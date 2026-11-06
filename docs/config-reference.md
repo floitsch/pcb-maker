@@ -31,7 +31,7 @@ The environment variables are indexed in the hand-over
 | [Router settings: net_classes entries](#router-settings-net_classes-entries) | 6 | 6 | 0 | 6 | 1 |
 | [Router settings: connection rules](#router-settings-connection-rules) | 4 | 4 | 0 | 4 | 0 |
 | [Router report: rules](#router-report-rules) | 6 | - | 0 | 6 | - |
-| [Router report: rules from the project](#router-report-rules-from-the-project) | 17 | - | 6 | 17 | - |
+| [Router report: rules from the project](#router-report-rules-from-the-project) | 20 | - | 9 | 20 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 71 | - | 0 | 71 | - |
 | [Placer settings](#placer-settings) | 56 | 49 | 7 | 56 | 31 |
@@ -257,6 +257,9 @@ The fields `project` flattens into `rules`; each is left out when empty. Source:
 | `rules.via_minimums` | `[f64; 3]` | The board's via minimums: diameter, drill, annular width (board setup, custom rules on every via). |
 | `rules.net_classes` | `BTreeMap<String, Vec<String>>` | Per net (as the router names it): its classes, the highest priority first ("Default" for a net in none). |
 | `rules.class_values` | `BTreeMap<String, [Option<f64>; 2]>` | Per class of the project: its track width and clearance as the project states them (before the board's minimums). |
+| `rules.layer_track_widths` | `BTreeMap<String, BTreeMap<String, f64>>` | Per net (as the router names it) that a custom `track_width` rule bounds on some layers only: per such layer the width the rule sets (its opt, else its min, else its max): the designer's widths per layer, as for one impedance on outer and inner layers. |
+| `rules.track_disallowed_layers` | `BTreeMap<String, Vec<String>>` | Per net a custom `disallow track` rule keeps off copper layers: those layers. |
+| `rules.layer_geometry_rules` | `Vec<KiCadLayerGeometryRule>` | The custom rules' track geometry on some copper layers only (a `track_width`, `diff_pair_gap` or `diff_pair_width` constraint whose layer clause or condition names a strict subset of the board's copper layers): a designer's controlled impedance. |
 
 ## Router report: custom_rules entries
 

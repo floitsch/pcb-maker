@@ -1380,6 +1380,9 @@ pub struct KiCadRunFacts {
     /// The classes whose nets the narrow-signal step routed below the
     /// class's width (`KiCadRulesSummary::narrowed`).
     pub narrowed: Vec<crate::board_router::KiCadNarrowedClass>,
+    /// Per class, the layers its tracks went on in the written board
+    /// (`class_view::class_layers`).
+    pub class_layers: Vec<crate::class_view::KiCadClassLayers>,
     /// The project's routing rules the router does not keep
     /// (`KiCadProjectRulesReport::unmodelled`).
     pub unmodelled_rules: Vec<String>,
@@ -2096,6 +2099,7 @@ impl KiCadRunFacts {
             diff_pair_why: BTreeMap::new(),
             lengths: Vec::new(),
             narrowed: Vec::new(),
+            class_layers: Vec::new(),
             unmodelled_rules: Vec::new(),
             custom_rules: Vec::new(),
             input_warnings: Vec::new(),
@@ -2310,6 +2314,16 @@ pub struct KiCadVerdict {
     /// step did not run on the board written.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub narrowed_classes: Vec<crate::board_router::KiCadNarrowedClass>,
+    /// Route and layout: per net class with tracks on the board written,
+    /// the copper layers they went on (`layer`, `length_mm`, `nets`, and
+    /// `rule_width_mm` where a custom rule gives the class a width on
+    /// that layer), with a `warning` where a class went on a layer its
+    /// width is not for: a layer its widths per layer leave out, or both
+    /// outer and inner layers for a class narrower than Default without
+    /// layer rules (likely an impedance, whose width differs between a
+    /// microstrip and a stripline). KiCad's DRC checks neither.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub class_layers: Vec<crate::class_view::KiCadClassLayers>,
     /// The result-changing environment variables that were set
     /// (`RESULT_ENVIRONMENT`), with their values, and the binary's build
     /// (`pcb_maker_version`: commit and build date).
@@ -2883,6 +2897,7 @@ fn next_actions(
         actions.push(pour_action(pour));
     }
     actions.extend(narrowed_action(&facts.narrowed));
+    actions.extend(crate::class_view::class_layers_action(&facts.class_layers));
     actions.extend(skeleton_budget_action(facts));
     actions.extend(facts.decoupling.as_ref().and_then(|decoupling| {
         decoupling_action(
@@ -4507,6 +4522,7 @@ pub(crate) fn judge_at(
         diff_pairs: facts.diff_pairs.clone(),
         lengths: facts.lengths.clone(),
         narrowed_classes: facts.narrowed.clone(),
+        class_layers: facts.class_layers.clone(),
         environment: result_environment(),
         pours: facts.pours.clone(),
         moves: facts.moves.clone(),
@@ -4601,6 +4617,14 @@ pub fn route_facts(
     });
     facts.lengths = result.lengths.clone();
     facts.narrowed = result.rules.narrowed.clone();
+    // The layers each class went on, from the board written.
+    if let Some(board) =
+        fs::read_to_string(directory.join(format!("{}.kicad_pcb", result.board_id)))
+            .ok()
+            .and_then(|text| crate::parse(&text).ok())
+    {
+        facts.class_layers = crate::class_view::class_layers(&result.rules.project, &board);
+    }
     facts.vias_in_pads = result.vias_in_pads.clone();
     facts.open_nets = result
         .nets
@@ -4883,6 +4907,57 @@ mod tests {
                 .next_actions
                 .iter()
                 .any(|line| line.starts_with("the narrow-signal step routed 6"))
+        );
+    }
+
+    #[test]
+    fn the_classes_layers_are_in_the_verdict_with_their_warning() {
+        use crate::class_view::{KiCadClassLayer, KiCadClassLayers};
+        let layer = |name: &str, length_mm: f64, rule_width_mm: Option<f64>| KiCadClassLayer {
+            layer: name.into(),
+            length_mm,
+            nets: 1,
+            rule_width_mm,
+        };
+        let classes = vec![
+            KiCadClassLayers {
+                class: "Default".into(),
+                track_width_mm: Some(0.15),
+                nets: 3,
+                layers: vec![layer("F.Cu", 30.0, None), layer("B.Cu", 20.0, None)],
+                designer_layers: Vec::new(),
+                rule_widths: BTreeMap::new(),
+                impedance: None,
+                warning: None,
+            },
+            KiCadClassLayers {
+                class: "RF_ANT_INT".into(),
+                track_width_mm: Some(0.1102),
+                nets: 1,
+                layers: vec![layer("In1.Cu", 14.0, None), layer("B.Cu", 55.0, None)],
+                designer_layers: Vec::new(),
+                rule_widths: BTreeMap::new(),
+                impedance: None,
+                warning: Some("RF_ANT_INT (0.1102 mm, ...) went on outer layers (B.Cu 55.0 mm) and inner ones (In1.Cu 14.0 mm)".into()),
+            },
+        ];
+        let mut facts = routed(DrcTally::default());
+        facts.class_layers = classes.clone();
+        let verdict = judge(&facts);
+        assert_eq!(verdict.class_layers, classes);
+        let json = serde_json::to_value(&verdict).unwrap();
+        assert_eq!(json["class_layers"][1]["layers"][1]["layer"], "B.Cu");
+        assert!(json["class_layers"][0].get("warning").is_none());
+        assert!(verdict.next_actions.iter().any(|line| line.starts_with(
+            "classes went on layers their width is not for, which KiCad's DRC does not check (verdict.class_layers): RF_ANT_INT (0.1102 mm, ...)"
+        ) && line.contains("(rule \"RF_ANT_INT layers\" (condition \"A.hasNetclass('RF_ANT_INT') && A.Layer == '<layer>'\") (constraint disallow track))")));
+        // No warning, no action.
+        facts.class_layers.truncate(1);
+        assert!(
+            !judge(&facts)
+                .next_actions
+                .iter()
+                .any(|line| line.starts_with("classes went on layers"))
         );
     }
 

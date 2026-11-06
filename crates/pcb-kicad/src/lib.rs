@@ -96,6 +96,7 @@ pub use work_rate::{
     KiCadMeasuredRate, KiCadWorkRate, WORK_RATE_VARIABLE, calibrate as calibrate_work_rate,
     calibrate_reference_by_default, measure as measure_work_rate, parse_work_rate, work_rate,
 };
+mod class_view;
 mod constraints_template;
 mod describe;
 mod flip;
@@ -121,6 +122,9 @@ mod board_footprints;
 mod key_matrix;
 pub use key_matrix::{KiCadStarterHalf, KiCadStarterReport};
 mod netlist_import;
+pub use class_view::{
+    KiCadClassLayer, KiCadClassLayers, KiCadClassRow, note_designer_class_layers,
+};
 pub use constraints_template::constraints_template;
 pub use describe::{KiCadBoardDescription, KiCadSwapCandidate, describe_kicad_board};
 pub use netlist_import::{
@@ -167,8 +171,8 @@ pub use board_router::{
     route_kicad_board, write_kicad_board_without_tracks, write_kicad_board_without_tracks_except,
 };
 pub use project_rules::{
-    KiCadProjectMinimums, KiCadRuleOverride, preflight_overrides, resolve_project_rules,
-    router_config_over_project,
+    KiCadLayerGeometryRule, KiCadProjectMinimums, KiCadRuleOverride, preflight_overrides,
+    resolve_project_rules, router_config_over_project,
 };
 pub use run_diagnosis::{
     KiCadRunDiagnosis, KiCadRunFiles, KiCadRunInspection, inspect_routing_run, run_files,

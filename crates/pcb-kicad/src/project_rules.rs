@@ -109,6 +109,41 @@ pub struct KiCadProjectRulesReport {
     /// project states them (before the board's minimums).
     #[serde(skip)]
     pub class_values: BTreeMap<String, [Option<f64>; 2]>,
+    /// Per net (as the router names it) that a custom `track_width` rule
+    /// bounds on some layers only: per such layer the width the rule sets
+    /// (its opt, else its min, else its max): the designer's widths per
+    /// layer, as for one impedance on outer and inner layers.
+    #[serde(skip)]
+    pub layer_track_widths: BTreeMap<String, BTreeMap<String, f64>>,
+    /// Per net a custom `disallow track` rule keeps off copper layers:
+    /// those layers.
+    #[serde(skip)]
+    pub track_disallowed_layers: BTreeMap<String, Vec<String>>,
+    /// The custom rules' track geometry on some copper layers only (a
+    /// `track_width`, `diff_pair_gap` or `diff_pair_width` constraint
+    /// whose layer clause or condition names a strict subset of the
+    /// board's copper layers): a designer's controlled impedance.
+    #[serde(skip)]
+    pub layer_geometry_rules: Vec<KiCadLayerGeometryRule>,
+}
+
+/// A custom rule's track geometry on some layers only
+/// (`KiCadProjectRulesReport::layer_geometry_rules`).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct KiCadLayerGeometryRule {
+    pub rule: String,
+    pub constraint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_mm: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub opt_mm: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_mm: Option<f64>,
+    /// The copper layers its layer clause and condition name.
+    pub layers: Vec<String>,
+    /// Its condition as written.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub condition: Option<String>,
 }
 
 /// The class whose track width a net takes: of its classes (`classes`,
@@ -919,6 +954,15 @@ pub fn resolve_project_rules(
                 // Track widths per layer (rules on some layers only): per
                 // net with one, its bounds on each layer, every-layer
                 // bounds and the board's minimum widths folded in.
+                for (&index, widths) in &lowered.rule_layer_widths {
+                    report.layer_track_widths.insert(
+                        net_names.normalize(&board.nets[index].name).to_string(),
+                        widths
+                            .iter()
+                            .map(|(&layer, &width)| (board.copper_layers[layer].clone(), width))
+                            .collect(),
+                    );
+                }
                 if !lowered.layer_width_min.is_empty() {
                     let board_minimum = minimum("min_track_width").max(floor.unwrap_or(0.0));
                     for (index, net) in board.nets.iter().enumerate() {
@@ -994,6 +1038,41 @@ pub fn resolve_project_rules(
         &severities,
         &mut report,
     );
+    let copper = copper_layer_names(&pcb);
+    for rule in &pair_custom_rules {
+        let layers = dru::rule_copper_layers(rule, &copper);
+        if layers.is_empty() || layers.len() == copper.len() {
+            continue;
+        }
+        for constraint in rule.constraints.iter().filter(|constraint| {
+            matches!(
+                constraint.kind.as_str(),
+                "track_width" | "diff_pair_gap" | "diff_pair_width"
+            )
+        }) {
+            report.layer_geometry_rules.push(KiCadLayerGeometryRule {
+                rule: rule.name.clone(),
+                constraint: constraint.kind.clone(),
+                min_mm: constraint.min,
+                opt_mm: constraint.opt,
+                max_mm: constraint.max,
+                layers: layers.clone(),
+                condition: rule.condition.clone(),
+            });
+        }
+    }
+    report.track_disallowed_layers = track_disallowed
+        .iter()
+        .map(|(net, mask)| {
+            let layers = copper
+                .iter()
+                .enumerate()
+                .filter(|(layer, _)| mask & (1 << layer) != 0)
+                .map(|(_, name)| name.clone())
+                .collect();
+            (net.clone(), layers)
+        })
+        .collect();
     let mut config = KiCadBoardRouterConfig {
         narrow_signal_mm: narrow_signal,
         relaxed_clearance_mm:

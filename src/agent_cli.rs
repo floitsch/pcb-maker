@@ -393,6 +393,17 @@ fn check_reference(
 /// result is the input's (`pcb_kicad::input_items`: the parts kept where
 /// the input has them, its zones and board graphics unchanged), for the
 /// verdict's `input_findings`; only when the result has errors that count.
+/// The designer's boards a verdict compares the classes' layers with
+/// (`note_designer_class_layers`): the reference's, then the input's.
+fn designer_boards(reference: Option<&Path>, source: &Path, board_id: &str) -> Vec<PathBuf> {
+    let board = format!("{board_id}.kicad_pcb");
+    reference
+        .map(|project| project.join(&board))
+        .into_iter()
+        .chain(std::iter::once(source.join(&board)))
+        .collect()
+}
+
 fn check_input(facts: &mut KiCadRunFacts, source: &Path, result: &Path, board_id: &str) {
     if matches!(facts.reference, KiCadReference::Findings { .. }) || !facts.needs_reference() {
         return;
@@ -582,6 +593,11 @@ fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     facts.input_warnings.extend(kicad_warning);
     facts.input_warnings.extend(pour_warnings);
     facts.input_warnings.extend(override_warnings(&config));
+    pcb_kicad::note_designer_class_layers(
+        &mut facts,
+        &result,
+        &designer_boards(reference.as_deref(), Path::new(source), board_id),
+    );
     check_reference(
         &mut facts,
         reference.as_deref(),
@@ -1058,6 +1074,11 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     facts.work_seconds = Some(result.work_seconds + result.routed.work_seconds);
     facts.kicad_check_work_seconds = Some(result.kicad_check_work_seconds);
     facts.outputs = existing(&outputs);
+    pcb_kicad::note_designer_class_layers(
+        &mut facts,
+        &result.routed,
+        &designer_boards(reference.as_deref(), Path::new(source), board_id),
+    );
     check_reference(
         &mut facts,
         reference.as_deref(),

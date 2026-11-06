@@ -1187,6 +1187,11 @@ pub(crate) struct Lowered {
     pub layer_width_min: Vec<Vec<f64>>,
     pub layer_width_max: Vec<Vec<f64>>,
     pub layer_width_opt: Vec<Vec<Option<f64>>>,
+    /// Per net and layer, the width of the last `track_width` rule on
+    /// some layers only that holds there (its opt, else its min, else its
+    /// max), whether or not it changes what the router does: the
+    /// designer's widths per layer, for the reports.
+    pub rule_layer_widths: BTreeMap<usize, BTreeMap<usize, f64>>,
     pub via_diameter_min: Vec<f64>,
     pub via_diameter_min_all: f64,
     pub via_diameter_max: Vec<f64>,
@@ -1336,6 +1341,26 @@ fn rule_layers<'a>(rule: &Rule, copper: &'a [String]) -> Vec<&'a str> {
             Some("inner") => !matches!(*layer, "F.Cu" | "B.Cu"),
             Some(pattern) => text_matches(pattern, layer),
         })
+        .collect()
+}
+
+/// The copper layers a rule names: those of its layer clause, narrowed
+/// to the layers its condition names in quotes where it names any
+/// (`A.Layer == 'In1.Cu' || A.Layer == 'In4.Cu'`). A reading of the text,
+/// for reports: the lowering evaluates the condition per layer.
+pub(crate) fn rule_copper_layers(rule: &Rule, copper: &[String]) -> Vec<String> {
+    let clause = rule_layers(rule, copper);
+    let condition = rule.condition.as_deref().unwrap_or("");
+    let named: Vec<&str> = clause
+        .iter()
+        .copied()
+        .filter(|layer| {
+            condition.contains(&format!("'{layer}'")) || condition.contains(&format!("\"{layer}\""))
+        })
+        .collect();
+    if named.is_empty() { clause } else { named }
+        .into_iter()
+        .map(str::to_string)
         .collect()
 }
 
@@ -2230,6 +2255,20 @@ fn lower_constraint(
                 Vec::new()
             };
             let by_layer = per_layer.windows(2).any(|pair| pair[0] != pair[1]);
+            if kind == "track_width"
+                && by_layer
+                && let Some(width) = constraint.opt.or(constraint.min).or(constraint.max)
+            {
+                for (layer, nets) in per_layer.iter().enumerate() {
+                    for &net in nets {
+                        lowered
+                            .rule_layer_widths
+                            .entry(net)
+                            .or_default()
+                            .insert(layer, width);
+                    }
+                }
+            }
             let mut applies = Vec::new();
             for group in &groups {
                 match truth_for(Some(representative(group)), None, false) {

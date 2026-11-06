@@ -70,7 +70,9 @@ outline that fits), `outputs` (absolute paths), `cut`, `free_dimension`,
 `approximated`, `no_effect`, `unmodelled`, ...), `lengths` (the `length`
 and `skew` rules per net), `narrowed_classes` (classes the narrow-signal step routed below
 their width, which KiCad's DRC does not check; since 2026-11-06 only `Default`: every class the
-designer named, an impedance or a power class, keeps its width), `sub_boards`, `ledger_wait_seconds` (the part of
+designer named, an impedance or a power class, keeps its width), `class_layers` (per class the
+layers its tracks went on, with a `warning` where an impedance class went on a layer its width is
+not for: a `disallow track` rule per layer keeps it off), `sub_boards`, `ledger_wait_seconds` (the part of
 `wall_seconds` spent waiting in the machine's memory ledger, not working). Without a reference (a layout's
 default) a footprint's own findings (`footprint_findings`) and the
 input's own edge clearances, mask bridges and courtyards of parts kept
