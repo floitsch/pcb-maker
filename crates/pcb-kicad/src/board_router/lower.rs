@@ -2159,14 +2159,23 @@ fn lower_board(
 const PIN_ROW_ADJACENT: f64 = 1.25;
 
 /// Adjacent pads farther apart than this (centre to centre, mm) are no pin
-/// row to the router's pin-row cost: a track between them is ordinary.
+/// row to the negotiation's pin-row cost: a track between them is
+/// ordinary there.
 const PIN_ROW_PITCH_MM: f64 = 1.5;
+
+/// Adjacent pads farther apart than `PIN_ROW_PITCH_MM` and at most this
+/// apart are a pin row to the clean-up's searches and comparisons only
+/// (`PinRowGap::cleanup_only`): an SOT-23's 1.9 mm, a 2.54 mm header.
+/// Charged in the negotiation they cost 46 unconnected on the expansion
+/// tier (2026-10-23); the clean-up never leaves a net open.
+const PIN_ROW_CLEANUP_PITCH_MM: f64 = 2.6;
 
 /// The gaps between adjacent SMD pads of one footprint (`pads`: centre,
 /// copper layers, net), per copper layer with three pads or more: the
 /// pairs whose centres lie at most `PIN_ROW_ADJACENT` times the closer
-/// pad's nearest-neighbour distance and `PIN_ROW_PITCH_MM` apart, as
-/// score-kicad-board's crossing measure pairs them.
+/// pad's nearest-neighbour distance and `PIN_ROW_CLEANUP_PITCH_MM` apart,
+/// as score-kicad-board's crossing measure pairs them, those over
+/// `PIN_ROW_PITCH_MM` apart `cleanup_only`.
 pub(crate) fn footprint_pin_row_gaps(
     pads: &[([f64; 2], core::LayerMask, Option<core::NetId>)],
 ) -> Vec<core::PinRowGap> {
@@ -2198,7 +2207,7 @@ pub(crate) fn footprint_pin_row_gaps(
             for (j, b) in members.iter().enumerate().skip(i + 1) {
                 let gap = distance(a.0, b.0);
                 if gap < 1.0e-6
-                    || gap > PIN_ROW_PITCH_MM
+                    || gap > PIN_ROW_CLEANUP_PITCH_MM
                     || gap > PIN_ROW_ADJACENT * nearest[i].min(nearest[j])
                 {
                     continue;
@@ -2208,6 +2217,7 @@ pub(crate) fn footprint_pin_row_gaps(
                     a: a.0,
                     b: b.0,
                     nets: [a.2, b.2],
+                    cleanup_only: gap > PIN_ROW_PITCH_MM,
                 });
             }
         }

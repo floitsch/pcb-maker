@@ -5059,6 +5059,7 @@ fn pin_row_board(left: f64, s_start: f64) -> Board {
             a: [left + index as f64, 5.0],
             b: [left + index as f64 + 1.0, 5.0],
             nets: [Some(index as NetId), Some(index as NetId + 1)],
+            cleanup_only: false,
         })
         .collect();
     Board {
@@ -5147,6 +5148,46 @@ fn the_pin_row_cost_keeps_other_nets_out_from_between_a_parts_pads() {
     };
     assert!(crosses(0.0));
     assert!(!crosses(5.0));
+}
+
+/// The same row with its gaps the clean-up's only (`cleanup_only`: a row
+/// wider than 1.5 mm): the negotiation charges nothing there and routes S
+/// between the pads, the clean-up's reroute pays the gap cost, finds the
+/// way round the row cheaper all told and keeps it.
+#[test]
+fn a_cleanup_only_pin_row_gap_is_charged_by_the_clean_up_alone() {
+    let mut board = pin_row_board(4.0, 2.0);
+    for gap in &mut board.pin_row_gaps {
+        gap.cleanup_only = true;
+    }
+    let crosses = |cleanup_passes: usize| {
+        let config = Config {
+            pitches: vec![0.05],
+            pin_row_cost: 5.0,
+            cleanup_passes,
+            ..Config::default()
+        };
+        let result = crate::route(&board, &config);
+        assert_eq!(result.status[3], crate::NetStatus::Routed);
+        crosses_the_row(&result.routes[3])
+    };
+    assert!(crosses(0));
+    assert!(!crosses(Config::default().cleanup_passes.max(1)));
+    // Marked, at no cost to the negotiation's search.
+    let config = Config {
+        pitches: vec![0.05],
+        pin_row_cost: 5.0,
+        ..Config::default()
+    };
+    let router = Router::new(&board, &config);
+    let node = router.grid.nearest_node([4.5, 5.0]).unwrap();
+    let gap = router.pin_row_at(0, node) as usize;
+    assert_ne!(gap, 0);
+    assert_eq!(
+        (router.pin_row_costs[gap], router.pin_row_cleanup_costs[gap]),
+        (0.0, 5.0)
+    );
+    assert!(router.pin_row_foreign(3, 0, node));
 }
 
 /// A part moved by `update` (the layout's moves) takes its pin-row gaps

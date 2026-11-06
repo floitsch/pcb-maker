@@ -201,7 +201,8 @@ pub struct Board {
     pub fill_passes: Vec<usize>,
     /// The gaps between adjacent SMD pads of one footprint's pin rows
     /// (`PinRowGap`): another net's track there snakes between a part's
-    /// pins, which the search charges `Config::pin_row_cost` a step.
+    /// pins, which the search charges `Config::pin_row_cost` a step (the
+    /// clean-up's searches only for a gap `cleanup_only`).
     pub pin_row_gaps: Vec<PinRowGap>,
     /// Copper a terminal reaches beside its pad (`TerminalCopper`): the
     /// search ends on any of it. Empty but for route mode's differential
@@ -388,6 +389,12 @@ pub struct PinRowGap {
     pub b: Point,
     /// The two pads' nets: theirs pass freely.
     pub nets: [Option<NetId>; 2],
+    /// Charged by the clean-up's searches and comparisons only (the
+    /// clean-up's and the bend round's reroutes), not by the negotiation
+    /// nor the via reduction: a wider row (an SOT-23's 1.9 mm, a 2.54 mm
+    /// header) whose charge in the negotiation cost connections
+    /// (docs/router.md, "Pin-row gaps from 1.5 to 2.6 mm in the clean-up").
+    pub cleanup_only: bool,
 }
 
 /// A pad merged into its net's terminal `host` (`Board::merged_pads`).

@@ -305,7 +305,10 @@ pub struct Config {
     /// Cost in millimetres of trace of a step into a pin-row gap
     /// (`Board::pin_row_gaps`) by a net other than the gap's two pads':
     /// a track snaking between a part's adjacent SMD pins pays it once or
-    /// twice per gap it crosses. 0 turns it off (no gap marks built);
+    /// twice per gap it crosses (the gaps over 1.5 mm, `cleanup_only`, in
+    /// the clean-up's searches and comparisons only, docs/router.md,
+    /// "Pin-row gaps and compaction in the clean-up (2026-11-06)"). 0
+    /// turns it off (no gap marks built);
     /// `PCB_ROUTER_PIN_ROW_COST` sets it (default 2: from 3 mm on the
     /// expansion tier loses to the thermal guards, docs/router.md).
     pub pin_row_cost: f64,

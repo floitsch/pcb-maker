@@ -349,6 +349,8 @@ impl Router {
             pin_row: vec![Vec::new(); layers],
             pin_row_nets: Vec::new(),
             pin_row_costs: Vec::new(),
+            pin_row_cleanup_costs: Vec::new(),
+            cleanup_rows: false,
             tile_covered: vec![vec![0.0; tiles_x * tiles_y]; layers],
             layer_cut: vec![1.0; layers],
             sever: vec![Vec::new(); layers],
@@ -746,6 +748,7 @@ impl Router {
         self.pin_row = vec![Vec::new(); layers];
         self.pin_row_nets.clear();
         self.pin_row_costs.clear();
+        self.pin_row_cleanup_costs.clear();
         let mut work = self.mark_pin_row_gaps();
         for nodes in &mut self.pin_row {
             work += nodes.len() as u64;
@@ -765,9 +768,24 @@ impl Router {
         let mut work = 0u64;
         self.pin_row_nets.push((0, 0));
         self.pin_row_costs.push(0.0);
+        self.pin_row_cleanup_costs.push(0.0);
         let pitch = self.grid.pitch;
         let owner = |net: Option<NetId>| net.map_or(0, crate::grid::owner);
-        for gap in &self.board.pin_row_gaps {
+        // The negotiation's gaps first: of a node's gaps the first stays,
+        // so a clean-up-only gap takes no node of one charged everywhere
+        // (the negotiation routes as without them).
+        let gaps = self
+            .board
+            .pin_row_gaps
+            .iter()
+            .filter(|gap| !gap.cleanup_only)
+            .chain(
+                self.board
+                    .pin_row_gaps
+                    .iter()
+                    .filter(|gap| gap.cleanup_only),
+            );
+        for gap in gaps {
             if gap.layer >= layers || self.pin_row_nets.len() > u16::MAX as usize {
                 continue;
             }
@@ -803,7 +821,10 @@ impl Router {
             if marked {
                 self.pin_row_nets
                     .push((owner(gap.nets[0]), owner(gap.nets[1])));
-                self.pin_row_costs.push(self.config.pin_row_cost as f32);
+                let cost = self.config.pin_row_cost as f32;
+                self.pin_row_costs
+                    .push(if gap.cleanup_only { 0.0 } else { cost });
+                self.pin_row_cleanup_costs.push(cost);
             }
         }
         work

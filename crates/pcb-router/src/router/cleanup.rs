@@ -16,18 +16,23 @@ impl Router {
     pub(super) fn geometric_cost_of(&self, net: NetId, branches: &[Branch]) -> f64 {
         let nx = self.grid.nx as i64;
         let mut cost = 0.0;
+        let row_costs = if self.cleanup_rows {
+            &self.pin_row_cleanup_costs
+        } else {
+            &self.pin_row_costs
+        };
         for branch in branches {
-            // The search's pin-row cost, a node in another net's gap.
+            // The search's pin-row cost, a node in another net's gap
+            // (`cleanup_only` gaps too where the search charges them).
             if !self.pin_row_nets.is_empty() {
-                let gaps = branch
+                cost += branch
                     .nodes
                     .iter()
-                    .filter(|node| {
+                    .filter_map(|node| {
                         self.pin_row_foreign_entry(net, node.layer as usize, node.cell as usize)
-                            .is_some()
                     })
-                    .count();
-                cost += self.config.pin_row_cost * gaps as f64;
+                    .map(|gap| row_costs[gap] as f64)
+                    .sum::<f64>();
             }
             for pair in branch.nodes.windows(2) {
                 if pair[0].cell == pair[1].cell {
@@ -50,6 +55,10 @@ impl Router {
     /// the result when it is strictly cheaper. Returns the improvements.
     pub(super) fn clean_up(&mut self, order: &[NetId]) -> usize {
         self.cleanup = true;
+        // Not in the via reduction's clean-up: there the wider gaps' charge
+        // changed which reroutes were kept and the later rounds' vias
+        // (CyberKeeb2040: 134 to 147 after round 1).
+        self.cleanup_rows = !self.in_via_reduction;
         let mut improvements = 0;
         let mut pour_stranded = self
             .config
@@ -260,6 +269,7 @@ impl Router {
             }
         }
         self.cleanup = false;
+        self.cleanup_rows = false;
         if self.config.verbose && pour_stranded.is_some() {
             eprintln!(
                 "clean-up: {pour_rejected} batches kept out for stranding pour pads, {pour_check_seconds:.1} s of pour checks ({pour_analyses} analyses); {:.1} s of work of a budget of {budget:.0} s, {:.1} s of it pour analyses, in {:.1} s of wall clock",

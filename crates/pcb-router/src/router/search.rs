@@ -342,6 +342,11 @@ impl Router {
             // rather than once per step.
             let layer_hot = &self.hot[self.hot_of[class] * layers + layer];
             let cleanup = self.cleanup;
+            let row_costs = if self.cleanup_rows {
+                &self.pin_row_cleanup_costs
+            } else {
+                &self.pin_row_costs
+            };
             let layer_costs = &direction_cost[layer];
             let mut layer_factor = if self.layer_bias.is_empty() {
                 1.0
@@ -512,7 +517,7 @@ impl Router {
                             if gap != 0 {
                                 let (a, b) = self.pin_row_nets[gap as usize];
                                 if a != own && b != own {
-                                    pin_row = self.pin_row_costs[gap as usize];
+                                    pin_row = row_costs[gap as usize];
                                 }
                             }
                             if guard != 0 && guard as u32 != own {

@@ -37,14 +37,19 @@ pub(super) struct BendTally {
     pub length: f64,
     pub jogs: usize,
     pub staircases: usize,
+    /// Pin-row crossings: entries into another net's pin-row gap (every
+    /// gap, `cleanup_only` too; `row_crossings`).
+    pub crossings: usize,
 }
 
 /// Whether a reroute of the bend round is kept: nothing opens, no via is
 /// added, the length grows by at most `length_share` of what it was, no
-/// staircase is added and the jogs and staircases together fall.
+/// staircase and no pin-row crossing is added and the jogs and staircases
+/// together fall.
 pub(super) fn keep_bend_round(before: &BendTally, after: &BendTally, length_share: f64) -> bool {
     after.open <= before.open
         && after.vias <= before.vias
+        && after.crossings <= before.crossings
         && after.length <= before.length * (1.0 + length_share) + 1.0e-9
         && after.staircases <= before.staircases
         && after.jogs + after.staircases < before.jogs + before.staircases
@@ -84,6 +89,28 @@ impl Router {
         }
         flush(&mut directions);
         (jogs, staircases)
+    }
+
+    /// A net's pin-row crossings: the times its branches enter another
+    /// net's pin-row gap (a run of nodes in one gap is one).
+    pub(super) fn row_crossings(&self, net: NetId) -> usize {
+        self.row_crossings_of(net, &self.nets[net as usize].branches)
+    }
+
+    /// `row_crossings` of `net` with these branches.
+    pub(super) fn row_crossings_of(&self, net: NetId, branches: &[Branch]) -> usize {
+        let mut crossings = 0;
+        for branch in branches {
+            let mut last = None;
+            for node in &branch.nodes {
+                let gap = self.pin_row_foreign_entry(net, node.layer as usize, node.cell as usize);
+                if gap.is_some() && gap != last {
+                    crossings += 1;
+                }
+                last = gap;
+            }
+        }
+        crossings
     }
 
     /// The jogs and staircases of a net's branches.
@@ -128,7 +155,7 @@ impl Router {
     /// The board's tally.
     pub(super) fn bend_tally(&self) -> BendTally {
         let (open, vias, length) = self.quality();
-        let (mut jogs, mut staircases) = (0, 0);
+        let (mut jogs, mut staircases, mut crossings) = (0, 0, 0);
         for (net, state) in self.nets.iter().enumerate() {
             if !state.routable {
                 continue;
@@ -136,6 +163,7 @@ impl Router {
             let (j, s) = self.net_jogs(net as NetId);
             jogs += j;
             staircases += s;
+            crossings += self.row_crossings(net as NetId);
         }
         BendTally {
             open,
@@ -143,6 +171,7 @@ impl Router {
             length,
             jogs,
             staircases,
+            crossings,
         }
     }
 
@@ -169,6 +198,7 @@ impl Router {
             length,
             jogs,
             staircases,
+            crossings: self.row_crossings(net),
         }
     }
 
@@ -245,6 +275,7 @@ impl Router {
         let reroutes = budget - 4.0 * check;
         let (was_cleanup, bend_cost) = (self.cleanup, self.config.bend_cost);
         self.cleanup = true;
+        self.cleanup_rows = true;
         self.config.bend_cost = self.config.bend_round_cost;
         // The reroutes kept, in order: (net, old branches, new branches).
         // Each was routed against the ones before it, so a prefix of them
@@ -323,6 +354,7 @@ impl Router {
             }
         }
         self.cleanup = was_cleanup;
+        self.cleanup_rows = false;
         self.config.bend_cost = bend_cost;
         let after = self.bend_tally();
         if !changed.is_empty() && !keep_bend_round(&before, &after, self.config.bend_round_length) {
@@ -336,7 +368,7 @@ impl Router {
         if self.config.verbose {
             let after = self.bend_tally();
             eprintln!(
-                "bend round at {:.2} mm: {} nets with jogs, {} rerouted, {} kept, {} taken back; open {} -> {}, vias {} -> {}, length {:.1} -> {:.1} mm, jogs {} -> {}, staircases {} -> {}; {:.1} s of work of a budget of {:.1} s ({:.1} s of the route's work before it)",
+                "bend round at {:.2} mm: {} nets with jogs, {} rerouted, {} kept, {} taken back; open {} -> {}, vias {} -> {}, length {:.1} -> {:.1} mm, jogs {} -> {}, staircases {} -> {}, pin-row crossings {} -> {}; {:.1} s of work of a budget of {:.1} s ({:.1} s of the route's work before it)",
                 self.config.bend_round_cost,
                 round.nets,
                 round.tried,
@@ -352,6 +384,8 @@ impl Router {
                 after.jogs,
                 before.staircases,
                 after.staircases,
+                before.crossings,
+                after.crossings,
                 round.work,
                 round.budget,
                 route_work,
@@ -372,6 +406,7 @@ mod tests {
             length,
             jogs,
             staircases,
+            crossings: 2,
         }
     }
 
@@ -394,6 +429,18 @@ mod tests {
         ));
         // A staircase more, whatever the jogs.
         assert!(!keep_bend_round(&before, &tally(0, 10, 990.0, 5, 6), 0.01));
+        // A pin-row crossing more, whatever the steps.
+        let crossing = BendTally {
+            crossings: 3,
+            ..tally(0, 10, 990.0, 10, 0)
+        };
+        assert!(!keep_bend_round(&before, &crossing, 0.01));
+        // One fewer: kept.
+        let fewer = BendTally {
+            crossings: 1,
+            ..tally(0, 10, 990.0, 10, 0)
+        };
+        assert!(keep_bend_round(&before, &fewer, 0.01));
         // No fewer steps in all.
         assert!(!keep_bend_round(&before, &tally(0, 10, 990.0, 21, 4), 0.01));
         assert!(!keep_bend_round(&before, &before, 0.01));

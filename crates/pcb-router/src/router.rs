@@ -1800,8 +1800,17 @@ pub struct Router {
     /// entry 0 is no gap.
     pin_row_nets: Vec<(u32, u32)>,
     /// Per entry of `pin_row_nets`: the search's cost of a step into one
-    /// of its nodes by another net (`pin_row_cost`).
+    /// of its nodes by another net (`pin_row_cost`; 0 for a gap
+    /// `PinRowGap::cleanup_only`).
     pin_row_costs: Vec<f32>,
+    /// `pin_row_costs` in the clean-up's searches (`cleanup_rows`): every
+    /// gap's `pin_row_cost`.
+    pin_row_cleanup_costs: Vec<f32>,
+    /// The search and the clean-up's comparison charge
+    /// `pin_row_cleanup_costs`: set by the clean-up (`clean_up`, not the
+    /// via reduction's) and the bend round, not by the negotiation, the
+    /// repairs or the spoke repairs.
+    cleanup_rows: bool,
     /// Per layer and tile: share of the tile under some pour.
     tile_covered: Vec<Vec<f32>>,
     /// Per layer: cost factor for cutting a pour there. Relative to the

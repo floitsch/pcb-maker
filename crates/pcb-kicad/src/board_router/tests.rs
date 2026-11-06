@@ -4191,7 +4191,8 @@ mod pour_rank_tests {
 #[test]
 fn pin_row_gaps_pair_adjacent_smd_pads_of_a_row() {
     // An SOIC-8's two rows at 1.27 mm (5.4 mm apart): three gaps a row,
-    // none across; a 2.54 mm row is no pin row; two pads are none.
+    // none across, charged everywhere; a 2.54 mm row's gaps are the
+    // clean-up's only, a 3.0 mm row is none; two pads are none.
     let mut soic = Vec::new();
     for row in 0..2 {
         for pin in 0..4 {
@@ -4206,12 +4207,17 @@ fn pin_row_gaps_pair_adjacent_smd_pads_of_a_row() {
     assert_eq!(gaps.len(), 6);
     assert!(
         gaps.iter()
-            .all(|gap| gap.a[1] == gap.b[1] && gap.layer == 0)
+            .all(|gap| gap.a[1] == gap.b[1] && gap.layer == 0 && !gap.cleanup_only)
     );
-    let header: Vec<_> = (0..4)
-        .map(|pin| ([pin as f64 * 2.54, 0.0], 1, None))
-        .collect();
-    assert!(super::lower::footprint_pin_row_gaps(&header).is_empty());
+    let row = |pitch: f64| -> Vec<_> {
+        (0..4)
+            .map(|pin| ([pin as f64 * pitch, 0.0], 1, None))
+            .collect()
+    };
+    let header = super::lower::footprint_pin_row_gaps(&row(2.54));
+    assert_eq!(header.len(), 3);
+    assert!(header.iter().all(|gap| gap.cleanup_only));
+    assert!(super::lower::footprint_pin_row_gaps(&row(3.0)).is_empty());
     assert!(super::lower::footprint_pin_row_gaps(&soic[..2]).is_empty());
 }
 
