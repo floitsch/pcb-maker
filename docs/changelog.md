@@ -11,6 +11,40 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Measured on 2026-11-06 (the first night of the skeleton race and the Default-only narrowing: the losses attributed)
+
+Branch first-night; docs only. docs/placer.md, "The first night
+(2026-11-06)", has the table and the place checks.
+
+- **Every loss is the skeleton race's; the narrowing rule changes none.**
+  The four lost strict passes, vaio_re 1 -> 34 and SNSP-CPU-01 97 -> 157
+  were laid out at the task budget, seed 1, on x1919 (neither default),
+  x1920 (the race), x1923 (both) and x1923 with `"skeleton_race": null`.
+  Every arm without the race equals the 2026-11-05 nightly to the via,
+  and every arm with it equals the 2026-11-06 nightly. jetson's 17 open
+  under the old narrowing (x1920) are x1923's, and vaio_re narrows only
+  Default either way. SNSP-CPU-01 stays inside its spread of 68. The
+  one-finding losses (MokyaLora, zpn_devboard, USB_Cable_Tester PCB) are
+  placement noise without a seed spread on record.
+- **vaio_re and jetson**: the race's passives start at the skeleton's
+  level 0, full halos. 26 to 36 (vaio_re) and 86 to 109 (jetson)
+  passives find no room there, and that level costs 180 to 330 s of
+  work, so `skip_to_tight` jumps to level 7 (vaio_re, tight bodies) or
+  level 5 (jetson). Every seed uses its whole 600 s, where the plain
+  placement seats both boards at level 2 in 100 to 161 s. Routed at
+  one full route budget, the plain placements leave 1 and 5 open and
+  the race's 34 and 18: the cause is the tight seat, not the router's
+  smaller share.
+- **Proposed, not built**: start the passives no looser than the first
+  level without small parts' halos (`place_skeleton`'s
+  `second.first_level`, level 2), measured again in the race's stage 2
+  with vaio_re, jetson and SNSP-CPU-01. Otherwise turn the race off by
+  default. Also found: zpn_devboard's two-piece outline gives every part
+  a region, so `absent_parts` leaves no passive out and its race places
+  whole while the summary reports "a skeleton of 0 parts".
+- Compute: 20 layouts with 17 360 CPU s, 4 routes with 3 540, three place
+  checks, at most three layouts at once.
+
 ## Committed on 2026-11-06 (pin-row gaps to 2.6 mm and compaction in the clean-up)
 
 Branch pin-gaps-bundling. The census's two gaps left after the bend

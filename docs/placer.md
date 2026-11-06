@@ -8056,6 +8056,93 @@ What is left: the skip is still the lever on both sides of the rule
 at a budget near 500 s is not measured. SNSP-CPU-01 stays the race's loser
 (+34 % at stage 2, weight 11).
 
+### The first night (2026-11-06)
+
+The nightly of 2026-11-06 (layout sweep v33, main 66115ba, x1923's
+code) was the first with the race on and the narrow-signal step
+narrowing only Default (router.md, "The narrow-signal step's classes").
+It lost four strict passes and had two losses far outside any spread.
+Each board was laid out at the task budget, seed 1, 2 threads, with the
+reference work rates, in four arms (`build/night1/`): x1919 (neither
+default), x1920 (the race on, the old narrowing), x1923 (both: the
+nightly's binary) and x1923 with `{"skeleton_race": null}`. KiCad
+unconnected, strict findings in brackets, and the kept placement's
+passive level:
+
+| board | nightly 11-05 -> 11-06 | x1919 | x1920 | x1923 | x1923, race off | cause |
+| --- | --- | --- | --- | --- | --- | --- |
+| vaio_re | 1 (mask bridge 5) -> 34 | 1 (5) | 34 (level 7) | 34 (7) | 1 (5) | the race |
+| jetson-nano-baseboard | 0, pass -> 17 | 0, pass | 17 (5) | 17 (5) | 0, pass | the race |
+| SNSP-CPU-01 | 97 -> 157 | 97 | 157 (0) | = x1920 | 97 | the race, inside its spread of 68 |
+| MokyaLora | 0, pass -> 1 | 0, pass | 1 (1) | = x1920 | 0, pass | the race |
+| zpn_devboard | 0, pass -> 0 (mask bridge 1) | 0, pass | 0 (1) (level 1) | = x1920 | 0, pass | the race's settings, no skeleton |
+| USB_Cable_Tester PCB | 0, pass -> 0 (connection_width 1) | 0, pass | 0 (1) (level 0) | = x1920 | 0, pass | the race |
+
+Layouts are deterministic for their binary. x1923 reproduced the
+nightly's rows of vaio_re and jetson exactly, so it was not rerun on the
+other four ("= x1920": x1920's rows equal the nightly's to the via).
+Every arm without the race equals the nightly of 2026-11-05 to the via.
+Every arm with it equals the nightly of 2026-11-06. **The narrowing rule
+changes none of the six.** jetson's step no longer applies, but its
+x1920 layout under the old rule (17, 704 vias) is x1923's. vaio_re's
+nets are Default, so its step narrows 251 Default nets to 0.12 mm in
+both arms. Nor do any of the other 61 commits between the two nights
+change them. All six losses are the race's. jetson and vaio_re are far
+outside any spread. SNSP-CPU-01 is the known loser, inside its spread.
+The three one-finding losses (MokyaLora's one open,
+zpn's mask bridge, USB_Cable_Tester's connection width) come from a
+different placement, the size of a placement's noise, with no seed
+spread on record. zpn_devboard ran no skeleton. Its outline is two
+pieces, so the lowering gives every part a region (board_placer/lower.rs).
+`absent_parts` then counts all 107 passives as named by a constraint
+and the seed is placed whole with the race's global settings (the
+stall stop, the turns that fit). The summary still says "placed its
+skeleton of 0 parts".
+
+**vaio_re and jetson: the passives skip to the tight level.** In place
+checks of the nightly's sources (x1923, 600 s of work,
+`PCB_PLACER_DEBUG`; `build/night1/place-*`; the kept seed, its
+level and its work as in the nightly), every seed's skeleton seats at level 0 in 20 to 33 s. Its
+passives then start at the skeleton's level, full halos on every part.
+Around a skeleton grown only by the passives' tight bodies (`room` 1),
+level 0 leaves 26 to 36 passives without room on vaio_re (the level
+180 to 193 s of work) and 86 to 109 on jetson (302 to 329 s).
+`skip_to_tight` then jumps from level 0 to the first tight level: 7 on
+vaio_re (tight bodies, no halo, no spacing, the fine grid) and 5 on
+jetson (no halo, no spacing, the fine grid). On all three seeds of
+both boards the passives take 504 to 580 s and the seed its whole
+600 s. Placed plain, both boards seat at level 2 (halos halved on the
+many-pin parts, none on the others) in 100 s (jetson) and 161 s
+(vaio_re), seven and five seeds in the pool. The layout's clock charges
+the kept seed's work, so the first route got 337 s instead of 542 s
+(jetson) and 484 s (vaio_re). vaio_re's 80 open after it sent the rest
+to the narrow-signal attempt instead of the ladder (72 router-open, 34
+in KiCad).
+
+**The placement, not the budget.** Both nights' placements were routed
+with `run.py --route-from` on the x1923 binary at the same full route
+budget (ladder 1200 s; `build/night1/route-*`). vaio_re got 1 open on
+the plain placement and 34 on the race's: the layouts' results, vias
+and length to the unit. jetson got 5 on the plain and 18 on the race's.
+The first route's 147 to 205 s less work are not the loss: the tight
+seat is.
+
+**Not a bug; a proposal.** The skip works as built, but the race's
+passive phase starts at the skeleton's level, where a passive keeps its
+halo. The one-line candidate is in `place_skeleton`: replace
+`second.first_level = skeleton.level` with a start no looser than the
+first level without small parts' halos (level 2 of `relaxation_levels`,
+where the plain placement seats both boards). It changes every
+skeleton board's passives, so it needs the race's stage 2 again (with
+vaio_re, jetson and SNSP-CPU-01 among the units) before it goes in. The
+other choice is `"skeleton_race": null` by default again. The night's
+gains (video 210 -> 106, protoesp 81 -> 30, MegaDrive 125 -> 105 and
+the six strict passes) were not attributed here.
+
+Compute: 20 layouts with 17 360 CPU s, 4 routes with 3 540 CPU s, three
+place checks. At most three layouts ran at once, through the ledger
+with the nightly's estimates sidecar.
+
 ## Footprints without a courtyard, and their slots (2026-11-04)
 
 Fresh agent trial 4 (docs/reviews/2026-11-04-fresh-agent-trial-4.md,
