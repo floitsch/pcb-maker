@@ -1264,7 +1264,14 @@ pub(crate) fn set_pads_solid(pcb: &mut Expr, pads: &[SolidPad]) -> SolidChange {
                     && (*whole
                         || at.is_some_and(|at| request.at.iter().any(|point| near(at, *point))))
             });
-            if !solid {
+            // A pad solid already is no change (a later round of the solid
+            // step finds it starved still: nothing more to try for it).
+            let already = pad
+                .child("zone_connect")
+                .and_then(|form| form.children().get(1))
+                .and_then(Expr::atom)
+                == Some("2");
+            if !solid || already {
                 continue;
             }
             if let Expr::List(fields) = pad {
@@ -1329,113 +1336,217 @@ pub(crate) fn add_solid_pad(
     }
 }
 
+/// The solid step's rounds at most (`solidify_starved_thermals`). A pad set
+/// solid changes the fill, and a pad beside it can be starved only on the
+/// board after that round: k30-SBC's J1.39 after J1.14 and its neighbours,
+/// ghoul's RN3.3, then RN3.1 and RN3.2 of the same array (the designer
+/// tier of 2026-11-06: one more round, then three, and nothing starved,
+/// open or new; router-ceiling.md, bug 1).
+pub(crate) const SOLID_ROUNDS: usize = 4;
+
+/// What the solid step needs of KiCad (`solid_rounds`): the check of a
+/// board and the way back to the board before it.
+pub(super) trait SolidChecker {
+    /// Makes `pcb` the board and checks it: KiCad's report and its starved
+    /// thermals.
+    fn check(
+        &mut self,
+        pcb: &Expr,
+    ) -> Result<
+        (
+            crate::verification::VerificationReport,
+            Vec<KiCadStarvedThermal>,
+        ),
+        String,
+    >;
+    /// Goes back to the board (and its reports) before the last `check`.
+    fn restore(&mut self) -> Result<(), String>;
+}
+
+/// The checked board's files in its directory: `check` writes the board
+/// and runs KiCad's check there, `restore` puts back every file as it was
+/// before (and removes the ones the check wrote anew).
+struct BoardFiles<'a> {
+    directory: &'a Path,
+    board_id: &'a str,
+    kept: Vec<(std::path::PathBuf, Vec<u8>)>,
+}
+
+impl SolidChecker for BoardFiles<'_> {
+    fn check(
+        &mut self,
+        pcb: &Expr,
+    ) -> Result<
+        (
+            crate::verification::VerificationReport,
+            Vec<KiCadStarvedThermal>,
+        ),
+        String,
+    > {
+        self.kept.clear();
+        for entry in fs::read_dir(self.directory).map_err(|error| error.to_string())? {
+            let path = entry.map_err(|error| error.to_string())?.path();
+            if path.is_file() {
+                let bytes = fs::read(&path)
+                    .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+                self.kept.push((path, bytes));
+            }
+        }
+        let board_path = self.directory.join(format!("{}.kicad_pcb", self.board_id));
+        fs::write(&board_path, format!("{}\n", encode(pcb)))
+            .map_err(|error| format!("failed to write {}: {error}", board_path.display()))?;
+        let after = verify_materialized_rung(self.directory, self.board_id)?;
+        Ok((after, starved_thermal_diagnostics(self.directory)))
+    }
+
+    fn restore(&mut self) -> Result<(), String> {
+        for entry in fs::read_dir(self.directory).map_err(|error| error.to_string())? {
+            let path = entry.map_err(|error| error.to_string())?.path();
+            if path.is_file() && !self.kept.iter().any(|(kept, _)| *kept == path) {
+                fs::remove_file(&path)
+                    .map_err(|error| format!("failed to remove {}: {error}", path.display()))?;
+            }
+        }
+        for (path, bytes) in &self.kept {
+            fs::write(path, bytes)
+                .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+        }
+        Ok(())
+    }
+}
+
 /// `solid_starved_thermals` on a checked board: the pads KiCad finds
 /// starved get `(zone_connect 2)`, the board is checked again and kept when
-/// `solid_kept`, else restored. Returns the KiCad checks it ran (0 or 1).
-/// The layout runs it once, on the board it keeps (its own attempts'
-/// comparisons count the starved thermals as KiCad found them).
+/// `solid_kept`, else restored; on a kept board the pads starved now are
+/// the next round's, up to `SOLID_ROUNDS` rounds (`solid_rounds`). Returns
+/// the KiCad checks it ran (0 to `SOLID_ROUNDS`). The layout runs it once,
+/// on the board it keeps (its own attempts' comparisons count the starved
+/// thermals as KiCad found them).
 pub(crate) fn solidify_starved_thermals(
     result: &mut KiCadBoardRouterResult,
     output_directory: &Path,
     board_id: &str,
 ) -> Result<usize, String> {
+    if solid_pads_of_findings(&result.diagnostics.starved_thermals).is_empty() {
+        return Ok(0);
+    }
+    let board_path = output_directory.join(format!("{board_id}.kicad_pcb"));
+    let text = fs::read_to_string(&board_path)
+        .map_err(|error| format!("failed to read {}: {error}", board_path.display()))?;
+    let mut pcb = parse(&text)?;
+    let mut files = BoardFiles {
+        directory: output_directory,
+        board_id,
+        kept: Vec::new(),
+    };
+    solid_rounds(result, &mut pcb, &mut files, SOLID_ROUNDS)
+}
+
+/// The solid step's rounds on `pcb`, the board `result` describes: each
+/// round sets the pads KiCad found starved solid (only pads not solid
+/// already: a round that changes nothing ends the step), has `checker`
+/// check the board and keeps it when `solid_kept`; a round not kept is
+/// undone and ends the step. A solid pad changes the fill, and a pad
+/// beside it may be starved only on the board after the round (k30-SBC's
+/// J1.39), so a kept round is followed by another, up to `rounds`.
+/// `result.solid_starved` records every pad tried, whether a round was
+/// kept, the pads of the round undone, and KiCad's counts before the first
+/// round and after the last check. Returns the checks run.
+pub(super) fn solid_rounds(
+    result: &mut KiCadBoardRouterResult,
+    pcb: &mut Expr,
+    checker: &mut dyn SolidChecker,
+    rounds: usize,
+) -> Result<usize, String> {
+    let counts = |report: Option<&crate::verification::VerificationReport>| {
+        report.map_or([0, 0], |report| {
+            [
+                report.selected_net_unconnected_items,
+                report.drc_design_violations,
+            ]
+        })
+    };
+    let spokes = counts(result.native.as_ref());
     let mut checks = 0;
-    let starved = solid_pads_of_findings(&result.diagnostics.starved_thermals);
-    if !starved.is_empty() {
-        let board_path = output_directory.join(format!("{board_id}.kicad_pcb"));
-        let text = fs::read_to_string(&board_path)
-            .map_err(|error| format!("failed to read {}: {error}", board_path.display()))?;
-        let mut pcb = parse(&text)?;
-        let change = set_pads_solid(&mut pcb, &starved);
-        let changed = change.pads;
+    let mut record: Option<KiCadSolidStarved> = None;
+    for round in 1..=rounds {
+        let starved = solid_pads_of_findings(&result.diagnostics.starved_thermals);
+        if starved.is_empty() {
+            break;
+        }
+        let mut next = pcb.clone();
+        let change = set_pads_solid(&mut next, &starved);
         if !change.whole.is_empty() {
             eprintln!(
                 "starved pads not found at KiCad's points: all pads of {} connected solid",
                 change.whole.join(", ")
             );
         }
-        if changed > 0 {
-            // The checked board and its reports, to go back to: a solid
-            // pad changes the fill, which can cost more than it gains
-            // (k30-SBC's J1.14, a 0.41 mm card-connector pad set solid:
-            // its starved thermal gone, but J1.39 beside it
-            // unconnected twice).
-            let mut kept: Vec<(std::path::PathBuf, Vec<u8>)> = Vec::new();
-            for entry in fs::read_dir(output_directory).map_err(|error| error.to_string())? {
-                let path = entry.map_err(|error| error.to_string())?.path();
-                if path.is_file() {
-                    let bytes = fs::read(&path)
-                        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-                    kept.push((path, bytes));
-                }
-            }
-            let before = result.native.clone();
-            let starved_before = result.diagnostics.starved_thermals.clone();
-            fs::write(&board_path, format!("{}\n", encode(&pcb)))
-                .map_err(|error| format!("failed to write {}: {error}", board_path.display()))?;
-            let after = verify_materialized_rung(output_directory, board_id)?;
-            checks = 1;
-            // Kept when KiCad finds no more unconnected items and fewer
-            // findings (the starved thermals gone, nothing new).
-            let better = solid_kept(before.as_ref(), &after);
-            let counts = |report: Option<&crate::verification::VerificationReport>| {
-                report.map_or([0, 0], |report| {
-                    [
-                        report.selected_net_unconnected_items,
-                        report.drc_design_violations,
-                    ]
-                })
-            };
-            let (spokes, solid) = (counts(before.as_ref()), counts(Some(&after)));
-            result.solid_starved = Some(KiCadSolidStarved {
-                // As the verdict names the starved pads (`starved_pad`).
-                pads: starved_before
-                    .iter()
-                    .map(|finding| crate::verdict::starved_pad(finding).pad)
-                    .collect::<std::collections::BTreeSet<_>>()
-                    .into_iter()
-                    .collect(),
-                kept: better,
-                unconnected: [spokes[0], solid[0]],
-                findings: [spokes[1], solid[1]],
-            });
-            if better {
-                result.native = Some(after);
-                result.diagnostics.starved_thermals = starved_thermal_diagnostics(output_directory);
-                eprintln!(
-                    "{changed} starved pads connected solid: {} starved thermals left",
-                    result.diagnostics.starved_thermals.len()
-                );
-            } else {
-                for entry in fs::read_dir(output_directory).map_err(|error| error.to_string())? {
-                    let path = entry.map_err(|error| error.to_string())?.path();
-                    if path.is_file() && !kept.iter().any(|(kept, _)| *kept == path) {
-                        fs::remove_file(&path).map_err(|error| {
-                            format!("failed to remove {}: {error}", path.display())
-                        })?;
-                    }
-                }
-                for (path, bytes) in &kept {
-                    fs::write(path, bytes)
-                        .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
-                }
-                result.native = before;
-                result.diagnostics.starved_thermals = starved_before;
-                eprintln!(
-                    "{changed} starved pads connected solid: not kept ({} unconnected, {} findings; before {}, {})",
-                    after.selected_net_unconnected_items,
-                    after.drc_design_violations,
-                    result
-                        .native
-                        .as_ref()
-                        .map_or(0, |native| native.selected_net_unconnected_items),
-                    result
-                        .native
-                        .as_ref()
-                        .map_or(0, |native| native.drc_design_violations),
-                );
+        let changed = change.pads;
+        if changed == 0 {
+            break;
+        }
+        // A solid pad changes the fill, which can cost more than it gains
+        // (k30-SBC's J1.14, a 0.41 mm card-connector pad set solid: its
+        // starved thermal gone, but J1.39 beside it unconnected twice).
+        let before = result.native.clone();
+        // As the verdict names the starved pads (`starved_pad`).
+        let names: Vec<String> = result
+            .diagnostics
+            .starved_thermals
+            .iter()
+            .map(|finding| crate::verdict::starved_pad(finding).pad)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let (after, starved_after) = checker.check(&next)?;
+        checks += 1;
+        // Kept when KiCad finds no more unconnected items and fewer
+        // findings (the starved thermals gone, nothing new).
+        let better = solid_kept(before.as_ref(), &after);
+        let record = record.get_or_insert_with(|| KiCadSolidStarved {
+            unconnected: [spokes[0], 0],
+            findings: [spokes[1], 0],
+            ..KiCadSolidStarved::default()
+        });
+        for name in &names {
+            if !record.pads.contains(name) {
+                record.pads.push(name.clone());
             }
         }
+        record.pads.sort();
+        record.rounds = round;
+        let solid = counts(Some(&after));
+        record.unconnected[1] = solid[0];
+        record.findings[1] = solid[1];
+        if better {
+            record.kept = true;
+            result.native = Some(after);
+            result.diagnostics.starved_thermals = starved_after;
+            *pcb = next;
+            eprintln!(
+                "{changed} starved pads connected solid (round {round}): {} starved thermals left",
+                result.diagnostics.starved_thermals.len()
+            );
+        } else {
+            checker.restore()?;
+            record.undone = names;
+            eprintln!(
+                "{changed} starved pads connected solid (round {round}): not kept ({} unconnected, {} findings; before {}, {})",
+                after.selected_net_unconnected_items,
+                after.drc_design_violations,
+                before
+                    .as_ref()
+                    .map_or(0, |native| native.selected_net_unconnected_items),
+                before
+                    .as_ref()
+                    .map_or(0, |native| native.drc_design_violations),
+            );
+            break;
+        }
+    }
+    if record.is_some() {
+        result.solid_starved = record;
     }
     Ok(checks)
 }

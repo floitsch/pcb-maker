@@ -3287,6 +3287,13 @@ fn thermal_action_text(facts: &KiCadRunFacts) -> String {
         .iter()
         .map(|pad| pad.pad.as_str())
         .collect();
+    // The pads of the round KiCad's check undid (the whole try when no
+    // round was kept).
+    let undone_pads: BTreeSet<&str> = facts
+        .solid_starved
+        .iter()
+        .flat_map(|solid| solid.undone.iter().map(String::as_str))
+        .collect();
     let solid = match &facts.solid_starved {
         Some(solid) if !solid.kept && !starved.is_empty() && starved.is_subset(&tried) => format!(
             "solid_starved_thermals connected them solid and KiCad's check undid it: solid, {} unconnected items and {} findings, with spokes {} and {} (solid_starved in board-router.json), so they keep their spokes",
@@ -3306,18 +3313,41 @@ fn thermal_action_text(facts: &KiCadRunFacts) -> String {
                 .join(", ")
         ),
         Some(solid) => {
-            let again: Vec<&str> = starved.intersection(&tried).copied().collect();
+            let kept: Vec<&str> = solid
+                .pads
+                .iter()
+                .map(String::as_str)
+                .filter(|pad| !undone_pads.contains(pad))
+                .collect();
+            let again: Vec<&str> = starved
+                .intersection(&tried)
+                .copied()
+                .filter(|pad| !undone_pads.contains(pad))
+                .collect();
             let untried: Vec<&str> = starved.difference(&tried).copied().collect();
+            let rounds = if solid.rounds > 1 {
+                format!(" ({} rounds)", solid.rounds)
+            } else {
+                String::new()
+            };
             let mut said = vec![format!(
-                "solid_starved_thermals connected {} solid and KiCad's check kept it",
-                solid.pads.join(", ")
+                "solid_starved_thermals connected {} solid and KiCad's check kept it{rounds}",
+                kept.join(", ")
             )];
+            if !undone_pads.is_empty() {
+                said.push(format!(
+                    "{} connected solid after that and KiCad's check undid it (solid, {} unconnected items and {} findings)",
+                    undone_pads.iter().copied().collect::<Vec<_>>().join(", "),
+                    solid.unconnected[1],
+                    solid.findings[1]
+                ));
+            }
             if !again.is_empty() {
                 said.push(format!("{} still starved solid", again.join(", ")));
             }
             if !untried.is_empty() {
                 said.push(format!(
-                    "{} starved only on the board after that try (not tried)",
+                    "{} starved only on the board after the last round (not tried)",
                     untried.join(", ")
                 ));
             }
@@ -3331,7 +3361,7 @@ fn thermal_action_text(facts: &KiCadRunFacts) -> String {
         facts
             .solid_starved
             .as_ref()
-            .is_some_and(|solid| !solid.kept && tried.contains(pad))
+            .is_some_and(|solid| (!solid.kept && tried.contains(pad)) || undone_pads.contains(pad))
     };
     let advice = facts
         .starved_pads
@@ -7805,6 +7835,8 @@ mod tests {
         facts.solid_starved = Some(crate::board_router::KiCadSolidStarved {
             pads: vec!["U1.57".into()],
             kept: false,
+            rounds: 1,
+            undone: vec!["U1.57".into()],
             unconnected: [8, 9],
             findings: [3, 2],
         });
@@ -7822,6 +7854,26 @@ mod tests {
         );
         assert!(action.contains("U1.57: only 2 of 4 spokes reach the fill: keep other copper off the pad's sides (diagnostics"), "{action}");
         assert!(!action.contains("connects them solid"), "{action}");
+        // A kept round, then a round undone: the pad of the undone round is
+        // neither still starved solid nor advised the solid connection.
+        facts.solid_starved = Some(crate::board_router::KiCadSolidStarved {
+            pads: vec!["J1.14".into(), "U1.57".into()],
+            kept: true,
+            rounds: 2,
+            undone: vec!["U1.57".into()],
+            unconnected: [8, 9],
+            findings: [3, 2],
+        });
+        let action = thermal(&facts);
+        assert!(
+            action.contains("solid_starved_thermals connected J1.14 solid and KiCad's check kept it (2 rounds); U1.57 connected solid after that and KiCad's check undid it (solid, 9 unconnected items and 2 findings)"),
+            "{action}"
+        );
+        assert!(!action.contains("still starved solid"), "{action}");
+        assert!(
+            !action.contains("or give the pad a solid zone connection"),
+            "{action}"
+        );
         facts.solid_starved = None;
         let action = thermal(&facts);
         assert!(

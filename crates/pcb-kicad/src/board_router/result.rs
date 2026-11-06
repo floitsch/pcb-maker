@@ -25,7 +25,7 @@ pub struct KiCadBoardRouterViolation {
     pub actual_mm: f64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct KiCadBoardRouterResult {
     pub board_id: String,
     pub routable_connections: usize,
@@ -196,18 +196,24 @@ pub struct KiCadBoardRouterResult {
     pub attempts: Vec<KiCadAttemptRecord>,
 }
 
-/// The try of `solid_starved_thermals` on a checked board: the pads KiCad
-/// found starved that it connected solid (`REF.NUMBER`), whether the board
-/// with them solid was kept (KiCad finds no more unconnected items on it
-/// and fewer findings, `solid_kept`), and KiCad's unconnected items and
-/// design findings with spokes and with the pads solid. Trial 4's
-/// Quanta75: U1's exposed pad stayed starved twice while the verdict said
-/// the setting connects such pads solid.
+/// The tries of `solid_starved_thermals` on a checked board, round by
+/// round (`solid_rounds`): the pads KiCad found starved that it connected
+/// solid in any round (`REF.NUMBER`), whether a round's board was kept
+/// (KiCad finds no more unconnected items on it and fewer findings,
+/// `solid_kept`), the rounds checked, the pads of the round KiCad's check
+/// undid (it ends the step; empty when none was), and KiCad's unconnected
+/// items and design findings before the first round (with spokes) and on
+/// the last board checked. Trial 4's Quanta75: U1's exposed pad stayed
+/// starved twice while the verdict said the setting connects such pads
+/// solid.
 #[derive(Clone, Debug, Default, Serialize, PartialEq)]
 pub struct KiCadSolidStarved {
     pub pads: Vec<String>,
     pub kept: bool,
-    /// With spokes, then solid.
+    pub rounds: usize,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub undone: Vec<String>,
+    /// With spokes, then on the last board checked.
     pub unconnected: [usize; 2],
     pub findings: [usize; 2],
 }

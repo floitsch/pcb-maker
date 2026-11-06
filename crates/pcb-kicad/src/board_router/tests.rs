@@ -4066,6 +4066,208 @@ mod solid_starved_tests {
             ]
         );
     }
+
+    /// KiCad as the solid step's rounds see it: the pads of J1 of
+    /// `chain[i]` are starved once those of the stages before are solid (a
+    /// solid pad changes the fill beside it, k30-SBC's J1.39 after J1.14);
+    /// a pad of `harm` solid leaves an item unconnected.
+    struct ChainKiCad {
+        chain: Vec<Vec<&'static str>>,
+        harm: Vec<&'static str>,
+        /// The solid pads of each board checked.
+        checked: Vec<Vec<String>>,
+        restored: usize,
+    }
+
+    impl ChainKiCad {
+        fn starved(&self, solid: &[String]) -> Vec<super::super::KiCadStarvedThermal> {
+            self.chain
+                .iter()
+                .find(|stage| {
+                    stage
+                        .iter()
+                        .any(|pad| !solid.iter().any(|done| done == pad))
+                })
+                .into_iter()
+                .flatten()
+                .filter(|pad| !solid.iter().any(|done| done == *pad))
+                .map(|pad| super::super::KiCadStarvedThermal {
+                    pad: format!("Pad {pad} [GND] of J1 on F.Cu"),
+                    layer: "F.Cu".into(),
+                    at: [10.0 + pad.parse::<f64>().unwrap(), 10.0],
+                    spokes: Some(1),
+                    needed: Some(2),
+                    advice: String::new(),
+                })
+                .collect()
+        }
+
+        fn report(&self, solid: &[String]) -> VerificationReport {
+            let open = solid
+                .iter()
+                .filter(|pad| self.harm.contains(&pad.as_str()))
+                .count();
+            report(open, 10 + self.starved(solid).len())
+        }
+    }
+
+    impl super::super::route::SolidChecker for ChainKiCad {
+        fn check(
+            &mut self,
+            pcb: &crate::kicad_sexpr::Expr,
+        ) -> Result<(VerificationReport, Vec<super::super::KiCadStarvedThermal>), String> {
+            let solid: Vec<String> = connections(pcb)
+                .into_iter()
+                .flatten()
+                .filter(|(_, connection)| connection.as_deref() == Some("2"))
+                .map(|(number, _)| number)
+                .collect();
+            self.checked.push(solid.clone());
+            Ok((self.report(&solid), self.starved(&solid)))
+        }
+
+        fn restore(&mut self) -> Result<(), String> {
+            self.restored += 1;
+            Ok(())
+        }
+    }
+
+    /// J1 with pads 1 to 40 at (10 + n, 10).
+    fn connector() -> crate::kicad_sexpr::Expr {
+        let pads: String = (1..=40)
+            .map(|n| format!(r#"(pad "{n}" smd rect (at {n} 0) (size 0.4 1) (layers "F.Cu"))"#))
+            .collect();
+        crate::kicad_sexpr::parse(&format!(
+            r#"(kicad_pcb (footprint "C" (layer "F.Cu") (at 10 10 0) (property "Reference" "J1") {pads}))"#
+        ))
+        .unwrap()
+    }
+
+    fn solid_of(pcb: &crate::kicad_sexpr::Expr) -> Vec<String> {
+        connections(pcb)
+            .into_iter()
+            .flatten()
+            .filter(|(_, connection)| connection.as_deref() == Some("2"))
+            .map(|(number, _)| number)
+            .collect()
+    }
+
+    #[test]
+    fn the_solid_step_tries_the_pads_starved_after_its_round_until_none_is() {
+        use super::super::route::{SOLID_ROUNDS, solid_rounds};
+        // k30-SBC: J1.13 to J1.15 starved; solid, J1.39 beside them starved
+        // only on that board; one more round and nothing is starved (ghoul:
+        // three).
+        let mut kicad = ChainKiCad {
+            chain: vec![vec!["13", "14", "15"], vec!["39"]],
+            harm: Vec::new(),
+            checked: Vec::new(),
+            restored: 0,
+        };
+        let mut result = super::super::KiCadBoardRouterResult {
+            native: Some(kicad.report(&[])),
+            ..Default::default()
+        };
+        result.diagnostics.starved_thermals = kicad.starved(&[]);
+        let mut pcb = connector();
+        let checks = solid_rounds(&mut result, &mut pcb, &mut kicad, SOLID_ROUNDS).unwrap();
+        assert_eq!(checks, 2);
+        assert_eq!(kicad.checked.len(), 2);
+        assert_eq!(kicad.checked[0], vec!["13", "14", "15"]);
+        assert!(result.diagnostics.starved_thermals.is_empty());
+        assert_eq!(solid_of(&pcb), vec!["13", "14", "15", "39"]);
+        let record = result.solid_starved.clone().unwrap();
+        assert_eq!(record.pads, vec!["J1.13", "J1.14", "J1.15", "J1.39"]);
+        assert!(record.kept && record.undone.is_empty());
+        assert_eq!(
+            (record.rounds, record.unconnected, record.findings),
+            (2, [0, 0], [13, 10])
+        );
+        assert_eq!(kicad.restored, 0);
+
+        // A round that costs a connection is undone and ends the step; the
+        // rounds before it stay.
+        let mut kicad = ChainKiCad {
+            chain: vec![vec!["3", "4"], vec!["5"]],
+            harm: vec!["5"],
+            checked: Vec::new(),
+            restored: 0,
+        };
+        let mut result = super::super::KiCadBoardRouterResult {
+            native: Some(kicad.report(&[])),
+            ..Default::default()
+        };
+        result.diagnostics.starved_thermals = kicad.starved(&[]);
+        let mut pcb = connector();
+        let checks = solid_rounds(&mut result, &mut pcb, &mut kicad, SOLID_ROUNDS).unwrap();
+        assert_eq!((checks, kicad.restored), (2, 1));
+        assert_eq!(solid_of(&pcb), vec!["3", "4"]);
+        assert_eq!(result.native.as_ref().unwrap().drc_design_violations, 11);
+        assert_eq!(result.diagnostics.starved_thermals.len(), 1);
+        let record = result.solid_starved.clone().unwrap();
+        assert_eq!(record.pads, vec!["J1.3", "J1.4", "J1.5"]);
+        assert_eq!(record.undone, vec!["J1.5"]);
+        assert!(record.kept);
+        assert_eq!(record.unconnected, [0, 1]);
+
+        // At most `rounds` rounds.
+        let mut kicad = ChainKiCad {
+            chain: vec![
+                vec!["1", "2", "3", "4", "5"],
+                vec!["6", "7", "8", "9"],
+                vec!["10", "11", "12"],
+                vec!["13", "14"],
+                vec!["15"],
+            ],
+            harm: Vec::new(),
+            checked: Vec::new(),
+            restored: 0,
+        };
+        let mut result = super::super::KiCadBoardRouterResult {
+            native: Some(kicad.report(&[])),
+            ..Default::default()
+        };
+        result.diagnostics.starved_thermals = kicad.starved(&[]);
+        let mut pcb = connector();
+        assert_eq!(
+            solid_rounds(&mut result, &mut pcb, &mut kicad, SOLID_ROUNDS).unwrap(),
+            SOLID_ROUNDS
+        );
+        assert_eq!(result.solid_starved.as_ref().unwrap().rounds, SOLID_ROUNDS);
+        assert_eq!(
+            result.diagnostics.starved_thermals[0].pad,
+            "Pad 15 [GND] of J1 on F.Cu"
+        );
+    }
+
+    #[test]
+    fn a_pad_solid_already_is_no_round_of_the_solid_step() {
+        use super::super::route::{SOLID_ROUNDS, solid_rounds};
+        // KiCad finds J1.7 starved though it is solid: nothing to try, no
+        // check.
+        let mut kicad = ChainKiCad {
+            chain: vec![vec!["7"]],
+            harm: Vec::new(),
+            checked: Vec::new(),
+            restored: 0,
+        };
+        let mut result = super::super::KiCadBoardRouterResult {
+            native: Some(kicad.report(&[])),
+            ..Default::default()
+        };
+        result.diagnostics.starved_thermals = kicad.starved(&[]);
+        let mut pcb = connector();
+        let change = super::super::route::set_pads_solid(
+            &mut pcb,
+            &super::super::route::solid_pads_of_findings(&result.diagnostics.starved_thermals),
+        );
+        assert_eq!(change.pads, 1);
+        assert_eq!(
+            solid_rounds(&mut result, &mut pcb, &mut kicad, SOLID_ROUNDS).unwrap(),
+            0
+        );
+        assert!(kicad.checked.is_empty() && result.solid_starved.is_none());
+    }
 }
 
 /// Hostile and odd boards (docs/reviews/2026-10-21-review-robustness.md).
