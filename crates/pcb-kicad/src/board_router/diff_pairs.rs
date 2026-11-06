@@ -472,6 +472,12 @@ struct LinkCopper {
     moved: bool,
 }
 
+/// The name of a pair's coupled link (a net of its own on the lowered
+/// board), the `number`-th of the pair of `positive` and `negative`.
+pub(crate) fn link_name(positive: &str, negative: &str, number: usize) -> String {
+    format!("{positive} / {negative} link {number}")
+}
+
 /// The pairs of a lowered board, by name, with their rules.
 fn find_pairs(board: &core::Board, config: &KiCadBoardRouterConfig) -> Vec<Pair> {
     let ids: BTreeMap<&str, core::NetId> = board
@@ -2730,11 +2736,10 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
                 );
             }
             board.nets.push(core::Net {
-                name: format!(
-                    "{} / {} link {}",
-                    board.nets[pair.positive as usize].name,
-                    board.nets[pair.negative as usize].name,
-                    link + 1
+                name: link_name(
+                    &board.nets[pair.positive as usize].name,
+                    &board.nets[pair.negative as usize].name,
+                    link + 1,
                 ),
                 class,
                 terminals,
@@ -7409,6 +7414,58 @@ mod tests {
                 board.nets[net].name
             );
         }
+    }
+
+    /// A pair whose two nets prefer the same layers by a layer-limited
+    /// length or skew rule (`length_rule_layers`, trial 7's Sisu_SSE-9:
+    /// RP_USB off In1.Cu and In4.Cu as the designer runs it): its coupled
+    /// links prefer them too, under the name the lowering gives them;
+    /// nets preferring different layers leave the links free.
+    #[test]
+    fn a_pairs_links_prefer_the_layers_both_its_nets_prefer() {
+        let pcb = parse(BOARD).unwrap();
+        let mut config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            diff_pairs: Some(true),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let mut board = lower(&pcb, &config, true).unwrap().board;
+        let names: Vec<String> = board
+            .nets
+            .iter()
+            .map(|net| net.name.clone())
+            .filter(|name| name.ends_with("D+") || name.ends_with("D-"))
+            .collect();
+        assert_eq!(names.len(), 2, "{names:?}");
+        let nets = board.nets.len();
+        plan_pairs(&mut board, &config);
+        assert_eq!(board.nets.len(), nets + 1);
+        let link = board.nets[nets].name.clone();
+        let prefer = |config: &mut KiCadBoardRouterConfig, masks: [core::LayerMask; 2]| {
+            for (name, mask) in names.iter().zip(masks) {
+                config.length_layer_preferences.insert(
+                    name.clone(),
+                    crate::board_router::KiCadLayerPreference {
+                        mask,
+                        ..Default::default()
+                    },
+                );
+            }
+        };
+        let link_mask = |config: &KiCadBoardRouterConfig| {
+            core_config(config)
+                .layer_preferences
+                .and_then(|masks| masks.get(&link).copied())
+        };
+        prefer(&mut config, [0b10, 0b10]);
+        assert_eq!(link_mask(&config), Some(0b10));
+        prefer(&mut config, [0b10, 0b01]);
+        assert_eq!(link_mask(&config), None);
     }
 
     /// U2's pads in the other order (D- above D+): the link is crossed at

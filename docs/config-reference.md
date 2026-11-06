@@ -24,7 +24,7 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 106 | 88 | 18 | 106 | 53 |
+| [Router settings](#router-settings) | 109 | 90 | 19 | 109 | 55 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 2 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 1 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
@@ -33,7 +33,7 @@ The environment variables are indexed in the hand-over
 | [Router report: rules](#router-report-rules) | 6 | - | 0 | 6 | - |
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 20 | - | 9 | 20 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
-| [Router core](#router-core) | 75 | - | 0 | 75 | - |
+| [Router core](#router-core) | 77 | - | 0 | 77 | - |
 | [Placer settings](#placer-settings) | 56 | 49 | 7 | 56 | 31 |
 | [Layout settings](#layout-settings) | 21 | 21 | 0 | 21 | 13 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 2 |
@@ -100,6 +100,9 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `length_matching` | `Option<bool>` | unset | router.md | Length and skew rules (docs/router.md, "Length and skew rules"): the custom rules' `length` and `skew` constraints over single nets and groups of nets are kept after the route: a net shorter than a `length` minimum, or further than a `skew` maximum below the longest net of its rule, gets a meander (a KiCad tuning pattern) on a straight track of its route; a net over a `length` maximum is routed again the short way where the nets in its way can go round (the core's `repair_lengths`), and its length is checked and reported (`lengths` in the verdict), no hard bound. Route mode and layouts alike (a layout's own routes too, since 2026-10-27); on by default where the project has such a rule. `PCB_ROUTER_LENGTH_MATCHING=0` (or `1`) decides where the settings name none. |
 | `length_reroute` | `Option<bool>` | unset | router.md | The length reroute (with `length_matching`): a net still below its `length` minimum after the meanders is routed again alone, every other net's tracks kept and kept off by half a meander's height more than the clearance away from its pads, and meandered again; kept where it comes out nearer its target, complete and clean. `PCB_ROUTER_LENGTH_REROUTE=1` (or `0`) decides where the settings name none; off by default (measured on the firestarter: no length finding fewer; docs/router.md, "Length minima: the placer's share and the reroute (2026-11-04)"). |
 | `length_rules` (internal) | `Vec<KiCadLengthRule>` | `[]` (internal) | - | The project's `length` and `skew` rules with the nets they hold for (set by the project's rules, not read from a file). |
+| `length_rule_layers` | `Option<String>` | unset | router.md | Skew and length rules on some copper layers only (docs/router.md, "Skew groups' layers (2026-11-06)"): KiCad counts a net's copper on those layers alone, so a net routed elsewhere leaves the rule's group. `"designer"`: each net of such a rule prefers the side of the rule's layers the designer's board (the `--reference`, else the input) routes it on: the rule's layers where it has tracks there, the other open layers where its tracks lie only elsewhere, nothing where it has none; `"rule"`: every net of the rule prefers the rule's layers; `"off"`: no preference. A step off the preferred layers costs `layer_preference_cost` times as much (a soft disallow). `PCB_ROUTER_LENGTH_RULE_LAYERS` decides where the settings name none; default `"designer"`. |
+| `layer_preference_cost` | `Option<f64>` | unset | router.md | The factor on a step off a net's preferred layers (`length_rule_layers`; default 10, at least 1). `PCB_ROUTER_LAYER_PREFERENCE_COST` decides where the settings name none. |
+| `length_layer_preferences` (internal) | `BTreeMap<String, KiCadLayerPreference>` | `{}` (internal) | - | Per net (normalized like `connection_rules`), the layers it prefers by `length_rule_layers` and why (set from the rules and the designer's board, `admit_length_rule_layers`; not read from a file). |
 | `via_reduction_rounds` | `Option<usize>` | unset | - | Router `via_reduction_rounds`: via reduction rounds after the board is complete (default 3). |
 | `strict_via_budget` | `Option<bool>` | unset | - | Router `strict_via_budget` (default on): the via reduction keeps its budget within a round. |
 | `run_work` (internal) | `Option<(f64, f64)>` | unset (internal) | - | The run's work budget and what is left of it as the attempt starts (router `run_work`; set by the ladder, not read from a file). |
@@ -353,6 +356,8 @@ One constraint of one rule of the project's `.kicad_dru`. Source: `KiCadCustomRu
 | `limits_count_all` | `bool` | `false` | `limits_count_all` | The work deadline (`deadline_work`) and the negotiation's work limit (`negotiation_expansions`, in seconds at the reference's rate) count this router's pour analyses and fill probes beside its search, the deadline its build too: all of its work as route mode's ladder charges it. False: its search alone. The ladder sets it where it has no proportion of search to go by (its first attempt, the rung probes). |
 | `length_bounded` | `Option<std::sync::Arc<std::collections::BTreeMap<String, f64>>>` | unset | the KiCad layer | Nets whose length a rule bounds from above (KiCad's custom `length` rule with a maximum), by name, with that maximum in millimetres (tracks and vias, a via at the board's 1.6 mm over its layers). After the clean-up each one longer than its maximum is routed again through the copper in its way at `length_repair_present`, and the nets it then overlaps are routed again around it, hard; the exchange is kept when the net comes out shorter and no terminal of any of them more open (`repair_lengths`). `None`: no net. |
 | `length_repair_present` | `f64` | `2.0` | - | The price of sharing a node for the length repair's search. |
+| `layer_preferences` | `Option<std::sync::Arc<std::collections::BTreeMap<String, crate::board::LayerMask>>>` | unset | - | Nets with preferred copper layers, by name, with those layers (bits; a net not named, or named with 0, has none): a step on another layer costs `layer_preference_cost` times as much, in every search the net makes (the negotiation, the repairs, the clean-up) and in its corridor's plan; a soft `RuleClass::layers`. A layer-limited skew or length rule's nets go on the side of its layers the designer's board puts them (docs/router.md, "Skew groups' layers"). `None`: no net. |
+| `layer_preference_cost` | `f64` | `10.0` | - | The factor on a step off a net's preferred layers (`layer_preferences`; `PCB_ROUTER_LAYER_PREFERENCE_COST`). |
 
 ## Placer settings
 

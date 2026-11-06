@@ -177,7 +177,7 @@ pub struct KiCadClassLayer {
 
 /// The tracks of `pcb` per net (as the router names it) and copper layer:
 /// their length, mm (an arc by its two chords through its midpoint).
-fn track_lengths(pcb: &Expr) -> BTreeMap<String, BTreeMap<String, f64>> {
+pub(crate) fn track_lengths(pcb: &Expr) -> BTreeMap<String, BTreeMap<String, f64>> {
     let names = NetNames::of(pcb);
     let point = |item: &Expr, key: &str| -> Option<[f64; 2]> {
         let form = item.child(key)?;

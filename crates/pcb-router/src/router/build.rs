@@ -370,6 +370,7 @@ impl Router {
                 })
                 .collect(),
             layer_bias: Vec::new(),
+            preferred_layers: preferred_layers(board, config),
             scratch: Scratch::default(),
             spare_scratches: SpareScratches::default(),
             profile: Profile::default(),
@@ -1406,6 +1407,35 @@ fn shared_statics(
 }
 
 /// Every class's static maps, built.
+/// Per net of `board`, its preferred layers (`Config::layer_preferences`,
+/// limited to the board's layers; 0: none); empty where no net has any.
+fn preferred_layers(board: &Board, config: &Config) -> Vec<LayerMask> {
+    let Some(preferences) = config.layer_preferences.as_deref() else {
+        return Vec::new();
+    };
+    let all: LayerMask = if board.layer_count >= 32 {
+        LayerMask::MAX
+    } else {
+        (1 << board.layer_count) - 1
+    };
+    let masks: Vec<LayerMask> = board
+        .nets
+        .iter()
+        .map(
+            |net| match preferences.get(&net.name).map(|mask| mask & all) {
+                // Every layer preferred, or none of the board's: no preference.
+                Some(mask) if mask != all => mask,
+                _ => 0,
+            },
+        )
+        .collect();
+    if masks.iter().all(|mask| *mask == 0) {
+        Vec::new()
+    } else {
+        masks
+    }
+}
+
 fn build_statics(
     board: &Board,
     grid: &Grid,

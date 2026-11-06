@@ -259,6 +259,31 @@ pub struct KiCadBoardRouterConfig {
     /// (set by the project's rules, not read from a file).
     #[serde(skip)]
     pub length_rules: Vec<KiCadLengthRule>,
+    /// Skew and length rules on some copper layers only (docs/router.md,
+    /// "Skew groups' layers (2026-11-06)"): KiCad counts a net's copper
+    /// on those layers alone, so a net routed elsewhere leaves the rule's
+    /// group. `"designer"`: each net of such a rule prefers the side of
+    /// the rule's layers the designer's board (the `--reference`, else
+    /// the input) routes it on: the rule's layers where it has tracks
+    /// there, the other open layers where its tracks lie only elsewhere,
+    /// nothing where it has none; `"rule"`: every net of the rule prefers
+    /// the rule's layers; `"off"`: no preference. A step off the preferred
+    /// layers costs `layer_preference_cost` times as much (a soft
+    /// disallow). `PCB_ROUTER_LENGTH_RULE_LAYERS` decides where the
+    /// settings name none; default `"designer"`.
+    #[serde(default)]
+    pub length_rule_layers: Option<String>,
+    /// The factor on a step off a net's preferred layers
+    /// (`length_rule_layers`; default 10, at least 1).
+    /// `PCB_ROUTER_LAYER_PREFERENCE_COST` decides where the settings name
+    /// none.
+    #[serde(default)]
+    pub layer_preference_cost: Option<f64>,
+    /// Per net (normalized like `connection_rules`), the layers it prefers
+    /// by `length_rule_layers` and why (set from the rules and the
+    /// designer's board, `admit_length_rule_layers`; not read from a file).
+    #[serde(skip)]
+    pub length_layer_preferences: BTreeMap<String, KiCadLayerPreference>,
     /// Router `via_reduction_rounds`: via reduction rounds after the board
     /// is complete (default 3).
     #[serde(default)]
@@ -746,6 +771,20 @@ pub struct KiCadLengthRule {
     pub nets: Vec<KiCadLengthMember>,
 }
 
+/// A net's preferred copper layers by its layer-limited length or skew
+/// rule (`KiCadBoardRouterConfig::length_rule_layers`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct KiCadLayerPreference {
+    /// The preferred layers (bits in the router's order).
+    pub mask: pcb_router::LayerMask,
+    /// The preferred layers by name.
+    pub layers: Vec<String>,
+    /// Whether they are the rule's layers (else the other open layers).
+    pub on_rule_layers: bool,
+    /// Why: "the designer's board" or "the rule".
+    pub source: String,
+}
+
 /// A net of a `KiCadLengthRule`: the copper layers (by name) on which the
 /// rule is the one KiCad applies to its tracks, and whether it applies to
 /// its vias (a through via is on F.Cu to KiCad's rules).
@@ -779,6 +818,22 @@ impl KiCadBoardRouterConfig {
         match std::env::var("PCB_ROUTER_LENGTH_MATCHING") {
             Ok(value) if !value.is_empty() => value != "0",
             _ => true,
+        }
+    }
+
+    /// What `length_rule_layers` asks: the settings' value, else
+    /// `PCB_ROUTER_LENGTH_RULE_LAYERS`, else `"designer"` (an unknown
+    /// value is `"off"`).
+    pub fn length_rule_layers_mode(&self) -> &'static str {
+        let value = self
+            .length_rule_layers
+            .clone()
+            .or_else(|| std::env::var("PCB_ROUTER_LENGTH_RULE_LAYERS").ok())
+            .filter(|value| !value.is_empty());
+        match value.as_deref() {
+            None | Some("designer") => "designer",
+            Some("rule") => "rule",
+            _ => "off",
         }
     }
 

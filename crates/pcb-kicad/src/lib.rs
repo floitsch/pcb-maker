@@ -167,9 +167,10 @@ pub use board_router::{
     KiCadClosedPads, KiCadDiffPair, KiCadDiffPairRule, KiCadDiffPairs, KiCadExistingTracks,
     KiCadKeepWhole, KiCadKeptCopper, KiCadNetLength, KiCadPourMode, KiCadPourQuality,
     KiCadViaInPad, KiCadViaInPadEntry, KiCadViaInPadFootprint, KiCadViaInPadReport,
-    KiCadViaSpanEntry, admit_reference_via_spans, admit_reference_vias_in_pads, bench_kicad_search,
-    blind_vias_override, dump_kicad_pour_map, keep_whole_input_warnings, measure_pours,
-    route_kicad_board, write_kicad_board_without_tracks, write_kicad_board_without_tracks_except,
+    KiCadViaSpanEntry, admit_length_rule_layers, admit_reference_via_spans,
+    admit_reference_vias_in_pads, bench_kicad_search, blind_vias_override, dump_kicad_pour_map,
+    keep_whole_input_warnings, measure_pours, route_kicad_board, write_kicad_board_without_tracks,
+    write_kicad_board_without_tracks_except,
 };
 pub use project_rules::{
     KiCadLayerGeometryRule, KiCadProjectMinimums, KiCadRuleOverride, preflight_overrides,

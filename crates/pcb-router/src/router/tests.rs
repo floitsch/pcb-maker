@@ -5833,6 +5833,98 @@ fn a_net_over_its_length_maximum_takes_the_short_way_from_the_net_in_it() {
     }
 }
 
+/// Two layers, one net between two pads on both 20 mm apart in a row:
+/// layer 0 runs horizontally at the plain cost, layer 1 against its
+/// direction. `preferred` is the net's preferred layers
+/// (`Config::layer_preferences`; 0: none).
+fn preferring_net(preferred: LayerMask) -> RoutingResult {
+    let class = RuleClass {
+        trace_width: 0.25,
+        clearance: 0.2,
+        via_diameter: 0.6,
+        via_drill: 0.3,
+        layers: 0,
+    };
+    let mut obstacles = Vec::new();
+    let mut terminals = Vec::new();
+    for x in [5.0, 25.0] {
+        let label = format!("A.{x}");
+        let mut pad = copper(
+            Shape::Circle {
+                center: [x, 10.0],
+                radius: 0.4,
+            },
+            0,
+            &label,
+        );
+        pad.layers = 0b11;
+        obstacles.push(pad);
+        let mut at = terminal(obstacles.len() - 1, [x, 10.0], &label);
+        at.layers = 0b11;
+        terminals.push(at);
+    }
+    let board = Board {
+        layer_count: 2,
+        outline: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]],
+        edge_clearance: 0.1,
+        hole_clearance: 0.25,
+        hole_to_hole: 0.25,
+        classes: vec![class],
+        neck_width: 0.25,
+        obstacles,
+        nets: vec![Net {
+            name: "A".into(),
+            class: 0,
+            terminals,
+        }],
+        planes: Vec::new(),
+        solid_pads: Vec::new(),
+        isolated_pads: Vec::new(),
+        solid_pad_obstacles: Vec::new(),
+        isolated_pad_obstacles: Vec::new(),
+        pad_spokes: Default::default(),
+        merged_pads: Vec::new(),
+        no_via_pads: Vec::new(),
+        fill_passes: Vec::new(),
+        pin_row_gaps: Vec::new(),
+        terminal_copper: Vec::new(),
+        attachment: Default::default(),
+        via_spans: Vec::new(),
+    };
+    let config = Config {
+        pitches: vec![0.1],
+        parallel: false,
+        layer_preferences: (preferred != 0)
+            .then(|| std::sync::Arc::new([("A".to_string(), preferred)].into())),
+        layer_preference_cost: super::config::LAYER_PREFERENCE_COST,
+        ..Config::default()
+    };
+    route(&board, &config)
+}
+
+/// A net with preferred layers (`Config::layer_preferences`) routes on
+/// them where the plain costs would take another: here layer 1, against
+/// its direction, instead of layer 0 along it; a preference for every
+/// layer is none.
+#[test]
+fn a_net_routes_on_its_preferred_layers() {
+    let layers = |result: &RoutingResult| -> std::collections::BTreeSet<usize> {
+        result.routes[0]
+            .segments
+            .iter()
+            .map(|segment| segment.layer)
+            .collect()
+    };
+    let plain = preferring_net(0);
+    assert_eq!(plain.status[0], NetStatus::Routed);
+    assert_eq!(layers(&plain), [0].into());
+    let preferring = preferring_net(0b10);
+    assert_eq!(preferring.status[0], NetStatus::Routed);
+    assert_eq!(layers(&preferring), [1].into());
+    let every = preferring_net(0b11);
+    assert_eq!(layers(&every), [0].into());
+}
+
 /// Freeing the process's idle search arrays (`release_idle_search_arrays`,
 /// the placement race after its probes, the ladder after its probes)
 /// changes no search: a router that routes after them with new arrays

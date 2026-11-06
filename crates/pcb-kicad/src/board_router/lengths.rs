@@ -71,6 +71,19 @@ pub struct KiCadNetLength {
     /// The reroute's work (seconds of an idle machine), kept or not.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub reroute_work_seconds: f64,
+    /// The copper layers its tracks went on (the route's, kept copper
+    /// included).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<String>,
+    /// Whether KiCad counts copper of it for the rule: of the skew
+    /// group (a rule with a layer condition counts its layers alone),
+    /// checked by a length rule.
+    #[serde(default)]
+    pub in_group: bool,
+    /// The layers it was asked to prefer and why
+    /// (`length_rule_layers`; docs/router.md, "Skew groups' layers").
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub preferred: String,
 }
 
 fn is_zero(value: &f64) -> bool {
@@ -375,6 +388,42 @@ pub(crate) fn match_lengths(
             counted.get(layer).copied().unwrap_or(false)
         })
     };
+    // The copper layers a net's tracks went on, by name.
+    let layers_of = |member: &KiCadLengthMember, routes: &[core::NetRoute]| -> Vec<String> {
+        let Some(&id) = ids.get(member.net.as_str()) else {
+            return Vec::new();
+        };
+        let mut on: BTreeSet<usize> = routes[id as usize]
+            .segments
+            .iter()
+            .map(|segment| segment.layer)
+            .collect();
+        if let Some((tracks, _)) = fixed.get(&id) {
+            on.extend(tracks.iter().map(|track| track.0));
+        }
+        on.into_iter()
+            .filter_map(|layer| layer_names.get(layer).cloned())
+            .collect()
+    };
+    // The layers a net was asked to prefer (`length_rule_layers`).
+    let preferred_of = |member: &KiCadLengthMember| -> String {
+        config
+            .length_layer_preferences
+            .get(&member.net)
+            .map(|preference| {
+                format!(
+                    "{} ({} the rule's layers, by {})",
+                    preference.layers.join(", "),
+                    if preference.on_rule_layers {
+                        "on"
+                    } else {
+                        "off"
+                    },
+                    preference.source
+                )
+            })
+            .unwrap_or_default()
+    };
     // A net the rule counts no copper of although it has some (routed off
     // the rule's layers) or that has nothing to route (one pad): KiCad
     // matches none of its items, so the rule does not check it, and in a
@@ -456,6 +505,9 @@ pub(crate) fn match_lengths(
                     target_mm: target,
                     min_mm: min,
                     max_mm: max,
+                    layers: layers_of(member, &result.routes),
+                    in_group: length > 0.0,
+                    preferred: preferred_of(member),
                     ..KiCadNetLength::default()
                 };
                 let short = min.is_some_and(|min| length < min - ON_BOUND);
@@ -1731,6 +1783,12 @@ mod tests {
             "{b:?}"
         );
         assert_eq!(b.meander_mm, 0.0);
+        // Which layers it took, and that it left the group.
+        assert!(!b.in_group && !b.layers.is_empty(), "{b:?}");
+        assert!(b.layers.iter().all(|layer| layer != "In1.Cu"));
+        let a = lengths.iter().find(|entry| entry.net == "A").unwrap();
+        assert!(a.in_group && !a.layers.is_empty(), "{a:?}");
+        assert!(b.preferred.is_empty());
         // A, the group's only counted net, is its own longest.
         assert!(lengths.iter().all(|entry| entry.within), "{lengths:?}");
     }

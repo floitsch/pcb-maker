@@ -505,7 +505,7 @@ fn named_areas(pcb: &Expr) -> Vec<dru::NamedArea> {
         .collect()
 }
 
-fn copper_layer_names(pcb: &Expr) -> Vec<String> {
+pub(crate) fn copper_layer_names(pcb: &Expr) -> Vec<String> {
     let mut names: Vec<String> = pcb
         .child("layers")
         .map(|layers| {

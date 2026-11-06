@@ -348,6 +348,16 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "turns the length reroute on (1) or off (0) where the settings name none (`length_reroute`; unset, off): a net still short of its `length` minimum (or its `skew` group's) after the meanders is routed again alone, the other nets' tracks kept and kept off by half a meander's height more than the clearance beyond 1.5 mm of its pads, meandered again and kept where it ends nearer its window (docs/router.md, \"Length minima: the placer's share and the reroute (2026-11-04)\").",
     ),
     (
+        "PCB_ROUTER_LENGTH_RULE_LAYERS",
+        Kind::Switch,
+        "where the settings name none, which side of a layer-limited length or skew rule's layers its nets prefer (`length_rule_layers`; unset, `designer`): `designer` the side the designer's board (`--reference`, else the input's own tracks) runs each on, `rule` the rule's layers for all of them, `off` none (docs/router.md, \"Skew groups' layers (2026-11-06)\").",
+    ),
+    (
+        "PCB_ROUTER_LAYER_PREFERENCE_COST",
+        Kind::Switch,
+        "the router's `layer_preference_cost` where the settings name none: the factor on a step off a net's preferred layers (`length_rule_layers`; default 10, at least 1).",
+    ),
+    (
         "PCB_ROUTER_LENGTH_DEBUG",
         Kind::Diagnostic,
         "the length repair: prints per net over its maximum what the priced search found, the victims and why the exchange was kept or undone; the length reroute: its router's log and per net the route's status.",

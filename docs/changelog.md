@@ -11,6 +11,53 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-06 (skew groups' layers; PolyKybd's stubs checked)
+
+Branch skew-group-layers (`build/bin/pcb-maker-skew1-a` to `-e`), two
+router items trial 7's leftovers left. docs/router.md, "Skew groups'
+layers (2026-11-06)", has the design and the runs.
+
+- **Skew groups' layers** (`length_rule_layers`, default `"designer"`;
+  `layer_preference_cost` 10; `PCB_ROUTER_LENGTH_RULE_LAYERS`,
+  `PCB_ROUTER_LAYER_PREFERENCE_COST`): each net of a `length` or `skew`
+  rule on some copper layers only prefers the side of those layers the
+  designer's board (`--reference`, else the input's own tracks, `--strip`
+  or not) runs it on, a step elsewhere costing ten times as much in all
+  its searches and its corridor (`pcb_router::Config::layer_preferences`,
+  `admit_length_rule_layers`); a coupled pair whose nets agree has its
+  links prefer the same. `"rule"` puts every net on the rule's layers,
+  `"off"` none. Sisu_SSE-9's designer keeps only MODEM_USB on In1.Cu (the
+  other eight USB nets on the outer layers), not all eleven as the
+  package assumed, so `"rule"` was measured as the alternative. Sisu in
+  route mode on the designer's placement (1200 s, pinned rates): x1925 18
+  unconnected, 7 `skew_out_of_range`, 8 nets in the group (1 within), 3
+  pair findings; `"designer"` at cost 10 17, 3, 4 (1), 0 (twice, and -e
+  byte for byte the same board); `"rule"` 19, 7, 8 (1), 1; a hard mask on the coupled runs
+  0 skew findings but 19 and 22 unconnected; a 1.01 perturbation moved
+  x1925 to 18, 5, 6: one run's connections are noise. Sisu's layout
+  (tasks v7, no designer's tracks in the input) byte for byte x1925's;
+  `"rule"` there 24 unconnected for 20, skew 2 for 1. The short and
+  expansion tiers (no length rule): 12 of 12 and 46 of 46 boards byte for
+  byte x1925's. The verdict's `lengths` gain `layers`,
+  `in_group` and `preferred`; the off-layers action names the lever.
+  Tests `a_net_routes_on_its_preferred_layers`,
+  `a_skew_groups_nets_prefer_the_side_of_its_layers_the_designer_routes_them_on`,
+  `rules_that_disagree_on_a_net_give_it_no_preference`,
+  `a_pairs_links_prefer_the_layers_both_its_nets_prefer`,
+  `a_net_routed_off_a_rules_layers_is_not_of_its_group` (amended).
+- **PolyKybd after x1924's necked stubs**: the 2026-11-05 nightly's two
+  results with internal violations (poly_corne_split42_right and
+  poly_kybd_split72_left, layouts by 93162bd9: 3 each, KiCad `clearance`
+  3 each between U10's 0.4 mm-pitch escape stubs, 0.146 mm under 0.1524
+  and 0.150) routed again in route mode on their placements with x1925
+  (run.py `--route-from`, 1200 s): internal violations 0 and 0 ("escape
+  stubs: 2 necked down off another net's copper", 3 on split72_left),
+  KiCad's track clearance findings 0 and 0, 5 unconnected each; corne
+  keeps its 8 pad-to-pad findings inside U11 and U26 (0.150 mm under
+  0.1524, the footprints' own, as in the nightly). Nothing to fix.
+- docs: router.md "Skew groups' layers (2026-11-06)", agents.md
+  (`lengths`), config-reference.md regenerated.
+
 ## Measured on 2026-11-06 (nightly: layout sweep v33, matched designer tier)
 
 Written by the nightly from `build/nightly/2026-11-06/` (main 66115ba;

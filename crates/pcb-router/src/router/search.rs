@@ -234,6 +234,14 @@ impl Router {
 
         let (hop_steps, hop_reach) = self.hop_reach(class);
         let statics = &self.statics[class];
+        // The net's preferred layers (`Config::layer_preferences`): a step
+        // elsewhere costs `layer_preference_cost` times as much.
+        let preferred = self
+            .preferred_layers
+            .get(net as usize)
+            .copied()
+            .unwrap_or(0);
+        let off_preferred = self.config.layer_preference_cost as f32;
         let own = crate::grid::owner(net);
         let own16 = crate::grid::owner16(net);
         let trace_base = class * (layers + 1);
@@ -335,11 +343,14 @@ impl Router {
             let layer_hot = &self.hot[self.hot_of[class] * layers + layer];
             let cleanup = self.cleanup;
             let layer_costs = &direction_cost[layer];
-            let layer_factor = if self.layer_bias.is_empty() {
+            let mut layer_factor = if self.layer_bias.is_empty() {
                 1.0
             } else {
                 self.layer_bias[layer]
             };
+            if preferred != 0 && preferred & (1 << layer) == 0 {
+                layer_factor *= off_preferred;
+            }
             let thermal_guard_cost = self.config.thermal_guard_cost as f32;
 
             // Invariant per expansion: whether every neighbour lies inside

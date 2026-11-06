@@ -4,6 +4,10 @@
 
 //! The router's settings.
 
+/// The default factor on a step off a net's preferred layers
+/// (`Config::layer_preference_cost`).
+pub const LAYER_PREFERENCE_COST: f64 = 10.0;
+
 #[derive(Clone, Debug)]
 pub struct Config {
     /// Candidate lattice pitches; the one aligning best with the pads wins.
@@ -365,6 +369,19 @@ pub struct Config {
     pub length_bounded: Option<std::sync::Arc<std::collections::BTreeMap<String, f64>>>,
     /// The price of sharing a node for the length repair's search.
     pub length_repair_present: f64,
+    /// Nets with preferred copper layers, by name, with those layers
+    /// (bits; a net not named, or named with 0, has none): a step on
+    /// another layer costs `layer_preference_cost` times as much, in every
+    /// search the net makes (the negotiation, the repairs, the clean-up)
+    /// and in its corridor's plan; a soft `RuleClass::layers`. A
+    /// layer-limited skew or length rule's nets go on the side of its
+    /// layers the designer's board puts them (docs/router.md, "Skew
+    /// groups' layers"). `None`: no net.
+    pub layer_preferences:
+        Option<std::sync::Arc<std::collections::BTreeMap<String, crate::board::LayerMask>>>,
+    /// The factor on a step off a net's preferred layers
+    /// (`layer_preferences`; `PCB_ROUTER_LAYER_PREFERENCE_COST`).
+    pub layer_preference_cost: f64,
 }
 
 impl Default for Config {
@@ -464,6 +481,12 @@ impl Default for Config {
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(2.0),
+            layer_preferences: None,
+            layer_preference_cost: std::env::var("PCB_ROUTER_LAYER_PREFERENCE_COST")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .filter(|cost: &f64| *cost >= 1.0)
+                .unwrap_or(LAYER_PREFERENCE_COST),
         }
     }
 }

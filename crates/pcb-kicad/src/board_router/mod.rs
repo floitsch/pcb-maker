@@ -16,6 +16,7 @@ mod diff_pairs;
 mod geometry;
 mod kept;
 mod ladder;
+mod layer_preference;
 mod lengths;
 mod lower;
 mod meander;
@@ -38,6 +39,8 @@ pub(crate) use self::diff_pairs::{
     pairs_planned, plan_pairs, with_pairs, write_pair_copper,
 };
 pub(crate) use self::kept::{count_tracks, keep_existing_copper, strip_tracks};
+pub use self::layer_preference::admit_length_rule_layers;
+pub(crate) use self::layer_preference::core_layer_preferences;
 pub(crate) use self::lengths::{
     finish_lengths, match_lengths, with_lengths, write_length_patterns,
 };

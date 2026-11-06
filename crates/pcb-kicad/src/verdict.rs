@@ -3567,7 +3567,7 @@ fn lengths_summary(lengths: &[crate::KiCadNetLength], route_mode: bool) -> Optio
         .collect();
     if !off.is_empty() {
         parts.push(format!(
-            "{} routed off their rule's layers ({}) are not checked by it: a rule with a layer condition counts only the copper on those layers, and a skew rule matches only the nets with copper there as one group, so a net routed onto them joins the group (keep it off those layers, by hand or with a disallow rule, and it leaves the group)",
+            "{} routed off their rule's layers ({}) are not checked by it: a rule with a layer condition counts only the copper on those layers, and a skew rule matches only the nets with copper there as one group, so a net routed onto them joins the group (keep it off those layers, by hand or with a disallow rule, and it leaves the group; the router keeps each net of such a rule on the side of its layers the designer's board runs it on, `length_rule_layers`, where the input or --reference has the designer's tracks: each net's `preferred` says which)",
             off.len(),
             names(&off, false)
         ));

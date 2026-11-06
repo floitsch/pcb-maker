@@ -5530,6 +5530,123 @@ clearance kept, the neighbours untouched; off, it stays short),
 and `length_findings_say_which_nets_are_unrouted_and_which_over_by_what`
 (verdict.rs: what was added, the reroutes kept, what is missing).
 
+## Skew groups' layers (2026-11-06)
+
+`length_rule_layers` in the router settings (default `"designer"`;
+`PCB_ROUTER_LENGTH_RULE_LAYERS` where the settings name none: `designer`,
+`rule` or `off`) and `layer_preference_cost` (default 10;
+`PCB_ROUTER_LAYER_PREFERENCE_COST`). Fresh-agent trial 7
+(docs/reviews/2026-11-06-fresh-agent-trial-7.md) left it open: Sisu_SSE-9's
+`.kicad_dru` gives its USB class a `skew` of 0.5 mm with the condition
+`A.Layer == 'In1.Cu' || A.Layer == 'In4.Cu'`, and KiCad counts a net's
+copper on those layers alone, so a net routed elsewhere is not checked by
+the rule and leaves its group, and one routed onto them joins it. Since
+x1922 the report says so (`routed off the rule's layers`); the route did
+nothing about it.
+
+**What the designer does.** The designer's board (kicad-cli's DRC: no
+skew finding) runs only MODEM_USB_N and _P on In1.Cu (72.8 and 72.6 mm,
+4 mm of B.Cu at the ends); the other eight USB nets lie on the outer
+layers only (MODEM_USB_PHY 10 mm on B.Cu, MCU_USB 2 mm and RP_USB_PHY 7 mm
+on F.Cu, RP_USB 4 mm of F.Cu and 26 mm of B.Cu): the group is one pair.
+The package that asked for this assumed the designer keeps all eleven on
+In1.Cu and In4.Cu; the board says otherwise, and putting the short local
+runs on the inner layers would make them join a group they cannot match
+(7 mm against 72). So the preference follows the designer's side.
+
+**The preference.** `admit_length_rule_layers` (board_router/
+layer_preference.rs, called by `route-kicad-board` and
+`layout-kicad-board` once the settings are read): for each net of a
+`length` or `skew` rule whose layers are some of the board's copper
+layers only, the first board of the `--reference` and the input with
+tracks of such a net says the side: tracks on the rule's layers, the net
+prefers the rule's layers; tracks only elsewhere, it prefers the other
+layers the rules leave open (`disallow track` kept); no tracks, nothing.
+`"rule"` gives every net of such a rule the rule's layers (the package's
+first design), `"off"` nothing; a net of several such rules prefers what
+all of them prefer, none where they disagree. The router
+(`pcb_router::Config::layer_preferences`, by net name) multiplies a step
+off a net's preferred layers by `layer_preference_cost` in every search
+of the net (the negotiation, the hard and trouble repairs, the clean-up,
+the via reduction, the bend round) and in its corridor's plan; a
+differential pair whose two nets prefer the same layers has its coupled
+links (nets of their own on the lowered board, `diff_pairs::link_name`)
+prefer them too. A soft disallow: a net that finds no way on its side
+still routes. stderr says what was admitted (`length rules: 10 nets of
+rules on some layers only prefer a side of them (length_rule_layers
+"designer"): on the rule's layers MODEM_USB_N, MODEM_USB_P; off them
+...`); the verdict's `lengths` gives per net `layers` (its tracks'),
+`in_group` (KiCad counts copper of it for the rule) and `preferred`
+(`F.Cu, B.Cu (off the rule's layers, by the designer's board)`).
+
+**Measured** (route mode on the designer's placement as the trial ran
+it: `route-kicad-board <designer> Sisu_SSE-9 <out> auto --strip`, the
+default budget of 1200 s of work, `PCB_WORK_RATE=3.15e6,150e6`; KiCad's
+unconnected items, `skew_out_of_range`, the nets with copper the rule
+counts and of them those within the window, the pair findings
+`diff_pair_gap_out_of_range` plus `diff_pair_uncoupled_length_too_long`,
+vias, CPU seconds; the router's open count of the ladder's first attempt
+in brackets):
+
+| binary, setting | unconnected | skew | in the group, within | pair findings | vias | CPU |
+| --- | --- | --- | --- | --- | --- | --- |
+| x1925 (twice: unpinned and pinned) | 18, 18 [40] | 7, 7 | 8, 1 | 3 | 297 | 1000, 1166 |
+| preference at cost 1.01 (a perturbation, no preference to speak of) | 18 [46] | 5 | 6, 1 | 0 | 279 | 1364 |
+| `"rule"`, cost 3 | 19 [41] | 7 | 8, 1 | 1 | 286 | 1238 |
+| `"designer"`, cost 3, no link preference | 18 [41] | 5 | 6, 1 | 0 | 283 | 979 |
+| `"designer"`, cost 3, coupled runs held to the side (a hard mask), twice | 19 [46], 22 [46] | 0, 0 | 2, 2 and 0, 0 | 2, 0 | 278, 363 | 1123, 1540 |
+| `"designer"`, cost 3 (soft link preference) | 20 [44] | 4 | 5, 1 | 1 | 291 | 1364 |
+| `"designer"`, cost 10 (twice: 10 and 10.1) | 17, 17 [39] | 3, 3 | 4, 1 | 0 | 293 | 1284, 1323 |
+| `"designer"`, cost 10, the default (-e) | 17 [39] (the board byte for byte the cost-10 run's) | 3 | 4, 1 | 0 | 293 | 1303 |
+
+The run-to-run spread is wide: the 1.01 perturbation moved the first
+attempt from 40 to 46 open and the skew findings from 7 to 5, so one
+run's connections say little; the group's shape is what moves with the
+setting. `"rule"` grows nothing (MCU_USB's 2 mm between two pads stays on
+F.Cu: two vias cost more than the preference saves) and keeps the seven findings at a
+connection more; the hard mask on the coupled runs empties the group but
+cost one to four connections in both runs (the two pairs' coupled runs
+had to fit F.Cu and B.Cu); the soft preference at cost 10 keeps
+MODEM_USB on In4.Cu, RP_USB, MCU_USB and RP_USB_PHY_P off, and leaves
+RP_USB_PHY_N (12.9 mm of it on In1.Cu) and 0.8 mm of MODEM_USB_PHY_N
+on In4.Cu: 3 skew findings (the two and MODEM_USB_P,
+0.99 mm shorter than its partner, the pairs' pass's), 17 unconnected.
+
+*Layouts* (tasks v7, the sweep's settings, the layout's default seed;
+run.py): the task's input carries no tracks, so `"designer"` admits
+nothing (stderr: `no designer's board with their tracks`) and the board is
+byte for byte x1925's (20 unconnected, `skew_out_of_range` 1,
+`diff_pair_uncoupled_length_too_long` 3; CPU 1464 and 1578 s). With
+`"rule"` (cost 3): 24 unconnected for 20, `skew_out_of_range` 2 for 1
+(5 nets in the group, 3 within, against 5 and 4), CPU 1628 s.
+
+*Identity*: without a layer-limited length or skew rule nothing is
+admitted (`config.length_layer_preferences` empty, the core's
+`layer_preferences` `None`, every net's mask 0: the search's factor and
+the planner's are exactly 1). The short tier and the expansion tier have
+no length rule: x1925 against `-e`, the expansion tier (1 x 1) 46 of 46
+routed boards byte for byte the same (24/46 pass, 558 unconnected in
+both), the short tier (1 x 2) 12 of 12 (7/12 strict, 21 unconnected in
+both).
+
+Default: `"designer"` at cost 10. What is left: the designer tier and
+run.py's route mode strip the board before routing and pass `--reference
+none`, so they admit nothing (a router config key with the designer's
+side per net, as `via_in_pad` carries the designer's vias, would bring
+it there); a layout from a netlist import has no designer's tracks
+either, and there no rule of thumb is measured (the long net on the
+rule's layers, the short ones off, would be one).
+
+Tests: `a_net_routes_on_its_preferred_layers` (pcb-router: a net between
+two pads routes on layer 1 against its direction where it prefers it,
+on layer 0 otherwise, and a preference for every layer is none),
+`a_skew_groups_nets_prefer_the_side_of_its_layers_the_designer_routes_them_on`,
+`rules_that_disagree_on_a_net_give_it_no_preference`
+(board_router/layer_preference.rs),
+`a_pairs_links_prefer_the_layers_both_its_nets_prefer`
+(board_router/diff_pairs.rs), `a_net_routed_off_a_rules_layers_is_not_of_its_group`
+(lengths.rs: `layers` and `in_group`).
+
 ## CPU profile (2026-10-25)
 
 Where a route's CPU goes and how to profile it: [profiling.md](profiling.md).

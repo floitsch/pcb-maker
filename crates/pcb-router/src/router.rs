@@ -1838,6 +1838,9 @@ pub struct Router {
     /// Per layer: step cost multiplier while a plane skeleton is routed
     /// (empty otherwise).
     layer_bias: Vec<f32>,
+    /// Per net: its preferred copper layers (`Config::layer_preferences`;
+    /// 0: none, and empty without any).
+    preferred_layers: Vec<LayerMask>,
 
     scratch: Scratch,
     /// The scratches beyond `scratch` that parallel batches used.

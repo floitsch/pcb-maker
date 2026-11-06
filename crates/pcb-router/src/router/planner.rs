@@ -51,10 +51,22 @@ impl Router {
         let tile_mm = (TILE as f64 * self.grid.pitch) as f32;
         // A step's cost per layer and direction, before the entered tile's
         // factor (the same expression as at each step until 2026-11-05).
+        // Off the net's preferred layers (`Config::layer_preferences`) as
+        // the search prices it.
+        let preferred = self
+            .preferred_layers
+            .get(net as usize)
+            .copied()
+            .unwrap_or(0);
         steps.clear();
         steps.extend((0..layers).map(|layer| {
+            let factor = if preferred != 0 && preferred & (1 << layer) == 0 {
+                self.config.layer_preference_cost as f32
+            } else {
+                1.0
+            };
             std::array::from_fn::<f32, 8, _>(|direction| {
-                self.direction_cost[layer][direction] / self.grid.pitch as f32 * tile_mm
+                self.direction_cost[layer][direction] / self.grid.pitch as f32 * tile_mm * factor
             })
         }));
         let via_step = self.config.via_cost as f32;

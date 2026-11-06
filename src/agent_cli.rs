@@ -513,6 +513,14 @@ fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     if strip {
         config.existing_tracks = pcb_kicad::KiCadExistingTracks::Strip;
     }
+    // A layer-limited skew or length rule's nets prefer the side of its
+    // layers the designer's board (the reference's, else the input's own
+    // tracks, `--strip` or not) routes them on (`length_rule_layers`).
+    pcb_kicad::admit_length_rule_layers(
+        &mut config,
+        &Path::new(source).join(format!("{board_id}.kicad_pcb")),
+        &designer_boards(reference.as_deref(), Path::new(source), board_id),
+    );
     // Route mode: differential pairs couple where the project's rules ask
     // for them, unless the settings say (`diff_pairs_choice`).
     config.diff_pairs_by_need = true;
@@ -901,6 +909,13 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         pcb_kicad::admit_reference_vias_in_pads(&mut router, project, board_id);
         pcb_kicad::admit_reference_via_spans(&mut router, project, board_id);
     }
+    // A layer-limited skew or length rule's nets prefer the side of its
+    // layers the designer's board routes them on (`length_rule_layers`).
+    pcb_kicad::admit_length_rule_layers(
+        &mut router,
+        &Path::new(source).join(format!("{board_id}.kicad_pcb")),
+        &designer_boards(reference.as_deref(), Path::new(source), board_id),
+    );
     let mut config: pcb_kicad::KiCadBoardLayoutConfig = match positional.get(4) {
         Some(path) => read_json(path)?,
         None => Default::default(),

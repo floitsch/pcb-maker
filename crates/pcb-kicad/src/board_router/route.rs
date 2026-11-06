@@ -844,6 +844,7 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     // come out over it (`Config::length_bounded`; docs/router.md, "Length
     // and skew rules"): the meanders lengthen a net, this shortens one.
     router_config.length_bounded = length_bounded_nets(config);
+    core_layer_preferences(config, &mut router_config);
     if let Some(exact) = config.exact_escape_stubs
         && core::router::exact_escapes_override().is_none()
     {
