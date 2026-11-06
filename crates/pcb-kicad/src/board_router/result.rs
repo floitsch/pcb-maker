@@ -460,17 +460,8 @@ pub(crate) fn narrowed_classes(
         }
         // The class whose width the net takes: the first by priority that
         // states one.
-        let class = net_classes
-            .get(name)
-            .and_then(|names| {
-                names.iter().find(|class| {
-                    class_values
-                        .get(*class)
-                        .is_some_and(|values| values[0].is_some())
-                })
-            })
-            .cloned()
-            .unwrap_or_else(|| "Default".to_string());
+        let class =
+            crate::project_rules::width_class(net_classes.get(name), class_values).to_string();
         let micro = |value: f64| (value * 1.0e6).round() as i64;
         classes
             .entry((class, micro(width), micro(*routed)))

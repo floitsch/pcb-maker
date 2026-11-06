@@ -1877,6 +1877,8 @@ fn skeleton_budget_action(facts: &KiCadRunFacts) -> Option<String> {
 /// Sisu's RF_ANT, 0.1422 mm, and RF_ANT_INT, 0.1102 mm, written at 0.1).
 /// The levers: a custom rule giving the class's width as opt (the step
 /// keeps a net whose width a rule gives, `ruled_widths`), or the step off.
+/// Since 2026-11-06 the step narrows the Default class alone
+/// (`KiCadBoardRouterConfig::narrows_class_of`), so this is a guard.
 fn narrowed_action(narrowed: &[crate::board_router::KiCadNarrowedClass]) -> Option<String> {
     let chosen: Vec<&crate::board_router::KiCadNarrowedClass> = narrowed
         .iter()

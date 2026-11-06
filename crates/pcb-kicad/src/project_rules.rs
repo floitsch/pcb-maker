@@ -111,6 +111,25 @@ pub struct KiCadProjectRulesReport {
     pub class_values: BTreeMap<String, [Option<f64>; 2]>,
 }
 
+/// The class whose track width a net takes: of its classes (`classes`,
+/// the highest priority first, `KiCadProjectRulesReport::net_classes`) the
+/// first whose own width the project states (`class_values`), else
+/// "Default" (a net in no class, or in classes that set only clearances).
+pub(crate) fn width_class<'a>(
+    classes: Option<&'a Vec<String>>,
+    class_values: &BTreeMap<String, [Option<f64>; 2]>,
+) -> &'a str {
+    classes
+        .and_then(|names| {
+            names.iter().find(|class| {
+                class_values
+                    .get(*class)
+                    .is_some_and(|values| values[0].is_some())
+            })
+        })
+        .map_or("Default", String::as_str)
+}
+
 /// The board's minimum track width and clearance (`min_track_width`,
 /// `min_clearance` of the board setup), each with its source.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

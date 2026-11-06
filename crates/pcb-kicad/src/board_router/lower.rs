@@ -377,8 +377,9 @@ fn lower_board(
     let mut pin_row_gaps: Vec<core::PinRowGap> = Vec::new();
     let mut pad_spokes: std::collections::HashMap<usize, core::PadSpokes> =
         std::collections::HashMap::new();
-    // With `use_narrow_signals`, signal nets (not poured, not named as a
-    // ground or a rail) route at the project's smallest predefined width.
+    // With `use_narrow_signals`, signal nets of the Default class (not
+    // poured, not named as a ground or a rail; `narrows_class_of`) route at
+    // the project's smallest predefined width.
     let poured: std::collections::HashSet<String> = if config.use_narrow_signals == Some(true) {
         pours(pcb, &layers)?
             .into_iter()
@@ -453,6 +454,7 @@ fn lower_board(
             (Some(true), Some(width))
                 if width < rules.trace_width_mm
                     && !config.ruled_widths.contains(name)
+                    && config.narrows_class_of(name, rules)
                     && !poured.contains(name)
                     && !crate::quality::ground(name)
                     && !crate::quality::rail_name(name) =>

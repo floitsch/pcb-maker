@@ -2234,19 +2234,122 @@ mod narrow_step_tests {
             ..plain.clone()
         };
         assert!(!narrow_step_applies(&not_smaller));
-        // A wide class among narrow ones is enough.
+        // A wide class among narrow ones is not enough (since 2026-11-06):
+        // only the Default class is narrowed (jetson-nano-baseboard's
+        // impedance classes at 0.25 mm beside its Default's 0.125).
         let mut classes = plain.clone();
         classes.default_rules = Some(rules(0.125, 0.2));
         classes
             .connection_rules
             .insert("/PWR".into(), rules(0.5, 0.2));
         classes.narrow_signal_mm = Some(0.125);
+        assert!(!narrow_step_applies(&classes));
+        // A wide Default is (ohdsp's DSP board: 0.5 mm, signals at 0.135).
+        classes.default_rules = Some(rules(0.5, 0.2));
+        classes
+            .connection_rules
+            .insert("/SIG".into(), rules(0.5, 0.2));
         assert!(narrow_step_applies(&classes));
         // A wide net whose width a rule gives (oculink_port's pairs, at
         // the `inDiffPair()` rule's 0.1712 mm) is not narrowed: alone it
         // gives the step nothing to do.
+        classes.default_rules = Some(rules(0.125, 0.2));
+        classes.connection_rules.remove("/SIG");
+        classes
+            .connection_rules
+            .insert("/PWR".into(), rules(0.125, 0.2));
+        classes.narrow_signal_mm = Some(0.1);
+        assert!(narrow_step_applies(&classes));
         classes.ruled_widths.insert("/PWR".into());
+        classes.default_rules = None;
         assert!(!narrow_step_applies(&classes));
+    }
+
+    #[test]
+    fn the_narrow_step_narrows_only_the_default_class() {
+        // Trial 7's Sisu_SSE-9: Default 0.15 mm, the menu's 0.1; the
+        // impedance class RF_ANT (0.1422) and the power class
+        // Power_VBATT_3V8 (0.5) keep their widths, and so does a named
+        // class at Default's width (USB) and a Default net whose width a
+        // custom rule raises (WIDE); a net in a class that sets only a
+        // clearance (Spaced) takes Default's width and is narrowed.
+        let pads = ["SIG", "SPACED", "ANT", "VBAT_IN", "USB_P", "WIDE"]
+            .iter()
+            .enumerate()
+            .map(|(index, net)| {
+                format!(
+                    r#"(footprint "a{index}" (at 5 {y}) (pad "1" smd rect (at 0 0) (size 0.5 0.5) (layers "F.Cu") (net "/{net}")))
+                       (footprint "b{index}" (at 15 {y}) (pad "1" smd rect (at 0 0) (size 0.5 0.5) (layers "F.Cu") (net "/{net}")))"#,
+                    y = 2 + 2 * index
+                )
+            })
+            .collect::<String>();
+        let pcb = parse(&format!(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+              (gr_rect (start 0 0) (end 20 14) (layer "Edge.Cuts")) {pads})"#
+        ))
+        .unwrap();
+        let mut config = KiCadBoardRouterConfig {
+            default_rules: Some(rules(0.15, 0.15)),
+            narrow_signal_mm: Some(0.1),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let mut project = crate::project_rules::KiCadProjectRulesReport::default();
+        for (net, class, width) in [
+            ("SIG", None, 0.15),
+            ("SPACED", Some("Spaced"), 0.15),
+            ("ANT", Some("RF_ANT"), 0.1422),
+            ("VBAT_IN", Some("Power_VBATT_3V8"), 0.5),
+            ("USB_P", Some("USB"), 0.15),
+            ("WIDE", None, 0.2),
+        ] {
+            config
+                .connection_rules
+                .insert(net.into(), rules(width, 0.15));
+            project
+                .net_classes
+                .insert(net.into(), vec![class.unwrap_or("Default").to_string()]);
+        }
+        for (class, width) in [
+            ("Default", Some(0.15)),
+            ("Spaced", None),
+            ("RF_ANT", Some(0.1422)),
+            ("Power_VBATT_3V8", Some(0.5)),
+            ("USB", Some(0.15)),
+        ] {
+            project
+                .class_values
+                .insert(class.into(), [width, Some(0.15)]);
+        }
+        config.project_rules = Some(project);
+        assert!(narrow_step_applies(&config));
+        let step = narrow_step_config(&config);
+        assert_eq!(step.use_narrow_signals, Some(true));
+        let board = lower(&pcb, &step, true).unwrap().board;
+        let width = |name: &str| {
+            let net = board.nets.iter().find(|net| net.name == name).unwrap();
+            board.classes[net.class].trace_width
+        };
+        assert_eq!(width("SIG"), 0.1);
+        assert_eq!(width("SPACED"), 0.1);
+        assert_eq!(width("ANT"), 0.1422);
+        assert_eq!(width("VBAT_IN"), 0.5);
+        assert_eq!(width("USB_P"), 0.15);
+        assert_eq!(width("WIDE"), 0.2);
+        // What the report says: Default's nets alone.
+        let summary = KiCadRulesSummary::of(&board, &step);
+        let narrowed: Vec<(&str, usize)> = summary
+            .narrowed
+            .iter()
+            .map(|class| (class.class.as_str(), class.nets.len()))
+            .collect();
+        assert_eq!(narrowed, [("Default", 2)]);
+        // Only named classes wider than the menu: the step does not apply
+        // (Glasgow's Power class, VUSB at 0.25 beside Default's 0.15 and
+        // the menu's 0.15).
+        let mut named_only = config.clone();
+        named_only.narrow_signal_mm = Some(0.15);
+        assert!(!narrow_step_applies(&named_only));
     }
 
     #[test]
@@ -2433,15 +2536,18 @@ mod narrow_step_tests {
             .insert("/PWR".into(), rules(0.5, 0.2));
         config.narrow_signal_mm = Some(0.11);
         config.neck_width_mm = Some(0.1);
-        assert!(narrow_step_applies(&config));
+        // Only the power class is wider than the menu's width, and the step
+        // narrows the Default class alone.
+        assert!(!narrow_step_applies(&config));
         config.min_connection_mm = Some(0.16);
         config.apply_width_floor();
         assert_eq!(config.default_rules.as_ref().unwrap().trace_width_mm, 0.16);
         assert_eq!(config.connection_rules["/PWR"].trace_width_mm, 0.5);
         assert_eq!(config.narrow_signal_mm, Some(0.16));
         assert_eq!(config.neck_width_mm, Some(0.16));
-        // The power class is still wider: the narrow step routes the signals
-        // at the floor.
+        // A Default wider than the floored menu width: the narrow step
+        // routes its signals at the floor.
+        config.default_rules = Some(rules(0.2, 0.09));
         assert!(narrow_step_applies(&config));
         // No floor, nothing changes.
         let mut plain = KiCadBoardRouterConfig {

@@ -462,8 +462,11 @@ pub struct KiCadBoardRouterConfig {
     /// most tracks).
     #[serde(default)]
     pub narrow_signal_mm: Option<f64>,
-    /// Route signal nets at `narrow_signal_mm` (the ladder tries it when
-    /// connections stay open at the class widths).
+    /// Route signal nets of the Default class at `narrow_signal_mm` (the
+    /// ladder tries it when connections stay open at the class widths);
+    /// every other class keeps its width (`narrows_class_of`, since
+    /// 2026-11-06), and so do poured nets, grounds, rails and nets whose
+    /// width a custom rule gives.
     #[serde(default)]
     pub use_narrow_signals: Option<bool>,
     /// The board's minimum clearance when the project rates clearance
@@ -847,15 +850,44 @@ impl KiCadBoardRouterConfig {
     }
 
     /// Whether the narrow-signal step would narrow some net to `narrow`:
-    /// a net (or the default rules) at its class's width wider than it.
-    /// A net whose width a rule gives (`ruled_widths`) keeps it.
+    /// a net of the Default class (`narrows_class_of`), or the default
+    /// rules, at its class's width wider than it. A net whose width a rule
+    /// gives (`ruled_widths`) keeps it.
     pub fn narrows_some(&self, narrow: f64) -> bool {
         self.connection_rules
             .iter()
-            .filter(|(name, _)| !self.ruled_widths.contains(*name))
+            .filter(|(name, rules)| {
+                !self.ruled_widths.contains(*name) && self.narrows_class_of(name, rules)
+            })
             .map(|(_, rules)| rules)
             .chain(self.default_rules.iter())
             .any(|rules| rules.trace_width_mm > narrow + 1.0e-9)
+    }
+
+    /// Whether the narrow-signal step may narrow the net `name`, routed by
+    /// `rules`, for its class (since 2026-11-06): only a net of the Default
+    /// class, whose width no other class of the project gives
+    /// (`project_rules::width_class`) and which routes at Default's width
+    /// (`default_rules`: a custom rule that changes its width keeps it).
+    /// Every other class keeps the width the designer gave it: trial 7's
+    /// Sisu_SSE-9 had its impedance classes RF_ANT (0.1422 mm) and
+    /// RF_ANT_INT (0.1102) and its power class Power_VBATT_3V8 (0.5)
+    /// written at the menu's 0.1 mm, which KiCad's DRC does not check;
+    /// jetson-nano-baseboard's impedance classes (Z90_in and the others,
+    /// 0.25 mm) are wider than its Default (0.125). The step exists for a
+    /// wide Default (ohdsp's DSP board: 0.5 mm, its signals drawn at
+    /// 0.135). Without the default rules every net may be narrowed.
+    pub fn narrows_class_of(&self, name: &str, rules: &KiCadConnectionRoutingRules) -> bool {
+        let Some(default) = self.default_rules.as_ref() else {
+            return true;
+        };
+        if (rules.trace_width_mm - default.trace_width_mm).abs() > 1.0e-6 {
+            return false;
+        }
+        self.project_rules.as_ref().is_none_or(|project| {
+            crate::project_rules::width_class(project.net_classes.get(name), &project.class_values)
+                == "Default"
+        })
     }
 
     /// The narrowest track width allowed by `min_connection_mm` (0: none).
