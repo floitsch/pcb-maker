@@ -24,7 +24,7 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 110 | 91 | 19 | 110 | 55 |
+| [Router settings](#router-settings) | 111 | 92 | 19 | 111 | 55 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 2 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 1 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
@@ -33,7 +33,7 @@ The environment variables are indexed in the hand-over
 | [Router report: rules](#router-report-rules) | 6 | - | 0 | 6 | - |
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 20 | - | 9 | 20 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
-| [Router core](#router-core) | 77 | - | 0 | 77 | - |
+| [Router core](#router-core) | 78 | - | 0 | 78 | - |
 | [Placer settings](#placer-settings) | 56 | 49 | 7 | 56 | 31 |
 | [Layout settings](#layout-settings) | 21 | 21 | 0 | 21 | 13 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 2 |
@@ -138,6 +138,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `via_spans` | `Option<Vec<String>>` | unset | router.md | The via spans the board allows, replacing the designer's and the project's (with `blind_vias` on): `F.Cu-In2.Cu` (blind or buried by its layers), `F.Cu-In1.Cu:micro` (a micro via, one dielectric deep), or a keyword: `blind` (every span from an outer layer to an inner one), `buried` (every span between inner layers), `micro` (one dielectric down from each outer layer). |
 | `fixed_plane_stubs` | `Option<bool>` | unset | router.md | Connect every pour-net pad to its plane by a fixed stub and via before the signals route (router `fixed_plane_stubs`). |
 | `trouble_repair` | `Option<bool>` | unset | router.md | The trouble-makers' repair after the hard repair (router `trouble_repair`; docs/experiments/human-level-routing.md): unset, the router's default; `PCB_ROUTER_TROUBLE` overrides this. |
+| `residue_window` | `Option<bool>` | unset | - | The residue renegotiated in windows after the trouble repair (router `residue_window`; docs/router.md, "The residue in a window"): unset, on in route mode's ladder and off elsewhere; `PCB_ROUTER_RESIDUE` overrides this. |
 | `thermal_guard_cost` | `Option<f64>` | unset | router.md | Router `thermal_guard_cost`. |
 | `narrow_signal_mm` | `Option<f64>` | unset | - | The project's smallest predefined track width (its width menu), which designers use for signals where the class width is a power width (ohdsp's DSP board: class 0.5 mm, 0.135 mm in the menu and on most tracks). |
 | `use_narrow_signals` | `Option<bool>` | unset | router.md | Route signal nets of the Default class at `narrow_signal_mm` (the ladder tries it when connections stay open at the class widths); every other class keeps its width (`narrows_class_of`, since 2026-11-06), and so do poured nets, grounds, rails and nets whose width a custom rule gives. |
@@ -305,6 +306,7 @@ One constraint of one rule of the project's `.kicad_dru`. Source: `KiCadCustomRu
 | `apart_trees` | `bool` | `true` (`false` with `PCB_ROUTER_NO_APART_TREES`) | - | Terminals of a net that no path reaches from its tree (a board-wide search failed, `NetState::unreachable`) are joined among themselves where they reach each other: a tree of their own, which the net's count still calls unconnected (KiCad finds one unconnected item between the trees, not one per terminal). jiran-ble-lite's two halves share one GND and are joined only through a frame no track crosses: the right half's 20 GND pads stayed apart, also from each other (KiCad 20 unconnected items, the designer's own board 1). `PCB_ROUTER_NO_APART_TREES` turns it off. |
 | `lost_spoke_repair` | `bool` | `true` (`false` with `PCB_ROUTER_NO_LOST_SPOKES`) | - | After the clean-up, a pad the spoke model finds starved whose failed spokes other nets' copper cuts (in the spoke's strip, or where its end's fill would be) has those nets routed again around the strips, kept when every net involved stays complete and the pour nets' starved spokes go down (`free_lost_spokes`; `PCB_ROUTER_NO_LOST_SPOKES` turns it off). |
 | `trouble_repair` | `bool` | `true` | `trouble_repair` | After the hard repair, each net still open (pour nets aside), most open first, is routed through other nets' copper at a price; the nets it then overlaps lose the branches it crosses and are routed again hard, and the exchange is kept when the open terminals of all of them together drop; not in a layout's move trial (`repair_trouble`, router/trouble.rs; docs/experiments/human-level-routing.md). `PCB_ROUTER_TROUBLE` overrides it (`0` off, `1` on). |
+| `residue_window` | `bool` | `false` | `residue_window` | After the trouble-makers' repair, the connections still open (at most 12 nets) are taken up in windows: every net with copper in the box around an open net's pads loses its branches there, the history inside is reset and they are negotiated again jointly; kept only when the open terminals drop and nothing else opens (`renegotiate_residue`, router/residue.rs). Off by default; the KiCad adapter's route mode turns it on (`residue_window`). `PCB_ROUTER_RESIDUE` overrides it (`0` off, `1` on). |
 | `pour_aware_polish` | `bool` | `true` | - | The clean-up keeps a change only if no pour net has more pads off its main piece after it. |
 | `pour_aware_via_reduction` | `bool` | `true` | - | The same for a via reduction round. |
 | `pour_whole_rip_up` | `bool` | `true` | - | Whether a pour net stuck in conflict is ripped up whole now and then like the other nets (`rip_up_whole`). |

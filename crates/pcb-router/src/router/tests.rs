@@ -6386,3 +6386,253 @@ fn compaction_slides_a_run_beside_its_neighbour_and_keeps_length_and_ends() {
     let north = super::straighten::direction_of(0, 1).unwrap();
     assert_eq!(router.step_free(0, 0, middle.cell as usize, north), None);
 }
+
+/// The residue's windows: each open net's points grown by the margin,
+/// overlapping boxes merged (a merged box may reach a third).
+#[test]
+fn the_residue_windows_merge_where_they_overlap() {
+    let open = vec![
+        (0, vec![[0.0, 0.0], [1.0, 0.0]]),
+        (1, vec![[10.0, 0.0], [11.0, 1.0]]),
+        (2, vec![[5.0, 0.0]]),
+        (3, vec![[30.0, 30.0], [31.0, 30.0]]),
+    ];
+    // At 1 mm every box stands alone (x: -1..2, 9..12, 4..6, 29..32).
+    let windows = residue::residue_boxes(&open, 1.0);
+    let nets: Vec<Vec<NetId>> = windows.iter().map(|(nets, _)| nets.clone()).collect();
+    assert_eq!(nets, vec![vec![0], vec![1], vec![2], vec![3]]);
+    // At 3 mm 0 (-3..4) meets 2 (2..8), and the merged box meets 1
+    // (7..14); 3 stays apart.
+    let wide = residue::residue_boxes(&open, 3.0);
+    let nets: Vec<Vec<NetId>> = wide.iter().map(|(nets, _)| nets.clone()).collect();
+    assert_eq!(nets, vec![vec![0, 2, 1], vec![3]]);
+    let bounds = wide[0].1;
+    assert_eq!(bounds.minimum, [-3.0, -3.0]);
+    assert_eq!(bounds.maximum, [14.0, 4.0]);
+}
+
+/// A round of the residue is kept only when the open terminals drop with
+/// no net more open than before, no conflict left and the pours whole.
+#[test]
+fn a_residue_round_is_kept_only_when_nothing_else_opens() {
+    assert!(residue::keep_residue(&[1, 0, 2], &[0, 0, 2], 0, true));
+    // A trade: one closes, another opens.
+    assert!(!residue::keep_residue(&[1, 0], &[0, 1], 0, true));
+    // Nothing closed.
+    assert!(!residue::keep_residue(&[1, 0], &[1, 0], 0, true));
+    // A conflict left, a pour pad cut off.
+    assert!(!residue::keep_residue(&[2], &[0], 1, true));
+    assert!(!residue::keep_residue(&[2], &[0], 0, false));
+}
+
+/// The rip-up of a window takes the branches with a node in it (and only
+/// from nets with copper there); a net without copper in it keeps all.
+#[test]
+fn the_residue_rips_up_the_branches_in_its_window() {
+    let mut router = crossed_net();
+    for net in 0..3 {
+        router.route_net_seq(net, 0.0, false, 1.0);
+        router.stamp(net);
+    }
+    let around = |router: &Router, x0: f64, y0: f64, x1: f64, y1: f64| {
+        router.residue_range(crate::geometry::Aabb {
+            minimum: [x0, y0],
+            maximum: [x1, y1],
+        })
+    };
+    // Around B's crossing of A (x = 19, y = 10): A and B have copper
+    // there, C (x = 23) does not.
+    let range = around(&router, 18.5, 9.5, 19.5, 10.5);
+    let before = router.nets[2].branches.clone();
+    assert!(!router.rip_up_in(2, range));
+    assert_eq!(router.nets[2].branches, before);
+    assert!(router.nets[2].complete);
+    let kept: Vec<Branch> = router.nets[1]
+        .branches
+        .iter()
+        .filter(|branch| {
+            branch.nodes.iter().all(|node| {
+                let (x, y) = (
+                    node.cell as usize % router.grid.nx,
+                    node.cell as usize / router.grid.nx,
+                );
+                !(x >= range.0 && x <= range.2 && y >= range.1 && y <= range.3)
+            })
+        })
+        .cloned()
+        .collect();
+    assert!(router.rip_up_in(1, range));
+    assert!(!router.nets[1].complete);
+    assert_eq!(router.nets[1].branches, kept);
+    assert!(router.rip_up_in(0, range));
+}
+
+/// One layer, a wall across the board at x = 15 with two gaps of one
+/// track each (y = 5 and, with `second_gap`, y = 15). Net A's pads (13, 5)
+/// and (17, 5) sit in pockets either side of the first gap, each pocket
+/// open to the outside by a gap of one track at y = 5; net B runs from
+/// (2, 5) to (28, 5). B straight through the pockets takes every way A
+/// has; B round by the second gap leaves A its own.
+fn pocketed_gap(second_gap: bool) -> Router {
+    let class = RuleClass {
+        trace_width: 0.25,
+        clearance: 0.2,
+        via_diameter: 0.6,
+        via_drill: 0.3,
+        layers: 0,
+    };
+    let pads: [(NetId, [f64; 2], &str); 4] = [
+        (0, [13.0, 5.0], "A.0"),
+        (0, [17.0, 5.0], "A.1"),
+        (1, [2.0, 5.0], "B.0"),
+        (1, [28.0, 5.0], "B.1"),
+    ];
+    let mut obstacles: Vec<Obstacle> = pads
+        .iter()
+        .map(|(net, at, label)| {
+            copper(
+                Shape::Circle {
+                    center: *at,
+                    radius: 0.3,
+                },
+                *net,
+                label,
+            )
+        })
+        .collect();
+    let wall = |from: [f64; 2], to: [f64; 2]| Obstacle {
+        shape: Shape::rectangle(
+            [(from[0] + to[0]) / 2.0, (from[1] + to[1]) / 2.0],
+            [
+                ((to[0] - from[0]) / 2.0).abs().max(0.1),
+                ((to[1] - from[1]) / 2.0).abs().max(0.1),
+            ],
+            0.0,
+        ),
+        layers: 1,
+        kind: ObstacleKind::Keepout,
+        net: None,
+        clearance: 0.0,
+        clearance_override: None,
+        blocks_tracks: true,
+        blocks_vias: true,
+        label: "wall".into(),
+    };
+    // The middle wall, its gaps 0.8 mm wide.
+    obstacles.push(wall([15.0, 0.0], [15.0, 4.6]));
+    if second_gap {
+        obstacles.push(wall([15.0, 5.4], [15.0, 14.6]));
+        obstacles.push(wall([15.0, 15.4], [15.0, 20.0]));
+    } else {
+        obstacles.push(wall([15.0, 5.4], [15.0, 20.0]));
+    }
+    // The pockets: their outer walls with a gap at y = 5, top and bottom.
+    for x in [11.0, 19.0] {
+        obstacles.push(wall([x, 3.0], [x, 4.6]));
+        obstacles.push(wall([x, 5.4], [x, 7.0]));
+    }
+    for y in [3.0, 7.0] {
+        obstacles.push(wall([11.0, y], [19.0, y]));
+    }
+    let nets = ["A", "B"]
+        .iter()
+        .enumerate()
+        .map(|(net, name)| Net {
+            name: (*name).into(),
+            class: 0,
+            terminals: pads
+                .iter()
+                .enumerate()
+                .filter(|(_, (owner, ..))| *owner as usize == net)
+                .map(|(pad, (_, at, label))| Terminal {
+                    anchor: *at,
+                    layers: 1,
+                    pad,
+                    contact: None,
+                    label: (*label).into(),
+                })
+                .collect(),
+        })
+        .collect();
+    let board = Board {
+        layer_count: 1,
+        outline: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]],
+        edge_clearance: 0.1,
+        hole_clearance: 0.25,
+        hole_to_hole: 0.25,
+        classes: vec![class],
+        neck_width: 0.25,
+        obstacles,
+        nets,
+        planes: Vec::new(),
+        solid_pads: Vec::new(),
+        isolated_pads: Vec::new(),
+        solid_pad_obstacles: Vec::new(),
+        isolated_pad_obstacles: Vec::new(),
+        pad_spokes: Default::default(),
+        merged_pads: Vec::new(),
+        no_via_pads: Vec::new(),
+        fill_passes: Vec::new(),
+        pin_row_gaps: Vec::new(),
+        terminal_copper: Vec::new(),
+        attachment: Default::default(),
+        via_spans: Vec::new(),
+    };
+    let config = Config {
+        pitches: vec![0.1],
+        ..Config::default()
+    };
+    Router::new(&board, &config)
+}
+
+/// `pocketed_gap` with B routed first, straight through A's pockets, and
+/// A's hard route after it: A open, B complete.
+fn pocketed_gap_with_a_open(second_gap: bool) -> Router {
+    let mut router = pocketed_gap(second_gap);
+    router.route_net_seq(1, 0.0, false, 4.0);
+    router.stamp(1);
+    router.route_net_seq(0, 0.0, true, 4.0);
+    router.stamp(0);
+    assert!(router.nets[1].complete);
+    assert!(!router.nets[0].complete);
+    router
+}
+
+/// The residue takes up the open net with the net whose copper is in its
+/// window: negotiated together, B gives way by the second gap and A
+/// closes; the window is kept with both ripped up.
+#[test]
+fn the_residue_closes_a_net_another_takes_the_way_of() {
+    let mut router = pocketed_gap_with_a_open(true);
+    let closed = router.renegotiate_residue(&[0, 1], 10.0);
+    assert_eq!(closed, 1);
+    assert!(router.nets[0].complete && router.nets[1].complete);
+    assert!((0..2).all(|net| router.conflicts(net).is_empty()));
+    let windows = router.residue_windows.clone();
+    assert_eq!(windows.len(), 1, "{windows:?}");
+    assert!(windows[0].kept);
+    assert_eq!(windows[0].nets, vec![0]);
+    assert_eq!(windows[0].ripped, 2);
+    assert_eq!((windows[0].open_before, windows[0].open_after), (1, 0));
+    // The first round's box: A's pads grown by 2 mm.
+    assert_eq!(windows[0].rounds, 1);
+    assert_eq!(windows[0].bounds, [11.0, 3.0, 19.0, 7.0]);
+}
+
+/// Without a second way for B nothing closes A: every round is undone
+/// and the board is exactly as it was, each round's box larger.
+#[test]
+fn the_residue_restores_what_it_cannot_close() {
+    let mut router = pocketed_gap_with_a_open(false);
+    let fingerprint = router.fingerprint();
+    let closed = router.renegotiate_residue(&[0, 1], 10.0);
+    assert_eq!(closed, 0);
+    assert_eq!(router.fingerprint(), fingerprint);
+    assert!(!router.nets[0].complete && router.nets[1].complete);
+    let windows = router.residue_windows.clone();
+    assert_eq!(windows.len(), 1, "{windows:?}");
+    assert!(!windows[0].kept);
+    assert_eq!(windows[0].rounds, residue::RESIDUE_MARGINS_MM.len());
+    assert_eq!(windows[0].bounds, [5.0, -3.0, 25.0, 13.0]);
+    assert_eq!(windows[0].open_after, windows[0].open_before);
+}

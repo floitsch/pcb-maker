@@ -1308,6 +1308,11 @@ impl<'a> Ladder<'a> {
     fn rung_config(&self, mode: usize) -> KiCadBoardRouterConfig {
         let (_, skeleton, exclusive, plane_stubs) = self.modes[mode];
         let mut attempt = self.config.clone();
+        // Route mode's attempts renegotiate their residue unless the
+        // configuration says otherwise (a layout's ladder does not).
+        if self.work_bound.is_some() && attempt.residue_window.is_none() {
+            attempt.residue_window = Some(true);
+        }
         attempt.plane_skeleton = Some(skeleton);
         attempt.exclusive_planes = Some(exclusive);
         attempt.fixed_plane_stubs = Some(plane_stubs);

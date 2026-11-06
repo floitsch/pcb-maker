@@ -479,6 +479,7 @@ impl Router {
             hot_spots,
             repair: self.repair_entries.clone(),
             released: self.released.clone(),
+            residue: self.residue_windows.clone(),
         }
     }
 

@@ -80,6 +80,9 @@ pub struct Diagnostics {
     /// The nets the negotiation gave up (`Board::attachment`'s `give_up`:
     /// a differential pair's links), in the order they went, with why.
     pub released: Vec<super::ReleasedNet>,
+    /// The residue's windows (`Config::residue_window`), in the order they
+    /// ran. A record, not an input.
+    pub residue: Vec<super::ResidueWindow>,
 }
 
 /// A net as the hard repair found it (`Diagnostics::repair`).

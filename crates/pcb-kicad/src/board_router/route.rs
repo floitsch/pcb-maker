@@ -861,6 +861,11 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     {
         router_config.trouble_repair = repair;
     }
+    if let Some(residue) = config.residue_window
+        && core::router::residue_override().is_none()
+    {
+        router_config.residue_window = residue;
+    }
     if let Some(cost) = config.thermal_guard_cost {
         router_config.thermal_guard_cost = cost;
     }

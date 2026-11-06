@@ -53,6 +53,7 @@ mod pour_report;
 mod prepare;
 mod profile;
 mod reclaim;
+mod residue;
 mod resolve;
 mod result;
 mod route_net;
@@ -79,6 +80,7 @@ pub use give_up::{GiveUpRule, NO_PATH, NO_ROOM, ReleasedNet};
 pub use pad_exits::{ClosedPad, ExitBlocker, ExitProbe, ProbeCounts, label_part, work_nanos};
 pub use pour_report::{PourLayerReport, StarvedThermal};
 pub use profile::{ProcessAccounting, build_totals, process_accounting};
+pub use residue::{ResidueWindow, residue_override};
 pub use result::{DeadPad, Diagnostics, HotSpot, NetStatus, RepairEntry, RoutingResult};
 pub use subset::{SubsetNet, SubsetStanding};
 pub use trouble::{TROUBLE_REPAIR_DEFAULT, trouble_override};
@@ -1858,6 +1860,11 @@ pub struct Router {
     profile: Profile,
     /// While the via reduction runs (its negotiations are its own phase).
     in_via_reduction: bool,
+    /// While the residue renegotiates a window (`renegotiate_residue`):
+    /// its negotiations are nested as the via reduction's.
+    in_residue: bool,
+    /// The residue's windows of the last `finish` (`Diagnostics::residue`).
+    residue_windows: Vec<residue::ResidueWindow>,
     /// Which of its searches a hard route makes while the trouble
     /// repair routes its victims again (`TroubleSettings::local`);
     /// `HardScope::Full` elsewhere.

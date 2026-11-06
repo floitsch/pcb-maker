@@ -82,6 +82,7 @@ impl Router {
         }
         let resolve_started = std::time::Instant::now();
         let mark = self.phase_mark();
+        let repairs_started = self.budget_work();
         // What the repair takes up, for the diagnostics.
         let entries: Vec<RepairEntry> = order
             .iter()
@@ -123,6 +124,14 @@ impl Router {
         // and video's layout lost its gain (185 to 199) without it there.
         if !self.hopeless && self.config.trouble_repair && !self.in_trial {
             self.repair_trouble(order, super::trouble::TroubleSettings::from_env());
+        }
+        // The residue renegotiated in windows (router/residue.rs), at
+        // least the repairs' work: as the trouble repair, not in a
+        // layout's move trial.
+        self.residue_windows.clear();
+        if !self.hopeless && self.config.residue_window && !self.in_trial && !self.skip_resolve {
+            let repairs = self.budget_work() - repairs_started;
+            self.renegotiate_residue(order, repairs);
         }
         self.phase_charge(1, mark);
         self.profile.resolve += resolve_started.elapsed().as_secs_f64();
