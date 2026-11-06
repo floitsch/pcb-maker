@@ -252,3 +252,202 @@ fn a_pocketed_pad_routes_on_every_lattice_offset() {
     );
     assert!(!open_at(false).is_empty());
 }
+
+/// Hub's X2SON-4 regulator (PCM_Package_SON_AKL:Texas_X2SON-4_1x1mm_P0.65mm,
+/// U2, U3 and U6 on its board) at `centre`, in its own frame: four custom
+/// corner pads, each a 0.148 mm anchor at (+-0.43, +-0.325) and a 0.46 x
+/// 0.31 mm polygon whose corner towards the middle is cut to 0.12 mm from
+/// the centre pad, and the centre pad (a 0.58 mm square turned by 45
+/// degrees) of GND with pad 2. One layer, the board's Default class (0.2
+/// mm tracks and clearance) with a 0.127 mm neck. Each corner pad's net
+/// joins a plain pad 2 mm out along its diagonal. The anchors' centres lie
+/// 0.244 mm from the centre pad: within the clearance plus half a neck
+/// (0.2635 mm), so no track may end there.
+pub(super) fn x2son4(centre: Point) -> Board {
+    let class = RuleClass {
+        trace_width: 0.2,
+        clearance: 0.2,
+        via_diameter: 0.6,
+        via_drill: 0.3,
+        layers: 0,
+    };
+    let at = |x: f64, y: f64| [centre[0] + x, centre[1] + y];
+    // (number, anchor, polygon around the anchor), from the board file.
+    let pads: [(&str, Point, Vec<Point>); 4] = [
+        (
+            "1",
+            [-0.43, 0.325],
+            vec![
+                [0.23, 0.054289],
+                [0.020711, -0.155],
+                [-0.23, -0.155],
+                [-0.23, 0.155],
+                [0.23, 0.155],
+            ],
+        ),
+        (
+            "2",
+            [-0.43, -0.325],
+            vec![
+                [0.23, -0.054289],
+                [0.23, -0.155],
+                [-0.23, -0.155],
+                [-0.23, 0.155],
+                [0.020711, 0.155],
+            ],
+        ),
+        (
+            "3",
+            [0.43, -0.325],
+            vec![
+                [0.23, -0.155],
+                [-0.23, -0.155],
+                [-0.23, -0.054289],
+                [-0.020711, 0.155],
+                [0.23, 0.155],
+            ],
+        ),
+        (
+            "4",
+            [0.43, 0.325],
+            vec![
+                [0.23, -0.155],
+                [-0.020711, -0.155],
+                [-0.23, 0.054289],
+                [-0.23, 0.155],
+                [0.23, 0.155],
+            ],
+        ),
+    ];
+    let mut obstacles = Vec::new();
+    let mut nets: Vec<Net> = ["+3V3", "GND", "EN", "+5V"]
+        .iter()
+        .map(|name| Net {
+            name: (*name).into(),
+            class: 0,
+            terminals: Vec::new(),
+        })
+        .collect();
+    let copper = |shape: Shape, net: NetId, label: String| Obstacle {
+        shape,
+        layers: 1,
+        kind: ObstacleKind::Copper,
+        net: Some(net),
+        clearance: 0.0,
+        clearance_override: None,
+        blocks_tracks: true,
+        blocks_vias: true,
+        label,
+    };
+    for (index, (number, anchor, polygon)) in pads.iter().enumerate() {
+        let net = index as NetId;
+        let position = at(anchor[0], anchor[1]);
+        let contact = Shape::Circle {
+            center: position,
+            radius: 0.074246,
+        };
+        let shape = Shape::Union {
+            parts: vec![
+                contact.clone(),
+                Shape::Polygon {
+                    points: polygon
+                        .iter()
+                        .map(|point| [position[0] + point[0], position[1] + point[1]])
+                        .collect(),
+                },
+            ],
+        };
+        let label = format!("U2.{number}");
+        obstacles.push(copper(shape, net, label.clone()));
+        nets[index].terminals.push(Terminal {
+            anchor: position,
+            layers: 1,
+            pad: obstacles.len() - 1,
+            contact: Some(contact),
+            label,
+        });
+        // Its partner, 2 mm out along the diagonal.
+        let out = [
+            position[0] + 2.0 * anchor[0].signum(),
+            position[1] + 2.0 * anchor[1].signum(),
+        ];
+        let label = format!("P{number}.1");
+        obstacles.push(copper(
+            Shape::rectangle(out, [0.3, 0.3], 0.0),
+            net,
+            label.clone(),
+        ));
+        nets[index].terminals.push(Terminal {
+            anchor: out,
+            layers: 1,
+            pad: obstacles.len() - 1,
+            contact: None,
+            label,
+        });
+    }
+    obstacles.push(copper(
+        Shape::Polygon {
+            points: vec![at(0.41, 0.0), at(0.0, 0.41), at(-0.41, 0.0), at(0.0, -0.41)],
+        },
+        1,
+        "U2.5".into(),
+    ));
+    nets[1].terminals.push(Terminal {
+        anchor: centre,
+        layers: 1,
+        pad: obstacles.len() - 1,
+        contact: None,
+        label: "U2.5".into(),
+    });
+    Board {
+        layer_count: 1,
+        outline: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]],
+        edge_clearance: 0.1,
+        hole_clearance: 0.1,
+        hole_to_hole: 0.1,
+        classes: vec![class],
+        neck_width: 0.127,
+        obstacles,
+        nets,
+        planes: Vec::new(),
+        solid_pads: Vec::new(),
+        isolated_pads: Vec::new(),
+        solid_pad_obstacles: Vec::new(),
+        isolated_pad_obstacles: Vec::new(),
+        pad_spokes: Default::default(),
+        merged_pads: Vec::new(),
+        no_via_pads: Vec::new(),
+        fill_passes: Vec::new(),
+        pin_row_gaps: Vec::new(),
+        terminal_copper: Vec::new(),
+        attachment: Default::default(),
+        via_spans: Vec::new(),
+    }
+}
+
+#[test]
+fn a_custom_pad_whose_anchor_lies_in_a_neighbours_clearance_leaves_from_its_far_side() {
+    // Hub's X2SON-4 corner pads: their anchors' centres lie within the
+    // centre pad's clearance, so the escape stubs start on the anchor's
+    // far side, where the designer's tracks end. Every offset of the part
+    // against the 0.1 mm lattice.
+    let config = Config {
+        pitches: vec![0.1],
+        ..Config::default()
+    };
+    for step in 0..5 {
+        let offset = step as f64 * 0.023;
+        let board = x2son4([5.0 + offset, 5.0 + offset / 2.0]);
+        let result = crate::route(&board, &config);
+        let violations = crate::verify(&board, &result.routes);
+        assert!(violations.is_empty(), "offset {offset}: {violations:?}");
+        for (net, status) in result.status.iter().enumerate() {
+            assert_eq!(
+                *status,
+                NetStatus::Routed,
+                "offset {offset}: {} open",
+                board.nets[net].name
+            );
+        }
+    }
+}
