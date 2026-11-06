@@ -24,7 +24,7 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 109 | 90 | 19 | 109 | 55 |
+| [Router settings](#router-settings) | 110 | 91 | 19 | 110 | 55 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 2 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 1 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
@@ -130,6 +130,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `negotiation_seconds` | `Option<f64>` | unset | router.md | Seconds one negotiation may run (default 900 s). The ladder sets it per attempt from what is left of its budget, so that a hopeless first rung leaves time for the next (video's exclusive-plane rung ran 1180 s with 222 open, and no other rung ran). |
 | `probe_ladder` | `Option<bool>` | unset | - | Large multilayer boards: probe every rung briefly and continue the best (default on). |
 | `probe_seconds` | `Option<f64>` | unset | router.md, placer.md | Seconds of negotiation per probe (default 75). |
+| `leader_first` | `Option<bool>` | unset | - | Route mode, on a board of two rungs or more: the leading rung's variants first (its seed round, its finer pitches), then the rungs of other pour modes whose probe (or regular attempt) left at most twice the leader's unfinished nets (docs/router.md, "The leader first"; default on). `PCB_LADDER_LEADER_FIRST` (0 or 1) overrides it. |
 | `escape_stub_mm` | `Option<f64>` | unset | router.md | Fixed escape stubs for fine-pitch pad rows, this long in mm (router `escape_stub_mm`; off by default). |
 | `exact_escape_stubs` | `Option<bool>` | unset | router.md | Escape stubs stamped exactly, straight ones along a lattice line first (router `exact_escape_stubs`; docs/router.md, "Fine-pitch escapes"): unset, the router's default (on since 2026-10-26); `PCB_ROUTER_EXACT_ESCAPES` overrides this. |
 | `bga_fanout` | `Option<bool>` | unset | router.md | Prepared fan-outs for BGAs (board_router/bga_fanout.rs; docs/router.md, "Prepared fan-outs for BGAs (2026-11-04)"): before routing, every ball of a grid array's inner rings (those no track between the outer balls serves) gets a stub and a via in a diagonal gap, the largest of the class's and the project's via sizes that keeps every clearance, fixed copper of the ball's net that its route may end on, on any layer; written only where the net's route uses it; an array whose class's via fits a gap is left to the search. Unset: on (since 2026-11-04); `PCB_ROUTER_BGA_FANOUT` overrides this. |

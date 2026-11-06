@@ -468,6 +468,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "route mode's steps start without room for their first negotiation iteration (the rule before 2026-10-21; for attributing rows).",
     ),
     (
+        "PCB_LADDER_LEADER_FIRST",
+        Kind::Switch,
+        "`0` or `1`: route mode's ladder runs the leading rung's seed round and finer pitches before the rungs of other pour modes, and those only where their probe left at most twice the leader's unfinished nets (wins over the router setting `leader_first`; default on; `0` the order before 2026-11-07).",
+    ),
+    (
         "PCB_LADDER_NO_STEP_COST_GATE",
         Kind::Switch,
         "route mode's steps start with less left under the bound than a fifth of the ladder's first attempt's work (the rule before 2026-10-21, probe overhead; for attributing rows).",

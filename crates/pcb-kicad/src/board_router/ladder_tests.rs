@@ -658,6 +658,150 @@ fn a_panic_in_the_continuation_falls_back_to_the_rungs() {
     assert_eq!(kept(&ladder, &out), (0, "tracks".into()));
 }
 
+/// The leader first, its switch and its gate: route mode on two rungs or
+/// more unless the setting or the environment turns it off; a rung runs
+/// after the leader where its measure is at most twice the leader's, or
+/// where either was not measured.
+#[test]
+fn the_leader_first_applies_in_route_mode_and_gates_by_twice_the_leader() {
+    assert!(leader_first_applies(None, None, true, 4));
+    assert!(leader_first_applies(Some(true), None, true, 2));
+    assert!(!leader_first_applies(Some(false), None, true, 4));
+    assert!(!leader_first_applies(None, Some("0"), true, 4));
+    assert!(leader_first_applies(Some(false), Some("1"), true, 4));
+    // A layout's ladder keeps its order; one rung has no other mode.
+    assert!(!leader_first_applies(None, None, false, 4));
+    assert!(!leader_first_applies(None, None, true, 1));
+    assert!(leader_gate_admits(Some(20), Some(10)));
+    assert!(!leader_gate_admits(Some(21), Some(10)));
+    assert!(!leader_gate_admits(Some(1), Some(0)));
+    assert!(leader_gate_admits(None, Some(10)));
+    assert!(leader_gate_admits(Some(300), None));
+}
+
+/// A probed board, leader first: the continued leader's seed round, then
+/// the leader on each finer pitch, then the rungs whose probe left at most
+/// twice the leader's unfinished nets on the regular pitch and the finer
+/// ones; the rungs the gate keeps out never run and `skipped` says why.
+/// The attempts share what is left as they start (a seed round one share),
+/// and the work stays within the bound.
+#[test]
+fn route_mode_probed_board_runs_the_leader_first() {
+    let config = route_mode(1000.0);
+    let out = output("leader-probed");
+    let mut fake = Fake::new(|routed| {
+        Some(Outcome {
+            open: 3,
+            work: if routed.pitch.is_some() { 30.0 } else { 20.0 },
+        })
+    });
+    fake.layers = 4;
+    fake.connections = 200;
+    // exclusive 30, connect 10 (the leader), stubs 25, tracks 15.
+    fake.probes = vec![30, 10, 25, 15];
+    fake.continued = Outcome {
+        open: 3,
+        work: 40.0,
+    };
+    let mut ladder = ladder(&config, &out, 4);
+    ladder.run(&fake).unwrap();
+    let routes = fake.routes();
+    let order: Vec<(&str, Option<f64>, usize)> = routes
+        .iter()
+        .map(|routed| (routed.rung, routed.pitch, routed.seeds))
+        .collect();
+    assert_eq!(
+        order,
+        vec![
+            // (A) the leader's seed round,
+            ("connect", None, 4),
+            // (B) the leader on the finer pitches,
+            ("connect", Some(0.075), 1),
+            ("connect", Some(0.05), 1),
+            // (C) the rung the gate admits (15 <= 2 x 10) on the regular
+            // pitch, (D) on the finer ones,
+            ("tracks", None, 1),
+            ("tracks", Some(0.075), 1),
+            ("tracks", Some(0.05), 1),
+            // and the best rung's seed rounds after.
+            ("connect", None, 4),
+            ("connect", None, 4),
+        ],
+        "{routes:?}"
+    );
+    // Exclusive planes (30) and the plane stubs (25) are kept out.
+    let kept_out: Vec<&String> = ladder
+        .skipped
+        .iter()
+        .filter(|note| note.contains("leader_first"))
+        .collect();
+    assert_eq!(kept_out.len(), 2, "{:?}", ladder.skipped);
+    assert!(kept_out[0].contains("pours=connect (exclusive planes)"));
+    assert!(kept_out[0].contains("its probe left 30 unfinished"));
+    assert!(kept_out[1].contains("pours=connect (plane stubs)"));
+    // Every attempt had a work deadline, the seed round a share of four
+    // (the round, two finer pitches, one admitted rung): its seeds a
+    // quarter of that each; the ladder stays within its bound.
+    assert!(routes.iter().all(|routed| routed.deadline_work.is_some()));
+    let bound = ladder_work_bound(1000.0);
+    let probes = 4.0 * bounded_probe_seconds(75.0, 1000.0, 4);
+    let left = bound - probes - 40.0;
+    assert!(
+        (routes[0].deadline_work.unwrap() - left / 4.0 / 4.0).abs() < 1e-6,
+        "{routes:?}"
+    );
+    assert!(ladder.work <= bound + 1e-6, "{}", ladder.work);
+    assert!(ladder.failed.is_empty());
+}
+
+/// A board without probes, leader first: its rungs run on the regular
+/// pitch as before but for the last rung's seed retry; the best of them
+/// leads: its seed round, its finer pitches, then the other rungs whose
+/// regular attempt left at most twice its open count on those pitches.
+#[test]
+fn route_mode_unprobed_board_runs_the_best_rung_first() {
+    let config = route_mode(1000.0);
+    let out = output("leader-unprobed");
+    let fake = Fake::new(|routed| {
+        Some(Outcome {
+            open: match (routed.rung, routed.pitch, routed.seeds) {
+                ("tracks", Some(0.05), _) => 0,
+                ("tracks", ..) => 2,
+                _ => 5,
+            },
+            work: 10.0,
+        })
+    });
+    let mut ladder = ladder(&config, &out, 2);
+    ladder.run(&fake).unwrap();
+    let order: Vec<(&str, Option<f64>, usize)> = fake
+        .routes()
+        .iter()
+        .map(|routed| (routed.rung, routed.pitch, routed.seeds))
+        .collect();
+    // The skeleton rung is skipped (no pour pad open); connect (5 open)
+    // is more than twice the leader's 2: it does not run again.
+    assert_eq!(
+        order,
+        vec![
+            ("connect", None, 1),
+            ("tracks", None, 1),
+            ("tracks", None, 4),
+            ("tracks", Some(0.075), 1),
+            ("tracks", Some(0.05), 1),
+        ]
+    );
+    assert_eq!(kept(&ladder, &out), (0, "tracks".into()));
+    assert!(
+        ladder
+            .skipped
+            .iter()
+            .any(|note| note.contains("pours=connect did not run on the finer pitches")),
+        "{:?}",
+        ladder.skipped
+    );
+}
+
 /// The regular ladder in route mode: the first rung alone with all that
 /// is left, its work kept for the narrow-signal step once it leaves
 /// connections open, the other rungs with an even share, the last rung's
@@ -665,7 +809,9 @@ fn a_panic_in_the_continuation_falls_back_to_the_rungs() {
 /// last with what was kept; the work stays within the bound.
 #[test]
 fn route_mode_rungs_seeds_and_the_narrow_step_stay_within_the_bound() {
-    let config = with_narrow_step(route_mode(100.0));
+    // The order before the leader first (`leader_ladder`).
+    let mut config = with_narrow_step(route_mode(100.0));
+    config.leader_first = Some(false);
     let out = output("bound");
     let fake = Fake::new(|routed| {
         Some(if routed.narrow {
@@ -1039,7 +1185,9 @@ fn every_attempt_failing_leaves_no_board() {
 /// A panic in the seed retry or a seed round keeps the rung's board.
 #[test]
 fn a_panic_in_the_seeds_keeps_the_rungs_board() {
-    let config = route_mode(100.0);
+    // The last rung's seed retry: the order before the leader first.
+    let mut config = route_mode(100.0);
+    config.leader_first = Some(false);
     let out = output("seeds");
     let fake = Fake::new(|routed| (routed.seeds == 1).then_some(Outcome { open: 4, work: 5.0 }));
     let mut ladder = ladder(&config, &out, 2);

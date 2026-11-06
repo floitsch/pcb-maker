@@ -277,6 +277,39 @@ pub(crate) fn ladder_pitches(config: &KiCadBoardRouterConfig) -> Vec<Option<Vec<
     pitches
 }
 
+/// The leader first (`Ladder::leader_ladder`): a rung of another pour
+/// mode runs only where its probe (on a board without probes, its regular
+/// attempt) left at most this many times the leader's unfinished nets.
+pub(crate) const LEADER_GATE_FACTOR: usize = 2;
+
+/// Whether the ladder puts its leader first (`Ladder::leader_ladder`):
+/// route mode (a layout's ladder keeps its order) on a board of two rungs
+/// or more, unless the setting (`leader_first`) or the environment
+/// (`PCB_LADDER_LEADER_FIRST`, 0 or 1, which wins) turns it off.
+pub(crate) fn leader_first_applies(
+    setting: Option<bool>,
+    environment: Option<&str>,
+    route_mode: bool,
+    rungs: usize,
+) -> bool {
+    let wanted = match environment.map(str::trim) {
+        Some("0") | Some("") => false,
+        Some(_) => true,
+        None => setting.unwrap_or(true),
+    };
+    wanted && route_mode && rungs >= 2
+}
+
+/// Whether a rung whose probe (or regular attempt) left `count` unfinished
+/// nets runs after the leader, which left `leader` (None: not measured,
+/// it runs).
+pub(crate) fn leader_gate_admits(count: Option<usize>, leader: Option<usize>) -> bool {
+    match (count, leader) {
+        (Some(count), Some(leader)) => count <= LEADER_GATE_FACTOR * leader,
+        _ => true,
+    }
+}
+
 /// How an attempt's line names an open count KiCad did not check.
 fn by_router(judged: &Option<Opens>) -> &'static str {
     if judged.is_none() {
@@ -329,6 +362,9 @@ fn beyond_search(result: &KiCadBoardRouterResult, charges_all: bool, charges_spo
         0.0
     }
 }
+
+/// The most seed rounds of the best rung (`Ladder::seed_rounds`).
+const SEED_ROUNDS: usize = 3;
 
 /// Whether the ladder goes on after a rung.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -458,6 +494,18 @@ pub(crate) struct Ladder<'a> {
     /// The rung the probe continued: the regular ladder skips it.
     probed_mode: Option<usize>,
     probe_complete: bool,
+    /// Route mode on two rungs or more: the leader's variants first
+    /// (`leader_ladder`; `leader_first_applies`).
+    leader_first: bool,
+    /// Per rung: the nets its probe left unfinished (None: not probed).
+    probe_counts: Vec<Option<usize>>,
+    /// Per rung: its open count on the regular lattice (None: not run).
+    regular_opens: Vec<Option<usize>>,
+    /// The rung of the best board so far.
+    best_mode: Option<usize>,
+    /// The seed rounds run so far and the next round's first seed.
+    seed_rounds_run: usize,
+    next_seed: u64,
     /// Whether the best attempt's rung had its seed retry.
     best_seeded: bool,
     /// The best board so far, with its open count.
@@ -629,6 +677,12 @@ impl<'a> Ladder<'a> {
             extra_rung_tried: false,
             probed_mode: None,
             probe_complete: false,
+            leader_first: false,
+            probe_counts: Vec::new(),
+            regular_opens: Vec::new(),
+            best_mode: None,
+            seed_rounds_run: 0,
+            next_seed: 1,
             best_seeded: false,
             best: None,
             best_attempt: None,
@@ -639,6 +693,14 @@ impl<'a> Ladder<'a> {
             ledger: Vec::new(),
             selected: None,
         };
+        ladder.leader_first = leader_first_applies(
+            config.leader_first,
+            std::env::var("PCB_LADDER_LEADER_FIRST").ok().as_deref(),
+            work_bound.is_some(),
+            ladder.modes.len(),
+        );
+        ladder.probe_counts = vec![None; ladder.modes.len()];
+        ladder.regular_opens = vec![None; ladder.modes.len()];
         // The layout's attempt after this one: its floor is kept from the
         // start, so that the first attempt stops before it too.
         if ladder.reserve_wanted
@@ -693,7 +755,11 @@ impl<'a> Ladder<'a> {
         crate::mem_profile::phase("probes");
         self.probes(runner)?;
         crate::mem_profile::phase("rungs");
-        self.rungs(runner)?;
+        if self.leader_first {
+            self.leader_ladder(runner)?;
+        } else {
+            self.rungs(runner)?;
+        }
         // Probes whose leader finished the board leave their maps unused.
         self.carried.clear();
         self.clear_rung_directories()?;
@@ -1535,6 +1601,7 @@ impl<'a> Ladder<'a> {
                     probed.pour,
                     lattice
                 );
+                self.probe_counts[mode] = Some(unfinished);
                 if leader.as_ref().is_none_or(|(best, ..)| unfinished < *best) {
                     runner.speak(&mut router, attempt);
                     leader = Some((unfinished, mode, router, board.clone(), attempt.clone()));
@@ -1746,6 +1813,7 @@ impl<'a> Ladder<'a> {
         self.probe_complete = opens.0 == 0;
         self.best = Some((opens, result));
         self.best_attempt = Some((attempt.clone(), connect));
+        self.best_mode = Some(mode);
         self.probed_mode = Some(mode);
         Ok(())
     }
@@ -1761,7 +1829,154 @@ impl<'a> Ladder<'a> {
             if self.pitch_skipped(pitch) {
                 break;
             }
-            if self.pitch(runner, pitch)? == Flow::Stop {
+            // A probed rung continued with what it had is not run again; the
+            // other rungs still get their turn when it left connections open.
+            let candidates: Vec<usize> = (0..self.modes.len())
+                .filter(|mode| !(pitch.is_none() && self.probed_mode == Some(*mode)))
+                .collect();
+            let sharing = self.modes.len();
+            if self.pitch(runner, pitch, &candidates, sharing, 0, true)? == Flow::Stop {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// Route mode on two rungs or more (`leader_first`): the leader's
+    /// variants before the rungs of other pour modes. The leader is the
+    /// probed rung the ladder continued, or on a board without probes the
+    /// best rung of the regular pitch (whose rungs run as before, without
+    /// the last rung's seed retry). While the board stays open: (A) a seed
+    /// round of the leader, (B) the leader's rung on each finer pitch,
+    /// (C) on a probed board the other rungs on the regular pitch whose
+    /// probe left at most `LEADER_GATE_FACTOR` times the leader's
+    /// unfinished nets (`leader_gate_admits`; on a board without probes
+    /// the measure is the rung's regular attempt), (D) those rungs on the
+    /// finer pitches the leader ran. A rung the gate keeps out does not run
+    /// (`skipped` says why). The ladder's bound is the same: (A) to (C)
+    /// share what is left for rungs and seeds evenly as they start, a seed
+    /// round counting as one attempt (its seeds share its part), (D) has
+    /// what they leave; the best rung's seed rounds and the steps follow
+    /// as before. Until 2026-11-07 every pour mode ran on the regular
+    /// pitch first, then on each finer pitch, and the seed rounds last
+    /// (docs/router-ceiling.md, "Design 1").
+    pub(crate) fn leader_ladder<R: LadderRunner>(&mut self, runner: &R) -> Result<(), String> {
+        if self.probe_complete {
+            return Ok(());
+        }
+        let pitches = self.pitches.clone();
+        let Some((regular, finer)) = pitches.split_first() else {
+            return Ok(());
+        };
+        let all: Vec<usize> = (0..self.modes.len()).collect();
+        let probed = self.probed_mode.is_some();
+        if probed {
+            // The probes' maps of the other rungs: those that run start a
+            // phase of their own after the leader's variants.
+            self.carried.clear();
+        } else if self.pitch(runner, regular, &all, all.len(), 0, false)? == Flow::Stop {
+            return Ok(());
+        }
+        if !self.open_best() {
+            return Ok(());
+        }
+        let Some(leader) = self.probed_mode.or(self.best_mode) else {
+            return Ok(());
+        };
+        let measures = if probed {
+            self.probe_counts.clone()
+        } else {
+            self.regular_opens.clone()
+        };
+        let leader_count = measures[leader];
+        let what = if probed {
+            "its probe left"
+        } else {
+            "its regular attempt left"
+        };
+        let mut admitted = Vec::new();
+        let mut gated = Vec::new();
+        for &mode in all.iter().filter(|mode| **mode != leader) {
+            if leader_gate_admits(measures[mode], leader_count) {
+                admitted.push(mode);
+            } else {
+                gated.push(format!(
+                    "{} ({})",
+                    self.rung_name(mode),
+                    measures[mode].unwrap_or(0)
+                ));
+                self.skipped.push(format!(
+                    "the rung {} did not run{}: {what} {} unfinished, more than {LEADER_GATE_FACTOR} times the leader's {} ({}; leader_first)",
+                    self.rung_name(mode),
+                    if probed { "" } else { " on the finer pitches" },
+                    measures[mode].unwrap_or(0),
+                    leader_count.unwrap_or(0),
+                    self.rung_name(leader)
+                ));
+            }
+        }
+        // The finer pitches the leader's rung is expected to run on (as
+        // `pitch_skipped` judges them now).
+        let finer_planned = finer
+            .iter()
+            .take_while(|pitch| self.pitch_skip_reason(pitch).is_none())
+            .count();
+        let regular_planned = if probed { admitted.len() } else { 0 };
+        let mut slots = 1 + finer_planned + regular_planned;
+        eprintln!(
+            "ladder: the leader first: {} ({what} {}): a seed round, {} finer pitch(es), then {} other rung(s){}{}",
+            self.rung_name(leader),
+            leader_count.map_or("unmeasured".to_string(), |count| count.to_string()),
+            finer_planned,
+            admitted.len(),
+            if probed { "" } else { " on the finer pitches" },
+            if gated.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "; kept out (more than {LEADER_GATE_FACTOR} times the leader's): {}",
+                    gated.join(", ")
+                )
+            }
+        );
+        // (A) The leader's seed round.
+        crate::mem_profile::phase("seeds");
+        self.seed_round(runner, slots)?;
+        slots -= 1;
+        // (B) The leader on the finer pitches.
+        crate::mem_profile::phase("rungs");
+        let mut finer_run = 0;
+        for pitch in finer {
+            if !self.open_best() {
+                return Ok(());
+            }
+            if self.pitch_skipped(pitch) {
+                break;
+            }
+            slots = slots.saturating_sub(1);
+            finer_run += 1;
+            if self.pitch(runner, pitch, &[leader], 1 + slots, slots, false)? == Flow::Stop {
+                return Ok(());
+            }
+        }
+        if admitted.is_empty() {
+            return Ok(());
+        }
+        // (C) The rungs the gate admits, on the regular pitch.
+        if probed {
+            if !self.open_best() {
+                return Ok(());
+            }
+            if self.pitch(runner, regular, &admitted, admitted.len(), 0, false)? == Flow::Stop {
+                return Ok(());
+            }
+        }
+        // (D) Those rungs on the finer pitches the leader ran on.
+        for pitch in &finer[..finer_run] {
+            if !self.open_best() || self.pitch_skipped(pitch) {
+                break;
+            }
+            if self.pitch(runner, pitch, &admitted, admitted.len(), 0, false)? == Flow::Stop {
                 break;
             }
         }
@@ -1777,20 +1992,33 @@ impl<'a> Ladder<'a> {
     /// 2026-10-21 the machine's check used the process's peak resident
     /// size, which follows how many probes ran side by side).
     pub(crate) fn pitch_skipped(&mut self, pitch: &Option<Vec<f64>>) -> bool {
+        match self.pitch_skip_reason(pitch) {
+            Some((line, note)) => {
+                eprintln!("{line}");
+                self.skipped.push(note);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Why a finer `pitch` would not be tried now (`pitch_skipped`): the
+    /// log's line and the note for `skipped`; None when it would.
+    fn pitch_skip_reason(&self, pitch: &Option<Vec<f64>>) -> Option<(String, String)> {
         let budget = self.budget;
         if let (Some(pitch), Some((seconds, previous))) = (pitch, self.slowest) {
             let projected = seconds * (previous / pitch[0]).powi(2);
             if projected > budget {
-                eprintln!(
+                let line = format!(
                     "skipping pitch {:?}: projected {projected:.0} s exceeds the {budget:.0} s refinement budget",
                     pitch
                 );
-                self.skipped.push(format!(
+                let note = format!(
                     "the finer lattice ({} mm) was not tried: projected {projected:.0} s of routing exceeds refine_budget_seconds ({budget:.0} s); \"refine_budget_seconds\": {:.0} or more in the router config tries it",
                     pitch[0],
                     projected.ceil()
-                ));
-                return true;
+                );
+                return Some((line, note));
             }
         }
         // Route mode: a finer lattice whose attempt would take more than is
@@ -1800,15 +2028,15 @@ impl<'a> Ladder<'a> {
         {
             let projected = seconds * (previous / pitch[0]).powi(2);
             if projected > left {
-                eprintln!(
+                let line = format!(
                     "skipping pitch {:?}: projected {projected:.0} s exceeds the {left:.0} s left of the ladder's bound",
                     pitch
                 );
-                self.skipped.push(format!(
+                let note = format!(
                     "the finer lattice ({} mm) was not tried: projected {projected:.0} s of routing exceeds the {left:.0} s left of the ladder's work bound; a larger ladder_budget_seconds in the router config tries it",
                     pitch[0]
-                ));
-                return true;
+                );
+                return Some((line, note));
             }
         }
         // A limit of the process's own (its address space, its cgroup, an
@@ -1816,21 +2044,21 @@ impl<'a> Ladder<'a> {
         if let (Some(pitch), Some((maps, previous))) = (pitch, self.router_maps) {
             let projected = maps * (previous / pitch[0]).powi(2);
             if let Some(limit) = self.memory_at_start.too_small_for(projected, 1) {
-                eprintln!(
+                let line = format!(
                     "skipping pitch {:?}: a router of about {:.0} MB ({projected:.0} MB of maps) does not fit {} of {:.0} MB",
                     pitch,
                     limit.router_mb(projected),
                     limit.source,
                     limit.limit_mb
                 );
-                self.skipped.push(format!(
+                let note = format!(
                     "the finer lattice ({} mm) was not tried: a router of about {:.0} MB does not fit {} of {:.0} MB",
                     pitch[0],
                     limit.router_mb(projected),
                     limit.source,
                     limit.limit_mb
-                ));
-                return true;
+                );
+                return Some((line, note));
             }
             // Against the machine's memory, not what is available now: the
             // attempts may not depend on what else runs (jiran-ble-lite:
@@ -1841,20 +2069,20 @@ impl<'a> Ladder<'a> {
                 .memory_total_mb
                 .is_some_and(|total| router > total * 0.4)
             {
-                eprintln!(
+                let line = format!(
                     "skipping pitch {:?}: a router of about {:.1} GB does not fit the machine's memory",
                     pitch,
                     router / 1024.0
                 );
-                self.skipped.push(format!(
+                let note = format!(
                     "the finer lattice ({} mm) was not tried: a router of about {:.1} GB does not fit the machine's memory",
                     pitch[0],
                     router / 1024.0
-                ));
-                return true;
+                );
+                return Some((line, note));
             }
         }
-        false
+        None
     }
 
     /// The configuration of rung `mode` on `pitch` with the pitch's plan.
@@ -1912,11 +2140,19 @@ impl<'a> Ladder<'a> {
         self.output_directory.with_extension(format!("rung{mode}"))
     }
 
-    /// The rungs of one pitch.
+    /// The rungs `candidates` of one pitch. Their negotiation is a third
+    /// of an even share of what is left over `sharing` attempts; their
+    /// work deadline (route mode) an even share over the candidates still
+    /// to run and `after` attempts planned after them. The last rung has
+    /// its seed retry where `seed_retry` allows.
     fn pitch<R: LadderRunner>(
         &mut self,
         runner: &R,
         pitch: &Option<Vec<f64>>,
+        candidates: &[usize],
+        sharing: usize,
+        after: usize,
+        seed_retry: bool,
     ) -> Result<Flow, String> {
         let config = self.config;
         let output_directory = self.output_directory;
@@ -1933,12 +2169,13 @@ impl<'a> Ladder<'a> {
         // the first run side by side, as many as fit the memory; they are
         // judged in rung order as one after another, a rung the order
         // would not have reached counting for nothing.
+        let sharing = sharing.max(1) as f64;
         let negotiation = config.negotiation_seconds.is_none().then(|| {
             if let Some(left) = self.rung_left() {
-                self.router_work(bounded_negotiation(left / modes.len() as f64 / 3.0, left))
+                self.router_work(bounded_negotiation(left / sharing / 3.0, left))
             } else {
                 let remaining = (ladder_budget - self.spent(self.work)).max(0.0);
-                (remaining / modes.len() as f64 / 3.0).clamp(60.0, 900.0)
+                (remaining / sharing / 3.0).clamp(60.0, 900.0)
             }
         });
         // Route mode: each rung's work deadline (`rung_share`): the
@@ -1965,11 +2202,6 @@ impl<'a> Ladder<'a> {
             held.clear();
             self.new_phase();
         }
-        // A probed rung continued with what it had is not run again; the
-        // other rungs still get their turn when it left connections open.
-        let candidates: Vec<usize> = (0..modes.len())
-            .filter(|mode| !(pitch.is_none() && self.probed_mode == Some(*mode)))
-            .collect();
         // Each rung's outcome: its result, or the panic's message.
         let mut ran: Vec<Option<Result<Result<KiCadBoardRouterResult, String>, String>>> =
             (0..modes.len()).map(|_| None).collect();
@@ -2039,7 +2271,7 @@ impl<'a> Ladder<'a> {
                     plan.share_fixed = true;
                     plan.counts_all = false;
                     plan.route_deadline = self.rung_left().map(|left| {
-                        self.router_work(rung_share(left, candidates.len() - position))
+                        self.router_work(rung_share(left, candidates.len() - position + after))
                     });
                 }
             }
@@ -2118,7 +2350,8 @@ impl<'a> Ladder<'a> {
                 );
             }
             let mut seeds_tried = false;
-            if opens.0 > 0
+            if seed_retry
+                && opens.0 > 0
                 && retry > 0
                 && attempt.seeds.unwrap_or(1) <= 1
                 && attempt.first_seed.unwrap_or(0) == 0
@@ -2173,6 +2406,9 @@ impl<'a> Ladder<'a> {
                 &result,
                 attempt_seconds,
             ));
+            if pitch.is_none() {
+                self.regular_opens[mode] = Some(opens.0);
+            }
             self.last_attempt_work = attempt_seconds;
             self.last_attempt_pitch = result.grid_pitch_mm;
             self.keep_reserves(
@@ -2201,6 +2437,7 @@ impl<'a> Ladder<'a> {
                 self.best = Some((opens, result));
                 self.selected = Some(noted);
                 self.best_attempt = Some((attempt.clone(), connect));
+                self.best_mode = Some(mode);
                 self.best_seeded = seeds_tried || attempt.seeds.unwrap_or(1) > 1;
             } else if directory.exists() {
                 fs::remove_dir_all(&directory).map_err(|error| error.to_string())?;
@@ -2494,16 +2731,27 @@ impl<'a> Ladder<'a> {
     /// over half the refine budget used to get none: eurorack-pmod ended
     /// 4 open with 700 s of its budget left; three seeds took it to 2).
     pub(crate) fn seed_rounds<R: LadderRunner>(&mut self, runner: &R) -> Result<(), String> {
+        while self.seed_rounds_run < SEED_ROUNDS {
+            if self.seed_round(runner, 1)? == Flow::Stop {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// One seed round of the best rung, sharing what is left for rungs and
+    /// seeds with `slots - 1` attempts planned after it (route mode;
+    /// `leader_ladder`); Stop when it did not start.
+    fn seed_round<R: LadderRunner>(&mut self, runner: &R, slots: usize) -> Result<Flow, String> {
         let config = self.config;
         let output_directory = self.output_directory;
         let scratch = self.scratch.clone();
-        let mut next_seed = 1u64;
-        for _round in 0..3 {
+        {
             let Some((opens, best_result)) = self.best.as_ref() else {
-                break;
+                return Ok(Flow::Stop);
             };
             let Some((attempt, connect)) = self.best_attempt.as_ref() else {
-                break;
+                return Ok(Flow::Stop);
             };
             let opens = *opens;
             let connect = *connect;
@@ -2522,8 +2770,11 @@ impl<'a> Ladder<'a> {
                         .max(0.0) as usize,
                 );
             }
-            if let Some(left) = self.rung_left() {
-                affordable = affordable.min((left / cost).floor().max(0.0) as usize);
+            // Route mode: the round's share of what is left for rungs and
+            // seeds (all of it with nothing planned after it).
+            let share = self.rung_left().map(|left| rung_share(left, slots.max(1)));
+            if let Some(share) = share {
+                affordable = affordable.min((share / cost).floor().max(0.0) as usize);
             }
             let retry = config.retry_seeds.unwrap_or(4).min(affordable);
             if opens.0 == 0
@@ -2533,8 +2784,10 @@ impl<'a> Ladder<'a> {
                 || self.no_time_for_another()
                 || !self.bound_allows()
             {
-                break;
+                return Ok(Flow::Stop);
             }
+            self.seed_rounds_run += 1;
+            let first = self.next_seed;
             // As many at once as fit the memory (`MemoryLimits`); how many
             // seeds route does not depend on it.
             let side_by_side = self.router_maps.map_or(1, |(maps, previous)| {
@@ -2548,7 +2801,7 @@ impl<'a> Ladder<'a> {
             let mut seeded = attempt;
             seeded.seeds = Some(retry);
             seeded.seeds_side_by_side = Some(side_by_side);
-            seeded.first_seed = Some(next_seed);
+            seeded.first_seed = Some(first);
             // In a layout's ladder each seed stops at its share of the
             // work left beyond the reserve, also when nothing is kept:
             // without a deadline a seed round of the narrow-signal attempt
@@ -2562,10 +2815,10 @@ impl<'a> Ladder<'a> {
                     self.reserve,
                     retry,
                 ));
-            } else if let Some(left) = self.rung_left() {
-                seeded.router_deadline_work = Some(self.router_work(rung_share(left, retry)));
+            } else if let Some(share) = share {
+                seeded.router_deadline_work = Some(self.router_work(rung_share(share, retry)));
             }
-            next_seed += retry as u64;
+            self.next_seed += retry as u64;
             // A round is a phase: its seeds hold their maps (`route_seeds`)
             // and charge their shared parts once.
             self.new_phase();
@@ -2573,10 +2826,7 @@ impl<'a> Ladder<'a> {
                 fs::remove_dir_all(&scratch).map_err(|error| error.to_string())?;
             }
             let quality = self.quality();
-            let name = format!(
-                "the best rung's seed round from seed {} ({retry} seeds)",
-                next_seed - retry as u64
-            );
+            let name = format!("the best rung's seed round from seed {first} ({retry} seeds)");
             let panics = self.panic_due("seeds");
             let unchecked = self.unchecked(&seeded);
             let other = isolate(|| {
@@ -2589,7 +2839,7 @@ impl<'a> Ladder<'a> {
                 if scratch.exists() {
                     fs::remove_dir_all(&scratch).map_err(|error| error.to_string())?;
                 }
-                continue;
+                return Ok(Flow::Next);
             };
             let mut other = other?;
             other.pours = best_pours;
@@ -2600,7 +2850,7 @@ impl<'a> Ladder<'a> {
                 if scratch.exists() {
                     fs::remove_dir_all(&scratch).map_err(|error| error.to_string())?;
                 }
-                continue;
+                return Ok(Flow::Next);
             };
             let other_opens = other_judged.unwrap_or((router_open(&other), 0));
             let work = self.result_work(&other) * retry as f64;
@@ -2636,7 +2886,7 @@ impl<'a> Ladder<'a> {
                 fs::remove_dir_all(&scratch).map_err(|error| error.to_string())?;
             }
         }
-        Ok(())
+        Ok(Flow::Next)
     }
 
     /// The step's work left for its routing (a layout's ladder: its check

@@ -428,6 +428,14 @@ pub struct KiCadBoardRouterConfig {
     /// Seconds of negotiation per probe (default 75).
     #[serde(default)]
     pub probe_seconds: Option<f64>,
+    /// Route mode, on a board of two rungs or more: the leading rung's
+    /// variants first (its seed round, its finer pitches), then the rungs
+    /// of other pour modes whose probe (or regular attempt) left at most
+    /// twice the leader's unfinished nets (docs/router.md, "The leader
+    /// first"; default on). `PCB_LADDER_LEADER_FIRST` (0 or 1) overrides
+    /// it.
+    #[serde(default)]
+    pub leader_first: Option<bool>,
     /// Fixed escape stubs for fine-pitch pad rows, this long in mm (router
     /// `escape_stub_mm`; off by default).
     #[serde(default)]
