@@ -33,14 +33,24 @@ level (2026-11-06)".
   +34 %), video -43 %. DSP-ADAU1452 loses the race's gain (median 0 ->
   7 open, all five seeds) and its strict pass on seed 1. Strict passes:
   off 5, the race 6, the fix 5. Today's router reproduces stage 2's on
-  rows on 19 of 21. The decision is left to the supervisor.
+  rows on 19 of 21.
+- **A variant** (branch skeleton-race-5-skip): the passives start as
+  before, and their skip to the tight levels goes to level 2
+  (`Config::skip_level`). It places DSP-ADAU1452, SNSP-CPU-01,
+  split72_left, MokyaLora and the USB_Cable_Tester as x1927 does, so it
+  keeps DSP's strict pass, and its composite stays BETTER (-12.3 %, p
+  0.002; video -37 %). jetson recovers (2, 3, 6 at three seeds) and
+  zpn passes. vaio_re reaches only 7, 10, 7 (plain 1, 1, 4; the fix
+  3, 3, 3) and MokyaLora stays at 1. protoesp's skip is the skeleton's,
+  from level 0 to 5, and is untouched. The choice between x1927, the
+  fix and the variant is left to the supervisor.
 - **An outline in pieces**: `keep_on_pieces`' regions are the tool's
   (`Constraints::automatic_regions`). They no longer keep passives in
   the skeleton or stop bodies from growing (zpn_devboard: 0 -> 105 of
   107 passives absent). A race with no free passive now says "ran
   without a skeleton" instead of "skeleton of 0 parts".
 - The short tier is byte-identical. With `"skeleton_race": null` the
-  place checks are byte-identical to main. About 40 CPU hours.
+  place checks are byte-identical to main. About 49 CPU hours.
 
 ## Committed on 2026-11-06 (a regression found by the pair work: the narrow step's classes)
 

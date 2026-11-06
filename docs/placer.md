@@ -8302,29 +8302,83 @@ places plain, and the fix does not touch that path.
 **Identity.** With `"skeleton_race": null`, skel5-a writes x1927's boards
 byte for byte on DSP-ADAU1452 and split72_left (place checks at 600 s).
 
-**Decision: left to the supervisor.** The rule for this package was:
-the fix goes in if (b) recovers vaio_re and jetson, (c) is not worse
-and (d) holds; if it recovers the losers but costs the gainers beyond
-noise, report both. That is the case here:
-- (b) recovers both boards into their spreads, and MokyaLora's and
-  zpn_devboard's strict passes come back.
-- (c) is not worse.
-- (d) holds against the race off: BETTER at p 0.001, no dense strict
-  pass lost against off.
-- But DSP-ADAU1452, a gainer, loses beyond its noise (all five seeds,
-  median 0 to 7) together with the race's one extra strict pass.
+**The variant: the skip goes to level 2** (branch
+skeleton-race-5-skip, commit b5d9b248, binary `pcb-maker-skel5-v`,
+`build/skel5/{place,bv,s1-v,s2-v}`). The passives start at the
+skeleton's level as before. When `skip_to_tight` fires before level 2,
+it goes to level 2 (`Config::skip_level`, `PASSIVES_SKIP_LEVEL`)
+instead of the tight level, and the walk goes on from there; the skip
+may fire again later. The test is
+`the_passives_skip_to_the_first_level_without_small_halos`: twelve
+passives between fixed walls, at the work of the unlimited walk, land
+on the fine grid (level 5) by default and on level 2 with the skip
+level.
 
-A candidate that would keep both, not built: try the passives at the
-skeleton's level and, where too many find no room, go to level 2
-instead of the tight level. vaio_re and jetson would get their level-2
-seat, and DSP-ADAU1452 (level 0 on every seed) its old one. SNSP-CPU-01
-and video gain from level 2 even where level 0 fits, though, so that
-variant would give part of their gains back.
+protoesp's skip is the skeleton's own (from level 0 straight to 5, the
+fine grid without spacing; it has no tight bodies), not the passives',
+so the variant does not touch it.
+
+Place checks at 600 s:
+- Unchanged, byte for byte: DSP-ADAU1452, SNSP-CPU-01, video,
+  MokyaLora, the USB_Cable_Tester, protoesp and the 4in1. Their
+  passives seat at level 0 or 1 without a skip.
+- vaio_re: the passives skip from level 0 to 2. Level 0 leaves 26 to
+  36 without room and costs 180 to 193 s, so the kept seed takes 256 s
+  and the pool holds 3 seeds (with the fix: 121 s and 6 seeds).
+- jetson: skips from 0 to 2 as well (86 to 96 without room, 302 to
+  329 s); kept seed 379 s, 3 seeds.
+- zpn_devboard: the region fix (skeleton level 1).
+
+Layouts, KiCad unconnected:
+
+| board | seeds | race off | x1927 | the fix | the variant |
+| --- | --- | --- | --- | --- | --- |
+| vaio_re | 1, 101, 201 | 1, 1, 4 | 34 (seed 1) | 3, 3, 3 | 7, 10, 7 (2 mask bridges each) |
+| jetson-nano-baseboard | 1, 101, 201 | 0, 9, 1 | 17 (seed 1) | 1, 7, 2 | 2, 3, 6 |
+| MokyaLora | 1 | 0, pass | 1 | 0, pass | 1 (x1927's placement) |
+| zpn_devboard | 1 | 0, pass | 0 (mask bridge 1) | 0, pass | 0, pass |
+
+Stage 1 on the fix's four boards (variant against x1927):
+DSP-ADAU1452, SNSP-CPU-01 and split72_left place exactly as x1927 on
+every seed. Video changes on seeds 101 to 401: first route 150 to 131
+by median, -6.2 %.
+
+Stage 2's composite with the variant's five video rows (x1927's rows
+everywhere else): BETTER, -12.3 %, p 0.002. Video's full rows are 106,
+129, 74, 39 and 112, against x1927's 106, 131, 112, 57 and 99.
+Strict passes equal x1927's: 6, DSP-ADAU1452's seed 1 kept.
+
+**Against the supervisor's bar** the variant:
+- keeps DSP-ADAU1452's rows and every dense strict pass;
+- stays BETTER (-12.3 %, p 0.002);
+- recovers jetson (inside the plain spread) and zpn_devboard;
+- brings vaio_re from 34 to 7 to 10, still outside the plain spread
+  (1 to 4) and worse than the fix (3);
+- leaves MokyaLora at x1927's one open.
+
+On vaio_re the cost is the level-0 attempt itself: a third of the
+seed's work, and half the race's seeds. It does not meet the bar.
+
+**Decision: the supervisor's**, between three placements:
+
+| | x1927 (the race as it is) | the fix (level-2 start) | the variant (skip to 2) |
+| --- | --- | --- | --- |
+| vaio_re, jetson at seed 1 | 34, 17 | 3, 1 | 7, 2 |
+| MokyaLora, zpn_devboard | 1, mask bridge | pass, pass | 1, pass |
+| SNSP-CPU-01 (stage 2 median) | 75 | 49 | 75 |
+| DSP-ADAU1452 (stage 2 median, strict) | 0, 1 pass | 7, none | 0, 1 pass |
+| stage 2 composite against off | -12.1 %, p 0.002 | -12.7 %, p 0.001 | -12.3 %, p 0.002 |
+
+The region fix holds in the fix's and the variant's code alike. This
+branch (skeleton-race-5) carries the fix. The variant is on
+skeleton-race-5-skip, a commit on top of the fix's code that replaces
+the level-2 start.
 
 CPU: stage 1 14.9 CPU hours (110 rows, 34 of x1927's reused), stage 2
 15.6 (42 layouts), the six boards and their spreads 7.6 (22 layouts), the
-short tier 1.2, the place checks about 1; in all about 40 CPU hours, at
-most six layouts at once, beside another agent's pair layouts.
+short tier 1.2, the place checks about 1; the variant 8.8 (20 stage-1
+rows, 13 layouts, 12 place checks); in all about 49 CPU hours, at most
+six layouts at once, beside another agent's pair layouts.
 
 ## Footprints without a courtyard, and their slots (2026-11-04)
 

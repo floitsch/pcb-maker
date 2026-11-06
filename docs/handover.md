@@ -462,8 +462,14 @@ then the rest.
      DSP-ADAU1452 loses the race's gain (0 to 7 open, all five seeds,
      and its one strict pass). Also fixed: an outline in pieces no
      longer turns the race off (zpn_devboard: its lowering's piece
-     regions counted as user constraints). Whether it goes in is the
-     supervisor's call.
+     regions counted as user constraints). A variant (branch
+     skeleton-race-5-skip) keeps the passives' start and only sends their
+     skip to level 2 instead of the tight level. It keeps DSP-ADAU1452
+     and its strict pass and stays BETTER (-12.3 %, p 0.002), and jetson
+     recovers. But vaio_re only reaches 7 to 10 (plain 1 to 4: the
+     level-0 attempt eats a third of the seed's work and half the race's
+     seeds), and MokyaLora stays at 1. Which of x1927, the fix and the
+     variant goes in is the supervisor's call.
      Measured and not taken: `join_pins` 0 (fixes
      SNSP-CPU-01 and split72_left, loses the 4in1-mini: +3.0 % against
      the race).
