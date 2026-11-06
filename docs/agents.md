@@ -694,8 +694,9 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     by its stubs"). A pair's AC-coupling or series capacitor the placer
     put apart from its partner leaves the pair uncoupled ("fewer than two
     parts ... side by side"; a run from the one part to a split end near
-    such parts was built and measured, and left out: docs/router.md, "A
-    pair point across a pin"): a `row`
+    such parts was built and measured, and left out, again with a gate on
+    2026-11-06: docs/router.md, "A pair point across a pin" and "Split
+    ends with a gate"): a `row`
     of the two (`{"parts": ["C150", "C151"], "pitch_mm":
     1.0, "axis": "y"}`, a pitch no shorter than the parts along the axis)
     keeps them side by side. The placer's `pair_rows` (layout.json

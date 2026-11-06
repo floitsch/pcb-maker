@@ -11,6 +11,42 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-06 (split ends with a gate: built, measured, left out)
+
+Branch split-ends (`build/bin/pcb-maker-pairs8-g1` to `-g3`, outputs in
+build/pairs8/, the code in build/pairs8/split-ends-g3.patch). docs/router.md,
+"Split ends with a gate (2026-11-06)", has the diagnosis, the gates and
+the numbers.
+
+- **Diagnosis** of left_io's designer placement with pairs7's split ends:
+  its two split links (USBC1_DP and PD1_HOST_SWITCHED_DP at the USB switch
+  U2003) are crossed with no crossover, never coupled, and cost the kept
+  attempt a third of its work (507 -> 347 s and alike at 1450 and
+  1550 s); of the four pairs lost, three flip between x1915's own runs,
+  USBC1_SSRX shares USBC1_DP's way from FPC101. Over 60 split links on
+  pairs7's placements, tails (at least half the pads' span) and the
+  blocked share round the split end do not tell the outcomes apart;
+  crossing tails (1 of 5 coupled) and 15 or more other pads within 3 mm
+  (1 of 13) do.
+- **Built**: the split end with the gate (no crossing tails, at most 14
+  other pads within 3 mm, the rules' `diff_pair_uncoupled`), the split
+  links planned after the full links (the full links' plan as without
+  them), split links given up in the negotiation whatever
+  `diff_pair_give_up` (by the rule, or at once: `GiveUp::eager`), per pair
+  `split_end` (pads, tails). Left_io's designer placement routes x1927's
+  board at 1450, 1500 and 1550 s; ducktop2's layouts gain 1 to 6 coupled
+  pairs, the expansion tier's 25 pair boards 16 -> 18 (586 -> 587
+  unconnected, 9 passes).
+- **Out**: jetson's seed-1 layout loses coupled pairs in every variant
+  (x1927 13 / 17 / 13 at three layout budgets; with the crowd gate 10 / 10
+  / 12, its three split links never coupling; giving them up at once 11 /
+  15 / 12, which in turn costs right_io's seed 7 4 -> 2), and right_io's
+  designer placement adds 5 to 10 unconnected. Identity held (video,
+  MegaDrive, EMG_DAQ's fingerprints byte for byte x1927's).
+- Seen on the way: x1927 routes these placements worse than x1915 did
+  (left_io's designer placement 3 to 4 coupled and 101 to 111 unconnected
+  against 5 to 7 and 78 to 90; jetson's seed-1 layout 52 unconnected
+  against 23), not looked into.
 ## Measured on 2026-11-06 (the first night of the skeleton race and the Default-only narrowing: the losses attributed)
 
 Branch first-night; docs only. docs/placer.md, "The first night

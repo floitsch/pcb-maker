@@ -4683,12 +4683,172 @@ reach diagnostic's `grid` verdict.
 apart (73 of the 140 diagnosed, more than 5 mm apart; with split ends 40
 more pairs would get a run): the placer's (`pair_rows`, off), or split ends
 with a gate that keeps them off a board as dense as left_io's (where its
-two split links never coupled and displaced four coupled pairs): an open
-item with the numbers above. Straight-end stubs the negotiation leaves
-open stay as pairs6 left them: their way in is mostly other nets' routes,
+two split links never coupled and displaced four coupled pairs): tried on
+2026-11-06 and left out again, "Split ends with a gate" below.
+Straight-end stubs the negotiation leaves open stay as pairs6 left them: their way in is mostly other nets' routes,
 the partner's and the room after the attempt, and the plan's part (the
 lead in front, a part's pins round the pad) has no closer launch; a stub
 reserved in the negotiation is the open item.
+
+**Split ends with a gate (2026-11-06, branch split-ends; built, measured,
+left out).** The split end of "A pair point across a pin" built again with
+a gate, planned after the full links and given up in the negotiation
+before them; the code is gone again (build/pairs8/split-ends-g3.patch
+holds it whole, the outputs are in build/pairs8/).
+
+*The diagnosis* (pairs7's outputs, build/pairs7/; the plan of every split
+link again with `pcb-maker-pairs8-diag`, pairs7's code with a
+`pairs why: split` line: tails, crossing, densities; build/pairs8/diag/,
+joined.py). *Which links are split on left_io's designer placement*: two,
+both at the USB switch U2003 on B.Cu (D+ and D- across its body, 4.33 mm
+apart): USBC1_DP from the FPC connector FPC101 (a 38 mm run) and
+PD1_HOST_SWITCHED_DP from U2001 (8 mm). Both are *crossed with no
+crossover* (the run's positive side is the negative pad's; a split end's
+stubs are the router's, so no crossover fits and the tails would cross
+under or round the part), so their split ends were launched again further
+out (tails 2.82 / 2.50 and 2.58 / 2.52 mm, where the same switch's ends
+elsewhere have 2.16). Neither coupled in pairs7's three runs (1450, 1500,
+1550 s): USBC1_DP's own copper met its partner's (0.000 mm), PD1's run
+found no room in the hard repair. *What the four pairs lost*: the split
+links cost the attempts' *work* more than their room. In all three runs
+the first attempt (pours as tracks) negotiated 90 to 280 s longer (748 ->
+1027, 712 -> 813, 723 -> 817 s) and the attempt the ladder keeps (signals
+at 0.091 mm) had 507 -> 347, 452 -> 335, 569 -> 350 s of work, leaving
+191 to 211 open where x1915's left 180 to 208. The pairs lost (J22_TX2, J23_TX2 "no room in
+the hard repair", HUB_DIS6 a stub, USBC1_SSRX copper) are ones that flip
+between x1915's three runs too (J22_TX2 1, 1, 0; J23_TX2 0, 1, 0;
+HUB_DIS6 1, 2, 2 links), except USBC1_SSRX (coupled in all three of
+x1915's, in 1 of 3 with split ends): it runs from FPC101 to C2009/C2010,
+which sit over U2003, along USBC1_DP's run. *The candidate gates*, per placement split links coupled of
+planned (pairs7's outcomes with every split link present; tails: the
+longer pad-to-run-start distance; "crowd": pads of other nets within 3 mm
+of the split pads' middle; no project sets `diff_pair_uncoupled`, so a
+gate on it keeps them all):
+
+| placement | all | tails <= 1 | <= 2 | <= 2.5 | <= 3 | blocked share in 3 mm <= 0.3 | crowd <= 14 | no crossing tails | both of the last |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| left_io, the designer's | 0/2 | 0/0 | 0/0 | 0/0 | 0/2 | 0/0 | 0/0 | 0/0 | 0/0 |
+| right_io, the designer's | 2/3 | 0/0 | 0/0 | 2/2 | 2/3 | 0/0 | 2/2 | 2/3 | 2/2 |
+| left_io, seed 1 | 6/7 | 0/0 | 3/3 | 6/7 | 6/7 | 5/5 | 6/7 | 6/7 | 6/7 |
+| left_io, seed 101 | 4/7 | 0/0 | 1/2 | 4/7 | 4/7 | 3/5 | 4/7 | 4/7 | 4/7 |
+| right_io, seed 1 | 2/3 | 0/0 | 0/1 | 2/3 | 2/3 | 1/1 | 2/3 | 2/3 | 2/3 |
+| right_io, seed 101 | 6/9 | 0/0 | 2/3 | 5/6 | 5/6 | 4/7 | 6/9 | 6/8 | 6/8 |
+| right_io, seed 7 | 4/6 | 0/0 | 2/2 | 4/6 | 4/6 | 4/5 | 4/6 | 4/6 | 4/6 |
+| jetson, seed 1 | 2/10 | 0/0 | 0/6 | 1/8 | 1/8 | 1/7 | 2/6 | 1/8 | 1/5 |
+| jetson, seed 101 | 1/9 | 0/0 | 1/4 | 1/8 | 1/9 | 1/7 | 0/3 | 1/9 | 0/3 |
+| expansion tier (bms, Eurorack, node_v6, MSign) | 3/4 | 0/0 | 1/1 | 3/4 | 3/4 | 2/3 | 3/4 | 3/4 | 3/4 |
+| all | 30/60 | 0/0 | 10/22 | 28/51 | 28/55 | 21/40 | 29/47 | 29/55 | 28/45 |
+
+A tail is at least half the pads' span, so no split end has tails of 1 mm
+or less, and 2 mm drops ducktop2's USB switches (2.16 mm: right_io's gains).
+A tail cap of 2.5 mm keeps left_io's designer placement as before only
+because its two links were launched again past a crossing (every link with
+crossing tails has tails of 2.58 mm or more); the share of the region
+blocked for the pair's track (sampled at 0.1 mm in 2 and 3 mm round the
+split pads, in a 6 mm band along the run, in the run's 1 mm corridor) does
+not tell the outcomes apart (left_io's designer pair 0.36 and 0.45 in
+3 mm, the USB switches' ends elsewhere 0.28 to 0.41, mostly coupled).
+Crossing tails: 1 of 5 coupled (both of left_io's designer placement among
+them; their tails 2.58 to 4.80 mm); a crowd of 15 or more other pads: 1
+of 13 (10 of jetson's AC-coupling capacitors and series resistors by the
+module's connector, left_io's designer pair with 22 each, right_io's GbE
+capacitor among 27).
+
+*Built* (`pcb-maker-pairs8-g1` to `-g3`): the split end as pairs7 built it
+(the nearest P and N pads at most 5 mm apart and 3 mm from the pair
+point, the run ending between them toward the link's other end, the tails
+the router's), and
+
+- *the gate* (`split_refusal`): no split link where its tails would cross
+  (crossed with no crossover; g1 on), where more than 14 other nets' pads
+  lie within 3 mm of the split pads' middle (g2 on), or where its tails
+  and the other end's routed stubs exceed the rules' `diff_pair_uncoupled`
+  (none here); the pair's `why` says which ("a split end's tails would
+  cross (no crossover fits)", "a split end among 19 other pads within
+  3 mm (at most 14)");
+- *the plan's order*: the full links first, the split links after them
+  (their nets, launches and copper after every full link's, the
+  crossovers' neighbour room of the full links' launches alone), so that
+  the full links are planned exactly as without split ends;
+- *the give-up for split links* (`GiveUp::optional` true for a split link
+  whatever `diff_pair_give_up`): a split link without room goes by the
+  give-up's rule (8, 4, 16 rounds counted from the price of 100; g1, g2),
+  or at its first round unsettled once the price counts (g3: `GiveUp::eager`,
+  `GiveUpRule::eager`);
+- *reported*: per pair `split_end` (its pads and planned tails, in
+  board-router.json's pairs and the verdict's skews), `split_ends` and
+  `split_coupled`.
+
+Tests covered the gate, a crossed split end with and without a
+crossover, the plan's order (a split pair before a full one in the pairs'
+order: the full link's plan as without split ends, its net first) and the
+give-up (split links alone optional, eager).
+
+*Measured* (as pairs7: run.py at the pinned rates, `--jobs 1 --threads 4`,
+three runs at a time; x1927 against g1; g2 differs from g1 only on the
+three placements where the crowd gate refuses links, the others planned
+alike; g3 on all where it differs from g2. Pairs found / coupled / partly
+/ fallen back; links coupled of planned; split links coupled of planned;
+KiCad unconnected; `diff_pair_gap_out_of_range`; CPU seconds):
+
+| board, placement | x1927 | g1 | g2 | g3 |
+| --- | --- | --- | --- | --- |
+| jetson, the designer's | 75/26/2/47, 28/82, 10 unc, 0 gap, 1400 s | the same board (no split end), 1861 s | the same | the same |
+| right_io, the designer's | 21/4/4/13, 8/23, 34, 47, 1575 s | 21/5/4/12, 9/26, split 1/3, 44, 43, 1821 s | 21/6/3/12, 10/26, 1/2, 43, 58, 1972 s | 21/5/3/13, 8/26, 1/2, 39, 40, 1720 s |
+| left_io, the designer's (1450 / 1500 / 1550 s) | 3 / 3 / 4 coupled, 111 / 104 / 101 unc | the same boards (both split links refused: crossing tails) | the same | the same |
+| jetson, seed 1 | 75/17/0/58, 19/54, 52, 0, 1181 s | 75/8/2/65, 10/65, 0/7, 79, 0, 1318 s | 75/10/3/62, 13/65, 0/3, 47, 0, 1479 s | 75/15/2/58, 18/65, 0/3, 53, 0, 1586 s |
+| jetson, seed 1, layout budget x0.97 / x1.03 | 13 / 13 coupled, 61 / 56 unc | | 10 / 12, 69 / 61 | 11 / 12, 55 / 52 |
+| jetson, seed 101 | 75/5/1/69, 6/53, 74, 0, 909 s | 75/7/2/66, 9/66, 2/13, 78, 0, 1080 s | 75/10/2/63, 12/66, 1/7, 72, 0, 1146 s | 75/9/2/64, 11/66, 1/7, 72, 0, 1064 s |
+| right_io, seed 1 | 21/4/4/13, 8/15, 13, 71, 1287 s | 21/5/2/14, 8/19, 0/4, 11, 69, 1492 s | as g1 | 21/6/2/13, 10/19, 0/4, 17, 106, 2028 s |
+| right_io, seed 101 | 21/3/2/16, 6/12, 12, 66, 1278 s | 21/6/2/13, 9/16, 3/3, 11, 60, 1407 s | as g1 | 21/6/2/13, 10/16, 2/3, 12, 53, 1968 s |
+| right_io, seed 7 | 21/4/0/17, 6/13, 13, 79, 1399 s | 21/6/2/13, 9/19, 3/5, 20, 57, 1549 s | as g1 | 21/2/1/18, 3/19, 0/5, 11, 81, 1889 s |
+| left_io, seed 1 | 39/8/2/29, 11/29, 29, 126, 1353 s | 39/13/4/22, 18/35, 3/6, 36, 95, 1404 s | as g1 | 39/9/4/26, 14/35, 0/6, 30, 118, 1391 s |
+| left_io, seed 101 | 39/10/4/25, 16/30, 32, 119, 1271 s | 39/16/3/20, 21/39, 4/9, 31, 88, 1330 s | as g1 | 39/16/3/20, 22/39, 1/9, 27, 124, 1442 s |
+
+Every layout kept the same placement as x1927's (the footprints' places
+compared): the plan does not move the placer, so the rows differ by the
+route alone. The expansion tier's 25 pair boards at 30 s (`--jobs 2
+--threads 1`): x1927 16 pairs coupled, 12 partly, 30 links, 586
+unconnected, 9 passes, 681 CPU s; g1 (and g3) 18, 11, 31, 587, 9, 678
+(778) s: the Eurorack module and ducktop2's bms a pair more each
+(their split ends couple), MSign 73 -> 71, node_v6 11 -> 14 (its XTAL
+"pair" split, its stub not reaching). *Identity*: video's and MegaDrive's
+place checks (default settings and `diff_pairs` on) and route mode on
+EMG_DAQ_ADS1292 with its eight fingerprints are x1927's byte for byte
+(build/pairs8/ident/); the designer placements of jetson and left_io
+(every budget) route to x1927's boards byte for byte.
+
+*The decision: out* (the rule: coupled pairs up on every measured board,
+unconnected not beyond seed noise). The gate does what it was built for:
+left_io's designer placement is x1927's board at all three budgets, and
+the layouts of ducktop2 gain (g1: left_io's 8 -> 13 and 10 -> 16, right_io's
+4 -> 5, 3 -> 6, 4 -> 6; the tier 16 -> 18), at -2 to +7 unconnected
+(right_io's seed 7 13 -> 20, left_io's seed 1 29 -> 36). What blocks it is jetson's
+seed-1 layout: its split links never couple (0 of 7, 0 of 3, 0 of 3) and
+they cost the full links theirs, 17 -> 8 coupled with g1, and with the
+crowd gate (three split links left) 13 / 17 / 13 -> 10 / 10 / 12 at three
+layout budgets (x0.97, x1, x1.03), every g2 run below every x1927 run; the
+losses are spread over the board (CSI pairs far from any split end), the
+work and room of three more links in a negotiation already at the price
+cap. Giving split links up at once (g3) brings jetson's seed 1 to 11 / 15 /
+12 with fewer unconnected (55 / 53 / 52 against 61 / 52 / 56), still a
+pair or two under x1927 at each budget, and costs the split links that
+settle late elsewhere: right_io's seed 7 4 -> 2, left_io's seed 1 only 8 ->
+9 (split links 0 of 6 coupled where g1 had 3 of 6). right_io's designer
+placement adds 5 to 10 unconnected in every variant (34 -> 44, 43, 39;
+left_io's designer runs move 101 to 111 across budgets). So no variant
+couples more on every board; the code stays out, the numbers here.
+
+*What is left.* Split ends help where the board has room (ducktop2's
+layouts, the tier) and cost on jetson, where even the links that are
+planned do not couple; a gate would need a measure of the board's
+congestion before the route (jetson's layouts leave 50 to 80 unconnected
+either way), not of the split end's own neighbourhood. The placer's side
+(`pair_rows`, off) keeps the pair's series parts side by side and needs
+no split end. Seen on the way: x1927 routes these placements worse than
+x1915 did (left_io's designer placement 3 to 4 coupled and 101 to 111
+unconnected against 5 to 7 and 78 to 90; jetson's seed-1 layout 52 against
+23), a change between the two builds not looked into here.
 
 **The verdict.** `diff_pairs` in `board-router.json` and the verdict:
 `on`, `default` (`rules`: the project's rules ask; `off`: nothing asks;
