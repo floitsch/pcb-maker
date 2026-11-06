@@ -11,6 +11,33 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Measured on 2026-11-06 (nightly: layout sweep v33, matched designer tier)
+
+Written by the nightly from `build/nightly/2026-11-06/` (main 66115ba;
+[benchmarks.md](benchmarks.md#layout-sweep-v33-2026-11-06)). The guard
+held: every stage ran, no row was cut or killed, the sweep has at least
+100 rows with a result.
+
+- **Layout sweep v33**: **63 of 109 pass the strict rule** (63 per
+  type), 2100 unconnected in all, strict errors 29, 3 without a result.
+  Against the nightly of 2026-11-05: better 16, same 70, worse 20,
+  strict passes 61 -> 63 (gained framework_mobo_lefthalf, Explorer,
+  DSP-ADAU1452, capybully, k30-SBC, ghoul; lost USB_Cable_Tester PCB,
+  zpn_devboard, jetson-nano-baseboard, MokyaLora).
+- **Medians against the designer's**: vias x0.68, length x1.02, open
+  0.000 (mean 0.080), bends x1.04, stair-steps +37.5, crossings +1.
+- **Matched designer tier** (budget scale 0.647): 68 strict passes (71
+  per type); over the 100 target boards placement 74 %, routing 26 % of
+  the open connections.
+- **Placement costs most** on Batch_1 (+120: 123 / 3), SNSP-CPU-01
+  (+113: 157 / 44), video (+105: 106 / 1), OpenESC-30x30 4in1 (+94: 109
+  / 15), glasgow revC3 (+65: 83 / 18).
+- **Worse beyond noise**: vaio_re 1 -> 34, jetson-nano-baseboard 0 ->
+  17, Batch_1 112 -> 123, RP2040_base 39 -> 47, laptop motherboard 21 ->
+  26, WLED_Matrix 9 -> 13, MIDAS-MK1-revA 1 -> 4, OpenAirScope 1 -> 4,
+  poly_corne_split42_right 22 -> 25, reCamera_S101_v1.1 4 -> 6 and 9
+  more.
+
 ## Committed on 2026-11-06 (the bend round: jogs and staircases rerouted out after the via reduction)
 
 Branch bend-round. The census of 2026-11-05 named jogs (x1.53 of the
