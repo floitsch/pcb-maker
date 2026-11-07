@@ -3173,44 +3173,71 @@ unconnected, no pass lost; the short tier (layout mode) and the
 fingerprints at the quarter budget identical; CPU in two pinned pairs
 1511 -> 1397 s (video) and 1431 -> 1388 s (koeg-board).
 
-### The residue in a window (2026-11-07, off)
+### The residue in a window (2026-11-07: built, measured, removed)
 
-`renegotiate_residue` (router/residue.rs; `residue_window`, off by
-default; `PCB_ROUTER_RESIDUE=1`), after the trouble repair in `finish`,
-when at most 12 nets are open (`RESIDUE_MAX_NETS`): per open net its
-open pads (those with a node) and the pads of its tree nearest them,
-their box grown by 2 mm, boxes that overlap merged into windows. Per
-window: every net routed as tracks (not given up, without a pour of its
-own) loses the branches with a node in the box and those left dangling
-at a junction on them (`rip_up_in`), the negotiation's history inside the
-box is reset (nodes, search records, tiles), the open nets and the
-ripped ones negotiate again jointly (`negotiate_from` from the price's
-start value, nested like the via reduction's, the board not judged
-hopeless) and are repaired hard (`resolve_remaining`). The round is kept
-only when the open terminals drop with no net more open than before, no
-conflict and no pour pad newly cut off from its main piece
-(`keep_residue`, `pour_stranded`); else everything is restored
-(`restore_lean`) and the window grows to 4, then 8 mm
-(`RESIDUE_MARGINS_MM`). Its work is the attempt's search and pour work,
-within a third of what the attempt's work deadline leaves and at least
-the hard and trouble repairs' work (`RESIDUE_SHARE`). The windows are in
-board-router.json's `diagnostics.residue` (nets, box, rounds, nets
-ripped up, open before and after, kept, work).
+After the trouble repair, when at most 12 nets were open, the residue
+was renegotiated in windows (router/residue.rs, commit 6b74adb4 and the
+follow-up below, branch residue-kicad-judged): per open net the box of its
+open pads and its tree's nearest pads, grown by 2, then 4, then 8 mm;
+every net routed as tracks lost its branches in the box, the history
+inside was reset, the open and the ripped nets negotiated jointly from
+the start price and were repaired hard; a round was kept only when the
+open terminals dropped with no net more open, no conflict and no pour
+pad cut off. Its first measurement (table above) gained the corne's
+right half on top of the leader first and lost poly_kybd_split72_left:
+the window completed the continuation by the router's count, the via
+reduction and the polish took the narrow-signal step's work, and the
+stitching left 6 GND pads cut off.
 
-On the designer tier (table above) it closes 46 to 53 terminals in 22
-to 24 of 93 to 97 windows over 77 attempts, for about 7000 s of work
-(19 % of the arm's ladder work); alone it passes video (its continuation
-closed: 2 -> 0 open), the corne's right half, BAGEL and DSP-ADAU1452, on
-top of the leader first only the corne. It loses poly_kybd_split72_left:
-the window closes the continuation's last two open terminals by the
-router's count (43 nets ripped up, 161 s of work), the complete board
-then gets the via reduction and the polish (732 s of work against 257),
-KiCad finds 12 open on it, and the narrow-signal step that completes the
-board in base is left 50 s. So it stays off: what it adds on the
-designer tier (one pass over the leader first) is what it loses. Next
-for it, if it is taken up again: judge a kept window by KiCad's count
-before the board's polish, and keep the via reduction's work out of an
-attempt the residue completed by the router's count only.
+The follow-up judged a completed board as the ladder judges an attempt:
+a `finish` whose residue completed the board left out the clean-up, the
+via reduction, the bend round, the straightening and the compaction; the
+KiCad adapter read the router's count after the stitching and had KiCad
+check the board written beside the attempt, and polished it
+(`Router::polish`) only when KiCad found nothing open; the attempts
+before the ladder keeps the narrow-signal step's work left that work
+(the residue at most what leaves as much under the deadline as the
+attempt took). One change to the windows' negotiation was tried on the
+five congestion boards (jetson, link, split72_right, Batch_1, protoesp):
+the price of sharing started at a tenth of its start value. Same open
+counts on all five, fewer windows kept (Batch_1 4 -> 0, protoesp 3 -> 1),
+and the windows still stall at the cap with two nets in conflict, six
+iterations later; not taken.
+
+Measured on the designer tier's 54 boards that take more than one
+attempt (route mode on the designer's placement at scale 0.647, 970.5 s
+of work, 1 thread a board, rates pinned; one binary,
+`build/bin/pcb-maker-res1-a`, main a8d797f0's code (x1930) with the follow-up;
+`PCB_ROUTER_RESIDUE` 0 against 1, the leader first on in both;
+`build/res1/d-off`, `build/res1/d-on`):
+
+| Arm | Strict passes (54) | Unconnected | Ladder work |
+| --- | ---: | ---: | ---: |
+| residue off | 20 | 2723 | 37 861 s |
+| residue on, judged by KiCad | 20 | 2721 | 36 738 s |
+
+Gained poly_corne_split42_right (2 -> 0: the window closed the
+continuation, KiCad confirmed it, polished); lost
+Quanta75_BareRP2040_JLCPCBAoptimized (its first regular attempt's
+windows closed nothing in 314 s, the first attempt took 579 s against
+265 s, the tracks rung never ran and the narrow-signal step varied the
+connect rung: 6 clearance, 1 shorting and 4 mask-bridge findings).
+split72_left passes in both (the residue's completion had 7 open by the
+router's count after the stitching: not polished, and the step had 340
+s). Over 76 attempts the windows ran 94 times, 23 kept, 52 terminals
+closed, 7108 s of work (19.3 % of the arm's ladder work; 34 of 76 runs
+past their limit, 705 s over in all); 10 attempts were completed by it,
+9 confirmed by KiCad and polished. Unconnected elsewhere: WLED_Matrix
+2 -> 1, glasgow 18 -> 16, osprey 1 -> 2, OpenAirScope 1 -> 3.
+
+So the code went (a switch off by default that does not pay is
+removed): one pass gained for one lost and a fifth of the ladder's work
+on the boards it touches. What it showed: the congestion boards' open
+items are not a residue a local joint renegotiation closes (their
+windows stall at the price cap with the same two nets in conflict
+whatever the box or the start price), and on top of the leader first
+the one pass it adds (the corne's right half, twice) is paid for by the
+rungs and steps whose work it takes.
 
 ## Via reduction
 

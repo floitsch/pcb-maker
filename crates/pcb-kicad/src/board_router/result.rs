@@ -551,36 +551,6 @@ pub struct KiCadRoutingDiagnostics {
     /// Pads KiCad finds short of thermal spokes (its starved_thermal),
     /// with what to do about each.
     pub starved_thermals: Vec<KiCadStarvedThermal>,
-    /// The residue's windows (router `residue_window`; docs/router.md,
-    /// "The residue in a window"), in the order they ran.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub residue: Vec<KiCadResidueWindow>,
-    /// The residue's windows completed the board by the router's count;
-    /// `residue_unpolished`: its polish did not run (the router's count at
-    /// the end or KiCad's check found it open, or no check ran; the log's
-    /// "residue: the board it completed ..." line says which).
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub residue_completed: bool,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub residue_unpolished: bool,
-}
-
-/// A window of the residue (router `ResidueWindow`).
-#[derive(Clone, Debug, Serialize)]
-pub struct KiCadResidueWindow {
-    /// The open nets it was for.
-    pub nets: Vec<String>,
-    /// Its last round's box, x0, y0, x1, y1 in mm.
-    pub bounds: [f64; 4],
-    /// Rounds run (a larger margin each), the nets the last one ripped
-    /// up, the board's open terminals before and after it.
-    pub rounds: usize,
-    pub ripped: usize,
-    pub open_before: usize,
-    pub open_after: usize,
-    pub kept: bool,
-    /// Its search and pour work, seconds.
-    pub work_seconds: f64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -897,26 +867,5 @@ pub(super) fn diagnostics(
             })
             .collect(),
         starved_thermals: Vec::new(),
-        residue: result
-            .diagnostics
-            .residue
-            .iter()
-            .map(|window| KiCadResidueWindow {
-                nets: window
-                    .nets
-                    .iter()
-                    .map(|net| board.nets[*net as usize].name.clone())
-                    .collect(),
-                bounds: window.bounds.map(|value| (value * 1000.0).round() / 1000.0),
-                rounds: window.rounds,
-                ripped: window.ripped,
-                open_before: window.open_before,
-                open_after: window.open_after,
-                kept: window.kept,
-                work_seconds: (window.work * 100.0).round() / 100.0,
-            })
-            .collect(),
-        residue_completed: result.diagnostics.residue_completed,
-        residue_unpolished: result.diagnostics.residue_polish_deferred,
     }
 }

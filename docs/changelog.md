@@ -11,6 +11,54 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-07 (the residue in a window: judged by KiCad, measured again, removed)
+
+Branch residue-kicad-judged; router.md "The residue in a window
+(2026-11-07: built, measured, removed)", router-ceiling.md's design 1
+("Part 2 closed"), handover open problems 3 and 18.
+
+- **The keep rule judged by KiCad** (first commit, then removed with the
+  rest): a `finish` whose residue completed the board left out the
+  clean-up, via reduction, bend round, straightening and compaction; the
+  KiCad adapter (`confirm_residue`, in the continuation, the seeds and
+  every routed attempt) read the router's count after the stitching and
+  had KiCad check the board written beside the attempt, polishing only
+  when KiCad found nothing open; the attempts before the narrow-signal
+  step's reserve left that work (`residue_keeps_step`). Tests for the
+  verdict, the deferred polish, the limit and the ladder's flag.
+- **The five congestion boards** (jetson, link, split72_right, Batch_1,
+  protoesp): the windows' price started at a tenth of its start value
+  (`PCB_ROUTER_RESIDUE_PRICE=0.1`, a trial knob): the same open counts,
+  windows kept Batch_1 4 -> 0 and protoesp 3 -> 1, the same stall at the
+  price cap with two nets in conflict; not taken. The rule's own arm
+  reproduced the 2026-11-07 "both" rows on all five and passed
+  split72_left (the completion had 7 open after the stitching: not
+  polished; the narrow-signal step had 340 s and completed it).
+- **The designer tier's 54 multi-attempt boards** (scale 0.647, one
+  binary `pcb-maker-res1-a` = x1930's code with the rule,
+  `PCB_ROUTER_RESIDUE` 0 against 1, the leader first on; `build/res1/`):
+  20 -> 20 strict, 2723 -> 2721 unconnected, ladder work 37 861 ->
+  36 738 s; poly_corne_split42_right gained (KiCad-confirmed, polished),
+  Quanta75_BareRP2040_JLCPCBAoptimized lost (its first attempt's windows
+  closed nothing in 314 s, the tracks rung never ran, the narrow-signal
+  step on the connect rung left clearance, shorting and mask-bridge
+  findings); osprey 1 -> 2 and OpenAirScope 1 -> 3, WLED_Matrix 2 -> 1,
+  glasgow 18 -> 16. The windows: 94 run over 76 attempts, 23 kept, 52
+  terminals closed, 7108 s (19.3 % of the ladder's work), 34 runs past
+  their limit by 705 s in all; 10 attempts completed by them, 9
+  confirmed by KiCad.
+- **Removed** (a switch off by default that does not pay goes):
+  router/residue.rs, its hooks in `finish`, the negotiation's nesting,
+  the report's `diagnostics.residue`, `residue_window` in both configs and
+  `PCB_ROUTER_RESIDUE`; config reference and the environment index
+  regenerated.
+- **Guards** (main d24f29db = x1932 against the branch head):
+  the expansion tier at 30 s identical row for row (25 strict, 557
+  unconnected, the same vias, length and work on all 46); the
+  fingerprints at the quarter budget identical (Castor and k30-SBC
+  strict, jetson 13, Sisu 7). The switch was off by default, so main's
+  behaviour is unchanged by construction.
+
 ## Committed on 2026-11-07 (pad access: what walls a pad; plated pads apart from SMD pads)
 
 Branch pad-access (docs/router.md "What walls a pad (2026-11-07)",

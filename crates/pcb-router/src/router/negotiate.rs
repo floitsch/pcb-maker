@@ -23,7 +23,7 @@ impl Router {
         let started = std::time::Instant::now();
         let profile_started = started;
         // The via reduction negotiates too: its time is its own phase.
-        let nested = self.in_via_reduction || self.in_residue;
+        let nested = self.in_via_reduction;
         let expansions_before = self.scratch.expansions;
         let work_before = self.work_seconds();
         let used_before = self.negotiation_used();

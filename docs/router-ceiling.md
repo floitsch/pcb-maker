@@ -31,7 +31,7 @@ median 15 % of the ladder's work, while 28 % of the work goes to rungs
 that end with far more open; every pass the extra work bought came from
 another try of the best rung's kind. The designs: **the ladder's work to
 the leader, and the residue renegotiated in a window** (congestion and
-the budget) and **prepared fan-outs for fine-pitch rows, the BGA method**
+the budget; the second part built, measured and removed on 2026-11-07) and **prepared fan-outs for fine-pitch rows, the BGA method**
 (rows; pad access is five different footprints, two of them plain bugs
 with their own fixes). Estimated: design 1 up to 7 passes,
 realistically 3; design 2 up to 5, realistically 2; the plain bugs 4
@@ -530,7 +530,8 @@ were not measured together, their gaining boards differ). Part 2, the
 residue in a window, is in but off (`residue_window`,
 `PCB_ROUTER_RESIDUE=1`): alone it also reaches 71 (video, the corne's
 right half, BAGEL, DSP-ADAU1452; split72_left lost), on top of part 1
-it adds the corne and loses split72_left, so 71 either way. Against the
+it adds the corne and loses split72_left, so 71 either way (removed
+since: below). Against the
 estimate: part 1 gave 3 where 1 was expected (BAGEL and DSP-ADAU1452 by
 the leader's seed round and the admitted rungs' larger shares, not at
 3000 s); part 2's five congestion boards with at most three items
@@ -539,6 +540,21 @@ the leader's seed round and the admitted rungs' larger shares, not at
 windows' joint negotiations stall at the price cap like the board-wide
 one (protoesp's log: 6 nets in conflict from iteration 20 on), and are
 restored.
+
+**Part 2 closed (2026-11-07, branch residue-kicad-judged).** The one
+follow-up: a board the residue completes is judged as the ladder judges
+an attempt (polished only when KiCad confirms it complete; the attempts
+before the narrow-signal step's reserve leave that work), and on the five
+congestion boards one change to the windows' negotiation (the price
+started at a tenth: same open counts, fewer windows kept, the same stall
+at the cap; not taken). On the 54 multi-attempt boards, residue off
+against on with the leader first in both: 20 -> 20 strict, 2723 -> 2721
+unconnected; split72_left no longer lost (the completion had 7 open
+after the stitching: not polished), the corne gained, Quanta75's
+BareRP2040 lost (its first attempt's windows closed nothing in 314 s and
+the tracks rung never ran); 19 % of the ladder's work. Kill criterion
+met: the residue code is removed (router.md, "The residue in a window
+(2026-11-07: built, measured, removed)"). Design 1 is part 1 alone.
 
 ## Design 2: prepared fan-outs for fine-pitch rows (the BGA method)
 

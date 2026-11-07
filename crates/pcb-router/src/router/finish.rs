@@ -82,7 +82,6 @@ impl Router {
         }
         let resolve_started = std::time::Instant::now();
         let mark = self.phase_mark();
-        let repairs_started = self.budget_work();
         // What the repair takes up, for the diagnostics.
         let entries: Vec<RepairEntry> = order
             .iter()
@@ -125,35 +124,18 @@ impl Router {
         if !self.hopeless && self.config.trouble_repair && !self.in_trial {
             self.repair_trouble(order, super::trouble::TroubleSettings::from_env());
         }
-        // The residue renegotiated in windows (router/residue.rs), at
-        // least the repairs' work: as the trouble repair, not in a
-        // layout's move trial. A board it completes is complete by the
-        // router's count only: no polish here (the caller's check first,
-        // then `polish`).
-        self.residue_polish_deferred = false;
-        if !self.hopeless && self.config.residue_window && !self.in_trial && !self.skip_resolve {
-            let repairs = self.budget_work() - repairs_started;
-            let closed = self.renegotiate_residue(order, repairs);
-            self.residue_polish_deferred = closed > 0 && self.residue_completed;
-            if self.residue_polish_deferred && self.config.verbose {
-                eprintln!(
-                    "residue: the board is complete by the router's count: no clean-up, via reduction or polish until a check confirms it"
-                );
-            }
-        }
-        let polish = !self.residue_polish_deferred;
         self.phase_charge(1, mark);
         self.profile.resolve += resolve_started.elapsed().as_secs_f64();
         let cleanup_started = std::time::Instant::now();
         let mark = self.phase_mark();
-        let improved = if self.hopeless || !polish {
+        let improved = if self.hopeless {
             0
         } else {
             self.clean_up(order)
         };
         // The nets a rule bounds the length of, shortened where they came
         // out over it (`Config::length_bounded`, with the polish only).
-        if !self.hopeless && polish && self.config.cleanup_passes > 0 {
+        if !self.hopeless && self.config.cleanup_passes > 0 {
             self.repair_lengths(order);
         }
         self.phase_charge(2, mark);
@@ -164,11 +146,9 @@ impl Router {
         }
         let reduction_started = std::time::Instant::now();
         let mark = self.phase_mark();
-        if polish {
-            self.in_via_reduction = true;
-            self.reduce_vias(order);
-            self.in_via_reduction = false;
-        }
+        self.in_via_reduction = true;
+        self.reduce_vias(order);
+        self.in_via_reduction = false;
         self.phase_charge(3, mark);
         self.profile.via_reduction += reduction_started.elapsed().as_secs_f64();
         if std::env::var_os("PCB_ROUTER_FINGERPRINT").is_some() {
@@ -179,7 +159,7 @@ impl Router {
         }
         // The bend round, part of the clean-up (a trial without one skips
         // it), before the spoke repairs: they see the routes as they stay.
-        if self.config.cleanup_passes > 0 && !self.hopeless && polish {
+        if self.config.cleanup_passes > 0 && !self.hopeless {
             let started = std::time::Instant::now();
             let mark = self.phase_mark();
             self.reduce_bends(order);
@@ -209,7 +189,7 @@ impl Router {
         // Part of the clean-up (a trial without one does not straighten),
         // after the spoke repairs: they see the routes as before, and the
         // straightening keeps out of the spoke corridors they freed.
-        if self.config.straighten && self.config.cleanup_passes > 0 && !self.hopeless && polish {
+        if self.config.straighten && self.config.cleanup_passes > 0 && !self.hopeless {
             let mark = self.phase_mark();
             self.straighten(order);
             self.phase_charge(2, mark);

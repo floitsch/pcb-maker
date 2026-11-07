@@ -124,27 +124,6 @@ pub struct Config {
     /// docs/experiments/human-level-routing.md). `PCB_ROUTER_TROUBLE`
     /// overrides it (`0` off, `1` on).
     pub trouble_repair: bool,
-    /// After the trouble-makers' repair, the connections still open (at
-    /// most 12 nets) are taken up in windows: every net with copper in
-    /// the box around an open net's pads loses its branches there, the
-    /// history inside is reset and they are negotiated again jointly;
-    /// kept only when the open terminals drop and nothing else opens
-    /// (`renegotiate_residue`, router/residue.rs). Off by default (the
-    /// designer tier of 2026-11-07: on top of the leader first one pass
-    /// gained, one lost).
-    /// `PCB_ROUTER_RESIDUE` overrides it (`0` off, `1` on). A board the
-    /// residue completes is not polished in the same `finish` (no
-    /// clean-up, via reduction, bend round, straightening or compaction:
-    /// `Diagnostics::residue_polish_deferred`): its completeness is the
-    /// router's count, which the pours and KiCad can still contradict, and
-    /// the caller polishes it (`polish`) once its own check confirms it.
-    pub residue_window: bool,
-    /// The residue leaves under the work deadline at least as much as the
-    /// attempt has taken with it (`residue_limit`): set on an attempt that
-    /// runs before the caller keeps work for a later step as large as the
-    /// attempt (route mode's narrow-signal step, kept from the ladder's
-    /// first attempt's work).
-    pub residue_keeps_step: bool,
     /// The clean-up keeps a change only if no pour net has more pads off
     /// its main piece after it.
     pub pour_aware_polish: bool,
@@ -437,8 +416,6 @@ impl Default for Config {
             lost_spoke_repair: std::env::var_os("PCB_ROUTER_NO_LOST_SPOKES").is_none(),
             trouble_repair: super::trouble::trouble_override()
                 .unwrap_or(super::trouble::TROUBLE_REPAIR_DEFAULT),
-            residue_window: super::residue::residue_override().unwrap_or(false),
-            residue_keeps_step: false,
             pour_aware_polish: true,
             pour_aware_via_reduction: true,
             pour_whole_rip_up: true,

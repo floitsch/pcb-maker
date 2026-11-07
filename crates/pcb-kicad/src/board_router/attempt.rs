@@ -273,17 +273,6 @@ pub(super) fn route_kicad_board_lowered(
     let routing_started = std::time::Instant::now();
     // The router's lattice maps, for sizing routers side by side.
     let mut maps_mb = 0.0;
-    // A board the residue completed by the router's count: KiCad's check
-    // before its polish, where the attempt is checked (`confirm_residue`).
-    let check = (config.residue_check || !config.skip_native_verification).then(|| ResidueCheck {
-        pcb: &pcb,
-        board: &board,
-        layer_names: &layer_names,
-        source_directory,
-        board_id,
-        directory: residue_check_directory(output_directory),
-        config,
-    });
     let result = match &config.frame_directory {
         _ if config.engine.as_deref() == Some("topological") => {
             let mut topological = pcb_topo::Config {
@@ -302,13 +291,12 @@ pub(super) fn route_kicad_board_lowered(
                 config.first_seed.unwrap_or(0),
                 config.seeds.unwrap_or(1),
                 config.seeds_side_by_side.unwrap_or(usize::MAX),
-                check.as_ref(),
             );
             maps_mb = maps;
             result
         }
         None => {
-            let (result, maps) = route_measured(&board, &core_config(config), check.as_ref());
+            let (result, maps) = route_measured(&board, &core_config(config));
             maps_mb = maps;
             result
         }
@@ -333,7 +321,6 @@ pub(super) fn route_kicad_board_lowered(
             router.run()
         }
     };
-    drop(check);
     let routing_seconds = routing_started.elapsed().as_secs_f64();
     let mut written = write_attempt(
         pcb,
@@ -356,191 +343,14 @@ pub(super) fn route_kicad_board_lowered(
 
 /// Routes `board` as `core::route` does (`Router::new` and `run`), with
 /// the router's lattice maps in megabytes (its memory report; 0 when the
-/// report does not say). A board the residue completed by the router's
-/// count is polished only as `confirm_residue` says (`check`).
+/// report does not say).
 pub(super) fn route_measured(
     board: &core::Board,
     config: &core::Config,
-    check: Option<&ResidueCheck>,
 ) -> (core::RoutingResult, f64) {
-    let mut router = core::router::Router::new(board, config);
+    let router = core::router::Router::new(board, config);
     let maps_mb = maps_mb_of(&router.memory_report()).unwrap_or(0.0);
-    let routed = router.run_in_place();
-    (confirm_residue(&mut router, routed, check), maps_mb)
-}
-
-/// Where a residue check of the attempt in `output` writes its board:
-/// beside it (the attempt's directory is written new after the check),
-/// removed after the check.
-pub(super) fn residue_check_directory(output: &Path) -> PathBuf {
-    let mut name = output.file_name().unwrap_or_default().to_os_string();
-    name.push(".residue-check");
-    output.with_file_name(name)
-}
-
-/// KiCad's checks of boards the residue completed (`confirm_residue`), to
-/// be charged as the ladder's checks (`Ladder::judge`).
-pub(super) static RESIDUE_CHECKS: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
-
-/// What becomes of a board the router's residue completed by its own
-/// count (router `Diagnostics::residue_polish_deferred`): the router's
-/// count is optimistic (the pours' stitching at the end can leave pads
-/// cut off, and KiCad sees what the router's model does not), so the
-/// board is judged as the ladder judges an attempt (KiCad's check where
-/// the ladder checks) before the polish runs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ResidueVerdict {
-    /// KiCad finds nothing open: the polish runs.
-    Confirmed,
-    /// The router's own count at the end of its run (after the pours'
-    /// stitching) has terminals open: no polish.
-    OpenByRouter(usize),
-    /// KiCad finds items open: no polish.
-    OpenByKiCad(usize),
-    /// No KiCad check: complete by the router's count only, which can be
-    /// optimistic; no polish.
-    Unchecked,
-}
-
-/// The verdict on a board the residue completed, with the router's open
-/// terminals at the end of its run and KiCad's open count (the ladder's
-/// measure; None: not checked).
-pub(crate) fn residue_verdict(router_open: usize, kicad_open: Option<usize>) -> ResidueVerdict {
-    if router_open > 0 {
-        return ResidueVerdict::OpenByRouter(router_open);
-    }
-    match kicad_open {
-        None => ResidueVerdict::Unchecked,
-        Some(0) => ResidueVerdict::Confirmed,
-        Some(open) => ResidueVerdict::OpenByKiCad(open),
-    }
-}
-
-/// The open terminals of a routing by the router's own count (its nets'
-/// status; route_seeds ranks by it with the copper check on top).
-pub(super) fn routed_open(result: &core::RoutingResult) -> usize {
-    result
-        .status
-        .iter()
-        .map(|status| match status {
-            core::NetStatus::Partial {
-                unconnected_terminals,
-            } => *unconnected_terminals,
-            core::NetStatus::Unreachable => 1,
-            _ => 0,
-        })
-        .sum()
-}
-
-/// How a board the residue completed is checked: written as the attempt
-/// writes it into `directory` and checked by KiCad as the ladder checks
-/// an attempt.
-#[derive(Clone)]
-pub(super) struct ResidueCheck<'a> {
-    pub pcb: &'a Expr,
-    pub board: &'a core::Board,
-    pub layer_names: &'a [String],
-    pub source_directory: &'a Path,
-    pub board_id: &'a str,
-    pub directory: PathBuf,
-    pub config: &'a KiCadBoardRouterConfig,
-}
-
-impl ResidueCheck<'_> {
-    /// The same check in a directory of its own beside this one's
-    /// (`name` appended).
-    pub(super) fn at(&self, name: &str) -> Self {
-        let mut check = self.clone();
-        let mut directory = self.directory.clone().into_os_string();
-        directory.push(format!("-{name}"));
-        check.directory = PathBuf::from(directory);
-        check
-    }
-
-    /// The ladder's open count of `routed` (the router's unconnected
-    /// terminals and internal violations and KiCad's unconnected items),
-    /// its board written and checked in `directory`, which is removed
-    /// after.
-    fn open(&self, routed: &core::RoutingResult) -> Result<usize, String> {
-        let mut config = self.config.clone();
-        config.skip_native_verification = true;
-        if self.directory.exists() {
-            fs::remove_dir_all(&self.directory).map_err(|error| error.to_string())?;
-        }
-        // The board is written into a new directory, its parent there.
-        if let Some(parent) = self.directory.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
-        }
-        let checked = write_attempt(
-            self.pcb.clone(),
-            self.board,
-            routed.clone(),
-            self.layer_names,
-            self.source_directory,
-            self.board_id,
-            &self.directory,
-            &config,
-            [0.0, 0.0],
-        )
-        .and_then(|mut written| {
-            check_attempt(&mut written, &self.directory, self.board_id)?;
-            Ok(router_open(&written)
-                + written
-                    .native
-                    .as_ref()
-                    .map_or(0, |native| native.selected_net_unconnected_items))
-        });
-        let _ = fs::remove_dir_all(&self.directory);
-        checked
-    }
-}
-
-/// A board the residue completed by the router's count
-/// (`Diagnostics::residue_polish_deferred`) is polished (`Router::polish`)
-/// only when `check` confirms it complete (`residue_verdict`); otherwise
-/// `routed` stays as it is, unpolished. Any other routing passes as it is.
-pub(super) fn confirm_residue(
-    router: &mut core::router::Router,
-    routed: core::RoutingResult,
-    check: Option<&ResidueCheck>,
-) -> core::RoutingResult {
-    if !routed.diagnostics.residue_polish_deferred {
-        return routed;
-    }
-    let router_open = routed_open(&routed);
-    let kicad_open = match check.filter(|_| router_open == 0) {
-        Some(check) => {
-            RESIDUE_CHECKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            match check.open(&routed) {
-                Ok(open) => Some(open),
-                Err(error) => {
-                    eprintln!("residue: KiCad's check of the board failed: {error}");
-                    None
-                }
-            }
-        }
-        None => None,
-    };
-    let verdict = residue_verdict(router_open, kicad_open);
-    eprintln!(
-        "residue: the board it completed by the router's count {}",
-        match verdict {
-            ResidueVerdict::Confirmed => "is complete by KiCad's check too: polished".to_string(),
-            ResidueVerdict::OpenByRouter(open) => format!(
-                "has {open} open terminals by the router's count after the pours' stitching: not polished"
-            ),
-            ResidueVerdict::OpenByKiCad(open) =>
-                format!("has {open} open by KiCad's check: not polished"),
-            ResidueVerdict::Unchecked => "is not checked by KiCad (the router's count only, which can be optimistic): not polished".to_string(),
-        }
-    );
-    if verdict == ResidueVerdict::Confirmed {
-        router.polish()
-    } else {
-        routed
-    }
+    (router.run(), maps_mb)
 }
 
 /// Moves every `(layer "X")` that names a layer the board's layer table

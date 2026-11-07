@@ -101,18 +101,8 @@ pub(crate) trait LadderRunner: Sync {
     /// The router logs as `attempt` says (a probe beside others was quiet).
     fn speak(&self, probe: &mut Self::Probe, attempt: &KiCadBoardRouterConfig);
     /// Goes on from where the probe stopped, within `limits`; the routing
-    /// and the router's work in all. The router is gone after it. A board
-    /// its residue completed by the router's count is checked as
-    /// `attempt` says (`residue_check`) in `directory` before its polish
-    /// (`confirm_residue`).
-    fn resume(
-        &self,
-        probe: Self::Probe,
-        limits: ResumeLimits,
-        board: &Self::Board,
-        attempt: &KiCadBoardRouterConfig,
-        directory: &Path,
-    ) -> (Self::Routed, RouterWork);
+    /// and the router's work in all. The router is gone after it.
+    fn resume(&self, probe: Self::Probe, limits: ResumeLimits) -> (Self::Routed, RouterWork);
     /// Writes a continued router's routing as the project in `directory`.
     fn write(
         &self,
@@ -1084,22 +1074,7 @@ impl<'a> Ladder<'a> {
     fn unchecked(&self, attempt: &KiCadBoardRouterConfig) -> KiCadBoardRouterConfig {
         let mut attempt = attempt.clone();
         attempt.skip_native_verification = attempt.skip_native_verification || self.checking;
-        // A board the residue completes is checked before its polish as
-        // the ladder checks its attempts (`confirm_residue`).
-        attempt.residue_check = self.checking;
-        attempt.residue_keeps_step = self.keeps_step();
         attempt
-    }
-
-    /// Whether an attempt starting now comes before the work kept for the
-    /// narrow-signal step (`reserve`, `route_reserve`) is set, which is
-    /// as much as the first attempt took: its residue leaves that much
-    /// (router `residue_keeps_step`). poly_kybd_split72_left (2026-11-07):
-    /// the continuation's residue and the polish after it took 475 s of
-    /// work, and the step that completes the board in base had 50 s.
-    pub(crate) fn keeps_step(&self) -> bool {
-        (self.route_reserve_wanted && !self.route_reserve_set)
-            || (self.reserve_wanted && !self.reserve_set)
     }
 
     /// What attempts are ranked by: open (and starved), then the pours
@@ -1164,12 +1139,6 @@ impl<'a> Ladder<'a> {
                     0.0,
                 );
             }
-        }
-        // KiCad's checks of boards a residue completed (`confirm_residue`)
-        // are the ladder's checks.
-        let residue_checks = RESIDUE_CHECKS.swap(0, std::sync::atomic::Ordering::Relaxed);
-        if residue_checks > 0 {
-            self.charge_checks(residue_checks);
         }
         if !self.checking {
             return Ok(Some(Self::open(runner, result, directory)));
@@ -1342,9 +1311,6 @@ impl<'a> Ladder<'a> {
         attempt.plane_skeleton = Some(skeleton);
         attempt.exclusive_planes = Some(exclusive);
         attempt.fixed_plane_stubs = Some(plane_stubs);
-        // The probes' routers are built from it (their continuation is the
-        // first attempt).
-        attempt.residue_keeps_step = self.keeps_step();
         if exclusive && attempt.exclusive_layers.is_none() {
             attempt.exclusive_layers = Some(if self.copper_layers >= 6 { 2 } else { 1 });
         }
@@ -1750,7 +1716,6 @@ impl<'a> Ladder<'a> {
             self.built_router_work(1.0, &probe_work),
         );
         let panics = self.panic_due("continuation");
-        let unchecked = self.unchecked(&attempt);
         let outcome = isolate(|| {
             if panics {
                 test_panic("continuation");
@@ -1762,9 +1727,6 @@ impl<'a> Ladder<'a> {
                     deadline_work,
                     negotiation: resumed,
                 },
-                &board,
-                &unchecked,
-                output_directory,
             )
         });
         let Some((routed, resumed_work)) = self.survived(&name, outcome) else {
@@ -1785,6 +1747,7 @@ impl<'a> Ladder<'a> {
             fs::remove_dir_all(output_directory).map_err(|error| error.to_string())?;
         }
         let (connect, skeleton, exclusive, plane_stubs) = self.modes[mode];
+        let unchecked = self.unchecked(&attempt);
         let written = isolate(|| {
             runner.write(
                 &board,

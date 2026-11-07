@@ -377,7 +377,11 @@ ranks what keeps the designer tier's 41 failing boards open.
    leader's unfinished nets (router.md, "The leader first"; designer
    tier 68 -> 71 strict): the probe's misjudgment now also decides which
    rungs run at all (module: connect kept out at 161 against tracks' 33,
-   1 -> 3 unconnected), so a better judge matters more. Details
+   1 -> 3 unconnected), so a better judge matters more. Work spent
+   inside the first attempt is taken from the rungs the judge would
+   compare: the residue in a window (removed 2026-11-07) lost Quanta75's
+   BareRP2040 that way (314 s of windows that closed nothing, the tracks
+   rung never ran). Details
    in [congestion-model.md](congestion-model.md) and the changelog's
    2026-10-13 sections.
 4. **Placement: 73 % of what stays open.** The matched designer tier of
@@ -763,9 +767,13 @@ ranks what keeps the designer tier's 41 failing boards open.
     Problems 1, 2, 3, 5 and 6 above are the parts of it that were open
     before. Design 1 measured on 2026-11-07: the leader first on by
     default (+3 strict: video, BAGEL-MK1.1-Avocado, DSP-ADAU1452, none
-    lost), the residue in a window in but off (`residue_window`: +4 -1
-    alone, +1 -1 on top of the leader first; its windows stall at the
-    price cap where the board-wide negotiation did). Design 2 (prepared
+    lost); the residue in a window measured twice and removed (the
+    second time judged by KiCad before its polish, so split72_left is no
+    longer lost: on the 54 multi-attempt boards 20 -> 20 strict, the
+    corne gained, Quanta75's BareRP2040 lost, 19 % of the ladder's work;
+    its windows stall at the price cap where the board-wide negotiation
+    did, also with the price started at a tenth; router.md, "The residue
+    in a window (2026-11-07: built, measured, removed)"). Design 2 (prepared
     fan-outs for fine-pitch rows) is next. Pad access was diagnosed again on
     2026-11-07 (router.md, "What walls a pad"; router-ceiling.md, "Status
     of pad access"). Of the census's eight boards, three are the input's
@@ -1146,7 +1154,6 @@ Switches and experiment hooks (change the result):
 - `PCB_LADDER_UNCHARGED_POUR`: route mode's ladder counts the attempts' search expansions and manual spokes only, not their other pour analyses, lattice builds and lowerings, and its shares stay search work (the count before 2026-10-21, all pour work charged; for attributing rows).
 - `PCB_LADDER_SEARCH_SHARES`: route mode's ladder charges all the work but gives each router its share as search work, not scaled by the routers' share of search so far (for attributing rows).
 - `PCB_LADDER_NO_FIRST_ITERATION_GATE`: route mode's steps start without room for their first negotiation iteration (the rule before 2026-10-21; for attributing rows).
-- `PCB_ROUTER_RESIDUE`: `0` or `1`: the residue renegotiated in windows after the trouble repair (router `residue_window`; wins over the router setting `residue_window`; default off).
 - `PCB_LADDER_LEADER_FIRST`: `0` or `1`: route mode's ladder runs the leading rung's seed round and finer pitches before the rungs of other pour modes, and those only where their probe left at most twice the leader's unfinished nets (wins over the router setting `leader_first`; default on; `0` the order before 2026-11-07).
 - `PCB_LADDER_NO_STEP_COST_GATE`: route mode's steps start with less left under the bound than a fifth of the ladder's first attempt's work (the rule before 2026-10-21, probe overhead; for attributing rows).
 - `PCB_LADDER_SEARCH_LIMITS`: route mode's first attempt stops on its search alone, its pour analyses and lattice on top (the rule before 2026-10-21, probe overhead; for attributing rows).

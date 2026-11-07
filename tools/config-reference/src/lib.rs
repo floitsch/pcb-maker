@@ -468,11 +468,6 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "route mode's steps start without room for their first negotiation iteration (the rule before 2026-10-21; for attributing rows).",
     ),
     (
-        "PCB_ROUTER_RESIDUE",
-        Kind::Switch,
-        "`0` or `1`: the residue renegotiated in windows after the trouble repair (router `residue_window`; wins over the router setting `residue_window`; default off).",
-    ),
-    (
         "PCB_LADDER_LEADER_FIRST",
         Kind::Switch,
         "`0` or `1`: route mode's ladder runs the leading rung's seed round and finer pitches before the rungs of other pour modes, and those only where their probe left at most twice the leader's unfinished nets (wins over the router setting `leader_first`; default on; `0` the order before 2026-11-07).",

@@ -18,9 +18,6 @@ enum Call {
     Resume {
         negotiation: f64,
         deadline_work: Option<f64>,
-        /// Its residue leaves the narrow-signal step's work
-        /// (`residue_keeps_step`).
-        keeps_step: bool,
     },
     Route(Routed),
 }
@@ -36,9 +33,6 @@ struct Routed {
     narrow: bool,
     deadline_work: Option<f64>,
     negotiation: Option<f64>,
-    /// Its residue leaves the narrow-signal step's work
-    /// (`residue_keeps_step`).
-    keeps_step: bool,
 }
 
 /// An attempt's open connections and work in seconds (at most its work
@@ -318,18 +312,10 @@ impl LadderRunner for Fake {
 
     fn speak(&self, _: &mut FakeProbe, _: &KiCadBoardRouterConfig) {}
 
-    fn resume(
-        &self,
-        probe: FakeProbe,
-        limits: ResumeLimits,
-        _: &u128,
-        attempt: &KiCadBoardRouterConfig,
-        _: &Path,
-    ) -> (Outcome, RouterWork) {
+    fn resume(&self, probe: FakeProbe, limits: ResumeLimits) -> (Outcome, RouterWork) {
         self.calls.lock().unwrap().push(Call::Resume {
             negotiation: limits.negotiation,
             deadline_work: limits.deadline_work,
-            keeps_step: attempt.residue_keeps_step,
         });
         let probed = probe.expansions as f64 / core::router::expansions_per_second();
         let work = self.continued.work.min(
@@ -389,7 +375,6 @@ impl LadderRunner for Fake {
             narrow: attempt.use_narrow_signals == Some(true),
             deadline_work: attempt.router_deadline_work,
             negotiation: attempt.negotiation_seconds,
-            keeps_step: attempt.residue_keeps_step,
         };
         self.calls.lock().unwrap().push(Call::Route(routed.clone()));
         let Some(outcome) = (self.route)(&routed) else {
@@ -578,7 +563,6 @@ fn the_probes_lead_and_a_complete_continuation_finishes() {
     let Call::Resume {
         negotiation,
         deadline_work,
-        ..
     } = calls[4].clone()
     else {
         panic!("the leader continues: {calls:?}");
@@ -987,7 +971,6 @@ fn route_mode_probes_charge_their_pour_work_and_lattices() {
     let Call::Resume {
         negotiation,
         deadline_work,
-        ..
     } = calls[4].clone()
     else {
         panic!("the leader continues: {calls:?}");
@@ -1477,77 +1460,4 @@ fn route_mode_charges_the_same_one_at_a_time_and_side_by_side() {
         );
         assert!(work > 0.0);
     }
-}
-
-/// The residue of an attempt before the ladder keeps work for the
-/// narrow-signal step (as much as the first attempt took) leaves that much
-/// (router `residue_keeps_step`): the probed rung's continuation, on a
-/// board without probes its first rungs; the attempts after it, and every
-/// attempt without a narrow-signal step, do not.
-#[test]
-fn the_residue_keeps_the_narrow_steps_work_before_it_is_kept() {
-    // A probed board: the continuation leaves 3 open.
-    let config = with_narrow_step(route_mode(1000.0));
-    let out = output("residue-keeps-probed");
-    let mut fake = Fake::new(|_| {
-        Some(Outcome {
-            open: 3,
-            work: 20.0,
-        })
-    });
-    fake.layers = 4;
-    fake.connections = 200;
-    fake.probes = vec![30, 10, 25, 15];
-    fake.continued = Outcome {
-        open: 3,
-        work: 40.0,
-    };
-    let mut probed = ladder(&config, &out, 4);
-    probed.run(&fake).unwrap();
-    let calls = fake.calls();
-    let resumed: Vec<bool> = calls
-        .iter()
-        .filter_map(|call| match call {
-            Call::Resume { keeps_step, .. } => Some(*keeps_step),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(resumed, vec![true], "{calls:?}");
-    let routes = fake.routes();
-    assert!(!routes.is_empty());
-    assert!(routes.iter().all(|routed| !routed.keeps_step), "{routes:?}");
-    assert!(!probed.keeps_step());
-
-    // A board without probes: its first rungs (side by side) keep it, the
-    // attempts after the first's open count do not.
-    let out = output("residue-keeps-unprobed");
-    let fake = Fake::new(|routed| {
-        Some(Outcome {
-            open: if routed.narrow { 0 } else { 2 },
-            work: 10.0,
-        })
-    });
-    let mut unprobed = ladder(&config, &out, 2);
-    unprobed.run(&fake).unwrap();
-    let routes = fake.routes();
-    let first = routes.iter().take_while(|routed| routed.keeps_step).count();
-    assert!(first >= 1, "{routes:?}");
-    assert!(
-        routes[first..].iter().all(|routed| !routed.keeps_step),
-        "{routes:?}"
-    );
-    assert!(routes.iter().any(|routed| routed.narrow), "{routes:?}");
-
-    // Without a narrow-signal step nothing is kept for one.
-    let plain = route_mode(1000.0);
-    let out = output("residue-keeps-plain");
-    let fake = Fake::new(|_| {
-        Some(Outcome {
-            open: 2,
-            work: 10.0,
-        })
-    });
-    let mut without = ladder(&plain, &out, 2);
-    without.run(&fake).unwrap();
-    assert!(fake.routes().iter().all(|routed| !routed.keeps_step));
 }
