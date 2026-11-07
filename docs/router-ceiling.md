@@ -674,7 +674,8 @@ router setting for agents** (`pin_lines`). On the rows: RP2040_base 36 ->
 fourteen row boards. On the designer tier (scale 0.647): 76 -> 77 strict
 (OpenAirScope, koeg-board, split72_right gained; Quanta75_BareRP2040 and
 split72_left lost), 2709 -> 2679 unconnected; the expansion tier 25 -> 28
-strict with none lost; the short tier unchanged. The rule's "none lost"
+strict with none lost; the short tier unchanged; the fingerprints keep
+their passes, 20 -> 29 unconnected. The rule's "none lost"
 fails, so it is not the default; the channels' lines (F23) measured on
 two boards and left out.
 

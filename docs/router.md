@@ -8158,7 +8158,13 @@ So +3 strict passes and -2, 2709 -> 2679 unconnected.
   build/lad1/short-head row for row (7 strict, 21 open): no layout's
   lattice got a line its result shows.
 - *The fingerprints* (Castor, k30-SBC, jetson, Sisu; route mode from v16,
-  1 x 4, a quarter budget): FINGERPRINTS-PLACEHOLDER
+  1 x 4, a quarter budget, binary c, against build/lad1/fp-head): Castor
+  and k30-SBC pass both ways, 20 -> 29 unconnected (jetson 13 -> 17, Sisu
+  7 -> 12 on its v16 placement; Castor 240 -> 282 vias at 146 s of work
+  instead of 181).
+
+(The expansion and short arms ran on binary b, before the band vote; the
+vote only takes bands away.)
 
 **Work and CPU.** The lines cost no search work of their own: a step
 costs what it cost. The measured footprints run only in windows that are
@@ -8175,7 +8181,8 @@ settings' `pin_lines`, `PCB_ROUTER_PIN_LINES=1`). The rule (on only if
 the designer tier gains strict passes with none lost and the guards hold)
 fails on its second clause: +3 -2 on the tier (Quanta75_BareRP2040 and
 split72_left lost), though the expansion tier gains three with none lost
-and the short tier does not move. What it does is per board: where the
+and the short tier does not move; the fingerprints keep their passes but
+leave 9 more connections open. What it does is per board: where the
 open items are pads of exact-fit rows at a phase the lattice misses
 (RP2040_base 36 -> 5, vaio_re 11 -> 3, module 3 -> 1) it is the lever the
 rows lacked; elsewhere it moves routes like any lattice change. Agents
