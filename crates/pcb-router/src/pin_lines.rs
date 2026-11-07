@@ -462,6 +462,9 @@ pub struct Placed {
     /// regular lines they shifted.
     pub bands: usize,
     pub shifted: usize,
+    /// Bands not taken because the pads in them vote for the lattice's
+    /// phase.
+    pub outvoted: usize,
     /// Asked for and neither held, added nor moved (too close to a line
     /// another pin holds, or past the cap).
     pub left: usize,
@@ -540,6 +543,18 @@ pub fn warp(
             parts.entry(part_of(&line.label)).or_default().push(line);
         }
         let mut bands: Vec<(i64, i64, i64, usize)> = Vec::new();
+        // The narrow pads' anchors on this axis (nm), as `Grid::choose`
+        // counts them: a pad narrower than 0.35 mm across the axis.
+        let narrow: Vec<(i64, ())> = board
+            .nets
+            .iter()
+            .flat_map(|net| net.terminals.iter())
+            .filter(|terminal| {
+                let bounds = board.obstacles[terminal.pad].shape.aabb();
+                bounds.maximum[axis] - bounds.minimum[axis] < 0.35
+            })
+            .map(|terminal| ((terminal.anchor[axis] * 1.0e6).round() as i64, ()))
+            .collect();
         for part_lines in parts.values() {
             // (A part the lattice holds is a band of no shift: it keeps
             // others' bands off its rows.)
@@ -577,6 +592,30 @@ pub fn warp(
                 .max()
                 .unwrap_or(0)
                 + (BAND_MARGIN * 1.0e6) as i64;
+            // The pads in the band vote for its phase as the whole board's
+            // narrow pads vote for the lattice's (`Grid::choose`): the band
+            // is taken only where more of them lie at the part's phase than
+            // at the lattice's (a panel's copies, a row among passives
+            // aligned with the lattice, keep the lattice).
+            if shift != 0 {
+                let (mut at_part, mut at_lattice) = (0usize, 0usize);
+                for &(anchor_nm, _) in narrow
+                    .iter()
+                    .filter(|(anchor_nm, _)| (low..=high).contains(anchor_nm))
+                {
+                    let residue = (anchor_nm - origin_nm).rem_euclid(pitch_nm);
+                    let near = |phase: i64| {
+                        let offset = (residue - phase).rem_euclid(pitch_nm);
+                        offset.min(pitch_nm - offset) <= 100
+                    };
+                    at_part += near(first) as usize;
+                    at_lattice += near(0) as usize;
+                }
+                if at_part <= at_lattice {
+                    placed[axis].outvoted += 1;
+                    continue;
+                }
+            }
             bands.push((low, high, shift, part_lines.len()));
         }
         // The most lines first; a band meeting an accepted one of another
