@@ -25,6 +25,7 @@ mod pour_plan;
 mod pour_quality;
 mod result;
 mod route;
+mod row_fanout;
 #[cfg(test)]
 mod tests;
 mod tools;

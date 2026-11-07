@@ -65,6 +65,51 @@ pub(crate) fn emit_routes(
             kind,
         }));
     }
+    // The prepared row exits (`row_fanout`) the routes use: the path (and
+    // a diver's via where the route takes it off the pad's layer) written
+    // as the net's copper, the route's end joined to the landing where
+    // KiCad would not see them touch; one not used is dropped.
+    for exit in row_fanout::exits_of(board) {
+        let net = exit.net as usize;
+        let Some(route) = result.routes.get(net) else {
+            continue;
+        };
+        let (surface, through) = row_fanout::exit_use(board, &exit, route);
+        if surface.is_none() && !through {
+            continue;
+        }
+        let segment = |start: [f64; 2], end: [f64; 2]| {
+            supplemental_segment_expr(&SupplementalSegment {
+                connection: board.nets[net].name.clone(),
+                start: nanometres(start),
+                end: nanometres(end),
+                width: exit.width,
+                layer: layer_names[exit.layer].clone(),
+            })
+        };
+        for (start, end) in &exit.pieces {
+            items.push(segment(*start, *end));
+        }
+        if let Some(end) = surface
+            && !exit.pieces.iter().any(|(start, stop)| {
+                core::geometry::point_segment_distance(end, *start, *stop) <= exit.width / 2.0
+            })
+        {
+            items.push(segment(end, exit.landing));
+        }
+        if through && let Some((at, diameter, drill, span)) = exit.via {
+            pad_vias[net] += 1;
+            let (layers, kind) = via_layers_and_kind(span, board.layer_count, layer_names);
+            items.push(supplemental_via_expr(&SupplementalVia {
+                connection: board.nets[net].name.clone(),
+                at: nanometres(at),
+                size: diameter,
+                drill,
+                layers,
+                kind,
+            }));
+        }
+    }
     let mut nets = Vec::new();
     for (net, route) in result.routes.iter().enumerate() {
         let description = &board.nets[net];

@@ -457,6 +457,20 @@ pub struct KiCadBoardRouterConfig {
     /// 2026-11-04); `PCB_ROUTER_BGA_FANOUT` overrides this.
     #[serde(default)]
     pub bga_fanout: Option<bool>,
+    /// Prepared fan-outs for fine-pitch rows (board_router/row_fanout.rs;
+    /// docs/router.md, "Prepared fan-outs for fine-pitch rows
+    /// (2026-11-07)"): before routing, every pad of a signal net in a row
+    /// of a part whose adjacent pads lie closer than 0.65 mm gets its exit
+    /// at exact geometry, jointly with its neighbours (a stub straight out
+    /// beyond the row's tips, fanned where the pitch is narrower than two
+    /// tracks and a clearance need), and the pads whose targets cross the
+    /// row's order a via beyond the row whose landing on another layer is
+    /// checked first; fixed copper of the pad's net that its route may end
+    /// on, written only where the route uses it; a row the plan cannot
+    /// serve whole is left to the search. Unset: off;
+    /// `PCB_ROUTER_ROW_FANOUT` overrides this.
+    #[serde(default)]
+    pub row_fanout: Option<bool>,
     /// Blind, buried and micro vias (board_router/via_spans.rs;
     /// docs/router.md, "Blind, buried and micro vias (2026-11-05)"): the
     /// router routes each via as the shortest span the board allows that
