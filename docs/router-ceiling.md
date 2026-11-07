@@ -578,6 +578,24 @@ the run); the expansion and short tiers and the fingerprints as guards
 change; they must not lose). Kill criterion: the census's closed-row
 items do not fall, or a board loses a strict pass.
 
+**Status (2026-11-07, branch row-fanout): measured, out.** Built as
+designed (router.md, "Prepared fan-outs for fine-pitch rows
+(2026-11-07)": exits at exact geometry with the lattice's room, fanned
+rows, divers of adjacent crossing pairs through a via whose landing is
+checked, fixed copper the terminal reaches). The kill criterion's
+second clause holds: boards lose strict passes. The census's closed-row
+items do fall (113 -> 61 on the
+fifteen boards; vaio_re 11 -> 7, RP2040_base 36 -> 31, Glasgow 18 -> 15)
+and video and DSP-ADAU1452 pass, but x1930 (design 1's leader first)
+passes those two already, and the boards lose elsewhere: against x1930
+on the sixteen planned boards routed both ways, 10 -> 5 strict passes
+(hackrf-one, little_red_rover, ATAT1800, split72_left, Quanta75_BareRP2040
+lost) and 23 -> 44 unconnected; the whole tier with the plan before its
+last writer fixes 64 strict. The fixed exits and the divers' vias take
+room the negotiation used (jetson's tracks rung 4 -> 24 open). Taken
+out; the census refresh (the rows, the designer's own exits) is in
+router.md's section.
+
 ## The estimate
 
 Per design, by the boards of its class (a board counts where the

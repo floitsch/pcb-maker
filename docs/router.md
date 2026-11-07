@@ -7757,7 +7757,7 @@ Blind and micro vias for the dog-bones: "Blind, buried and micro vias
 
 ## Prepared fan-outs for fine-pitch rows (2026-11-07)
 
-Design 2 of the router ceiling (docs/router-ceiling.md): the BGA method
+Design 2 of the router's ceiling (docs/router-ceiling.md): the BGA method
 ("Prepared fan-outs for BGAs" above) for the rows of fine-pitch parts.
 Two earlier repairs of the rows were removed on 2026-11-04 ("Fan-out
 before negotiation", "Crossings decided in the repair"): the first
@@ -7766,75 +7766,168 @@ which pad of a crossing pair stays open; the second decided the layer
 change inside the repair, and its via landed on the other layer's routes.
 This one fixes copper before routing, at exact geometry, and decides the
 layer changes by the row's planar order with the via's landing checked
-first.
+first. **Measured and removed** (the decision below): the setting, its
+switches and board_router/row_fanout.rs are gone; the plan as it was
+built is in git history (the commits "row_fanout: ..." of 2026-11-07).
 
 **The plan** (`row_fanout`, router settings, `PCB_ROUTER_ROW_FANOUT`;
-board_router/row_fanout.rs). In the lowering, after the BGA plan, for
+board_router/row_fanout.rs; off). In the lowering, after the BGA plan, for
 every footprint of four SMD pads or more (the exposed pad left out):
 
 - *Rows*: per layer, the pads whose long axis (a square pad: the side of
   the centres' box it lies on) points out of one side of the part, in
   order along that side; adjacent pads at most 1.05 x 0.65 mm apart and
-  in line. A row is fine-pitch when its pitch is under 0.645 mm (the
-  census's 0.65 mm, `FINE_PITCH`, without the 0.65 mm parts whose
-  centres lie a nanometre either side of it).
+  in line. A row is fine-pitch when its pitch is under 0.645 mm.
 - *Roles*: a pad of a signal net with a pad on another part gets an
-  exit of copper; a pour net's pad, a pair's (`diff_pair_of`) and a
-  custom pad (joined at its anchor) a corridor: a straight path the
-  other exits keep their clearance from, no copper; a pad of no net, of
-  a net of one pad, or of a net whose other pads are its part's own,
-  nothing.
-- *Exits at exact geometry*: a stub from the pad's centre straight out,
-  at the class's width where that clears the neighbouring pads, else at
-  the neck, to a landing at least `MIN_EXIT` (0.25 mm) beyond the row's
-  tips where the track the search starts with (the neck where the
-  router's neck zone holds the pad, the class's width elsewhere) is
-  legal with `RHO` (0.09 mm, half the diagonal of the coarsest default
-  lattice, 0.127 mm) to spare: some lattice node lies there whatever the
-  lattice's phase. Tested off the lattice against the lowered board's
-  copper, holes, rule areas and edge with no margin (an exact fit
-  passes, as `stub_is_clear`).
+  exit of copper; a pour net's pad, a pair's and a custom pad (joined at
+  its anchor) a corridor: a straight path the other exits keep their
+  clearance from, no copper; a pad of no net, of a net of one pad or of
+  a net whose other pads are its part's own, nothing.
+- *Exits at exact geometry*: a stub from the pad's centre straight out
+  at the class's width as the project's rules hold it on the layer
+  (where that clears the neighbouring pads, else the neck), to a landing
+  at least 0.25 mm beyond the row's tips where the class's track is
+  legal with 0.09 mm to spare (half the diagonal of the coarsest default
+  lattice: some lattice node lies there whatever the lattice's phase).
+  Tested off the lattice against the lowered board's copper, holes,
+  rule areas, the project's custom clearances and the edge with no
+  margin (an exact fit passes, as `stub_is_clear`).
 - *The fan*: where two adjacent landings need more room than the pitch
-  gives (two half tracks, a clearance and `RHO`: 0.49 mm at 0.2/0.2, so
-  every 0.4 mm row), the exits fan from the row's middle: each pad's
-  stub turns 45 degrees away from the middle by the room its side needs,
-  the outer pads first, an inner pad that turns too later by as much as
-  two parallel diagonals need to keep their clearance, and the pads
-  that do not turn land beyond their neighbours' corners. One base
-  depth for the row's turns, the first in 0.02 mm steps at which every
-  exit, every landing and every pair of exits keep their rules.
+  gives (two half tracks, a clearance and the room: 0.49 mm at 0.2/0.2,
+  so every 0.4 mm row), the exits fan from the row's middle, each stub
+  turning 45 degrees away from the middle by the room its side needs, the
+  outer pads first, an inner pad that turns too later by as much as two
+  parallel diagonals need; the pads that do not turn land beyond their
+  neighbours' corners. One base depth for the row, the first in 0.02 mm
+  steps at which every exit, landing and pair keep their rules.
 - *The order*: the signal pads' targets (the nearest pad of the net on
-  another part) as angles from the part's centre against the pads'
-  order along the row; the longest increasing run stays on the layer, a
-  pad outside it whose target crosses its signal neighbour's dives.
-- *The via*: a diver's stub goes on beyond its landing, outward, to the
-  first site (0.05 mm steps, at most 2 mm) where a via (the largest of
-  the class's and the project's sizes, the shortest span the board
-  allows) keeps every rule against the lowered board on every layer it
-  spans and against the planned exits and landings, and where a
-  straight run of the net's track 0.5 mm beyond the via's ring leaves it
-  on another layer the net may route on (not another net's exclusive
-  plane): the landing, checked before. A diver without such a site stays
-  on the surface with its exit.
-- *All or nothing*: a row any of whose exits or landings the board's
-  copper or another exit closes is left to the search whole.
-- *The hand-over*: each exit is fixed copper of its net (`<pad> row
-  exit` segments, a `<pad> row landing` disc at its end); the landing is
-  copper the pad's terminal reaches (`Board::terminal_copper`), so the
-  search starts on its nodes and every other net keeps clear of the
-  exit from the start; a diver's via is the pad's terminal on the other
-  layers, as a dog-bone's. `emit_routes` writes an exit only where the
-  net's route ends on its landing (then joining the route's end to the
-  landing where KiCad would not see them touch) or uses its via off the
-  pad's layer (then the via too); an exit the routes did not take is
-  dropped.
-- *Work*: the plan's distance tests and the obstacles it visits, one
-  lowering expression each, on the lowering's work, for a part where a
-  row is planned.
-- `PCB_ROUTER_ROW_FANOUT_WHY` prints each row's plan once a process;
-  `PCB_ROUTER_ROW_FANOUT_DIVE=0` plans the rows on the surface alone.
+  another part) as angles from the part's centre against the pads' order
+  along the row; the longest increasing run stays on the layer, a pad
+  outside it whose target crosses its signal neighbour's dives: its stub
+  goes on to the first site (0.05 mm steps, at most 2 mm) where a via of
+  the class's or a project size keeps every rule, the hole clearance
+  among the planned vias too, and where a straight run of the net's
+  track 0.5 mm beyond the ring leaves it on another layer the net may
+  route on (its landing, checked before). A diver without such a site
+  stays on the surface.
+- *All or nothing*: a row any of whose exits or landings is closed is
+  left to the search whole.
+- *The hand-over*: each exit is fixed copper of its net, its landing a
+  disc of the lattice's room that the pad's terminal reaches
+  (`Board::terminal_copper` with `reach` 0: only nodes inside it, so a
+  route's end always overlaps it whatever width it ends with); a diver's
+  via is the pad's terminal on the other layers with the via's centre as
+  its anchor. `emit_routes` writes an exit where the net's route ends on
+  its landing (and a joint from the landing to the route's end: KiCad
+  calls a track's end on another track's round end dangling) or uses its
+  via off the pad's layer; an exit the routes did not take is dropped.
+- *Work*: the plan's distance tests and visited obstacles, a lowering
+  expression each, for a part where a row is planned.
 
-MEASUREMENTS-PLACEHOLDER
+**The census refreshed** (x1929 = main 83ef270f; route mode on the
+designer's placement at the tier's budget, scale 0.647, with
+`PCB_ROUTER_TROUBLE_WHY`: `build/row1/why-x1929.log`, identical to the
+night's designer tier row for row). The fine-pitch items of the four
+deciding and eleven second-class boards, molecule panels aside: no
+straight way out 55, a crossing pair 29, every straight way closed 29.
+The designer leaves those pads by a straight track out of the row
+(0.25 to 3 mm before the first turn; RP2040_base's 0.2 mm tracks run
+side by side at 0.4 mm for 0.7 to 3 mm), with a via at the row only on
+eurorack's resistor array (0.58 mm out), Glasgow's U1 (about 1 mm) and
+OpenRX's QFN-32s (0.2 to 0.6 mm); a crossing pair crosses away from the
+row (video's TVG3 dives 2.4 mm out, beyond X_DATA).
+
+**Measured** (tasks v7, the reference work rate, 3 x 1 or 4 x 1; KiCad
+unconnected / strict / vias; build/row1).
+
+*The fifteen boards*, x1929 against the plan on x1929's code (row1-i,
+before the panel, width-rule and hole fixes below):
+
+| Board | x1929 | row_fanout (row1-i) | row items no way / crossing / closed |
+| --- | --- | --- | --- |
+| video | 1 / no / 634 | 0 / **pass** / 577 | 0/1/0 -> 0/0/0 |
+| DSP-ADAU1452 | 1 / no / 75 | 0 / **pass** / 101 | 1/0/0 -> 0/0/0 |
+| BAGEL-MK1.1-Avocado | 2 / no / 248 | 2 / no / 274 | 2/0/0 -> 0/0/0 |
+| poly_corne_split42_right | 2 / no / 761 | 3 / no / 733 | 1/1/0 -> 1/0/0 |
+| eurorack-pmod-pcb | 1 / no / 151 | 3 / no (hole_clearance 30, a fixed bug) / 144 | 0/0/1 -> 0/0/0 |
+| vaio_re | 11 / no / 360 | 7 / no / 407 | 1/3/5 -> 1/0/0 |
+| RP2040_base | 36 / no / 263 | 31 / no (track_dangling 7, a fixed bug) / 333 | 27/0/0 -> 15/0/0 |
+| glasgow revC3 | 18 / no / 304 | 15 / no / 330 | 0/2/2 -> 0/0/0 |
+| 4in1 | 15 / no / 167 | 19 / no (clearance 2, a fixed bug) / 156 | 0/1/0 -> 0/0/1 |
+| 4in1-mini | 37 / no / 132 | 48 / no (clearance 3, a fixed bug) / 131 | 0/4/4 -> 0/0/1 |
+| 4in1-panel | 34 / no / 272 | 41 / no / 260 | 0/5/4 -> 0/2/1 |
+| OpenRX-panel-rev2 | 78 / no / 119 | 86 / no / 126 | 23/12/13 -> 22/7/10 |
+| Sisu_SSE-9 | 1 / no (skew 5) / 306 | 3 / no (skew 4) / 289 | - |
+| molecule 4x5, 7x5 wave left | 499 each | the same | - |
+
+The plan closes the rows' items it was built for (the census's closed
+rows fall from 113 to 61) and video and DSP-ADAU1452 pass, but the
+boards' other connections get worse: 1235 -> 1256 unconnected over the
+fifteen. x1930 (the leader first, main a8d797f0) passes video and
+DSP-ADAU1452 already.
+
+*The designer tier* (109 boards; the plan on a8d797f0's code). With the
+plan on, before the last fixes (row1-l): **64 strict passes** against
+x1929's 72 and x1930's 71, 3171 unconnected; lost the 0xCB panel and
+pcb-panel (0 -> 108, 0 -> 102) and SmartSpin2k_Panelized (0 -> 186)
+to a writer bug (a panel repeats references: its copies' exits were
+merged into one by their label), the laptop motherboard and the power
+board 155 and 31 track_width findings (exits at the class's width under
+a 0.127 mm outer-layer minimum) and 10 hole clearances (a custom rule
+against holes); every one fixed in row1-m. Then x1930 against row1-m,
+both arms routed on the boards whose plan places a row (16 of the 66
+such boards before the run was stopped; on the 36 boards without a
+planned row the two are identical row for row, by construction):
+
+| Board | x1930 | row_fanout (row1-m) |
+| --- | --- | --- |
+| hackrf-one | 0 / pass / 422 | 2 / no / 435 |
+| little_red_rover | 0 / pass / 143 | 1 / no / 111 |
+| ATAT1800 | 0 / pass / 228 | 3 / no / 223 |
+| poly_kybd_split72_left | 0 / pass / 769 | 2 / no / 744 |
+| Quanta75_BareRP2040 | 0 / pass / 91 | 1 / no / 120 |
+| jetson-nano-baseboard | 2 / no / 424 | 11 / no / 439 |
+| link | 1 / no / 367 | 3 / no / 321 |
+| koeg-board-pcb | 2 / no / 291 | 3 / no / 262 |
+| poly_kybd_split72_right | 1 / no / 746 | 3 / no / 802 |
+| poly_corne_split42_right | 2 / no / 761 | 3 / no / 733 |
+| laptop motherboard | 15 / no / 368 | 12 / no / 359 |
+| video, neotron-pico, PCB, panel, pcb-panel | pass each | pass each |
+
+Sum over the sixteen: 10 -> 5 strict passes, 23 -> 44 unconnected, no
+pass gained. jetson's continued tracks rung ends at 24 open against 4
+on the same rung: the fixed exits and the divers' vias take the room
+the negotiation used, with no emission fault behind it.
+
+*What the measuring found in the writer* (each fixed on the branch
+before the row1-m arms; the first three are the hand-over's, so they
+would hold for any terminal copper): a route that ends with a narrower
+track than its class (a neck) left the landing apart (the router's own
+copper check: 51 nets on vaio_re), a route running on through a landing
+in one segment was not seen to use it, a joint wider than the route's
+track (corne, clearance 18), a stub to the pad's centre on the far layer
+from a diver's via (dangling tracks), a joint ending on another track's
+round end (KiCad calls it dangling), two divers' vias within the hole
+clearance, the project's custom clearance and track-width rules, a
+panel's repeated references, and a kept-copper merge that did not
+renumber the terminal copper's terminals (this last one stays: kept.rs).
+
+**Decision: out.** The rule (on only if the designer tier gains strict
+passes over x1930 with none lost and the guards hold) fails: five
+passes lost on the sixteen boards measured, none gained, the two the
+plan wins (video, DSP-ADAU1452) passing on x1930 already. The diagnosis
+holds as far as it went: prepared exits do close the rows' own items
+(the census's closed rows halve, vaio_re 11 -> 7, RP2040_base 36 -> 31)
+but as fixed copper they cost the negotiation more room elsewhere than
+they give; the BGA method works where no search finds a way out at all
+(Glasgow's inner balls), not where the search finds most of them.
+Taken out (setting, switches, board_router/row_fanout.rs and
+`TerminalCopper::reach`); the code is in git history (the commits
+"row_fanout: ..." of 2026-11-07, before "row_fanout taken out"). Kept: kept.rs's renumbering of the terminal copper
+on a merge (test
+`copper_a_terminal_reaches_follows_it_when_kept_copper_merges_terminals`).
+What the rows need next is decided inside the negotiation, not before
+it: open problem 2.
 
 ## Blind, buried and micro vias (2026-11-05)
 

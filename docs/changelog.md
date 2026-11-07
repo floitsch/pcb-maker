@@ -11,6 +11,32 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Measured on 2026-11-07 (design 2 of the router's ceiling, prepared fan-outs for fine-pitch rows: out)
+
+Branch row-fanout; router.md "Prepared fan-outs for fine-pitch rows
+(2026-11-07)", router-ceiling.md's status under design 2, handover open
+problem 2.
+
+- **The census refreshed** on x1929: the fifteen row boards' items are
+  no straight way out 55, a crossing pair 29, every straight way closed
+  29; the designer leaves those pads by straight tracks out of the row,
+  a via at the row only on eurorack's array, Glasgow's U1 and OpenRX's
+  QFN-32s.
+- **The plan** (`row_fanout`, built and measured, then taken out): per
+  fine-pitch row, exits at exact geometry to landings with the lattice's
+  room, fanned where the pitch is narrower than that, the pads whose
+  target crosses a neighbour's through a via beyond the row whose
+  landing on another layer is checked first, all fixed copper the pad's
+  terminal reaches, a row the plan cannot serve left to the search.
+- **Measured**: the fifteen boards 1235 -> 1256 unconnected, video and
+  DSP-ADAU1452 pass (x1930 passes both already), the census's closed-row
+  items 113 -> 61; against x1930 on the sixteen planned boards routed
+  both ways 10 -> 5 strict passes (hackrf-one, little_red_rover,
+  ATAT1800, split72_left, Quanta75_BareRP2040 lost), 23 -> 44
+  unconnected, none gained; the whole tier before the last writer fixes
+  64 strict (x1929 72). Out by the rule.
+- **Kept**: a kept-copper merge renumbers the terminal copper's
+  terminals as it does the merged pads' hosts (kept.rs).
 ## Measured on 2026-11-07 (the passives' level per board: no rule found; `PASSIVES_FIRST_LEVEL` stays 2)
 
 Branch passives-level (docs only; docs/placer.md "The passives' level per

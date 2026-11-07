@@ -341,6 +341,18 @@ ranks what keeps the designer tier's 41 failing boards open.
    (Glasgow's U30) the inner balls get a dog-bone before routing
    (`bga_fanout`, on); what stays on Glasgow is its outer rings' surface
    escapes, ringed by our passives (open problem 4, `bga_room`).
+   A third repair, prepared fan-outs for the rows (design 2 of the
+   router's ceiling: exits fixed as copper at exact geometry, fanned
+   0.4 mm rows, divers of crossing pairs through a via with a checked
+   landing), was built, measured and taken out on 2026-11-07 (router.md,
+   "Prepared fan-outs for fine-pitch rows (2026-11-07)"): it closes the
+   rows' own items (the census's closed-row items 113 -> 61 on the
+   fifteen row boards) but against x1930 loses five strict passes on the
+   sixteen planned boards routed both ways and gains none (video and
+   DSP-ADAU1452, which it passes, x1930 passes already). Fixed copper
+   before the negotiation, like the reserved corridors before it, costs
+   the boards more room than it gives the rows; what is left is the
+   crossing decided inside the negotiation.
 3. **The ladder's judge.** On 21 boards with every rung continued to its
    final (2026-10-13), today's judge (unfinished nets after the probe)
    picks the best rung 16 times; no other count does better, and a class
