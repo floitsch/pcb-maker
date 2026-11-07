@@ -14,6 +14,7 @@ pub mod geometry;
 pub(crate) mod global;
 pub mod grid;
 pub mod mem_profile;
+pub mod pin_lines;
 pub mod pour;
 pub mod router;
 pub mod rules;

@@ -136,6 +136,13 @@ impl Router {
         if let Err(message) = grid.check_size() {
             panic!("{message} (Router::try_new returns it as an error)");
         }
+        if std::env::var_os("PCB_ROUTER_PIN_LINES_PROBE").is_some() {
+            crate::pin_lines::probe(board, &grid);
+            // The ladder's finer pitches, as their rungs would choose them.
+            for pitch in [0.075, 0.05] {
+                crate::pin_lines::probe(board, &Grid::choose(board, &[pitch]));
+            }
+        }
         if config.verbose {
             eprintln!(
                 "lattice: pitch {} mm, origin {:?}, {} x {} nodes",
