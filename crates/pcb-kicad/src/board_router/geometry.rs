@@ -185,31 +185,54 @@ pub(crate) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
     Ok(shapes)
 }
 
+/// How far KiCad 10.0.7's plate of a knockout text reaches past its
+/// glyphs: the larger of half the pen (the thickness, clamped to a quarter
+/// of the smaller of the text's height and width, as KiCad clamps a stroke
+/// text's pen) and a ninth of the height (pcbnew's polygons of 3150 texts
+/// made for it: 7 mm at 0.6, Quanta75's '0bsilab', 0.778 mm all round; 3 by
+/// 5 mm at 1.0, 0.375). It was taken as the thickness, under the ninth of
+/// the height for any text thinner than a fifth of its height.
+fn knockout_margin(item: &Expr) -> f64 {
+    let font = item
+        .child("effects")
+        .and_then(|effects| effects.child("font"));
+    let size = font
+        .and_then(|font| form_xy(font, "size").ok())
+        .unwrap_or([1.0, 1.0]);
+    let thickness = font
+        .and_then(|font| form_f64(font, "thickness", 1).ok())
+        .unwrap_or(0.15);
+    let pen = thickness.min(0.25 * size[0].min(size[1]));
+    (pen / 2.0).max(size[0] / 9.0)
+}
+
 /// The shapes of a board graphic as KiCad draws it, on a mask layer for
-/// its bridge test and on a copper layer for its clearance. KiCad draws a
-/// cached text's glyphs from the font, not from the cache, and a face it
-/// does not have is replaced (OpenESC's "ESC" in Tokyo on B.Mask, drawn in
-/// a stand-in 2 mm wider than its cache, over a track and a via that kept
-/// clear of the cached glyphs; the nine cached mask texts of the corpus
-/// reach 0.7 to 2.9 mm past their caches): the stroke font's box, which
-/// holds all nine within 0.06 mm, is part of the text too. On copper the
-/// same (Quanta75's '0bsilab' knockout plate in "Blrrpix Tweak", drawn in
-/// Noto Sans Bold: x 81.0 to 116.4 mm where the cache's glyphs span 84.8 to
-/// 112.8; our I2C1-SDA track inside it, clearance and mask bridges): a
-/// knockout text's plate covers the stroke font's box too.
+/// its bridge test and on a copper layer for its clearance. A plain
+/// (stroke font) text is its stroke box (`plain_text_box`); a cached
+/// (TrueType) text the box KiCad's glyphs fill in the face it draws
+/// (`drawn_text_box`, measured on pcbnew's polygons), and its cached
+/// glyphs beside it: KiCad draws a cached
+/// text from the font, not from the cache, and a face it does not have is
+/// replaced (OpenESC's "ESC" in Tokyo on B.Mask, drawn in a stand-in 2 mm
+/// wider than its cache; the nine cached mask texts of the corpus reach
+/// 0.7 to 2.9 mm past their caches). A knockout text is its plate: that
+/// box and a cached text's glyphs' box, each grown by KiCad's margin
+/// (`knockout_margin`) in the text's frame (Quanta75's '0bsilab' in
+/// "Blrrpix Tweak", drawn in Noto Sans Bold: pcbnew's plate x 81.0 to
+/// 116.4 and y 82.8 to 91.9 mm where the cache's glyphs span 84.8 to 112.8
+/// and 84.2 to 91.0; our I2C1-SDA track inside it, then a via). Other
+/// graphics as `copper_graphic_shapes`.
 pub(super) fn drawn_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, String> {
-    let mut shapes = copper_graphic_shapes(item)?;
-    let cached = item.head() == Some("gr_text")
-        && item.child("render_cache").is_some_and(|cache| {
-            cache
-                .children()
-                .iter()
-                .any(|child| child.head() == Some("polygon"))
-        });
-    if !cached {
-        return Ok(shapes);
+    if item.head() != Some("gr_text") {
+        return copper_graphic_shapes(item);
     }
-    let stroke = stroke_text_box(item)?;
+    let text = item.children().get(1).and_then(Expr::atom).unwrap_or("");
+    let cached = item.child("render_cache").is_some_and(|cache| {
+        cache
+            .children()
+            .iter()
+            .any(|child| child.head() == Some("polygon"))
+    });
     let knockout = item.child("layer").is_some_and(|layer| {
         layer
             .children()
@@ -217,24 +240,137 @@ pub(super) fn drawn_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Stri
             .skip(2)
             .any(|child| child.atom() == Some("knockout"))
     });
-    if knockout && !shapes.is_empty() {
-        let thickness = item
-            .child("effects")
-            .and_then(|effects| effects.child("font"))
-            .and_then(|font| form_f64(font, "thickness", 1).ok())
-            .unwrap_or(0.15);
-        let bounds = shapes
+    // The box of before (the stroke font's, and a knockout's plate grown
+    // by the thickness) stays where it holds KiCad's drawn box: a change
+    // of a text's shape moves routes (`covers`).
+    let stroke = stroke_text_box_of(item, text)?;
+    if knockout {
+        let margin = knockout_margin(item);
+        let mut plate = vec![drawn_text_box(item, text, margin)?];
+        if cached {
+            plate.extend(cached_glyph_box(item, margin)?);
+        }
+        let thickness = text_thickness(item);
+        let before = copper_graphic_shapes(item)?
             .iter()
             .fold(stroke.aabb().inflated(thickness), |bounds, shape| {
                 bounds.union(shape.aabb())
             });
-        let (low, high) = (bounds.minimum, bounds.maximum);
-        return Ok(vec![core::Shape::Polygon {
-            points: vec![low, [high[0], low[1]], high, [low[0], high[1]]],
-        }]);
+        let before = core::Shape::Polygon {
+            points: vec![
+                before.minimum,
+                [before.maximum[0], before.minimum[1]],
+                before.maximum,
+                [before.minimum[0], before.maximum[1]],
+            ],
+        };
+        let mut glyphs = vec![drawn_text_extent(item, text, margin)?];
+        if cached {
+            glyphs.extend(cached_glyph_box(item, margin)?);
+        }
+        if covers(&before, &glyphs) {
+            return Ok(vec![before]);
+        }
+        return Ok(plate);
     }
-    shapes.push(stroke);
+    if !cached {
+        return Ok(vec![plain_text_box(item, text)?]);
+    }
+    let mut shapes = copper_graphic_shapes(item)?;
+    let drawn = drawn_text_box(item, text, 0.0)?;
+    shapes.push(if covers(&stroke, &[drawn_text_extent(item, text, 0.0)?]) {
+        stroke
+    } else {
+        drawn
+    });
     Ok(shapes)
+}
+
+/// `drawn_text_box` without its room on every side: where KiCad's glyphs
+/// reach by the measurements (the test of `covers`).
+fn drawn_text_extent(item: &Expr, text: &str, grow: f64) -> Result<core::Shape, String> {
+    let height = item
+        .child("effects")
+        .and_then(|effects| effects.child("font"))
+        .and_then(|font| form_xy(font, "size").ok())
+        .map_or(1.0, |size| size[0]);
+    drawn_text_box(item, text, grow - 0.02 * height)
+}
+
+/// `text` without its text variables (`${...}`).
+fn without_variables(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("${") {
+        out.push_str(&rest[..start]);
+        match rest[start..].find('}') {
+            Some(end) => rest = &rest[start + end + 1..],
+            None => {
+                rest = "";
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Whether `outer` holds every corner of `inner` (polygons: the text
+/// boxes and plates).
+fn covers(outer: &core::Shape, inner: &[core::Shape]) -> bool {
+    inner.iter().all(|shape| match shape {
+        core::Shape::Polygon { points } => points.iter().all(|point| outer.contains(*point)),
+        _ => false,
+    })
+}
+
+/// A text's thickness (KiCad's default 0.15 mm without one).
+fn text_thickness(item: &Expr) -> f64 {
+    item.child("effects")
+        .and_then(|effects| effects.child("font"))
+        .and_then(|font| form_f64(font, "thickness", 1).ok())
+        .unwrap_or(0.15)
+}
+
+/// A cached text's glyphs' box in the text's frame, grown by `grow`.
+fn cached_glyph_box(item: &Expr, grow: f64) -> Result<Option<core::Shape>, String> {
+    let Some(cache) = item.child("render_cache") else {
+        return Ok(None);
+    };
+    let at = form_at(item)?;
+    let mut bounds = [
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    ];
+    for polygon in cache
+        .children()
+        .iter()
+        .filter(|child| child.head() == Some("polygon"))
+    {
+        for point in rule_area_like_points(polygon)? {
+            let local = rotate_vector([point[0] - at[0], point[1] - at[1]], at[2]);
+            bounds = [
+                bounds[0].min(local[0]),
+                bounds[1].min(local[1]),
+                bounds[2].max(local[0]),
+                bounds[3].max(local[1]),
+            ];
+        }
+    }
+    if !bounds[0].is_finite() {
+        return Ok(None);
+    }
+    let middle = [(bounds[0] + bounds[2]) / 2.0, (bounds[1] + bounds[3]) / 2.0];
+    let offset = rotate_vector(middle, -at[2]);
+    Ok(Some(core::Shape::rectangle(
+        [at[0] + offset[0], at[1] + offset[1]],
+        [
+            (bounds[2] - bounds[0]) / 2.0 + grow,
+            (bounds[3] - bounds[1]) / 2.0 + grow,
+        ],
+        -at[2],
+    )))
 }
 
 /// A board graphic on a mask layer as KiCad's bridge test sees it
@@ -337,12 +473,12 @@ fn stroke_text_box(item: &Expr) -> Result<core::Shape, String> {
 }
 
 /// A footprint's text (`fp_text`, a KiCad 8 `property`) on a copper or a
-/// mask layer, as `stroke_text_box` draws it, in the footprint's frame:
-/// its angle is relative to the footprint's (KiCad 7 and 8 alike: a
+/// mask layer, as KiCad draws it (`drawn_text_box`), in the footprint's
+/// frame: its angle is relative to the footprint's (KiCad 7 and 8 alike: a
 /// footprint at 90 degrees with its text at 90 draws it at 180), so
 /// `place_shape` puts it on the board. `None` for a hidden text, which
-/// KiCad's DRC skips. A knockout text is its plate, the box grown by the
-/// stroke.
+/// KiCad's DRC skips. A knockout text is its plate, the box grown by
+/// KiCad's margin (`knockout_margin`).
 pub(super) fn footprint_text_box(item: &Expr) -> Result<Option<core::Shape>, String> {
     if text_hidden(item) {
         return Ok(None);
@@ -351,7 +487,6 @@ pub(super) fn footprint_text_box(item: &Expr) -> Result<Option<core::Shape>, Str
     if text.is_empty() {
         return Ok(None);
     }
-    let shape = stroke_text_box_of(item, text)?;
     let knockout = item.child("layer").is_some_and(|layer| {
         layer
             .children()
@@ -359,22 +494,71 @@ pub(super) fn footprint_text_box(item: &Expr) -> Result<Option<core::Shape>, Str
             .skip(2)
             .any(|child| child.atom() == Some("knockout"))
     });
-    if !knockout {
-        return Ok(Some(shape));
-    }
-    let thickness = item
+    let face = item
         .child("effects")
         .and_then(|effects| effects.child("font"))
-        .and_then(|font| form_f64(font, "thickness", 1).ok())
-        .unwrap_or(0.15);
-    let bounds = shape.aabb().inflated(thickness);
-    let (low, high) = (bounds.minimum, bounds.maximum);
-    Ok(Some(core::Shape::Polygon {
-        points: vec![low, [high[0], low[1]], high, [low[0], high[1]]],
+        .is_some_and(|font| font.child("face").is_some());
+    if !knockout && !face {
+        return Ok(Some(plain_text_box(item, text)?));
+    }
+    // As a board's text (`drawn_graphic_shapes`): the box of before where
+    // it holds the drawn one.
+    let stroke = stroke_text_box_of(item, text)?;
+    let (before, drawn, extent) = if knockout {
+        let bounds = stroke.aabb().inflated(text_thickness(item));
+        let before = core::Shape::Polygon {
+            points: vec![
+                bounds.minimum,
+                [bounds.maximum[0], bounds.minimum[1]],
+                bounds.maximum,
+                [bounds.minimum[0], bounds.maximum[1]],
+            ],
+        };
+        let margin = knockout_margin(item);
+        (
+            before,
+            drawn_text_box(item, text, margin)?,
+            drawn_text_extent(item, text, margin)?,
+        )
+    } else {
+        (
+            stroke,
+            drawn_text_box(item, text, 0.0)?,
+            drawn_text_extent(item, text, 0.0)?,
+        )
+    };
+    Ok(Some(if covers(&before, &[extent]) {
+        before
+    } else {
+        drawn
     }))
 }
 
+/// The box of the stroke font's glyphs as measured on KiCad's plots in
+/// 2026-10 (symmetric about the anchor's line; `drawn_text_box` is KiCad's
+/// layout, measured on pcbnew's polygons since 2026-11-08). The labels and
+/// the placer's marks keep it (`copper_graphic_shapes`): a change of their
+/// boxes moves layouts and was not measured.
 fn stroke_text_box_of(item: &Expr, text: &str) -> Result<core::Shape, String> {
+    stroke_box(item, text, false)
+}
+
+/// A plain (stroke font) text as the router's copper and mask see it: the
+/// stroke box, with every glyph KiCad draws below the baseline counted as
+/// a descender (`/`, `\`, `#`, `$`, `@`, `_` and the brackets as well:
+/// protoesp's "CH340/1" on F.Mask reached 0.165 mm below the box, and a
+/// bracket 0.17 heights). Measured on pcbnew's polygons of every plain
+/// copper and mask text of the designer, expansion and short tiers, the box
+/// holds each within 0.08 mm (the top of a `4`, a `^`; within its 8 % on
+/// top elsewhere); KiCad's own layout (`drawn_text_box`) is not used for
+/// them: a change of a plain text's box moved routes on the boards that
+/// carry one (DSP-ADAU1452 lost its pass to a 1-open route elsewhere,
+/// Sisu 1 -> 4), where none had a finding at a text.
+fn plain_text_box(item: &Expr, text: &str) -> Result<core::Shape, String> {
+    stroke_box(item, text, true)
+}
+
+fn stroke_box(item: &Expr, text: &str, all_descenders: bool) -> Result<core::Shape, String> {
     let at = form_at(item)?;
     let font = item
         .child("effects")
@@ -412,9 +596,20 @@ fn stroke_text_box_of(item: &Expr, text: &str) -> Result<core::Shape, String> {
         .fold(0.0, f64::max);
     // Symbols outside ASCII reach as far (eurorack-pmod's "⇒⊕⊥∃⊢≢" on
     // F.Mask: 0.73 mm across the line of a 1 mm text).
+    // (A line break is the two characters `\n` here, not a backslash; a
+    // text variable, `${REVISION}`, is drawn as its value: its own
+    // characters say nothing.)
+    let drawn: String = without_variables(text).replace("\\n", "");
     let descends = text
         .chars()
-        .any(|c| matches!(c, 'g' | 'j' | 'p' | 'q' | 'y' | ',' | ';') || !c.is_ascii());
+        .any(|c| matches!(c, 'g' | 'j' | 'p' | 'q' | 'y' | ',' | ';') || !c.is_ascii())
+        || (all_descenders
+            && drawn.chars().any(|c| {
+                matches!(
+                    c,
+                    '/' | '\\' | '#' | '$' | '@' | '_' | '(' | ')' | '[' | ']' | '{' | '}' | '|'
+                )
+            }));
     let half = [
         (widest * size[1] + thickness) / 2.0,
         (lines - 1.0) * 1.62 * size[0] / 2.0
@@ -465,6 +660,168 @@ fn stroke_text_box_of(item: &Expr, text: &str) -> Result<core::Shape, String> {
     Ok(core::Shape::rectangle(
         [at[0] + offset[0], at[1] + offset[1]],
         half,
+        -at[2],
+    ))
+}
+
+/// The box KiCad 10.0.7 fills with a text's glyphs, grown by `grow` on
+/// every side in the text's frame (a knockout text's plate:
+/// `knockout_margin`), from its anchor, size, thickness, face, lines and
+/// justification.
+fn drawn_text_box(item: &Expr, text: &str, grow: f64) -> Result<core::Shape, String> {
+    let at = form_at(item)?;
+    let font = item
+        .child("effects")
+        .and_then(|effects| effects.child("font"));
+    let size = font
+        .and_then(|font| form_xy(font, "size").ok())
+        .unwrap_or([1.0, 1.0]);
+    let thickness = font
+        .and_then(|font| form_f64(font, "thickness", 1).ok())
+        .unwrap_or(0.15);
+    // A face (TrueType) is drawn from the font installed, else from a
+    // stand-in (fontconfig's: Noto Sans here), with its own line layout.
+    let true_type = font.is_some_and(|font| font.child("face").is_some());
+    let italic = font.is_some_and(|font| {
+        font.children().iter().any(|child| {
+            child.atom() == Some("italic")
+                || (child.head() == Some("italic")
+                    && !matches!(
+                        child.children().get(1).and_then(Expr::atom),
+                        Some("no" | "false")
+                    ))
+        })
+    });
+    let height = size[0];
+    // KiCad's stroke font, measured on its own plots: glyph
+    // advances in units of the font width (`i` 0.48 ... `m` 1.33),
+    // a symbol outside ASCII 1.2 (eurorack-pmod's "⇒⊕⊥∃⊢≢"). The sum
+    // gets 8 % on top so the box stays outside every measured text.
+    let advance = |character: char| match character {
+        'i' | 'j' | 'I' | '!' | '.' | ',' | ':' | ';' | '\'' | '`' => 0.48,
+        'l' => 0.52,
+        't' | 'f' => 0.57,
+        'r' => 0.62,
+        '(' | ')' | '[' | ']' | '{' | '}' => 0.67,
+        'J' | '_' | ' ' | '"' => 0.76,
+        'A' => 0.86,
+        'N' | 'w' => 1.05,
+        'M' | 'W' | '%' => 1.14,
+        '-' => 1.24,
+        '@' => 1.29,
+        'm' => 1.33,
+        character if !character.is_ascii() => 1.2,
+        _ => 1.0,
+    };
+    let lines = text.split("\\n").count().max(1) as f64;
+    let widest = text
+        .split("\\n")
+        .map(|line| 1.08 * line.chars().map(advance).sum::<f64>())
+        .fold(0.0, f64::max);
+    // Across the line, from pcbnew's polygons of 3150 texts made for it
+    // (both fonts, five sizes, every justification, one to three lines)
+    // and every visible text on a copper or mask layer of the designer,
+    // expansion and short tiers. The lines are a block from the first
+    // line's capital tops to the last line's baseline, one height per line
+    // and the pitch between them (stroke 1.61 heights, a face 1.68); a top
+    // anchor is the block's top (stroke 0.045 heights below it), a bottom
+    // anchor its baseline (0.126 heights above it, a face 0.17), a centred
+    // one its middle (0.0425 heights below, a face 0.085). Glyphs reach
+    // past the block: above the capitals the stroke font's brackets and
+    // `$` 0.143 heights, a face's `b`, `l` and `f` 0.073, accented
+    // capitals 0.381 and 0.322; below the baseline the descenders (`g`,
+    // brackets, `/`, `#`, `$`, `@`, `J`, `Q`, a face's `,`) 0.381 and 0.337,
+    // the stroke font's `Q` and `_` 0.095 otherwise. The stroke font's pen
+    // adds half the thickness all round; a face's outline has no pen.
+    let ascii = text.is_ascii();
+    let descends = !ascii
+        || text.chars().any(|character| {
+            matches!(
+                character,
+                'g' | 'j'
+                    | 'p'
+                    | 'q'
+                    | 'y'
+                    | ','
+                    | ';'
+                    | '('
+                    | ')'
+                    | '['
+                    | ']'
+                    | '{'
+                    | '}'
+                    | '|'
+                    | '/'
+                    | '\\'
+                    | '#'
+                    | '$'
+                    | '@'
+                    | '_'
+                    | 'J'
+                    | 'Q'
+            )
+        });
+    let (pitch, below_top, above_bottom, below_centre) = if true_type {
+        (1.68, 0.0, 0.17, 0.085)
+    } else {
+        (1.61, 0.045, 0.126, 0.0425)
+    };
+    let (above, below, pen) = if true_type {
+        (
+            if ascii { 0.08 } else { 0.35 },
+            if descends { 0.35 } else { 0.03 },
+            0.0,
+        )
+    } else {
+        (
+            if ascii { 0.15 } else { 0.4 },
+            if descends { 0.4 } else { 0.1 },
+            thickness / 2.0,
+        )
+    };
+    let justify: Vec<&str> = item
+        .child("effects")
+        .and_then(|effects| effects.child("justify"))
+        .map(|justify| {
+            justify
+                .children()
+                .iter()
+                .skip(1)
+                .filter_map(Expr::atom)
+                .collect()
+        })
+        .unwrap_or_default();
+    let block = height * (1.0 + (lines - 1.0) * pitch);
+    let top = if justify.contains(&"top") {
+        below_top * height
+    } else if justify.contains(&"bottom") {
+        -above_bottom * height - block
+    } else {
+        -block / 2.0 - below_centre * height
+    };
+    // Some room on every side (a face's widest glyphs reach 0.009 mm
+    // inside it at 5 mm), more along the line for a slanted text.
+    let margin = 0.02 * height;
+    let low = top - above * height - pen - margin - grow;
+    let high = top + block + below * height + pen + margin + grow;
+    let along = (widest * size[1] + thickness) / 2.0;
+    let shift = if justify.contains(&"left") {
+        along
+    } else if justify.contains(&"right") {
+        -along
+    } else {
+        0.0
+    };
+    let shift = if justify.contains(&"mirror") {
+        -shift
+    } else {
+        shift
+    };
+    let slant = if italic { 0.2 * height } else { 0.0 };
+    let offset = rotate_vector([shift, (low + high) / 2.0], -at[2]);
+    Ok(core::Shape::rectangle(
+        [at[0] + offset[0], at[1] + offset[1]],
+        [along + margin + slant + grow, (high - low) / 2.0],
         -at[2],
     ))
 }
@@ -595,7 +952,7 @@ pub(super) fn dimension_shapes(item: &Expr) -> Result<Vec<core::Shape>, String> 
     if let Some(text) = item.child("gr_text") {
         let value = text.children().get(1).and_then(Expr::atom).unwrap_or("");
         if !value.is_empty() {
-            shapes.push(stroke_text_box_of(text, value)?);
+            shapes.push(plain_text_box(text, value)?);
         }
     }
     Ok(shapes)

@@ -676,9 +676,19 @@ mod pour_request_tests {
         let cached = copper_graphic_shapes(&text).unwrap();
         assert!(!cached[0].contains([81.2, 83.41]));
         let drawn = drawn_graphic_shapes(&text).unwrap();
-        assert_eq!(drawn.len(), 1);
-        for point in [[81.2, 83.41], [81.01, 88.0], [116.35, 88.0], [98.7, 91.5]] {
-            assert!(drawn[0].contains(point), "{point:?}");
+        assert_eq!(
+            drawn.len(),
+            2,
+            "the stand-in's plate and the cached glyphs' plate"
+        );
+        for point in [
+            [81.2, 83.41],
+            [81.01, 88.0],
+            [116.35, 88.0],
+            [98.7, 91.5],
+            [98.7, 82.78],
+        ] {
+            assert!(drawn.iter().any(|shape| shape.contains(point)), "{point:?}");
         }
         // A plain cached text gets the stroke font's box beside its glyphs,
         // as on a mask layer.
@@ -700,16 +710,43 @@ mod pour_request_tests {
     #[test]
     fn a_bottom_anchored_texts_descenders_hang_below_its_anchor() {
         // eurorack-pmod's "[apf.audio]" on F.Mask: KiCad's glyphs span x
-        // 9.98 to 11.68 at (11.43, 57.15, 90), 0.25 mm past the anchor; a
-        // track whose edge was at 11.549 bridged.
-        let shapes = copper_graphic_shapes(
+        // 10.13 to 11.71 and y 50.18 to 56.88 at (11.43, 57.15, 90)
+        // (pcbnew 10.0.7's polygon), 0.28 mm past the anchor; a track
+        // whose edge was at 11.549 bridged.
+        let shapes = drawn_graphic_shapes(
             &parse(r#"(gr_text "[apf.audio]" (at 11.43 57.15 90) (layer "F.Mask") (effects (font (size 1 0.85) (thickness 0.15)) (justify left bottom)))"#)
                 .unwrap(),
         )
         .unwrap();
         assert_eq!(shapes.len(), 1);
-        for point in [[11.6765, 53.0], [9.98, 53.0], [11.0, 50.0]] {
+        for point in [[11.71, 53.0], [10.13, 53.0], [11.0, 50.18], [11.0, 56.88]] {
             assert!(shapes[0].contains(point), "{point:?}");
+        }
+    }
+
+    #[test]
+    fn a_plain_texts_descenders_are_its_drawn_glyphs() {
+        // protoesp's "CH340/1" on F.Mask: KiCad's `/` reached 0.165 mm
+        // below the stroke box; a line break (`\n` in the file) and a
+        // text variable (jetson's `${REVISION}`, drawn as "1.6.1") are no
+        // glyphs: those texts keep their box.
+        let text = |words: &str| {
+            parse(&format!(
+                r#"(gr_text "{words}" (at 10 10 0) (layer "F.Mask") (effects (font (size 1.5 1.5) (thickness 0.3))))"#
+            ))
+            .unwrap()
+        };
+        let height = |words: &str| {
+            let bounds = drawn_graphic_shapes(&text(words)).unwrap()[0].aabb();
+            bounds.maximum[1] - bounds.minimum[1]
+        };
+        let before = |words: &str| {
+            let bounds = copper_graphic_shapes(&text(words)).unwrap()[0].aabb();
+            bounds.maximum[1] - bounds.minimum[1]
+        };
+        assert!(height("CH340/1") > before("CH340/1") + 0.3);
+        for words in [r"F = SIGNAL\n", "Rev. ${REVISION}", "LAY 4"] {
+            assert!((height(words) - before(words)).abs() < 1.0e-9, "{words}");
         }
     }
 
@@ -725,6 +762,14 @@ mod pour_request_tests {
         let bounds = shapes[0].aabb();
         assert!((bounds.minimum[0] - 0.4).abs() < 1e-9 && (bounds.maximum[0] - 8.6).abs() < 1e-9);
         assert!((bounds.minimum[1] - 0.4).abs() < 1e-9 && (bounds.maximum[1] - 4.6).abs() < 1e-9);
+        // As KiCad draws it (the router's copper and mask): the glyphs'
+        // box grown by KiCad's margin, a ninth of the height (7 / 9 mm;
+        // half the pen, 0.3, is less), beside the drawn text's plate.
+        let drawn = drawn_graphic_shapes(&text).unwrap();
+        let margin = 7.0 / 9.0;
+        for point in [[1.0 - margin, 1.0 - margin], [8.0 + margin, 4.0 + margin]] {
+            assert!(drawn.iter().any(|shape| shape.contains(point)), "{point:?}");
+        }
         // Without the knockout, the glyphs alone.
         let plain = parse(
             r#"(gr_text "0b" (at 0 0 0) (layer "F.Cu") (effects (font (size 7 7) (thickness 0.6)))
@@ -3695,6 +3740,86 @@ mod lowering_gap_tests {
                 .any(|bounds| (bounds.minimum[0] - 20.0).abs() < 1.0e-9
                     && (bounds.maximum[0] - 30.0).abs() < 1.0e-9
                     && (bounds.maximum[1] - 22.0).abs() < 1.0e-9)
+        );
+    }
+
+    #[test]
+    fn a_via_at_quanta75s_knockout_plate_is_refused_on_copper_and_mask() {
+        // Quanta75_BareRP2040 with pin lines (2026-11-07): KiCad found our
+        // I2C1-SDA via at (82.10, 82.51), 0.6 mm, shorted to the '0bsilab'
+        // knockout plate on F.Cu and bridged to it on F.Mask. KiCad draws
+        // the face it does not have ("Blrrpix Tweak") in Noto Sans Bold and
+        // grows the plate by a ninth of the height: pcbnew 10.0.7's plate
+        // is x 81.01 to 116.35, y 82.78 to 91.89; the model's plate (the
+        // stroke font's box, grown by the thickness) ended at y 83.15, and
+        // the via kept its 0.2 mm from that.
+        let pcb = parse(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user) (39 "F.Mask" user) (38 "B.Mask" user))
+              (gr_rect (start 70 70) (end 130 100) (layer "Edge.Cuts"))
+              (gr_text "0bsilab" (at 98.737484 88.106251 0) (layer "F.Cu" knockout)
+                (effects (font (face "Blrrpix Tweak") (size 7 7) (thickness 0.6) (bold yes)))
+                (render_cache "0bsilab" 0 (polygon (pts (xy 84.8 84.2) (xy 112.8 84.2) (xy 112.8 91.0) (xy 84.8 91.0)))))
+              (gr_text "0bsilab" (at 98.739903 88.090237 0) (layer "F.Mask" knockout)
+                (effects (font (face "Blrrpix Tweak") (size 7 7) (thickness 0.6) (bold yes)))
+                (render_cache "0bsilab" 0 (polygon (pts (xy 84.8 84.2) (xy 112.8 84.2) (xy 112.8 91.0) (xy 84.8 91.0)))))
+              (footprint "J" (at 75 75) (property "Reference" "J8")
+                (pad "4" smd rect (at 0 0) (size 1 1) (layers "F.Cu" "F.Mask") (net "I2C1-SDA")))
+              (footprint "J" (at 125 75) (property "Reference" "J9")
+                (pad "4" smd rect (at 0 0) (size 1 1) (layers "F.Cu" "F.Mask") (net "I2C1-SDA"))))"#,
+        )
+        .unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(rules(0.2)),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, false).unwrap().board;
+        let net = board
+            .nets
+            .iter()
+            .position(|net| net.name == "I2C1-SDA")
+            .unwrap();
+        let via_at = |at: [f64; 2]| {
+            let mut routes = vec![core::NetRoute::default(); board.nets.len()];
+            routes[net].vias.push(core::board::Via {
+                at,
+                diameter: 0.6,
+                drill: 0.3,
+                span: None,
+            });
+            core::verify(&board, &routes)
+        };
+        let found = via_at([82.0987, 82.5125]);
+        assert!(
+            found
+                .iter()
+                .any(|violation| violation.other == "copper gr_text" && violation.actual <= 0.0),
+            "the via on the plate: {found:?}"
+        );
+        // KiCad's plate as pcbnew draws it lies inside the model's, on
+        // both layers' shapes.
+        for shapes in [
+            drawn_graphic_shapes(&pcb.children()[3]).unwrap(),
+            mask_graphic_shapes(&pcb.children()[4]).unwrap(),
+        ] {
+            for point in [
+                [81.01, 82.78],
+                [116.35, 82.78],
+                [81.01, 91.89],
+                [116.35, 91.89],
+            ] {
+                assert!(
+                    shapes.iter().any(|shape| shape.contains(point)),
+                    "{point:?}"
+                );
+            }
+        }
+        // The model's plate is not much larger: a via whose centre is 0.8
+        // mm above KiCad's plate (0.3 mm of copper edge to edge more than
+        // the clearance needs) passes.
+        assert!(
+            via_at([90.0, 81.98])
+                .iter()
+                .all(|violation| violation.other != "copper gr_text"),
         );
     }
 
