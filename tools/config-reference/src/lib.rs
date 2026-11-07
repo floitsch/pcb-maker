@@ -208,6 +208,16 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "set: the router prints one `corridor census:` line per escape pad and lattice on stderr (its escape nodes' pocket open or closed on the lattice, and whether a corridor stub leaves it); `experiments/corridors/census.py` reads them (docs/router.md, \"Corridors of pocketed pads (2026-11-05)\").",
     ),
     (
+        "PCB_ROUTER_PIN_LINES",
+        Kind::Switch,
+        "overrides the router's `pin_lines` (`0` or `off`: the regular lattice; `exits`: lines through the pads of pin rows the lattice misses; `1` or `all`: those and the tracks of tight channels between pads; off by default): each part whose row exits share a phase gets the lattice at that phase over its rows and 1 mm around (a band), other exits and channel tracks a line added or moved onto them; the lattice's lines are then per-axis coordinate tables (docs/router.md, \"Lattice lines at pin rows (2026-11-07)\").",
+    ),
+    (
+        "PCB_ROUTER_PIN_LINES_PROBE",
+        Kind::Diagnostic,
+        "set: the router prints `pin lines:` lines on stderr for each lattice it builds and the finer pitches 0.075 and 0.05 mm: the lines the pin rows and pad gaps ask for, which the regular lattice misses, and what the bands and single lines would place (`2`: every missed line too) (docs/router.md, \"Lattice lines at pin rows (2026-11-07)\").",
+    ),
+    (
         "PCB_ROUTER_BGA_FANOUT",
         Kind::Switch,
         "overrides the router's `bga_fanout` (`0` off, anything else on; on by default): before routing, the inner balls of every grid array (those no track between the outer balls serves) whose net's own via does not fit a diagonal gap get a stub and a through via in a diagonal gap, the largest of the class's and the project's via sizes that keeps every clearance, as fixed copper of the ball's net that its route may end on; written only where the route uses it; the placer keeps the far side free under those vias (docs/router.md, \"Prepared fan-outs for BGAs (2026-11-04)\").",
