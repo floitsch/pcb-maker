@@ -645,6 +645,49 @@ Net-(C33-Pad1) went up and down again through two vias 0.25 mm apart to
 pass a back-side track, which KiCad reports as hole_to_hole whatever
 the nets.
 
+**Large pads inside a ring (2026-11-06).** Sisu_SSE-9's sixteen dome
+switches (3210:SW_Dome_Nokia_3210, SW2 to SW17) are a 4 mm centre pad
+0.4 mm inside a 6.2 mm ring pad of another net (a custom pad whose
+primitive is an unfilled circle); the designer leaves each centre pad by
+a via in it, 0.9 to 1.8 mm off its centre. Route mode left 16 of the
+board's 18 open items there (router-ceiling.md, bug 3): the evidence
+counted vias in small pads only (a 4 mm pad is not small), and
+`enclosed_pads` looked only at fields of nine pads or more. Now:
+
+- *The evidence.* score-kicad-board lists the vias in large SMD pads
+  apart (`vias_in_large_pads_at`, `vias_in_large_pads`; not counted as
+  vias in pads, the cost estimate's), and `designer_entries` reads both
+  lists; run.py's `designer_via_sites` passes both to the router config's
+  `via_in_pad` (cached under `large:<sha256>` beside the small pads'
+  entry, which older binaries keep reading; a binary is asked once
+  whether it lists them). The rule still puts vias only in enclosed pads.
+- *Enclosed in a footprint of a few pads* (`enclosed_pads`, fewer than
+  nine pads on the layer): a pad whose centre lies inside the box of
+  another net's pad of the footprint (`ringed`) is a candidate, and the
+  same flood judges it (no track of its net leaves, no via of its class
+  fits beside it).
+- *The via's place.* A large pad (2 mm across or more) whose centre does
+  not keep the rules gets the via at the nearest point of a 0.05 mm
+  raster on it that does (`sites`; `PlannedVia::pad_at` joins it to its
+  pad in the lowering), and no planned via goes into a rule area without
+  vias (`via_keepouts`, the board's and the footprints' zones). At the
+  centres four of Sisu's switches were refused (LEDs on the back under
+  them) and SW9's via lay in the keepout under U11, the modem (KiCad's
+  items_not_allowed).
+
+**Measured** (the designer tier as above): Sisu_SSE-9 **18 -> 1**
+unconnected (17 vias placed: 16 dome switches, 0.4/0.3 mm as the
+designer's, four off their centres, and LS1's; vias 288 -> 306; the
+one left is the modem's RESET, congestion; its 5 skew findings, a USB
+skew rule, are as before). The fingerprints' Sisu (route mode on the v16
+layout's placement, a quarter of the budget) 29 -> 7. No other board of
+the tiers gets a large-pad entry that changes its plan (the designer,
+expansion and short tiers' other rows are identical in unconnected
+items, vias and length where no other fix applies). A first build put
+every via at its pad's centre: four switches refused and SW9's via in
+U11's keepout (Sisu 4 unconnected and an items_not_allowed finding);
+hence the off-centre sites and the keepouts.
+
 ### Board edges and copper of no net (2026-10-21)
 
 KiCad 10.0.7's copper_edge_clearance measures copper against more than
@@ -733,9 +776,31 @@ Checked with kicad-cli 10.0.7 on boards made for each (the unit tests in
   outside the cached ones, median 0.14; tracks 0.22 mm from the cache were
   0.02 from KiCad's). Each line of the cache is also copper as a box, in
   the text's frame, grown by a tenth of the text's height
-  (`cached_text_line_boxes`); the gaps between lines stay open. The
-  stroke-font box the mask openings use would cover a centred six-line
-  text 1.7 times as wide as it is. 42 such texts on 22 intake boards.
+  (`cached_text_line_boxes`). The stroke-font box the mask openings use
+  would cover a centred six-line text 1.7 times as wide as it is. 42 such
+  texts on 22 intake boards. **Since 2026-11-06 the stroke-font box is
+  copper too** (`drawn_graphic_shapes`, the mask path's code, which
+  `mask_graphic_shapes` is now), and a knockout text's plate covers it: a
+  face KiCad does not have is drawn in a stand-in (fontconfig's: Noto Sans
+  Bold here for Quanta75's "Blrrpix Tweak" and "Urbanist SemiBold",
+  MIDAS's "ROG Fonts", OpenFC's "Tokyo"), 15 to 30 % wider than the cache
+  (pcbnew 10.0.7's polygons against the caches, every cached copper text
+  of the designer, expansion and short tiers: the stroke box holds each
+  across). Quanta75's '0bsilab' knockout plate: the cache x 84.8 to 112.8
+  mm, KiCad's plate x 81.0 to 116.4, our I2C1-SDA track at x 80.5 to 81.2
+  inside it, every strict finding of both Quanta75 boards (clearance,
+  shorting_items, solder_mask_bridge; router-ceiling.md, bug 2). The box
+  closes the gaps between a cached text's lines and is wider than a face
+  KiCad has (TomKeddie's Cantarell, installed here): the price of not
+  knowing which faces KiCad has (fontconfig would say; not asked).
+  Measured on the designer tier (scale 0.647, main 406dcb94 against the
+  branch): **both Quanta75 boards pass the strict rule** (Bare: clearance
+  2 and solder_mask_bridge 5 to none; Stamp: clearance 2,
+  shorting_items 2, solder_mask_bridge 1 to none); the four MIDAS boards
+  ("MIDAS" in ROG Fonts on F.Cu) route differently and pass as before
+  (MIDAS-MK1.1's first complete attempt comes later: 191 to 634 s of
+  work); OpenFC's four cached layer labels change nothing. The short
+  tier's MIDAS-MK1.1 layout: 1 open both, vias 242 to 244.
 - **Padstacks** (KiCad 9's `(padstack (mode front_inner_back) (layer
   "Inner" ...) (layer "B.Cu" ...))`, `(mode custom)` per copper layer): the
   pad's other shapes are copper of its net on their layers
@@ -2510,6 +2575,45 @@ On every board but 0xCB each starved label is one pad, so per pad and per
 label are the same. The short tier's 1337-v4.0, whose layout took the
 step on x1780 (placer.md, "Only thermals starved"), did not take it on
 either side here, nor did eternal-keypad.
+
+### The solid step in rounds (2026-11-06)
+
+The solid step ran once: it set the pads KiCad found starved solid,
+checked the board once and kept it when KiCad found no more unconnected
+items and fewer findings. A solid pad changes the fill, and the pad
+beside it can be starved only on the board after that round: on the
+designer tier of 2026-11-06 k30-SBC failed the strict rule on J1.39 alone
+(starved after J1.14 and its neighbours went solid) and ghoul on RN3.3
+alone (router-ceiling.md, bug 1). Now the step runs in rounds
+(`solid_rounds`, board_router/route.rs, at most `SOLID_ROUNDS` = 4, one
+KiCad check a round, charged as the single check was): each round sets
+the pads starved on the board before it solid (a pad solid already is no
+change; a round that changes nothing ends the step) and checks the board.
+The board kept is the best KiCad saw (`solid_kept` against the best
+before, the board before the step first: KiCad's final say as before). A
+round whose board is no better but has nothing new besides starved
+thermals (the findings grew by no more than the starved thermals did, no
+unconnected item more) leads to the next round: ghoul's RN3.3 solid
+starves RN3.1 and RN3.2 of the same array (68 findings to 69), and only
+the round after that clears them. A round with anything else new ends the
+step. `solid_starved` in board-router.json records the pads tried, the
+rounds, whether the board kept has solid pads and the pads of the rounds
+after it (`undone`, set back); the verdict's thermal action names the
+pads kept, the pads undone and the pads starved after the last round.
+
+**Measured** (the designer tier, route mode on the designer's placement,
+scale 0.647, 970.5 s of work, rates pinned, 2 x 1; main 406dcb94 against
+the branch, `build/bugs1/designer-base.log` and `designer-fin.log`):
+k30-SBC's two rounds (C9.2, J1.14, U14.34, U16.16, then J1.39; 30
+findings to 26) and ghoul's three (J2.S1, L2.2, RN3.4; RN3.3, 68 to 69
+findings, on; RN3.1 and RN3.2, kept) leave no starved thermal: **both
+pass the strict rule** (they failed on that pad alone), their routes
+byte for byte the same. The only other board with a second round is
+video (two pads more solid, no other change; it fails on an open item).
+15 of the 109 boards ran the step at all; 99 rows are identical to
+main's in unconnected items, vias, length and work. A round is one
+KiCad check, counted with the board's checks (`kicad_checks_charged`:
+k30-SBC 2 to 3).
 
 ### KiCad's connection width (necks)
 
@@ -7936,6 +8040,33 @@ strict pass kept** (the same seven boards); unconnected 21 to 24
 21486 to 20204 mm. Whether the race becomes the default is the placer's
 decision (docs/placer.md, "A race over skeletons"): OpenFC no longer
 loses it to the lattice; it loses three of ten seeds to pour islands.
+
+### A custom pad's contact in a neighbour's clearance (2026-11-06)
+
+A custom pad joins only through its contact (its anchor shape,
+`Terminal::contact`), and escape stubs started at the anchor's centre.
+Hub's three X2SON-4 regulators (U2, U3, U6;
+PCM_Package_SON_AKL:Texas_X2SON-4_1x1mm_P0.65mm) have corner pads whose
+0.148 mm anchors lie 0.244 mm from the centre pad's edge, under the
+Default class's 0.2 mm clearance plus half the 0.127 mm neck: no stub
+left them, and 9 of Hub's 12 open items were these pads
+(router-ceiling.md, bug 4). The designer's tracks end on the anchors'
+far side. Now, where the anchor's centre is not clear for the net's
+narrowest track, the escape stubs start at the contact's points that are
+(`contact_starts`, router/escapes.rs: a raster of 5 um, or a sixtieth of
+the contact's extent, at least 10 um inside the contact, against the
+obstacles within 2 mm, the farthest from the other copper first, four at
+most); KiCad joins a track whose end lies in the anchor. The fixture
+(`router/corridor_tests.rs`, `x2son4`: the footprint's pads as the board
+file has them, one layer, five offsets against the 0.1 mm lattice):
+every net routed and no verify violation with the starts, +3V3 open
+without them.
+
+**Measured** (the designer tier as above): Hub **12 -> 4** unconnected
+(all nine X2SON-4 corner pads of U2, U3 and U6 connected; vias 196 ->
+178; left: two GND zone pieces and two of U14's SPI pads, congestion).
+No other board of the designer, expansion and short tiers changed by
+it (rows identical but where another fix applies).
 
 ## What the routes look like (2026-11-05)
 

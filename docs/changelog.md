@@ -11,6 +11,45 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Measured on 2026-11-07 (the router ceiling's four plain bugs fixed: designer tier 68 -> 72 strict)
+
+Branch ceiling-bugs; docs/router-ceiling.md's "Plain bugs" has the
+per-board table, router.md each fix in its section.
+
+- **The solid step in rounds** (`solid_rounds`, at most 4 KiCad checks):
+  the pads starved on the board after a round get the next round; a
+  round whose board has nothing new but starved thermals goes on, the
+  best board KiCad saw is kept. k30-SBC (J1.39) and ghoul (RN3.3, then
+  RN3.1 and RN3.2) pass the strict rule.
+- **Copper texts as KiCad draws them**: a cached text on copper holds
+  the stroke font's box (the mask path's code, `drawn_graphic_shapes`),
+  a knockout text's plate covers it. Both Quanta75 boards pass the
+  strict rule (KiCad draws "Blrrpix Tweak" in Noto Sans Bold, 4 mm wider
+  than the cache).
+- **Vias in large enclosed pads**: the designer's vias in large SMD pads
+  are evidence (score-kicad-board's `vias_in_large_pads_at`, run.py),
+  a pad inside another net's pad of a small footprint can be enclosed,
+  and a large pad's via goes off its centre where the centre does not
+  fit, never into a rule area without vias. Sisu_SSE-9 18 -> 1
+  unconnected.
+- **A custom pad's contact in a neighbour's clearance**: escape stubs
+  start at the contact's clear points (`contact_starts`). Hub 12 -> 4
+  (its nine X2SON-4 corner pads).
+- **Tiers** (main 406dcb94 against the branch, one binary each): the
+  designer tier (109, scale 0.647) 68 -> 72 strict, 71 -> 72 per type,
+  2756 -> 2731 unconnected, 99 rows identical, none worse; the
+  expansion tier identical; the short tier's passes and unconnected
+  identical (MIDAS-MK1.1 vias 242 -> 244); the fingerprints' k30-SBC
+  strict, Sisu 29 -> 7, Castor and jetson identical.
+- CPU (pinned pairs: route mode at 300 s of ladder work, KiCad's check
+  skipped, 2 threads on cores 4,5,20,21 against 6,7,22,23 and swapped;
+  user CPU per second of work, since the routes differ and so does the
+  work spent): Sisu 0.887 and 0.902 on main, 0.931 and 0.910 fixed (+3.5
+  % and +0.9 %); Hub 0.875 and 0.853 on main, 0.824 and 0.847 fixed (-6
+  % and -1 %): within the pairs' noise. The designer tier's CPU 39041 ->
+  39867 s (+2 %), most of it MIDAS-MK1.1's later complete attempt (191
+  -> 634 s of work) and the solid step's extra KiCad checks.
+
 ## Measured on 2026-11-06 (the router's ceiling: the designer tier's 41 failures)
 
 Branch router-ceiling; a census and two designs, no router code

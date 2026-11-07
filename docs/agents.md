@@ -558,8 +558,13 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     can leave between its neighbours gets a filled and capped via of its
     net at its centre, of the designer's size where it fits, else of the
     largest of the project's via sizes that keeps every clearance (the
-    other side's parts too: the via goes through). Other pads and other
-    footprints stay closed. For a board without such a reference (from a
+    other side's parts too: the via goes through; a pad 2 mm across or
+    more gets it off its centre where the centre does not fit, and no via
+    goes into a rule area without vias). A pad inside another net's pad
+    of a small footprint (a dome switch's centre in its ring) counts as
+    enclosed too, and a via in a large pad on the designer's board is
+    evidence as well (since 2026-11-06, Sisu's keypad). Other pads and
+    other footprints stay closed. For a board without such a reference (from a
     netlist), name the parts or footprints: `"via_in_pad": ["U106"]`
     (a reference or a footprint name, with or without its library), or
     `[{"part": "U106", "via_mm": [0.35, 0.25]}]` for a via size of your
@@ -578,7 +583,8 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     `(capping yes) (filling yes)`, so KiCad's fab outputs carry the
     process, and score-kicad-board's "vias in pads" does not count them
     (`filled_vias_in_pads` does; `vias_in_pads_at` lists every via in a
-    small pad, filled or not).
+    small pad, filled or not, `vias_in_large_pads_at` those in large
+    pads, which no count includes).
   - Open connections at a fine-pitch row: run with
     `PCB_ROUTER_TROUBLE_WHY=1` in the environment to see which open pads
     are boxed in by a neighbour whose route must cross theirs (the log's

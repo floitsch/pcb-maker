@@ -305,6 +305,39 @@ reorders it.
 
 ## Plain bugs found on the way (no code changed)
 
+**Status (2026-11-06, branch ceiling-bugs).** All four fixed; router.md
+has each in its section ("The solid step in rounds", "A cached
+(TrueType) text on copper", "Large pads inside a ring", "A custom pad's
+contact in a neighbour's clearance").
+
+Route mode on the designer's placement at the tier's budget (scale
+0.647, 970.5 s of work, rates pinned), main 406dcb94 against the branch
+with all four fixes, one run each (`build/bugs1/designer-base.log`,
+`designer-fin.log`):
+
+| Bug | Board | main: open / strict findings | fixed: open / strict findings |
+| --- | --- | --- | --- |
+| 1, solid step in rounds | k30-SBC | 0 / starved_thermal 1 | 0 / none: **strict pass** (2 rounds) |
+| 1 | ghoul | 0 / starved_thermal 1 | 0 / none: **strict pass** (3 rounds) |
+| 2, copper texts as drawn | Quanta75_BareRP2040 | 0 / clearance 2, solder_mask_bridge 5 | 0 / none: **strict pass** |
+| 2 | Quanta75_RP2040Stamp | 0 / clearance 2, shorting_items 2, solder_mask_bridge 1 | 0 / none: **strict pass** |
+| 3, vias in large enclosed pads | Sisu_SSE-9 | 18 / skew_out_of_range 5 | 1 / skew_out_of_range 5 |
+| 4, a custom pad's contact | Hub | 12 / - | 4 / - |
+
+The whole tier: 68 -> **72** strict passes (71 -> 72 per type), 2756 ->
+2731 unconnected, 99 of 109 rows identical, no board worse; the
+expansion tier (46 boards, 30 s) identical, the short tier's passes and
+unconnected identical, the fingerprints' k30-SBC passes strict and
+Sisu's v16 placement 29 -> 7. Two corrections to the census on the way:
+ghoul's chain needs a round that is no better (RN3.3 solid starves RN3.1
+and RN3.2: 68 findings to 69), so the step goes on while only starved
+thermals move and keeps the best board KiCad saw; and Sisu's switches
+were not refused for being "large" alone: `enclosed_pads` looked at pad
+fields of nine pads or more only, and the designer's vias sit 0.9 to 1.8
+mm off the pads' centres (LEDs on the back, the modem's keepouts), so the
+via goes off the centre where needed.
+
+
 1. **The solid step runs once** (board_router/route.rs,
    `solidify_starved_thermals`, called once after the ladder). It sets
    the pads KiCad finds starved to a solid connection, checks once and
