@@ -3402,6 +3402,7 @@ pub(crate) fn place_sub_boards(
         overfull,
         level: 0,
         skeleton: None,
+        walk: Vec::new(),
         poses,
         exits: None,
     }

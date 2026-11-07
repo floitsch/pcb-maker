@@ -114,6 +114,66 @@ class Traces(unittest.TestCase):
             self.assertEqual(stages.race_seed({"seeds": [other, seed]}, path), 3)
             self.assertIsNone(stages.race_seed({"seeds": [other]}, path))
 
+    def skeleton_seed(self):
+        """A seed placed by skeleton: U1 (4 x 2 mm at the origin) held,
+        C1 inside it until the anneal, C2 outside throughout, C3 on the
+        other side under it."""
+        stages_ = ["skeleton_start", "skeleton_final", "start", "global", "annealed", "legal", "final"]
+
+        def part(reference, centers, side="Front", body=(1.0, 0.5)):
+            return {"reference": reference, "body": list(body), "side": side, "angles": [0.0] * len(stages_),
+                    "centers": centers, "poses": [c + [0.0] for c in centers]}
+        held = [[0.0, 0.0]] * len(stages_)
+        return {"seed": 1, "kept": True, "stages": stages_, "relaxation": {
+                    "halo_scale": 0.0, "small_halo_scale": 0.0, "spacing": 0.16, "tight": True,
+                    "courtyard_spacing": False},
+                "objective": {stage: self.objective(1.0) for stage in stages_},
+                "global_history": {"global": [[0, 0.9, 1.0, 1, 1, 1, 1], [135, 0.65, 54.0, 1, 1, 1, 1]]},
+                "parts": [part("U1", held, body=(4.0, 2.0)),
+                          part("C1", [[9, 9], [9, 9], [0.5, 0.2], [0.5, 0.2], [0.5, 1.6], [0.5, 1.6], [0.5, 1.6]]),
+                          part("C2", [[9, 9], [9, 9], [5.0, 0.0], [5.0, 0.0], [5.0, 0.0], [6.0, 0.0], [6.0, 0.0]]),
+                          part("C3", [[9, 9], [9, 9], [0.0, 0.5], [0.1, 0.5], [0.1, 0.5], [0.1, 0.5], [0.1, 0.5]],
+                               side="Back")]}
+
+    def test_the_passives_inside_a_held_body_by_stage(self):
+        seed = self.skeleton_seed()
+        self.assertEqual(stages.held_parts(seed), {0})
+        result = stages.measure_passives(seed)
+        # C3 lies under U1 on the other side: not inside.
+        self.assertEqual(result["inside"], {"start": 1, "global": 1, "annealed": 0, "legal": 0, "final": 0})
+        self.assertEqual(result["inside_by_part"], {"U1": 1})
+        self.assertEqual((result["held"], result["passives"]), (1, 3))
+        self.assertAlmostEqual(result["moved_trapped"], 1.4)
+        self.assertAlmostEqual(result["moved_free"], (1.0 + 0.0) / 2)
+        self.assertEqual((result["iterations"], result["overflow"], result["lambda_growth"]), (136, 0.65, 54.0))
+        self.assertEqual(result["level"], "halo 0/0, spacing 0.16, tight")
+        # A body turned a quarter: its box swaps its sides.
+        turned = dict(seed["parts"][0], angles=[90.0] * 7)
+        half = stages.body_box(turned, 0)[1]
+        self.assertAlmostEqual(half[0], 1.0)
+        self.assertAlmostEqual(half[1], 2.0)
+
+    def test_a_plain_seed_has_no_passives_measure(self):
+        seed = self.skeleton_seed()
+        seed["stages"] = seed["stages"][2:]
+        for part in seed["parts"]:
+            part["centers"] = part["centers"][2:]
+        self.assertIsNone(stages.held_parts(seed))
+        self.assertIsNone(stages.measure_passives(seed))
+
+    def test_only_the_designers_variants_start_from_the_designers_poses(self):
+        with tempfile.TemporaryDirectory() as directory:
+            inputs = Path(directory)
+            (inputs / "b-s1" / "source").mkdir(parents=True)
+            (inputs / "b-s1" / "source" / "b.kicad_pcb").write_text("(kicad_pcb)")
+            (inputs / "b.designer").write_text("/designer/b.kicad_pcb\n")
+            arguments = type("Arguments", (), {"inputs": str(inputs), "out": str(inputs / "out"),
+                                               "threads": 2, "binary": "/bin/true"})()
+            for variant, designer in (("ours", False), ("debug", False), ("nostall", False),
+                                      ("global-all", True), ("anneal", True), ("legalize-noanneal", True)):
+                env = stages.unit_command(arguments, f"b-s1-{variant}")[2]
+                self.assertEqual("PCB_PLACER_START" in env, designer, variant)
+
     def test_unit_names(self):
         self.assertEqual(stages.unit_parts("SNSP-CPU-01-s101-global-active"), ("SNSP-CPU-01", 101, "global-active"))
         with self.assertRaises(SystemExit):

@@ -1943,6 +1943,7 @@ pub(crate) fn place_copies(
         overfull: first.overfull || overfull,
         level: first.level,
         skeleton: None,
+        walk: Vec::new(),
         poses,
         exits: None,
     }

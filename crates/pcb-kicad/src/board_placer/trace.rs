@@ -167,7 +167,12 @@ pub(super) fn start_from(
 /// them under the race over skeletons), and `global_history` holds each
 /// global placement's descent every ten iterations (`iteration`,
 /// `overflow`, `lambda`, `gamma`, the wire gradient's and the weighted
-/// density gradient's absolute sums, the wirelength).
+/// density gradient's absolute sums, the wirelength). A seed of the race
+/// over skeletons says in `skeleton` its phases' levels and work, whether
+/// it fell back to the plain placement and which parts the skeleton or the
+/// passives left without a legal place; `walk` the relaxation levels the
+/// placement ran (the passives' around a held skeleton), each with the
+/// parts it left without room.
 pub(super) fn trace_placements(
     lowered: &LoweredPlacement,
     placements: &[core::Placement],
@@ -438,7 +443,26 @@ pub(super) fn trace_placements(
             "unplaced": placement.unplaced.len(),
             "illegal": placement.illegal.len(),
             "work": placement.work,
+            "walk": walk_json(&placement.walk, &lowered.references),
             "global_iterations": placement.global_iterations,
+            "skeleton": placement.skeleton.as_ref().map(|report| {
+                let names = |parts: &[usize]| -> Vec<&str> {
+                    parts.iter().map(|part| lowered.references[*part].as_str()).collect()
+                };
+                serde_json::json!({
+                    "skeleton_level": report.skeleton_level,
+                    "level": report.level,
+                    "fitting_level": report.fitting_level,
+                    "skeleton_work": report.skeleton_work,
+                    "passive_work": report.passive_work,
+                    "fallback_work": report.fallback_work,
+                    "fallback": report.fallback,
+                    "fallback_kept": report.fallback_kept,
+                    "skeleton_left_out": names(&report.skeleton_left_out),
+                    "passives_left_out": names(&report.passives_left_out),
+                    "skeleton_walk": walk_json(&report.skeleton_walk, &lowered.references),
+                })
+            }),
             "global_overflow": placement.global_overflow,
             "global_history": placement
                 .global_histories
@@ -473,6 +497,21 @@ pub(super) fn trace_placements(
     let text = serde_json::to_string(&serde_json::json!({"seeds": traced}))
         .map_err(|error| error.to_string())?;
     fs::write(path, text).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+/// A placement's level walk (`core::Placement::walk`) as JSON: per level
+/// run, `[level, [the parts it left without room], the work when it ended
+/// in seconds]`.
+fn walk_json(walk: &[(usize, Vec<usize>, u64)], references: &[String]) -> Vec<serde_json::Value> {
+    walk.iter()
+        .map(|(level, failed, work)| {
+            let names: Vec<&str> = failed
+                .iter()
+                .map(|part| references[*part].as_str())
+                .collect();
+            serde_json::json!([level, names, *work as f64 / core::work_per_second()])
+        })
+        .collect()
 }
 
 pub(super) fn diagnose_designer(lowered: &LoweredPlacement, designer: &Path) -> Result<(), String> {

@@ -86,6 +86,13 @@ pub struct Report {
     /// passives did, the better of the two kept: `fallback_kept`).
     pub fallback: bool,
     pub fallback_kept: bool,
+    /// The parts the skeleton's placement left without a legal place
+    /// (unplaced or illegal; the fallback's cause), and those the
+    /// passives' placement left so, judged whole (`PCB_PLACER_TRACE`).
+    pub skeleton_left_out: Vec<usize>,
+    pub passives_left_out: Vec<usize>,
+    /// The skeleton's placement's level walk (`Placement::walk`).
+    pub skeleton_walk: Vec<(usize, Vec<usize>, u64)>,
 }
 
 /// The passives the skeleton leaves out: `passive` parts that move, have
@@ -643,6 +650,7 @@ pub fn place_skeleton(
     }
     report.skeleton_work = skeleton.work;
     report.skeleton_level = skeleton.level;
+    report.skeleton_walk = skeleton.walk.clone();
     report.skeleton_wirelength = skeleton.wirelength_final;
     let left = |used: u64| {
         config
@@ -658,6 +666,7 @@ pub fn place_skeleton(
     // seed 301 none seated U12, U14 and U19 (docs/placer.md, "A race over
     // skeletons"): the plain placement needs the whole of it there.
     if skeleton.overfull || !skeleton.unplaced.is_empty() || !skeleton.illegal.is_empty() {
+        report.skeleton_left_out = left_out(&skeleton);
         let mut placement = place(problem, config);
         report.fallback = true;
         report.fallback_kept = true;
@@ -690,6 +699,11 @@ pub fn place_skeleton(
     // (2026-11-06)"). A skeleton that skipped past it (protoesp's gain)
     // keeps its level.
     second.first_level = skeleton.level.max(PASSIVES_FIRST_LEVEL);
+    // MEASUREMENT (glob2, not for merge): the passives' descent without
+    // the stall stop.
+    if std::env::var("PCB_PLACER_PASSIVES").is_ok_and(|value| value == "nostall") {
+        second.global.stall_iterations = 0;
+    }
     let passives = place(&holding, &second);
     report.passive_work = passives.work;
     if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
@@ -717,6 +731,7 @@ pub fn place_skeleton(
     }
     let mut used = skeleton.work + report.passive_work;
     if !placement.unplaced.is_empty() || !placement.illegal.is_empty() {
+        report.passives_left_out = left_out(&placement);
         // The plain seed's placement, at its full work, as above.
         let fallback = place(problem, config);
         report.fallback = true;
@@ -752,6 +767,20 @@ pub fn place_skeleton(
     placement.frames = frames;
     placement.skeleton = Some(report);
     placement
+}
+
+/// The parts a placement left without a legal place: its unplaced and
+/// illegal parts, in index order.
+fn left_out(placement: &Placement) -> Vec<usize> {
+    let mut parts: Vec<usize> = placement
+        .unplaced
+        .iter()
+        .chain(&placement.illegal)
+        .copied()
+        .collect();
+    parts.sort_unstable();
+    parts.dedup();
+    parts
 }
 
 /// A skeleton's stage's name in the whole placement's stages.
@@ -1109,6 +1138,21 @@ mod tests {
             report.skeleton_work + report.passive_work + report.fallback_work
         );
         assert!(report.level >= report.skeleton_level);
+        // Nothing left out; the walks end where every part seated, the
+        // passives' at the placement's level.
+        assert!(report.skeleton_left_out.is_empty() && report.passives_left_out.is_empty());
+        assert!(
+            report
+                .skeleton_walk
+                .last()
+                .is_some_and(|(_, failed, _)| failed.is_empty())
+        );
+        assert!(
+            placement
+                .walk
+                .last()
+                .is_some_and(|(level, failed, _)| failed.is_empty() && *level == placement.level)
+        );
         // The skeleton's own placement, alone: the held parts lie where it
         // put them.
         let absent = absent_parts(&problem, &passive);
@@ -1216,6 +1260,12 @@ mod tests {
         assert!(report.fallback && report.fallback_kept);
         assert_eq!(report.held, 0);
         assert!(report.skeleton_work > 0);
+        // What the skeleton left without a place, and its walk to there.
+        assert!(!report.skeleton_left_out.is_empty());
+        assert!(report.skeleton_left_out.iter().all(|part| !passive[*part]));
+        assert!(report.passives_left_out.is_empty());
+        let (_, failed, work) = report.skeleton_walk.last().expect("a level ran");
+        assert!(!failed.is_empty() && *work <= report.skeleton_work);
         assert_eq!(placement.poses, plain.poses);
         assert_eq!(report.fallback_work, plain.work);
         assert_eq!(placement.work, report.skeleton_work + plain.work);

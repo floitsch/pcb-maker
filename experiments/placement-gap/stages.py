@@ -9,6 +9,7 @@ stage (docs/placer.md, "Where the arrangement is lost (2026-11-04)").
     stages.py run --inputs DIR --out DIR --binary PATH [--slots 3] [--threads 2] UNIT...
     stages.py route --inputs DIR --out DIR --binary PATH [--slots 2] UNIT...
     stages.py table --inputs DIR --out DIR
+    stages.py passives --out DIR [UNIT...]
 
 A unit is `<board>-s<seed>-<variant>`; `--inputs` holds per board and seed
 `<board>-s<seed>/` (the layout's `source/`, `layout.json`, `router.json`,
@@ -22,6 +23,7 @@ seeds, its budget, the reference's rates) with the placer's trace
 and with a variant's start (`PCB_PLACER_START`):
 
 - `ours`: the placer's own start;
+- `debug`: `ours` with the placer's debug lines (`PCB_PLACER_DEBUG`);
 - `global-all`: the global placement from the designer's poses;
 - `global-active`: the same for the active parts, the passives from our start;
 - `anneal`: no global placement, each level's anneal from the designer's poses;
@@ -61,6 +63,18 @@ per seed and stage (the trace's stages: `global`, `annealed`, `legal`,
   the same parts);
 - `neighbours`: the share of each active part's three nearest active
   parts in the designer's that are among its three nearest in ours.
+
+`passives` measures the passives around a held skeleton (the race over
+skeletons' phase 2; docs/placer.md, "The passives' descent around a held
+skeleton (2026-11-08)"), per traced unit and seed placed by skeleton: the
+held parts are the movable parts that do not move from the passives'
+`start` to `final`, the passives the others. Per stage (`start`, `global`,
+`annealed`, `legal`, `final`): how many passives have their centre inside
+a held body on their side (`inside`); the passives' displacement between
+the stages (mean mm, and of those inside after the descent); the placer's
+objective by term at each stage; the passives' descent (iterations, the
+overflow at the stop); and the relaxation level's halos, tight bodies and
+courtyard spacing. Writes `<out>/passives.md` and `<out>/passives.json`.
 """
 
 import argparse
@@ -78,18 +92,29 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import metrics  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "benchmarks"))
+import harness_common  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[2]
 VARIANTS = {
     "ours": {},
     "off": {},
+    # `ours` with the placer's debug lines in place.log (the skeleton's
+    # parts without a place, the levels' walk).
+    "debug": {"PCB_PLACER_DEBUG": "1"},
+    # The passives' descent around a held skeleton without the stall stop
+    # (the measurement's switch, glob2).
+    "nostall": {"PCB_PLACER_PASSIVES": "nostall"},
     "global-all": {"PCB_PLACER_START_STAGE": "global"},
     "global-active": {"PCB_PLACER_START_STAGE": "global"},
     "anneal": {"PCB_PLACER_START_STAGE": "anneal"},
     "legalize": {"PCB_PLACER_START_STAGE": "legalize"},
-    # and out of the fixed bodies.
-    "netnoise": {"PCB_PLACER_NETLIST_START": "1", "PCB_PLACER_NETLIST_NOISE": "0.4"},
-    "netpush": {"PCB_PLACER_NETLIST_START": "1", "PCB_PLACER_NETLIST_PUSH": "1"},
 }
+# The variants that start from the designer's poses (`PCB_PLACER_START`); the
+# others start as the placer does. Until 2026-11-08 every variant but `ours`
+# and `off` did: `netnoise` and `netpush` (2026-11-07, their switches gone
+# since) ran from the designer's poses.
+DESIGNER_STARTS = ("global-all", "global-active", "anneal", "legalize")
 # `<variant>-noanneal`: the variant without the anneal (`PCB_PLACER_SKIP_ANNEAL`).
 NO_ANNEAL = "-noanneal"
 STAGES = ("global", "annealed", "legal", "final")
@@ -299,6 +324,179 @@ def race_seed(trace, board_path):
     return None
 
 
+# --- the passives around a held skeleton ------------------------------------------------------
+
+
+PASSIVE_STAGES = ("start", "global", "annealed", "legal", "final")
+
+
+def body_box(part, stage):
+    """The part's body at a stage as (centre, half extents), its rotation's
+    bounding box."""
+    width, height = part["body"]
+    angle = math.radians(part["angles"][stage])
+    c, s = abs(math.cos(angle)), abs(math.sin(angle))
+    return part["centers"][stage], (c * width / 2 + s * height / 2, s * width / 2 + c * height / 2)
+
+
+def sides_meet(a, b):
+    return a == b or "Both" in (a, b)
+
+
+def held_parts(seed):
+    """The indices of the seed's parts held in the passives' placement (the
+    skeleton's: they do not move from `start` to `final`), or None where
+    the seed was not placed by skeleton."""
+    stages = seed["stages"]
+    if "skeleton_final" not in stages or not all(stage in stages for stage in PASSIVE_STAGES):
+        return None
+    indices = [stages.index(stage) for stage in PASSIVE_STAGES]
+    return {number for number, part in enumerate(seed["parts"])
+            if all(math.dist(part["centers"][indices[0]], part["centers"][k]) < 1e-6 for k in indices[1:])}
+
+
+def inside_held(seed, held, stage):
+    """The passives (indices) whose centre lies inside a held body on their
+    side at `stage` (a stage name)."""
+    k = seed["stages"].index(stage)
+    boxes = [(body_box(seed["parts"][h], k), seed["parts"][h]["side"]) for h in held]
+    result = []
+    for number, part in enumerate(seed["parts"]):
+        if number in held:
+            continue
+        x, y = part["centers"][k]
+        for ((cx, cy), (hx, hy)), side in boxes:
+            if sides_meet(side, part["side"]) and abs(x - cx) < hx and abs(y - cy) < hy:
+                result.append(number)
+                break
+    return result
+
+
+def level_name(relaxation):
+    """The relaxation level in words: halos, spacing, tight bodies, courtyards."""
+    words = [f"halo {relaxation['halo_scale']:g}/{relaxation['small_halo_scale']:g}",
+             f"spacing {relaxation['spacing']:g}"]
+    if relaxation.get("tight"):
+        words.append("tight")
+    if relaxation.get("courtyard_spacing"):
+        words.append("courtyards")
+    return ", ".join(words)
+
+
+def measure_passives(seed):
+    """The passives around the seed's held skeleton (`passives`'s measures),
+    or None where it was not placed by skeleton."""
+    held = held_parts(seed)
+    if held is None:
+        return None
+    stages = seed["stages"]
+    passive = [n for n in range(len(seed["parts"])) if n not in held]
+    inside = {stage: inside_held(seed, held, stage) for stage in PASSIVE_STAGES}
+
+    def moved(numbers, first, second):
+        a, b = stages.index(first), stages.index(second)
+        distances = [math.dist(seed["parts"][n]["centers"][a], seed["parts"][n]["centers"][b]) for n in numbers]
+        return statistics.mean(distances) if distances else None
+    trapped = inside["global"]
+    free = [n for n in passive if n not in set(trapped)]
+    steps = (seed.get("global_history") or {}).get("global") or []
+    terms = {stage: split(seed["objective"][stage]) for stage in PASSIVE_STAGES if stage in seed["objective"]}
+    return {
+        "seed": seed.get("seed"), "kept": seed.get("kept"), "held": len(held), "passives": len(passive),
+        "inside": {stage: len(numbers) for stage, numbers in inside.items()},
+        "inside_by_part": _by_held(seed, held, inside["global"], stages.index("global")),
+        "moved": {f"{a}-{b}": moved(passive, a, b) for a, b in
+                  (("global", "annealed"), ("annealed", "legal"), ("legal", "final"), ("global", "final"))},
+        "moved_trapped": moved(trapped, "global", "final"), "moved_free": moved(free, "global", "final"),
+        "terms": terms,
+        "iterations": int(steps[-1][0]) + 1 if steps else None,
+        "overflow": steps[-1][1] if steps else None,
+        "lambda_growth": steps[-1][2] / steps[0][2] if steps and steps[0][2] > 0 else None,
+        "level": level_name(seed["relaxation"]), "unplaced": seed.get("unplaced"), "illegal": seed.get("illegal"),
+    }
+
+
+def _by_held(seed, held, trapped, stage):
+    """How many of the trapped passives lie in each held part, the most first."""
+    counts = {}
+    for n in trapped:
+        x, y = seed["parts"][n]["centers"][stage]
+        for h in held:
+            (cx, cy), (hx, hy) = body_box(seed["parts"][h], stage)
+            if (sides_meet(seed["parts"][h]["side"], seed["parts"][n]["side"])
+                    and abs(x - cx) < hx and abs(y - cy) < hy):
+                reference = seed["parts"][h]["reference"]
+                counts[reference] = counts.get(reference, 0) + 1
+                break
+    return dict(sorted(counts.items(), key=lambda item: -item[1]))
+
+
+def passives_table(arguments):
+    out = Path(arguments.out)
+    names = arguments.units or sorted(p.parent.name for p in (out / "runs").glob("*/trace.json"))
+    results = {}
+    for name in names:
+        trace = json.loads((out / "runs" / name / "trace.json").read_text())
+        unit = json.loads((out / "runs" / name / "unit.json").read_text()) if (
+            out / "runs" / name / "unit.json").exists() else {}
+        seeds = [measure_passives(seed) for seed in trace["seeds"]]
+        results[name] = {"unit": unit, "seeds": [seed for seed in seeds if seed is not None],
+                         "plain": sum(seed is None for seed in seeds),
+                         # Every seed in the race's order: by skeleton or plain, its level, its wire.
+                         "race": [{"seed": seed.get("seed"), "skeleton": measured is not None,
+                                   "level": level_name(seed["relaxation"]),
+                                   "wirelength": seed["wirelength"][seed["stages"].index("final")],
+                                   "illegal": seed.get("illegal"), "unplaced": seed.get("unplaced")}
+                                  for seed, measured in zip(trace["seeds"], seeds)]}
+    (out / "passives.json").write_text(json.dumps(results, indent=1))
+    lines = ["# The passives around the held skeleton", "",
+             "Kept seed; inside: passives whose centre lies in a held body on their side, at the passives' "
+             "start / after the descent / the anneal / the legaliser / the refinement; moved: the passives' mean "
+             "displacement in mm from the descent's spots to the final ones (all / those inside after the "
+             "descent / the others); the objective (the anneal's, at the level) after the descent and at the end.",
+             "", "| unit | seeds by skeleton | held / passives | inside: start / global / annealed / legal / final "
+             "| descent: iterations, overflow at the stop | moved all / inside / outside | level | "
+             "objective global -> final (relations, crossings) | CPU s |", "| --- " * 10 + "|"]
+    for name, result in results.items():
+        seeds = result["seeds"]
+        skeleton_seeds = f"{len(seeds)} of {len(seeds) + result['plain']}"
+        kept_seed = next((seed for seed in seeds if seed["kept"]), None)
+        cpu = result["unit"].get("cpu_seconds", "-")
+        if kept_seed is None:
+            lines.append(f"| {name} | {skeleton_seeds} (kept: plain) | - | - | - | - | - | - | {cpu} |")
+            continue
+        k = kept_seed
+        inside = " / ".join(str(k["inside"][stage]) for stage in PASSIVE_STAGES)
+        global_terms, final_terms = k["terms"].get("global"), k["terms"].get("final")
+        objective = (f"{global_terms['total']:.0f} -> {final_terms['total']:.0f} "
+                     f"({global_terms['relations']:.0f} -> {final_terms['relations']:.0f}, "
+                     f"{global_terms['crossings']:.0f} -> {final_terms['crossings']:.0f})"
+                     if global_terms and final_terms else "-")
+        lines.append(f"| {name} | {skeleton_seeds} | {k['held']} / {k['passives']} | {inside} | "
+                     f"{k['iterations']}, {fmt(k['overflow'], 3)} | {fmt(k['moved']['global-final'])} / "
+                     f"{fmt(k['moved_trapped'])} / {fmt(k['moved_free'])} | {k['level']} | {objective} | {cpu} |")
+    lines += ["", "Every seed placed by skeleton (inside after the descent, at the end; the descent's iterations "
+              "and overflow at the stop; the level):", ""]
+    for name, result in results.items():
+        cells = [f"s{seed['seed']}{'*' if seed['kept'] else ''}: {seed['inside']['global']} -> "
+                 f"{seed['inside']['final']}, {seed['iterations']} it {fmt(seed['overflow'], 2)}, "
+                 f"{seed['level']}" for seed in result["seeds"]]
+        lines.append(f"- {name}: " + ("; ".join(cells) if cells else "no seed by skeleton"))
+    lines += ["", "The seeds in the placer's order (the first kept): skeleton or plain, level, final wire mm:", ""]
+    for name, result in results.items():
+        lines.append(f"- {name}: " + "; ".join(
+            f"s{seed['seed']} {'skeleton' if seed['skeleton'] else 'plain'} ({seed['level']}) "
+            f"{seed['wirelength']:.0f}" for seed in result["race"]))
+    lines += ["", "The held parts with the most passives inside after the descent (kept seed):", ""]
+    for name, result in results.items():
+        kept_seed = next((seed for seed in result["seeds"] if seed["kept"]), None)
+        if kept_seed and kept_seed["inside_by_part"]:
+            top = list(kept_seed["inside_by_part"].items())[:6]
+            lines.append(f"- {name}: " + ", ".join(f"{ref} {count}" for ref, count in top))
+    (out / "passives.md").write_text("\n".join(lines) + "\n")
+    print("\n".join(lines))
+
+
 # --- the runs ---------------------------------------------------------------------------------
 
 
@@ -326,7 +524,7 @@ def unit_command(arguments, name):
     env.update(VARIANTS[variant])
     if skip:
         env["PCB_PLACER_SKIP_ANNEAL"] = "1"
-    if variant not in ("ours", "off"):
+    if variant in DESIGNER_STARTS:
         env["PCB_PLACER_START"] = designer
     if variant == "global-active":
         env["PCB_PLACER_START_PARTS"] = str(inputs / f"{board}.active.json")
@@ -340,6 +538,9 @@ def unit_command(arguments, name):
 def run(arguments):
     queue = [name for name in arguments.units if not (Path(arguments.out) / "runs" / name / "unit.json").exists()]
     running = {}
+    # Every place check reserves its expected peak in the machine's memory
+    # ledger (`--expected-gb`), handed to the binary's process.
+    ledger = harness_common.Ledger.from_env()
     while queue or running:
         for name, (process, log, out, started) in list(running.items()):
             waited = os.wait4(process.pid, os.WNOHANG)
@@ -359,7 +560,10 @@ def run(arguments):
             out, command, env = unit_command(arguments, name)
             out.mkdir(parents=True, exist_ok=True)
             log = open(out / "place.log", "w")
+            key = harness_common.admit(ledger, arguments.expected_gb * 1024, f"stages.py: {name} (expected peak)",
+                                       log=lambda line: print(time.strftime("%H:%M:%S"), line, flush=True))
             process = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, env=env)
+            ledger.move(key, process.pid)
             running[name] = (process, log, out, time.time())
             print(time.strftime("%H:%M:%S"), "start", name, flush=True)
         time.sleep(5)
@@ -373,6 +577,11 @@ BOARDS = {
     "SNSP-CPU-01": "stonedDiscord__nonSNES__SNSP-CPU-01",
     "4in1": "OpenDrone-hw__OpenESC-30x30__4in1",
     "revC3": "GlasgowEmbedded__glasgow__glasgow__revC3",
+    "4in1-mini": "OpenDrone-hw__OpenESC-20x20__4in1-mini",
+    "DSP-ADAU1452": "ohdsp__DSP-ADAU1452__DSP-ADAU1452",
+    "MegaDrive": "stonedDiscord__MegaDrive__MegaDrive",
+    "poly_kybd_split72_left": "thpoll83__PolyKybd__poly_kybd_split72_left",
+    "protoesp": "CRImier__MyKiCad__protoesp",
 }
 
 
@@ -381,7 +590,9 @@ def route_unit(arguments, name):
     command: `<board>-designer` (every movable part pinned at the
     designer's pose), `<board>-ours` (nothing pinned: the layout's own
     placement), `<board>-s<seed>-<variant>` (every movable part pinned at
-    that place check's pose); each at layout seed 1."""
+    that place check's pose; with `@<stage>`, at the kept seed's poses
+    after that stage; with `@<stage>.<n>`, at traced seed n's: the race's
+    other placements); each at layout seed 1."""
     import partialcopy  # noqa: PLC0415  (its extraction needs KiCad)
     out = Path(arguments.out).resolve() / "firstroute"
     if name.endswith(("-designer", "-ours")):
@@ -403,7 +614,9 @@ def route_unit(arguments, name):
         placed = next((Path(arguments.out).resolve() / "runs" / unit / "placed").glob("*.kicad_pcb"))
         source = partialcopy.extracted(placed, out / "extract" / f"{unit}.json")
         if stage:
-            source = at_stage(source, Path(arguments.out).resolve() / "runs" / unit / "trace.json", stage)
+            stage, _, seed = stage.partition(".")
+            source = at_stage(source, Path(arguments.out).resolve() / "runs" / unit / "trace.json", stage,
+                              int(seed) if seed else None)
     footprints = ([] if source is None else
                   [f for f in partialcopy.numbered(source["footprints"]) if partialcopy.key(f) in movable])
     if source is not None and len(footprints) != len(movable):
@@ -425,12 +638,14 @@ def others(runs):
     return count
 
 
-def at_stage(board, trace_path, stage):
+def at_stage(board, trace_path, stage, seed_number=None):
     """The extracted board with its movable footprints at a stage's poses
-    of the trace's kept seed (the trace's parts are the movable ones, in
-    board order: matched by `REF#n`)."""
+    of the trace's kept seed, or of the seed numbered `seed_number` (the
+    trace's parts are the movable ones, in board order: matched by
+    `REF#n`)."""
     trace = json.loads(Path(trace_path).read_text())
-    seed = next(entry for entry in trace["seeds"] if entry["kept"])
+    seed = next(entry for entry in trace["seeds"]
+                if (entry["kept"] if seed_number is None else entry.get("seed") == seed_number))
     index = seed["stages"].index(stage)
     poses = dict(zip(keyed(seed["parts"]), (part["poses"][index] for part in seed["parts"])))
     result = json.loads(json.dumps(board))
@@ -709,6 +924,9 @@ def main():
     runner.add_argument("--binary", required=True)
     runner.add_argument("--slots", type=int, default=3)
     runner.add_argument("--threads", type=int, default=2)
+    runner.add_argument("--expected-gb", type=float, default=0.5,
+                        help="each place check's expected peak, reserved in the memory ledger (default 0.5: the "
+                             "dense boards' checks peak at 0.11 to 0.18 GB)")
     runner.add_argument("units", nargs="+")
     router = commands.add_parser("route")
     router.add_argument("--inputs", required=True)
@@ -723,8 +941,11 @@ def main():
     tabler = commands.add_parser("table")
     tabler.add_argument("--inputs", required=True)
     tabler.add_argument("--out", required=True)
+    passiver = commands.add_parser("passives")
+    passiver.add_argument("--out", required=True)
+    passiver.add_argument("units", nargs="*", help="the units to measure (default: every traced unit)")
     arguments = parser.parse_args()
-    {"run": run, "route": route, "table": table}[arguments.command](arguments)
+    {"run": run, "route": route, "table": table, "passives": passives_table}[arguments.command](arguments)
 
 
 if __name__ == "__main__":

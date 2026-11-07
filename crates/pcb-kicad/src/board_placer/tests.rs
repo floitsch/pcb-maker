@@ -2983,5 +2983,12 @@ fn the_start_reads_the_designers_poses_and_the_trace_is_well_formed() {
     // The start's poses are the global stage's (none ran).
     assert_eq!(parts[0]["poses"][0][0].as_f64(), Some(8.0));
     assert_eq!(parts[0]["poses"][1][0].as_f64(), Some(8.0));
+    // The level walk: the levels that ran, the last with no part left
+    // without room; no race over skeletons ran.
+    let walk = seed["walk"].as_array().unwrap();
+    let last = walk.last().expect("a level ran");
+    assert!(last[1].as_array().unwrap().is_empty(), "{walk:?}");
+    assert!(last[2].as_f64().unwrap() >= 0.0);
+    assert!(seed["skeleton"].is_null());
     let _ = fs::remove_dir_all(&root);
 }

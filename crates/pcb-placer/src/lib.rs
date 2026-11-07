@@ -174,6 +174,11 @@ pub struct Placement {
     /// The race over skeletons' account of this placement (`skeleton`),
     /// where it ran.
     pub skeleton: Option<skeleton::Report>,
+    /// The relaxation levels that ran, each with the parts it left
+    /// without room and the placement's work when it ended
+    /// (`PCB_PLACER_TRACE`: what walks a placement to its level, and what
+    /// each level cost).
+    pub walk: Vec<(usize, Vec<usize>, u64)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1250,6 +1255,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     });
     let mut last_level_work: Option<u64> = None;
     let mut skipping_to_tight = false;
+    let mut walk: Vec<(usize, Vec<usize>, u64)> = Vec::new();
     for (
         level,
         (halo_scale, spacing_scale, grid, inset, tight, edge_copper, edge_rule, small_factor),
@@ -1347,6 +1353,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
             relaxed.grid = problem.grid;
             let mut poses = global_poses.clone();
             let failed = legal::legalize(&relaxed, &mut poses);
+            walk.push((level, failed.clone(), work() - work_started));
             best_level = level;
             relaxation = Some(Relaxation {
                 spacing: relaxed.spacing,
@@ -1441,6 +1448,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                     failed.len()
                 );
             }
+            walk.push((level, failed.clone(), work() - work_started));
             if failed.len() < known_failed.len() {
                 best_level = level;
                 relaxation = Some(Relaxation {
@@ -1555,6 +1563,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
             config.work_limit,
             debug,
         );
+        walk.push((level, failed.clone(), work() - work_started));
         let better = best.as_ref().is_none_or(|(unplaced, kept, _)| {
             failed.len() < unplaced.len()
                 || (failed.len() == unplaced.len()
@@ -1706,6 +1715,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         exits,
         level: best_level,
         skeleton: None,
+        walk,
     }
 }
 
