@@ -1414,12 +1414,14 @@ pub(crate) fn exit_use(
     // nodes have (`joins_copper`: the class's half width less 0.02 mm from
     // the landing's copper; the class's track may be wider than the
     // segment the route ends with, a narrowed signal's).
+    let class = board.classes[board.nets[exit.net as usize].class].trace_width;
     let surface = route
         .segments
         .iter()
         .filter(|segment| segment.layer == exit.layer)
         .flat_map(|segment| {
-            let reach = exit.width / 2.0 + segment.width.max(exit.width) / 2.0 + TOUCH;
+            let reach =
+                exit.width / 2.0 + segment.width.max(exit.width).max(class) / 2.0 + TOUCH;
             [segment.start, segment.end]
                 .into_iter()
                 .filter(move |end| core::geometry::distance(*end, exit.landing) <= reach)
