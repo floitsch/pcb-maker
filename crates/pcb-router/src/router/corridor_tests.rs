@@ -460,9 +460,9 @@ fn a_custom_pad_whose_anchor_lies_in_a_neighbours_clearance_leaves_from_its_far_
 /// its pad 3 at (5.015, 5.23), the same size, overlaps all of pad 2 but a
 /// 0.23 mm strip along pad 2's top edge. One layer, 0.127 mm tracks and
 /// clearance (the board's). Vin joins a plain pad at (7, 3.5). The pad's
-/// centre lies inside the other pad; a track may end only in the strip's
-/// top 40 um (`cover`: the no-net pad's offset along y, 0.23 mm; at 0.6
-/// it covers the whole pad). Everything moved by `offset`.
+/// centre lies inside the other pad (`cover`: the no-net pad's offset
+/// along y, 0.23 mm as on the board; at 0 it covers the whole pad).
+/// Everything moved by `offset`.
 fn overlapped_pad(cover: f64, offset: Point) -> Board {
     let at = |x: f64, y: f64| [x + offset[0], y + offset[1]];
     let class = RuleClass {
@@ -538,25 +538,6 @@ fn overlapped_pad(cover: f64, offset: Point) -> Board {
         terminal_copper: Vec::new(),
         attachment: Default::default(),
         via_spans: Vec::new(),
-    }
-}
-
-#[test]
-fn a_pad_whose_centre_lies_in_another_items_copper_leaves_from_its_free_part() {
-    // Every offset of the pad against the 0.1 mm lattice: the free strip
-    // holds no node, and the centre lies inside the no-net pad; the stub
-    // starts in the strip, where a track keeps the clearance.
-    let config = Config {
-        pitches: vec![0.1],
-        ..Config::default()
-    };
-    for step in 0..5 {
-        let offset = step as f64 * 0.023;
-        let board = overlapped_pad(0.23, [offset, offset / 2.0]);
-        let result = crate::route(&board, &config);
-        let violations = crate::verify(&board, &result.routes);
-        assert!(violations.is_empty(), "offset {offset}: {violations:?}");
-        assert_eq!(result.status[0], NetStatus::Routed, "offset {offset}");
     }
 }
 

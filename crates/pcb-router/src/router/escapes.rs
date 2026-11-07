@@ -13,14 +13,6 @@ pub fn exact_escapes_override() -> Option<bool> {
     Some(!(value.is_empty() || value == "0"))
 }
 
-/// `PCB_ROUTER_PAD_ACCESS=0` turns the pad access of 2026-11-07 off (a
-/// plain pad whose centre lies in another item's clearance leaves from
-/// its free part), for the measurement only.
-pub(super) fn pad_access() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("PCB_ROUTER_PAD_ACCESS").map_or(true, |value| value != "0"))
-}
-
 impl Router {
     /// Access for a pad too narrow to hold a lattice node: nearby legal
     /// nodes that a straight stub from the pad centre reaches without coming
@@ -130,7 +122,7 @@ impl Router {
                         starts.len()
                     );
                 }
-            } else if (terminal.contact.is_some() || pad_access())
+            } else if let Some(contact) = &terminal.contact
                 && !self.stub_is_clear(net, layer, terminal.anchor, terminal.anchor, narrowest)
             {
                 // A custom pad joins only through its contact (its anchor
@@ -138,28 +130,13 @@ impl Router {
                 // net's clearance (Hub's X2SON-4 corner pads: a 0.148 mm
                 // anchor 0.24 mm from the centre pad's edge, under the
                 // class's 0.2 mm plus half a track; the designer's tracks
-                // end on the anchor's far side). Any other pad joins a
-                // track whose end lies anywhere in its copper, and its
-                // centre may lie in another item's clearance too
-                // (WLED_Matrix's LDO1.2: a second footprint of the same
-                // reference, without nets, overlaps it). The stub starts at
-                // the contact's points that keep every clearance, the
-                // farthest from the other copper first.
-                let contact = terminal
-                    .contact
-                    .as_ref()
-                    .unwrap_or(&self.board.obstacles[terminal.pad].shape);
+                // end on the anchor's far side). The stub starts at the
+                // contact's points that keep every clearance, the farthest
+                // from the other copper first. (A plain pad whose centre
+                // lies in another item's clearance does the same with its
+                // copper on branch pad-access-starts, measured and not
+                // taken: docs/router.md, "What walls a pad (2026-11-07)".)
                 starts = self.contact_starts(net, layer, contact, narrowest);
-                if terminal.contact.is_none()
-                    && std::env::var_os("PCB_ROUTER_PAD_ACCESS_LOG").is_some()
-                {
-                    eprintln!(
-                        "pad access: {} ({}) layer {layer}: {} starts in its copper",
-                        terminal.label,
-                        self.board.nets[net as usize].name,
-                        starts.len()
-                    );
-                }
                 if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
                     eprintln!(
                         "contact escape for {} at {:?}: {} starts in its contact",
