@@ -247,6 +247,7 @@ pub(crate) fn keep_existing_copper(board: &mut core::Board, whole_pieces: bool) 
                         net,
                         terminal: renumbered[piece],
                         obstacle: index,
+                        reach: None,
                     });
                 }
             }
@@ -284,6 +285,7 @@ pub(crate) fn keep_existing_copper(board: &mut core::Board, whole_pieces: bool) 
                             net,
                             terminal,
                             obstacle: other,
+                            reach: None,
                         });
                     }
                 }

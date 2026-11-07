@@ -92,7 +92,10 @@ const MIN_PART_PADS: usize = 4;
 /// search starts from: half the diagonal of the coarsest default lattice
 /// (0.127 mm), so some node within it lies inside the landing's legal disc
 /// whatever the lattice's phase.
-pub(crate) const RHO: f64 = 0.09;
+const RHO: f64 = 0.09;
+/// The landing's copper radius: the lattice's room and a little, so the
+/// node nearest the landing lies inside it.
+pub(crate) const LANDING: f64 = RHO + 0.01;
 /// How far an exit may come short of a clearance: floating point noise
 /// (the router's `STUB_FIT`): an exact fit passes, as in KiCad.
 const FIT: f64 = 1.0e-6;
@@ -811,18 +814,9 @@ fn plan_row(
             continue;
         }
         let class = context.classes[description.class];
-        // A pad narrower than its net's track and clearance lies in a neck
-        // zone (the router's `neck_reach` about it): the search starts there
-        // at the neck width.
-        // (The router's test: the pad's box, `prepare_net`.)
-        let bounds = obstacles[pad.obstacle].shape.aabb();
-        let narrow =
-            (bounds.maximum[0] - bounds.minimum[0]).min(bounds.maximum[1] - bounds.minimum[1]);
-        let landing = if narrow < class.trace_width + class.clearance {
-            class.trace_width.min(neck)
-        } else {
-            class.trace_width
-        };
+        // The landing's nodes are legal at the class's width (the router
+        // tests a terminal's nodes on its class's maps, `prepare_net`).
+        let landing = class.trace_width;
         members.push(Exit {
             pad: position,
             net,
@@ -1478,7 +1472,7 @@ pub(crate) fn exit_use(
         .filter(|segment| segment.layer == exit.layer)
         .filter_map(|segment| {
             let reach = exit.width / 2.0
-                + segment.width.max(exit.width).max(class).max(2.0 * RHO) / 2.0
+                + segment.width.max(exit.width).max(class).max(2.0 * LANDING) / 2.0
                 + TOUCH;
             let distance =
                 core::geometry::point_segment_distance(exit.landing, segment.start, segment.end);
