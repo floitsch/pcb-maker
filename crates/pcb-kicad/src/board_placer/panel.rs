@@ -1939,6 +1939,7 @@ pub(crate) fn place_copies(
             ),
             ("final", poses.clone()),
         ],
+        global_histories: first.global_histories.clone(),
         overfull: first.overfull || overfull,
         level: first.level,
         skeleton: None,

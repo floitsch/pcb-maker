@@ -161,7 +161,13 @@ pub(super) fn start_from(
 /// placement's own: `global_overflow_at`, `_bare`, `_global`),
 /// and per movable part each stage's pose, how far each stage moved it and
 /// what it met where the annealer left it. Each seed says its seed
-/// number and whether it is the placement kept (the first).
+/// number and whether it is the placement kept (the first). The stages
+/// are the placement's (`core::Placement::stage_poses`: the global
+/// placement's `start` first, the kept skeleton's `skeleton_*` before
+/// them under the race over skeletons), and `global_history` holds each
+/// global placement's descent every ten iterations (`iteration`,
+/// `overflow`, `lambda`, `gamma`, the wire gradient's and the weighted
+/// density gradient's absolute sums, the wirelength).
 pub(super) fn trace_placements(
     lowered: &LoweredPlacement,
     placements: &[core::Placement],
@@ -434,6 +440,27 @@ pub(super) fn trace_placements(
             "work": placement.work,
             "global_iterations": placement.global_iterations,
             "global_overflow": placement.global_overflow,
+            "global_history": placement
+                .global_histories
+                .iter()
+                .map(|(name, steps)| {
+                    (
+                        name.to_string(),
+                        serde_json::json!(steps
+                            .iter()
+                            .map(|step| [
+                                step.iteration as f64,
+                                step.overflow,
+                                step.lambda,
+                                step.gamma,
+                                step.wire,
+                                step.density,
+                                step.wirelength,
+                            ])
+                            .collect::<Vec<_>>()),
+                    )
+                })
+                .collect::<serde_json::Map<String, serde_json::Value>>(),
             "relaxation": {
                 "spacing": relaxation.spacing, "grid": relaxation.grid, "halo_scale": relaxation.halo_scale,
                 "small_halo_scale": relaxation.small_halo_scale, "edge_inset": relaxation.edge_inset,

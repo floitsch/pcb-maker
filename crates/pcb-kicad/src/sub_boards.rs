@@ -3398,6 +3398,7 @@ pub(crate) fn place_sub_boards(
         relaxation,
         work: pcb_placer::work() - started,
         stage_poses: vec![("sub-boards", held), ("final", poses.clone())],
+        global_histories: Vec::new(),
         overfull,
         level: 0,
         skeleton: None,

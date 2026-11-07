@@ -86,10 +86,19 @@ VARIANTS = {
     "global-active": {"PCB_PLACER_START_STAGE": "global"},
     "anneal": {"PCB_PLACER_START_STAGE": "anneal"},
     "legalize": {"PCB_PLACER_START_STAGE": "legalize"},
+    # The global placement from the netlist's quadratic start (docs/placer.md,
+    # "The global placement's start (2026-11-07)").
+    "netlist": {"PCB_PLACER_NETLIST_START": "1"},
+    # and out of the fixed bodies.
+    "netnoise": {"PCB_PLACER_NETLIST_START": "1", "PCB_PLACER_NETLIST_NOISE": "0.4"},
+    "netpush": {"PCB_PLACER_NETLIST_START": "1", "PCB_PLACER_NETLIST_PUSH": "1"},
 }
 # `<variant>-noanneal`: the variant without the anneal (`PCB_PLACER_SKIP_ANNEAL`).
 NO_ANNEAL = "-noanneal"
 STAGES = ("global", "annealed", "legal", "final")
+# Every stage a trace may hold, in the tables' order: the kept skeleton's
+# (the race over skeletons) and the global placement's start before ours.
+ALL_STAGES = ("skeleton_start", "skeleton_global", "skeleton_final", "start") + STAGES
 NEIGHBOURS = 3
 
 
@@ -222,7 +231,8 @@ def measure_seed(seed, active):
     chosen = [part for key, part in zip(keys, seed["parts"]) if key in active and "designer_center" in part]
     designer = [part["designer_center"] for part in chosen]
     designer_objective = seed["objective"].get("designer")
-    result = {"seed": seed.get("seed"), "kept": seed.get("kept"), "stages": {}, "centers": {}}
+    result = {"seed": seed.get("seed"), "kept": seed.get("kept"), "stages": {}, "centers": {},
+              "global_history": seed.get("global_history")}
     for index, stage in enumerate(seed["stages"]):
         ours = [part["centers"][index] for part in chosen]
         result["centers"][stage] = ours
@@ -319,7 +329,7 @@ def unit_command(arguments, name):
     env.update(VARIANTS[variant])
     if skip:
         env["PCB_PLACER_SKIP_ANNEAL"] = "1"
-    if variant not in ("ours", "off"):
+    if variant not in ("ours", "off", "netlist"):
         env["PCB_PLACER_START"] = designer
     if variant == "global-active":
         env["PCB_PLACER_START_PARTS"] = str(inputs / f"{board}.active.json")
@@ -526,11 +536,12 @@ def table(arguments):
     for name, result in results.items():
         for seed in result["seeds"]:
             tags = []
+            seed_stages = [stage for stage in ALL_STAGES if stage in seed["stages"]]
             if seed["kept"]:
                 tags.append("kept")
             if result["race_seed"] is not None and seed["seed"] == result["race_seed"]:
                 tags.append("race")
-            for stage in STAGES:
+            for stage in seed_stages:
                 entry = seed["stages"].get(stage)
                 if entry is None:
                     continue
@@ -551,7 +562,8 @@ def agreement(seeds, stage):
     between every two seeds at a stage: how much of the arrangement the
     pipeline decides rather than its noise."""
     values = [pairwise(a["centers"][stage], b["centers"][stage])
-              for i, a in enumerate(seeds) for b in seeds[i + 1:]]
+              for i, a in enumerate(seeds) for b in seeds[i + 1:]
+              if stage in a["centers"] and stage in b["centers"]]
     values = [v for v in values if v is not None]
     return statistics.mean(values) if values else None
 
@@ -571,31 +583,36 @@ def summary(results, routes):
     """The decision tables: per board and seed our stages (the kept seed,
     the race's where known, the mean over the seeds), the warm starts'
     fixed points, the objective's split, the first routes."""
+    present = [stage for stage in ALL_STAGES
+               if any(stage in seed["stages"] for result in results.values() for seed in result["seeds"])]
     lines = ["## Our pipeline: the active parts against the designer's, per stage", "",
              "displacement share / pairwise rank correlation (0 / 1: the designer's arrangement; "
              "a shuffle about 1.4 / 0)", "",
-             "| board | seed | placement | global | annealed | legal | final | hpwl all, final |",
-             "| --- | --- | --- | --- | --- | --- | --- | ---: |"]
+             "| board | seed | placement | " + " | ".join(present) + " | hpwl all, final | objective, final |",
+             "| --- | --- | --- | " + "--- | " * len(present) + "---: | ---: |"]
     for name, result in results.items():
-        if result["variant"] != "ours":
+        if result["variant"] not in ("ours", "netlist"):
             continue
         rows = [("kept", kept(result))]
         race = next((seed for seed in result["seeds"] if seed["seed"] == result["race_seed"]), None)
         if race is not None:
             rows.append(("race", race))
+        tag = "" if result["variant"] == "ours" else f" {result['variant']}"
         for label, seed in rows:
-            lines.append(f"| {result['board']} | {result['seed']} | {label} (seed {seed['seed']}) | "
-                         + " | ".join(cell(seed["stages"].get(stage)) for stage in STAGES)
-                         + f" | {fmt(seed['stages']['final'].get('hpwl_all'))} |")
+            lines.append(f"| {result['board']} | {result['seed']}{tag} | {label} (seed {seed['seed']}) | "
+                         + " | ".join(cell(seed["stages"].get(stage)) for stage in present)
+                         + f" | {fmt(seed['stages']['final'].get('hpwl_all'))}"
+                         + f" | {fmt(seed['stages']['final'].get('objective'), 0)} |")
         means = []
-        for stage in STAGES:
-            shares = [seed["stages"][stage]["displacement_share"] for seed in result["seeds"]]
-            pairs = [seed["stages"][stage]["pairwise"] for seed in result["seeds"]]
-            means.append(f"{fmt(statistics.mean(shares))} / {fmt(statistics.mean(pairs))}")
-        lines.append(f"| {result['board']} | {result['seed']} | mean of {len(result['seeds'])} | "
-                     + " | ".join(means) + " | |")
-        lines.append(f"| {result['board']} | {result['seed']} | seeds against each other (pairwise) | "
-                     + " | ".join(fmt(agreement(result["seeds"], stage)) for stage in STAGES) + " | |")
+        for stage in present:
+            shares = [seed["stages"][stage]["displacement_share"] for seed in result["seeds"]
+                      if stage in seed["stages"]]
+            pairs = [seed["stages"][stage]["pairwise"] for seed in result["seeds"] if stage in seed["stages"]]
+            means.append(f"{fmt(statistics.mean(shares))} / {fmt(statistics.mean(pairs))}" if shares else "-")
+        lines.append(f"| {result['board']} | {result['seed']}{tag} | mean of {len(result['seeds'])} | "
+                     + " | ".join(means) + " | | |")
+        lines.append(f"| {result['board']} | {result['seed']}{tag} | seeds against each other (pairwise) | "
+                     + " | ".join(fmt(agreement(result["seeds"], stage)) for stage in present) + " | | |")
     lines += ["", "## Warm starts from the designer's poses (kept seed)", "",
               "the stage's own result, then the final placement: share / pairwise; the final objective "
               "against ours (the kept seed's final, same board and seed)", "",
@@ -621,6 +638,8 @@ def summary(results, routes):
         if result["variant"] == "ours":
             seed = kept(result)
             rows = [("ours, final", seed["terms"]["final"]), ("designer's poses", seed["terms"].get("designer"))]
+        elif result["variant"] == "netlist":
+            rows = [(f"{result['variant']} start, final", kept(result)["terms"]["final"])]
         elif result["variant"] == "legalize":
             seed = kept(result)
             rows = [("designer's, legalised", seed["terms"]["legal"]),
@@ -634,6 +653,7 @@ def summary(results, routes):
                          f"{terms['wire_3_8']:.0f} | {terms['wire_9plus']:.0f} | {terms['overlap']:.0f} "
                          f"({terms['overlapping']}) | {terms['crossings']:.0f} | {terms['relations']:.0f} | "
                          f"{terms['total']:.0f} |")
+    lines += descent(results)
     if routes:
         lines += ["", "## First routes (layout seed 1, `stop_after_first_route`)", "",
                   "| run | open terminals | KiCad unconnected | CPU s |", "| --- | ---: | ---: | ---: |"]
@@ -641,6 +661,45 @@ def summary(results, routes):
                   for label, r in routes.items()]
     cpu = [result["unit"].get("cpu_seconds") or 0 for result in results.values()]
     lines += ["", f"Place checks: {len(cpu)} units, {sum(cpu):.0f} CPU seconds."]
+    return lines
+
+
+def wire_share(step):
+    """The wirelength gradient's share of the descent's gradient at a
+    history step `[iteration, overflow, lambda, gamma, wire, density,
+    wirelength]`."""
+    total = step[4] + step[5]
+    return step[4] / total if total > 0 else None
+
+
+def descent(results):
+    """Per unit the kept seed's global placements (the trace's
+    `global_history`): the iterations, the overflow at the stop, the
+    density weight's growth, and where the wire gradient's share of the
+    gradient falls below a half, a tenth and a hundredth (with the overflow
+    there): whether the wires arrange the parts before the density
+    spreads them."""
+    lines = ["", "## The descents (kept seed)", "",
+             "| unit | descent | iterations | overflow at the stop | lambda last / first | "
+             "wire share at 0 | share < 0.5 at (overflow) | < 0.1 at | < 0.01 at |",
+             "| --- " * 9 + "|"]
+    for name, result in results.items():
+        seed = kept(result)
+        for label, steps in (seed.get("global_history") or {}).items():
+            if not steps:
+                continue
+            first, last = steps[0], steps[-1]
+
+            def below(limit):
+                for step in steps:
+                    share = wire_share(step)
+                    if share is not None and share < limit:
+                        return f"{int(step[0])} ({step[1]:.2f})"
+                return "-"
+            growth = last[2] / first[2] if first[2] > 0 else None
+            lines.append(f"| {name} | {label} | {int(last[0]) + 1} | {last[1]:.3f} | "
+                         f"{growth:.3g} | {fmt(wire_share(first))} | {below(0.5)} | {below(0.1)} | "
+                         f"{below(0.01)} |" if growth is not None else f"| {name} | {label} | - |")
     return lines
 
 

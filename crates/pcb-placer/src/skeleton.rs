@@ -15,7 +15,7 @@
 //! placements as it ranks any.
 
 use crate::constraints::{Anchor, Relation};
-use crate::problem::{Problem, Side};
+use crate::problem::{Pose, Problem, Side};
 use crate::{Config, Placement, legal, place};
 
 /// The race's settings (`Config::skeleton` with the passives named).
@@ -729,11 +729,41 @@ pub fn place_skeleton(
     }
     report.level = placement.level;
     placement.work = used;
+    if !report.fallback_kept {
+        // The kept skeleton's stages and descent before the passives'
+        // (`PCB_PLACER_TRACE`).
+        let mut stages: Vec<(&'static str, Vec<Pose>)> = skeleton
+            .stage_poses
+            .iter()
+            .filter_map(|(stage, poses)| skeleton_stage(stage).map(|name| (name, poses.clone())))
+            .collect();
+        stages.append(&mut placement.stage_poses);
+        placement.stage_poses = stages;
+        let mut histories: Vec<(&'static str, Vec<crate::global::GlobalStep>)> = skeleton
+            .global_histories
+            .iter()
+            .filter_map(|(stage, steps)| skeleton_stage(stage).map(|name| (name, steps.clone())))
+            .collect();
+        histories.append(&mut placement.global_histories);
+        placement.global_histories = histories;
+    }
     let mut frames = skeleton.frames;
     frames.append(&mut placement.frames);
     placement.frames = frames;
     placement.skeleton = Some(report);
     placement
+}
+
+/// A skeleton's stage's name in the whole placement's stages.
+fn skeleton_stage(stage: &str) -> Option<&'static str> {
+    match stage {
+        "start" => Some("skeleton_start"),
+        "global" => Some("skeleton_global"),
+        "annealed" => Some("skeleton_annealed"),
+        "legal" => Some("skeleton_legal"),
+        "final" => Some("skeleton_final"),
+        _ => None,
+    }
 }
 
 /// The passives' placement made a placement of `problem`: the relaxation

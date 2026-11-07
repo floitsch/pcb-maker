@@ -15,6 +15,7 @@ pub mod facing;
 pub mod global;
 pub mod groups;
 pub mod guidance;
+pub mod initial;
 pub mod legal;
 pub mod orient;
 pub mod problem;
@@ -153,9 +154,14 @@ pub struct Placement {
     pub relaxation: Relaxation,
     /// The placement work done (see `work`).
     pub work: u64,
-    /// The poses after each stage (global, annealed, legal, final), for
-    /// the measurement of where wirelength goes (`PCB_PLACER_TRACE`).
+    /// The poses after each stage (the global placement's start, global,
+    /// annealed, legal, final; under the race over skeletons the kept
+    /// skeleton's before them, `skeleton_` and the stage), for the
+    /// measurement of where wirelength goes (`PCB_PLACER_TRACE`).
     pub stage_poses: Vec<(&'static str, Vec<Pose>)>,
+    /// The global placements' descents (`global::GlobalResult::history`):
+    /// `global`, and the kept skeleton's `skeleton_global`.
+    pub global_histories: Vec<(&'static str, Vec<global::GlobalStep>)>,
     /// Even the tightest bodies need more area than a side has: no
     /// packing places every part, and the placer said so at once.
     pub overfull: bool,
@@ -1172,6 +1178,8 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
             frames: Vec::new(),
             iterations: 0,
             overflow: 0.0,
+            start: problem.poses.clone(),
+            history: Vec::new(),
         },
         _ => global::global_place(problem, &config.global),
     };
@@ -1180,6 +1188,8 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         eprintln!("placer: global {:.1}s", started.elapsed().as_secs_f64());
     }
     let mut global_poses = global.poses;
+    let global_start = global.start;
+    let global_history = global.history;
     // Bus groups: the banks' order and arrangement (`groups::arrange`).
     if let Some(groups) = bus_groups
         .as_deref()
@@ -1591,7 +1601,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     }
     let (unplaced, mut poses, relaxed) = best.expect("at least one relaxation level ran");
     let wirelength_legal = problem.wirelength(&poses);
-    let mut stage_poses = vec![("global", global_poses.clone())];
+    let mut stage_poses = vec![("start", global_start), ("global", global_poses.clone())];
     if let Some(annealed) = best_annealed {
         stage_poses.push(("annealed", annealed));
     }
@@ -1691,6 +1701,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         relaxation: relaxation.expect("at least one relaxation level ran"),
         work: work() - work_started,
         stage_poses,
+        global_histories: vec![("global", global_history)],
         overfull: overfull_sides,
         exits,
         level: best_level,

@@ -19,6 +19,10 @@ use crate::constraints;
 use crate::problem::{Point, Pose, Problem, point_in_polygon, rotate};
 use std::collections::BTreeMap;
 
+/// The netlist start's share of the common start's noise
+/// (`GlobalConfig::netlist_start`).
+const NETLIST_NOISE: f64 = 0.1;
+
 /// A pin on a net: its position and, for a movable body's pin, the body and
 /// the pin's index on it (`None` for a fixed pin).
 type NetPin = (Point, Option<(usize, usize)>);
@@ -67,6 +71,10 @@ pub struct GlobalConfig {
     /// it starts at its pose's centre without the start's noise. `None`:
     /// every part from the start point.
     pub warm: Option<std::sync::Arc<Vec<bool>>>,
+    /// The parts start where the netlist's quadratic wirelength puts them
+    /// (`initial::quadratic_start`), the start's noise a tenth of the
+    /// common start's: the arrangement is the netlist's, not the noise's.
+    pub netlist_start: bool,
 }
 
 impl Default for GlobalConfig {
@@ -85,6 +93,7 @@ impl Default for GlobalConfig {
             frame_interval: 5,
             seed: 1,
             warm: None,
+            netlist_start: false,
         }
     }
 }
@@ -324,11 +333,40 @@ impl Field {
     }
 }
 
+/// The descent's state at an iteration (`GlobalResult::history`): what
+/// decides whether the wires arrange the parts before the density spreads
+/// them (docs/placer.md, "The global placement's start (2026-11-07)").
+#[derive(Clone, Copy, Debug, Default)]
+pub struct GlobalStep {
+    pub iteration: usize,
+    pub overflow: f64,
+    /// The density weight.
+    pub lambda: f64,
+    /// The weighted-average wirelength's smoothing length, mm.
+    pub gamma: f64,
+    /// The wirelength gradient's sum of absolute components.
+    pub wire: f64,
+    /// The density gradient's, times `lambda`.
+    pub density: f64,
+    /// The weighted half-perimeter wirelength at the poses.
+    pub wirelength: f64,
+}
+
+/// Iterations between two `GlobalStep`s of the history (the last is
+/// always kept).
+pub const HISTORY_INTERVAL: usize = 10;
+
 pub struct GlobalResult {
     pub poses: Vec<Pose>,
     pub frames: Vec<Frame>,
     pub iterations: usize,
     pub overflow: f64,
+    /// The poses the descent started from (the start's noise, or the
+    /// netlist's start).
+    pub start: Vec<Pose>,
+    /// The descent's state every `HISTORY_INTERVAL` iterations and at its
+    /// last.
+    pub history: Vec<GlobalStep>,
 }
 
 pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
@@ -419,10 +457,12 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
         .collect();
     if movable.is_empty() {
         return GlobalResult {
+            start: poses.clone(),
             poses,
             frames: Vec::new(),
             iterations: 0,
             overflow: 0.0,
+            history: Vec::new(),
         };
     }
     let mut bodies: Vec<Body> = movable
@@ -590,6 +630,70 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
         })
         .collect();
     let nets = problem.net_weights.len();
+    if config.netlist_start {
+        // The noise drawn above, a tenth of it, around the netlist's
+        // positions: it breaks ties (parts on the same nets), not the
+        // arrangement.
+        let count = movable.len();
+        let warm = |index: usize| config.warm.as_ref().is_some_and(|warm| warm[index]);
+        let held: Vec<bool> = movable.iter().map(|index| warm(*index)).collect();
+        let anchor: Vec<Point> = movable
+            .iter()
+            .map(|index| starts.get(index).copied().unwrap_or(start))
+            .collect();
+        let noise: Vec<Point> = (0..count)
+            .map(|body| {
+                if held[body] {
+                    [0.0; 2]
+                } else {
+                    [
+                        major[body][0] - anchor[body][0],
+                        major[body][1] - anchor[body][1],
+                    ]
+                }
+            })
+            .collect();
+        let mut centers: Vec<Point> = (0..count)
+            .map(|body| {
+                if held[body] {
+                    major[body]
+                } else {
+                    anchor[body]
+                }
+            })
+            .collect();
+        let solve_work = crate::initial::quadratic_start(
+            problem,
+            &movable,
+            &offsets,
+            &fixed_pins,
+            &anchor,
+            &held,
+            &mut centers,
+            |centers: &mut [Point]| {
+                let mut moved = centers.to_vec();
+                clamp(&mut moved, &bodies);
+                centers.copy_from_slice(&moved);
+            },
+        );
+        crate::add_work(solve_work);
+        for body in 0..count {
+            major[body] = [
+                centers[body][0] + NETLIST_NOISE * noise[body][0],
+                centers[body][1] + NETLIST_NOISE * noise[body][1],
+            ];
+        }
+        clamp(&mut major, &bodies);
+    }
+    let start_poses: Vec<Pose> = {
+        let mut at = poses.clone();
+        for (body, index) in movable.iter().enumerate() {
+            at[*index].position =
+                problem.components[*index].position_for_center(major[body], at[*index].angle);
+        }
+        at
+    };
+    let mut history = Vec::new();
 
     let mut reference = major.clone();
     let mut momentum = 1.0f64;
@@ -605,6 +709,7 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
     let escape = problem.escape.as_deref();
     let escape_members = escape.map(|_| crate::escape::members(problem));
 
+    let mut last_step = GlobalStep::default();
     for iteration in 0..config.max_iterations {
         iterations = iteration + 1;
         // Work: the field solve per side dominates, then bodies and pins.
@@ -742,17 +847,26 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
             );
         }
 
+        let wire: f64 = wire_gradient.iter().map(|g| g[0].abs() + g[1].abs()).sum();
+        let charge: f64 = density_gradient
+            .iter()
+            .map(|g| g[0].abs() + g[1].abs())
+            .sum();
         if iteration == 0 {
-            let wire: f64 = wire_gradient.iter().map(|g| g[0].abs() + g[1].abs()).sum();
-            let charge: f64 = density_gradient
-                .iter()
-                .map(|g| g[0].abs() + g[1].abs())
-                .sum();
             lambda = if charge > 0.0 { wire / charge } else { 1.0 };
             if lambda == 0.0 {
                 lambda = 1.0e-3;
             }
         }
+        let step_state = GlobalStep {
+            iteration,
+            overflow,
+            lambda,
+            gamma,
+            wire,
+            density: lambda * charge,
+            wirelength: 0.0,
+        };
 
         let gradient: Vec<Point> = bodies
             .iter()
@@ -867,6 +981,13 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
             }
         }
 
+        if iteration % HISTORY_INTERVAL == 0 {
+            history.push(GlobalStep {
+                wirelength: problem.wirelength(&poses),
+                ..step_state
+            });
+        }
+        last_step = step_state;
         if config.frame_interval > 0 && iteration % config.frame_interval == 0 {
             frames.push(Frame {
                 iteration,
@@ -897,11 +1018,22 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
         wirelength: problem.wirelength(&poses),
         poses: poses.clone(),
     });
+    if history
+        .last()
+        .is_none_or(|step: &GlobalStep| step.iteration != last_step.iteration)
+    {
+        history.push(GlobalStep {
+            wirelength: problem.wirelength(&poses),
+            ..last_step
+        });
+    }
     GlobalResult {
         poses,
         frames,
         iterations,
         overflow,
+        start: start_poses,
+        history,
     }
 }
 
