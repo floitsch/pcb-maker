@@ -207,6 +207,11 @@ struct Context<'a> {
     boxes: Vec<core::geometry::Aabb>,
     /// The largest clearance any rule asks: beyond it nothing is near.
     margin: f64,
+    /// The project's custom clearance rules (`net_rules`): per rule its
+    /// two sides' nets by name (None: every item) and its clearance, held
+    /// on every layer and between every kind of item (the plan's copper
+    /// keeps the largest that may apply).
+    custom: Vec<(Option<BTreeSet<String>>, Option<BTreeSet<String>>, f64)>,
 }
 
 impl Context<'_> {
@@ -220,7 +225,26 @@ impl Context<'_> {
             let class = obstacle.net.map_or(0.0, |other| self.clearance_of(other));
             obstacle.clearance.max(class)
         });
-        self.clearance_of(net).max(other)
+        self.clearance_of(net)
+            .max(other)
+            .max(self.custom_clearance(Some(net), obstacle.net))
+    }
+
+    /// The largest custom rule's clearance between items of `a` and `b`.
+    fn custom_clearance(&self, a: Option<core::NetId>, b: Option<core::NetId>) -> f64 {
+        let name = |net: Option<core::NetId>| net.map(|net| self.nets[net as usize].name.as_str());
+        let (a, b) = (name(a), name(b));
+        let on = |side: &Option<BTreeSet<String>>, net: Option<&str>| match side {
+            None => true,
+            Some(names) => net.is_some_and(|net| names.contains(net)),
+        };
+        self.custom
+            .iter()
+            .filter(|(first, second, _)| {
+                (on(first, a) && on(second, b)) || (on(first, b) && on(second, a))
+            })
+            .map(|(_, _, clearance)| *clearance)
+            .fold(0.0, f64::max)
     }
 
     /// Whether a track of `net` from `a` to `b`, `width` wide, on `layer`
@@ -393,7 +417,26 @@ impl Context<'_> {
             if other.net == net || (candidate.zone && other.zone) {
                 return true;
             }
-            let clearance = self.clearance_of(net).max(self.clearance_of(other.net));
+            // A hole keeps the hole clearance from the other net's copper.
+            let hole_clear = |holder: &Planned, copper: &Planned| {
+                let (Some(radius), core::Shape::Circle { center, .. }) =
+                    (holder.hole, &holder.shape)
+                else {
+                    return true;
+                };
+                let hole = core::Shape::Circle {
+                    center: *center,
+                    radius,
+                };
+                core::verify::shape_distance(&hole, &copper.shape) >= self.hole_clearance + SAFETY
+            };
+            if !hole_clear(other, candidate) || !hole_clear(candidate, other) {
+                return false;
+            }
+            let clearance = self
+                .clearance_of(net)
+                .max(self.clearance_of(other.net))
+                .max(self.custom_clearance(Some(net), Some(other.net)));
             distance >= clearance - FIT
         })
     }
@@ -524,7 +567,32 @@ pub(crate) fn plan(
             })
             .chain(classes.iter().map(|class| class.clearance))
             .fold(config.hole_clearance_mm, f64::max)
+            .max(config.net_rules.as_ref().map_or(0.0, |rules| {
+                rules
+                    .clearances
+                    .iter()
+                    .map(|rule| rule.clearance)
+                    .fold(0.0, f64::max)
+            }))
             + 0.01,
+        custom: config
+            .net_rules
+            .as_ref()
+            .map(|rules| {
+                rules
+                    .clearances
+                    .iter()
+                    .map(|rule| {
+                        let side = |names: &Option<Vec<String>>| {
+                            names
+                                .as_ref()
+                                .map(|names| names.iter().cloned().collect::<BTreeSet<String>>())
+                        };
+                        (side(&rule.first), side(&rule.second), rule.clearance)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
     };
     let neck = config
         .neck_width_mm
