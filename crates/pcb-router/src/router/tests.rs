@@ -57,15 +57,12 @@ fn measured_footprints_are_the_offsets_on_the_regular_lattice() {
             );
         }
         let blocks = diagonal_block(radius, pitch);
-        for orientation in 0..2 {
+        for (orientation, block) in blocks.iter().enumerate() {
             let mut measured = Vec::new();
             grid.diagonal_start_cells((x, y), orientation, radius_nm(radius), |cell| {
                 measured.push(cell)
             });
-            let offsets: Vec<usize> = blocks[orientation]
-                .iter()
-                .map(|(dx, dy)| index(*dx, *dy))
-                .collect();
+            let offsets: Vec<usize> = block.iter().map(|(dx, dy)| index(*dx, *dy)).collect();
             assert_eq!(
                 sorted(measured),
                 sorted(offsets),
