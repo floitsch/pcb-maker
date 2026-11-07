@@ -10144,7 +10144,7 @@ first-route open terminals:
   open terminals off / on): where off kept the plain fallback and on a
   skeleton (level 7, the passives at 9), seeds 1, 301 and 401, 149 / 135,
   108 / 134 and 123 / 154; where both kept the plain fallback (201) 156
-  / 147; where both kept a skeleton (101: on the fallback) 141 / 143.
+  / 147; where off kept a skeleton and on the fallback (101) 141 / 143.
   Off falls back on four of five seeds (its passives find no room around
   the skeleton, "A race over skeletons"), on on two: from the netlist's
   start the 4in1-mini's passives seat around its skeleton more often, and
