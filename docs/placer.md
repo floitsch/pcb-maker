@@ -10129,14 +10129,20 @@ first-route open terminals:
   the others are unchanged (the place checks of the 4in1 and Glasgow at
   seed 1 by the landed binary, `pcb-maker-e`, and by `-d` with the
   switch are byte-identical). SmartSpin2k and the 0xCB panel with the
-  fix: SMARTSPIN_PLACEHOLDER
+  fix (`build/glob1/stage1-e`, five seeds, 3 287 CPU s): first-route open
+  terminals equal to off on every seed (51, 43, 33, 46, 90; the panel 0).
+  **As landed** (SmartSpin2k's rows from `-e`, the other ten boards'
+  from the screen): weighted **-8.9 %** (the noise file's interval -14.3
+  to -3.1 %), sign-flip p 0.007, the noise file's 0.004, sum of medians
+  970 to 752 (-22.5 %), every pair sum falls; eight boards better, the
+  4in1-mini worse, two equal.
 
 **Decision.** The netlist's start is the global placement's code path
 since 2026-11-07, without a switch (`PCB_PLACER_NETLIST_START` is gone).
 What it changes: the coarse arrangement is the netlist's (the active
 parts nearer the designer's on every stage-0 row, the race's seeds
 agreeing 0.48 to 0.85), and the first route falls by 7.9 % on the dense
-boards. Stage 2 (full layouts, KiCad unconnected, the short tier's
+boards as screened, 8.9 % as landed. Stage 2 (full layouts, KiCad unconnected, the short tier's
 strict passes) is the coordinator's call. Open: the passives' stall
 around a held skeleton (the 4in1, overflow 0.62 to 0.65 at the stop),
 video's skeleton that no longer fits at full halos (its seeds are the

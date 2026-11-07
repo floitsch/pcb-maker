@@ -111,7 +111,9 @@ Branch global-start (docs/placer.md "The global placement's start
   positions pushed out of fixed bodies, four times the noise.
 - **Stage 1** (the eleven dense boards, five seed pairs, first route, one
   binary): -7.9 % weighted, sign-flip p 0.014, sum of medians 970 to 796,
-  every pair sum falls; 19.6 CPU hours.
+  every pair sum falls; 19.6 CPU hours. SmartSpin2k's +92 % (the panel
+  copies solved against their regions' borders) fixed before landing: as
+  landed -8.9 %, p 0.007.
 - **Instruments**: the trace's `start` stage, the kept skeleton's stages
   (`skeleton_*`) and `global_history` (the descent's overflow, lambda,
   gamma, gradient sums, wirelength every ten iterations); stages.py's
