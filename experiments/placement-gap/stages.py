@@ -86,9 +86,6 @@ VARIANTS = {
     "global-active": {"PCB_PLACER_START_STAGE": "global"},
     "anneal": {"PCB_PLACER_START_STAGE": "anneal"},
     "legalize": {"PCB_PLACER_START_STAGE": "legalize"},
-    # The global placement from the netlist's quadratic start (docs/placer.md,
-    # "The global placement's start (2026-11-07)").
-    "netlist": {"PCB_PLACER_NETLIST_START": "1"},
     # and out of the fixed bodies.
     "netnoise": {"PCB_PLACER_NETLIST_START": "1", "PCB_PLACER_NETLIST_NOISE": "0.4"},
     "netpush": {"PCB_PLACER_NETLIST_START": "1", "PCB_PLACER_NETLIST_PUSH": "1"},
@@ -329,7 +326,7 @@ def unit_command(arguments, name):
     env.update(VARIANTS[variant])
     if skip:
         env["PCB_PLACER_SKIP_ANNEAL"] = "1"
-    if variant not in ("ours", "off", "netlist"):
+    if variant not in ("ours", "off"):
         env["PCB_PLACER_START"] = designer
     if variant == "global-active":
         env["PCB_PLACER_START_PARTS"] = str(inputs / f"{board}.active.json")

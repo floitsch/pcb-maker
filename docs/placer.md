@@ -9990,8 +9990,9 @@ the switch off wrote byte-identical boards).
   `lambda`, the wirelength's smoothing `gamma`, the absolute sums of the
   wire gradient and of the density gradient times `lambda`, the
   wirelength.
-- `stages.py` measures every stage a trace holds, has the variant
-  `netlist` (`PCB_PLACER_NETLIST_START=1`) and a table of the descents
+- `stages.py` measures every stage a trace holds, had the variant
+  `netlist` (`PCB_PLACER_NETLIST_START=1`, the measurement's switch, gone
+  with the landing; its rows are still tabled) and has a table of the descents
   (iterations, the overflow at the stop, lambda's growth, where the wire
   gradient's share of the gradient falls below a half, a tenth and a
   hundredth).
@@ -10079,6 +10080,67 @@ at the end not above ours) the netlist's start passes on the
 arrangement and the agreement on all four boards and on the objective
 on three; video's objective rises by less than its own seed spread.
 Stage 1 below.
+
+**Stage 1** (docs/benchmarks.md, "The ladder of placer measurements"):
+the eleven dense boards at the task budgets (tasks v7) with
+`stop_after_first_route`, placer seeds 1, 101, 201, 301 and 401, both
+sides on one binary (`build/glob1/pcb-maker-d`: main x1932 with the
+start behind the measurement switch; off the default, on
+`PCB_PLACER_NETLIST_START=1`; `screen.py --on '{}' --on-env
+PCB_PLACER_NETLIST_START=1`), one run.py per row at 2 threads, four and
+later six in flight beside two router packages, `build/glob1/stage1`,
+2026-11-07 15:28 to 18:07; 70 399 CPU seconds (19.6 CPU hours: off
+34 773, on 35 626). `placer_ab.py compare --metric first_open`,
+first-route open terminals:
+
+| Board | s1 off / on | s101 off / on | s201 off / on | s301 off / on | s401 off / on | median off / on | mean change | relative (weight) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4in1 | 216 / 141 | 176 / 87 | 116 / 129 | 163 / 133 | 149 / 97 | 163 / 129 | -46.6 | -25.9 % (48) |
+| 4in1-mini | 149 / 135 | 141 / 143 | 156 / 147 | 108 / 134 | 123 / 154 | 141 / 143 | +7.2 | +5.0 % (99) |
+| DSP-ADAU1452 | 32 / 20 | 28 / 25 | 19 / 23 | 46 / 24 | 36 / 28 | 32 / 24 | -8.2 | -12.4 % (29) |
+| MegaDrive | 130 / 95 | 160 / 46 | 129 / 42 | 199 / 90 | 117 / 92 | 130 / 90 | -74.0 | -47.3 % (21) |
+| panel | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | +0.0 | +0.0 % (0) |
+| poly_kybd_split72_left | 35 / 22 | 28 / 26 | 10 / 23 | 24 / 21 | 30 / 23 | 28 / 23 | -2.4 | -6.0 % (18) |
+| protoesp | 75 / 90 | 55 / 67 | 69 / 48 | 70 / 30 | 66 / 56 | 69 / 56 | -8.8 | -8.0 % (30) |
+| revC3 | 123 / 95 | 107 / 98 | 90 / 107 | 73 / 92 | 107 / 66 | 107 / 95 | -8.4 | -5.0 % (70) |
+| SmartSpin2k_Panelized | 51 / 72 | 43 / 90 | 33 / 65 | 46 / 127 | 90 / 123 | 46 / 90 | +42.8 | +92.4 % (3) |
+| SNSP-CPU-01 | 85 / 24 | 49 / 31 | 56 / 20 | 82 / 36 | 82 / 30 | 82 / 30 | -42.6 | -40.6 % (4) |
+| video | 193 / 92 | 172 / 159 | 109 / 116 | 29 / 111 | 178 / 165 | 172 / 116 | -7.6 | -2.4 % (12) |
+
+- **Stage 1 passes: BETTER.** Weighted relative change **-7.9 %** (the
+  noise file's 90 % interval -13.4 to -2.1 %), **sign-flip p 0.014**, the
+  noise file's p 0.010; sum of medians 970 to 796 (-17.9 %); every pair
+  sum falls (1089 to 786, 959 to 772, 787 to 720, 840 to 798, 978 to
+  834); eight boards better, two worse, one equal. The rule asks for a
+  negative change at p <= 0.25; it would pass the full protocol's
+  p <= 0.03 too.
+- **Where it wins**: MegaDrive (-47.3 %, all five seeds: 130 to 90 by the
+  median, its QFP order the netlist's), SNSP-CPU-01 (-40.6 %, all five),
+  the 4in1 (-25.9 %, four of five), DSP-ADAU1452 (-12.4 %), protoesp
+  (-8.0 %), split72_left (-6.0 %), Glasgow (-5.0 %), video (-2.4 % by
+  the median; its seeds swing: 193 to 92 on seed 1, 29 to 111 on 301).
+- **Where it loses**: the 4in1-mini (+5.0 %, the heaviest weight, two
+  of five seeds better) and SmartSpin2k (+92.4 %, all five, weight 3),
+  a panel of copies. Its copies' parts each have a start of their own
+  (their region's centre, `Constraints::starts`); solved from the
+  netlist, they were projected against their regions' borders and piled
+  up there, as before the starts existed. **Fixed before landing**: a part
+  with a start of its own begins there as before (held in the solve);
+  the others are unchanged (the place checks of the 4in1 and Glasgow at
+  seed 1 by the landed binary, `pcb-maker-e`, and by `-d` with the
+  switch are byte-identical). SmartSpin2k and the 0xCB panel with the
+  fix: SMARTSPIN_PLACEHOLDER
+
+**Decision.** The netlist's start is the global placement's code path
+since 2026-11-07, without a switch (`PCB_PLACER_NETLIST_START` is gone).
+What it changes: the coarse arrangement is the netlist's (the active
+parts nearer the designer's on every stage-0 row, the race's seeds
+agreeing 0.48 to 0.85), and the first route falls by 7.9 % on the dense
+boards. Stage 2 (full layouts, KiCad unconnected, the short tier's
+strict passes) is the coordinator's call. Open: the passives' stall
+around a held skeleton (the 4in1, overflow 0.62 to 0.65 at the stop),
+video's skeleton that no longer fits at full halos (its seeds are the
+plain fallback), the 4in1-mini.
 
 ## What went wrong on the way (kept as lessons)
 

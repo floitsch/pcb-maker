@@ -144,6 +144,18 @@ used to be here; code comments and docs that cite `docs/handover.md,
   null under its measurement is removed, not kept as an off switch
   ("Removed experiments (2026-11-04)"). A fresh-agent trial every few
   days (trials 4 to 6 on 2026-11-04).
+- **The global placement starts from the netlist (2026-11-07, branch
+  global-start; placer.md "The global placement's start (2026-11-07)").**
+  The parts began at one point with a noise of 5 % of the board, and the
+  active parts' arrangement was that noise's. Now a quadratic
+  (bound-to-bound) wirelength solve with the fixed pins as anchors places
+  them before the descent, a tenth of the noise breaking ties; panel
+  copies keep their own starts. Stage 0: nearer the designer's on all
+  four diagnosis boards, the race's seeds agreeing 0.48 to 0.85 (were 0.23
+  to 0.77), the objective 0.44 to 0.96 of ours except video (1.07, 1.10).
+  Stage 1: **-7.9 %** first-route open terminals, sign-flip p 0.014
+  (MegaDrive -47 %, SNSP-CPU-01 -41 %, the 4in1 -26 %; the 4in1-mini
+  +5 %). On by default, no switch; stage 2 pending.
 - **In flight**: "Working on it" below.
 
 ## The flow in one paragraph
@@ -590,6 +602,25 @@ ranks what keeps the designer tier's 41 failing boards open.
    `replicate_channels`, `supply_via_room`, `bus_rows`. More seeds do not
    close it (no seed holds the arrangement for the race to pick).
    Untested: seeded orientation starts in the race.
+   **The netlist's start (2026-11-07, placer.md "The global placement's
+   start (2026-11-07)")**: loss (a)'s cause was the global placement's
+   start, every part at one point with a noise of 5 % of the board. A
+   quadratic bound-to-bound solve of the movable parts with the fixed
+   pins as anchors (RePlAce's initial placement, `initial.rs`) now places
+   them first, in the plain seeds, the skeleton and the passives around
+   it. Stage 0 on the four boards at seeds 1 and 101: the active parts at
+   the end 0.46 to 0.65 / 0.38 to 0.67 (share / pairwise) against 0.64 to
+   0.87 / 0.20 to 0.45, the seeds agreeing 0.48 to 0.85, the objective
+   0.44 to 0.96 of ours on the 4in1, Glasgow and SNSP-CPU-01, 1.07 and
+   1.10 on video; the descent's schedule keeps the wire term at about half
+   of the gradient while the parts spread (not the loss), video's overflow
+   at the stop 0.040 and 0.060 (the bins not needed). Stage 1: -7.9 %,
+   sign-flip p 0.014, every pair sum falls; SmartSpin2k's +92 % was the
+   panel copies' own starts, fixed before landing. **On, no switch**;
+   stage 2 is next. Left: the passives' global placement around a held
+   skeleton stalls at overflow 0.62 to 0.65 on the 4in1 (their netlist
+   spots lie inside the ICs they serve), video's skeleton no longer fits
+   at full halos (the plain fallback is kept), the 4in1-mini +5 %.
 5. **Starved thermals as the only failure** on complete boards (rosco,
    Castor, mackerel-30, k30, mackerel-08, Hub, PixelWave, BAGEL; counts
    fell to 0-5 since the spoke model). Since 2026-10-21

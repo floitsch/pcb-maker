@@ -91,6 +91,33 @@ Branch residue-kicad-judged; router.md "The residue in a window
   strict, jetson 13, Sisu 7). The switch was off by default, so main's
   behaviour is unchanged by construction.
 
+## Committed on 2026-11-07 (the global placement's start from the netlist)
+
+Branch global-start (docs/placer.md "The global placement's start
+(2026-11-07)"; everything in `build/glob1/`).
+
+- **The netlist's start** (`crates/pcb-placer/src/initial.rs`): before
+  the descent the movable parts take the positions that minimise the
+  nets' quadratic wirelength in the bound-to-bound model, the fixed pins
+  as anchors, solved per axis by conjugate gradients and linearised again
+  up to twelve times; parts their constraints move are anchored at the
+  projection; a tenth of the old start noise breaks ties; a part with a
+  start of its own (a panel copy's) begins there as before. Every global
+  placement takes it (plain seeds, the skeleton, the passives).
+- **Stage 0** (video, the 4in1, Glasgow, SNSP-CPU-01 at seeds 1 and 101,
+  place checks): the active parts nearer the designer's on all eight rows,
+  the seeds agreeing 0.48 to 0.85 (were 0.23 to 0.77), the objective 0.44
+  to 0.96 of ours, video 1.07 and 1.10. Not taken: the netlist's
+  positions pushed out of fixed bodies, four times the noise.
+- **Stage 1** (the eleven dense boards, five seed pairs, first route, one
+  binary): -7.9 % weighted, sign-flip p 0.014, sum of medians 970 to 796,
+  every pair sum falls; 19.6 CPU hours.
+- **Instruments**: the trace's `start` stage, the kept skeleton's stages
+  (`skeleton_*`) and `global_history` (the descent's overflow, lambda,
+  gamma, gradient sums, wirelength every ten iterations); stages.py's
+  `netlist` variant and descent table. With the start off they changed no
+  placement (x1932 against the branch, byte-identical).
+
 ## Committed on 2026-11-07 (pad access: what walls a pad; plated pads apart from SMD pads)
 
 Branch pad-access (docs/router.md "What walls a pad (2026-11-07)",
