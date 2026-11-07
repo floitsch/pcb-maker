@@ -2949,9 +2949,17 @@ fn the_start_reads_the_designers_poses_and_the_trace_is_well_formed() {
         .iter()
         .map(|stage| stage.as_str().unwrap())
         .collect();
-    assert_eq!(stages, vec!["start", "global", "annealed", "legal", "final"]);
+    assert_eq!(
+        stages,
+        vec!["start", "global", "annealed", "legal", "final"]
+    );
     // The descent's history: none ran, so none is kept.
-    assert!(seed["global_history"]["global"].as_array().unwrap().is_empty());
+    assert!(
+        seed["global_history"]["global"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
     for stage in &stages {
         for objective in ["objective", "objective_bare"] {
             let terms = &seed[objective][stage];
