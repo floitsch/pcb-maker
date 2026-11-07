@@ -451,3 +451,130 @@ fn a_custom_pad_whose_anchor_lies_in_a_neighbours_clearance_leaves_from_its_far_
         }
     }
 }
+
+/// WLED_Matrix's LDO1 pad 2 (a SOT-23's 1.07 x 0.6 mm pad, net Vin) at
+/// (5, 5), with a second SOT-23 of the same reference and no nets over it:
+/// its pad 3 at (5.015, 5.23), the same size, overlaps all of pad 2 but a
+/// 0.23 mm strip along pad 2's top edge. One layer, 0.127 mm tracks and
+/// clearance (the board's). Vin joins a plain pad at (7, 3.5). The pad's
+/// centre lies inside the other pad; a track may end only in the strip's
+/// top 40 um (`cover`: the no-net pad's offset along y, 0.23 mm; at 0.6
+/// it covers the whole pad). Everything moved by `offset`.
+fn overlapped_pad(cover: f64, offset: Point) -> Board {
+    let at = |x: f64, y: f64| [x + offset[0], y + offset[1]];
+    let class = RuleClass {
+        trace_width: 0.127,
+        clearance: 0.127,
+        via_diameter: 0.6,
+        via_drill: 0.4,
+        layers: 0,
+    };
+    let copper = |shape: Shape, net: Option<NetId>, label: &str| Obstacle {
+        shape,
+        layers: 1,
+        kind: ObstacleKind::Copper,
+        net,
+        clearance: 0.0,
+        clearance_override: None,
+        blocks_tracks: true,
+        blocks_vias: true,
+        label: label.into(),
+    };
+    let obstacles = vec![
+        copper(
+            Shape::rectangle(at(5.0, 5.0), [1.07, 0.6], 0.0),
+            Some(0),
+            "LDO1.2",
+        ),
+        copper(
+            Shape::rectangle(at(7.0, 3.5), [0.6, 0.6], 0.0),
+            Some(0),
+            "C7.1",
+        ),
+        copper(
+            Shape::rectangle(at(5.015, 5.0 + cover), [1.07, 0.6], 0.0),
+            None,
+            "LDO1.3",
+        ),
+    ];
+    let terminal = |anchor: Point, pad: usize, label: &str| Terminal {
+        anchor,
+        layers: 1,
+        pad,
+        contact: None,
+        label: label.into(),
+    };
+    Board {
+        layer_count: 1,
+        outline: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]],
+        edge_clearance: 0.1,
+        hole_clearance: 0.1,
+        hole_to_hole: 0.1,
+        classes: vec![class],
+        neck_width: 0.127,
+        obstacles,
+        nets: vec![Net {
+            name: "Vin".into(),
+            class: 0,
+            terminals: vec![
+                terminal(at(5.0, 5.0), 0, "LDO1.2"),
+                terminal(at(7.0, 3.5), 1, "C7.1"),
+            ],
+        }],
+        planes: Vec::new(),
+        solid_pads: Vec::new(),
+        isolated_pads: Vec::new(),
+        solid_pad_obstacles: Vec::new(),
+        isolated_pad_obstacles: Vec::new(),
+        pad_spokes: Default::default(),
+        merged_pads: Vec::new(),
+        no_via_pads: Vec::new(),
+        fill_passes: Vec::new(),
+        pin_row_gaps: Vec::new(),
+        terminal_copper: Vec::new(),
+        attachment: Default::default(),
+        via_spans: Vec::new(),
+    }
+}
+
+#[test]
+fn a_pad_whose_centre_lies_in_another_items_copper_leaves_from_its_free_part() {
+    // Every offset of the pad against the 0.1 mm lattice: the free strip
+    // holds no node, and the centre lies inside the no-net pad; the stub
+    // starts in the strip, where a track keeps the clearance.
+    let config = Config {
+        pitches: vec![0.1],
+        ..Config::default()
+    };
+    for step in 0..5 {
+        let offset = step as f64 * 0.023;
+        let board = overlapped_pad(0.23, [offset, offset / 2.0]);
+        let result = crate::route(&board, &config);
+        let violations = crate::verify(&board, &result.routes);
+        assert!(violations.is_empty(), "offset {offset}: {violations:?}");
+        assert_eq!(result.status[0], NetStatus::Routed, "offset {offset}");
+    }
+}
+
+#[test]
+fn a_dead_pad_names_what_walls_it() {
+    // The no-net pad covers all of LDO1.2: no point of it keeps the
+    // clearance, and the diagnostic names the pad of no net that walls it.
+    let config = Config {
+        pitches: vec![0.1],
+        ..Config::default()
+    };
+    let board = overlapped_pad(0.0, [0.0, 0.0]);
+    let result = crate::route(&board, &config);
+    let dead = &result.diagnostics.dead_pads;
+    assert_eq!(dead.len(), 1, "{dead:?}");
+    assert_eq!(dead[0].label, "LDO1.2");
+    assert!(
+        dead[0]
+            .wall
+            .contains("no point of the pad keeps the clearances")
+            && dead[0].wall.contains("LDO1.3 (no net"),
+        "{}",
+        dead[0].wall
+    );
+}

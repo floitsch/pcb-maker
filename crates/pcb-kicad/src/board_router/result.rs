@@ -660,6 +660,10 @@ pub struct KiCadDeadPad {
     pub net: String,
     pub at: [f64; 2],
     pub near: Vec<String>,
+    /// What walls the pad: per layer, the item nearest to being cleared
+    /// at the pad's best point for the net's narrowest track, or what
+    /// blocks the stubs from a legal track end to the nearest nodes.
+    pub wall: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -854,6 +858,7 @@ pub(super) fn diagnostics(
                 net: board.nets[dead.net as usize].name.clone(),
                 at: round(dead.anchor),
                 near: dead.near.clone(),
+                wall: dead.wall.clone(),
             })
             .collect(),
         conflicted_nets: result

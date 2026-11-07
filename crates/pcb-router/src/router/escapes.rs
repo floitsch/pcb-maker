@@ -13,6 +13,14 @@ pub fn exact_escapes_override() -> Option<bool> {
     Some(!(value.is_empty() || value == "0"))
 }
 
+/// `PCB_ROUTER_PAD_ACCESS=0` turns the pad access of 2026-11-07 off (a
+/// plain pad whose centre lies in another item's clearance leaves from
+/// its free part), for the measurement only.
+pub(super) fn pad_access() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("PCB_ROUTER_PAD_ACCESS").map_or(true, |value| value != "0"))
+}
+
 impl Router {
     /// Access for a pad too narrow to hold a lattice node: nearby legal
     /// nodes that a straight stub from the pad centre reaches without coming
@@ -122,7 +130,7 @@ impl Router {
                         starts.len()
                     );
                 }
-            } else if let Some(contact) = &terminal.contact
+            } else if (terminal.contact.is_some() || pad_access())
                 && !self.stub_is_clear(net, layer, terminal.anchor, terminal.anchor, narrowest)
             {
                 // A custom pad joins only through its contact (its anchor
@@ -130,10 +138,28 @@ impl Router {
                 // net's clearance (Hub's X2SON-4 corner pads: a 0.148 mm
                 // anchor 0.24 mm from the centre pad's edge, under the
                 // class's 0.2 mm plus half a track; the designer's tracks
-                // end on the anchor's far side). The stub starts at the
-                // contact's points that keep every clearance, the farthest
-                // from the other copper first.
+                // end on the anchor's far side). Any other pad joins a
+                // track whose end lies anywhere in its copper, and its
+                // centre may lie in another item's clearance too
+                // (WLED_Matrix's LDO1.2: a second footprint of the same
+                // reference, without nets, overlaps it). The stub starts at
+                // the contact's points that keep every clearance, the
+                // farthest from the other copper first.
+                let contact = terminal
+                    .contact
+                    .as_ref()
+                    .unwrap_or(&self.board.obstacles[terminal.pad].shape);
                 starts = self.contact_starts(net, layer, contact, narrowest);
+                if terminal.contact.is_none()
+                    && std::env::var_os("PCB_ROUTER_PAD_ACCESS_LOG").is_some()
+                {
+                    eprintln!(
+                        "pad access: {} ({}) layer {layer}: {} starts in its copper",
+                        terminal.label,
+                        self.board.nets[net as usize].name,
+                        starts.len()
+                    );
+                }
                 if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
                     eprintln!(
                         "contact escape for {} at {:?}: {} starts in its contact",
@@ -483,6 +509,219 @@ impl Router {
             }
         }
         starts
+    }
+
+    /// What walls a pad with no node and no escape (a dead pad), in words:
+    /// on each of its layers, whether any point of its contact (its copper,
+    /// a custom pad's anchor) keeps every clearance for the net's narrowest
+    /// track (its neck), and if none does, the item nearest to being
+    /// cleared at the best point; if one does, what blocks the narrowest
+    /// stubs from there to the nearest nodes the class may use, or that no
+    /// such node lies within the escape's reach. Items are named with their
+    /// net and place (two footprints may share a reference: WLED_Matrix's
+    /// LDO1, a second SOT-23 without nets over the first).
+    pub(super) fn dead_pad_wall(&self, net: NetId, terminal: &crate::board::Terminal) -> String {
+        const REACH: f64 = 2.0;
+        const DEPTH: f64 = 0.01;
+        let class_index = self.board.nets[net as usize].class;
+        let statics = &self.statics[class_index];
+        let shape = terminal
+            .contact
+            .as_ref()
+            .unwrap_or(&self.board.obstacles[terminal.pad].shape);
+        let bounds = shape.aabb();
+        let name = |obstacle: &crate::board::Obstacle| -> String {
+            let owner = match obstacle.net {
+                Some(other) => self.board.nets[other as usize].name.clone(),
+                None => "no net".to_string(),
+            };
+            let at = obstacle.shape.aabb();
+            format!(
+                "{} ({owner}, at {:.3}, {:.3})",
+                obstacle.label,
+                (at.minimum[0] + at.maximum[0]) / 2.0,
+                (at.minimum[1] + at.maximum[1]) / 2.0
+            )
+        };
+        let mut walls: Vec<String> = Vec::new();
+        for layer in 0..self.board.layer_count {
+            if terminal.layers & (1 << layer) == 0 {
+                continue;
+            }
+            let width = self
+                .neck_width_on(class_index, layer)
+                .min(self.width_on(class_index, layer));
+            let near: Vec<(&crate::board::Obstacle, f64)> = self
+                .board
+                .obstacles
+                .iter()
+                .filter(|obstacle| {
+                    obstacle.net != Some(net)
+                        && obstacle.layers & (1 << layer) != 0
+                        && obstacle.blocks_tracks
+                        && obstacle
+                            .shape
+                            .aabb()
+                            .intersects(bounds.inflated(REACH + 1.0))
+                })
+                .map(|obstacle| {
+                    let required = width / 2.0
+                        + match obstacle.kind {
+                            crate::board::ObstacleKind::Copper => self.obstacle_clearance(
+                                class_index,
+                                crate::rules::TRACK,
+                                obstacle,
+                                layer,
+                            ),
+                            crate::board::ObstacleKind::Keepout => obstacle.clearance,
+                            crate::board::ObstacleKind::Hole => {
+                                self.board.hole_clearance.max(obstacle.clearance)
+                            }
+                        };
+                    (obstacle, required)
+                })
+                .collect();
+            // The binding item at a point: the least slack (what it keeps
+            // beyond what it asks); a mask opening around the point asks
+            // nothing (`stub_is_clear`).
+            let binding = |point: crate::geometry::Point| -> (f64, Option<usize>) {
+                near.iter()
+                    .enumerate()
+                    .filter(|(_, (obstacle, _))| {
+                        !(obstacle.kind == crate::board::ObstacleKind::Keepout
+                            && obstacle.label.starts_with("solder mask opening")
+                            && obstacle.shape.contains(point))
+                    })
+                    .map(|(index, (obstacle, required))| {
+                        (
+                            obstacle.shape.distance_to_point(point) - required,
+                            Some(index),
+                        )
+                    })
+                    .fold((f64::INFINITY, None), |best, next| {
+                        if next.0 < best.0 { next } else { best }
+                    })
+            };
+            let extent =
+                (bounds.maximum[0] - bounds.minimum[0]).max(bounds.maximum[1] - bounds.minimum[1]);
+            let step = (extent / 60.0).max(0.005);
+            let columns = ((bounds.maximum[0] - bounds.minimum[0]) / step).ceil() as usize;
+            let rows = ((bounds.maximum[1] - bounds.minimum[1]) / step).ceil() as usize;
+            let mut best: Option<(f64, crate::geometry::Point, Option<usize>)> = None;
+            for row in 0..=rows {
+                for column in 0..=columns {
+                    let point = [
+                        bounds.minimum[0] + column as f64 * step,
+                        bounds.minimum[1] + row as f64 * step,
+                    ];
+                    if !shape.contains_disc(point, DEPTH) {
+                        continue;
+                    }
+                    let (slack, by) = binding(point);
+                    if best.is_none_or(|(other, _, _)| slack > other) {
+                        best = Some((slack, point, by));
+                    }
+                }
+            }
+            let Some((slack, point, by)) = best else {
+                walls.push(format!("layer {layer}: the contact holds no track end"));
+                continue;
+            };
+            if slack + STUB_FIT < 0.0 {
+                let by = by.map_or("nothing".to_string(), |index| {
+                    let (obstacle, required) = near[index];
+                    format!(
+                        "{} {:.3} mm away where a {width:.3} mm track asks {:.3}",
+                        name(obstacle),
+                        (slack + required).max(0.0),
+                        required
+                    )
+                });
+                walls.push(format!(
+                    "layer {layer}: no point of the pad keeps the clearances for a {width:.3} mm track: the best, ({:.3}, {:.3}), has {by}",
+                    point[0], point[1]
+                ));
+                continue;
+            }
+            // A track end fits: the nearest nodes the class may use, and
+            // what blocks the stubs to them.
+            let Some((x0, y0, x1, y1)) = self.grid.node_range(
+                crate::geometry::Aabb {
+                    minimum: point,
+                    maximum: point,
+                }
+                .inflated(REACH),
+            ) else {
+                continue;
+            };
+            let mut candidates: Vec<(f64, usize)> = Vec::new();
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    let cell = self.grid.index(x, y);
+                    let distance = crate::geometry::distance(point, self.grid.center(x, y));
+                    if distance <= REACH && statics.trace_allowed(layer, cell, net) {
+                        candidates.push((distance, cell));
+                    }
+                }
+            }
+            candidates.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+            if candidates.is_empty() {
+                walls.push(format!(
+                    "layer {layer}: a {width:.3} mm track may end at ({:.3}, {:.3}), but no node within {REACH} mm admits the class's {:.3} mm track",
+                    point[0],
+                    point[1],
+                    self.width_on(class_index, layer)
+                ));
+                continue;
+            }
+            let mut blocked: Vec<String> = Vec::new();
+            for (distance, cell) in candidates.iter().take(3) {
+                let center = self.grid.center_of(*cell);
+                let by = near
+                    .iter()
+                    .filter(|(obstacle, _)| {
+                        !(obstacle.kind == crate::board::ObstacleKind::Keepout
+                            && obstacle.label.starts_with("solder mask opening")
+                            && obstacle.shape.contains(point))
+                    })
+                    .map(|(obstacle, required)| {
+                        (
+                            obstacle.shape.distance_to_segment(point, center) - required,
+                            obstacle,
+                            required,
+                        )
+                    })
+                    .min_by(|a, b| a.0.total_cmp(&b.0));
+                match by {
+                    Some((short, obstacle, required)) if short + STUB_FIT < 0.0 => {
+                        blocked.push(format!(
+                            "to ({:.3}, {:.3}) ({distance:.3} mm) by {} {:.3} mm from the stub where it asks {:.3}",
+                            center[0],
+                            center[1],
+                            name(obstacle),
+                            (short + required).max(0.0),
+                            required
+                        ))
+                    }
+                    _ if !self.stub_keeps_edge(point, center, width) => blocked.push(format!(
+                        "to ({:.3}, {:.3}) ({distance:.3} mm) by the board's edge",
+                        center[0], center[1]
+                    )),
+                    _ => blocked.push(format!(
+                        "to ({:.3}, {:.3}) ({distance:.3} mm) free (the escape was not kept: its node another pad's of the net, or its pocket closed)",
+                        center[0], center[1]
+                    )),
+                }
+            }
+            walls.push(format!(
+                "layer {layer}: a {width:.3} mm track may end at ({:.3}, {:.3}); its stubs to the nearest nodes the class's {:.3} mm track may use: {}",
+                point[0],
+                point[1],
+                self.width_on(class_index, layer),
+                blocked.join("; ")
+            ));
+        }
+        walls.join(" | ")
     }
 
     /// A pad-centre stub is cosmetic (the track already ends inside the pad),

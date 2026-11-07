@@ -108,6 +108,8 @@ pub struct DeadPad {
     pub label: String,
     pub anchor: crate::geometry::Point,
     pub near: Vec<String>,
+    /// What walls the pad, in words (`Router::dead_pad_wall`).
+    pub wall: String,
 }
 
 #[derive(Clone, Debug)]

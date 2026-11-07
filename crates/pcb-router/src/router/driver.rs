@@ -450,6 +450,7 @@ impl Router {
                     label: terminal.label.clone(),
                     anchor: terminal.anchor,
                     near,
+                    wall: self.dead_pad_wall(net as NetId, terminal),
                 });
             }
         }
