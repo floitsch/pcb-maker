@@ -483,6 +483,29 @@ ranks what keeps the designer tier's 41 failing boards open.
      where it is, not in total. **Decided 2026-11-06: the fix**. DSP-ADAU1452's
      loss is the known residual: its passives fitted at level 0. Taking it
      back needs a test of where the passives' room lies.
+     **The passives' level per board (2026-11-07, placer.md "The
+     passives' level per board (2026-11-07): no rule found")**: on one
+     binary the flips between the 11-06 and 11-07 nightlies that are the
+     level's are DSP-ADAU1452 (level 0: 0 open and a strict pass; level 2:
+     7) against MokyaLora and jetson (level 2: a pass and 1 open; level 0:
+     1 and 17). USB_Cable_Tester and zpn_devboard pass at both levels
+     (their 11-06 losses were the router's and the region bug), and
+     capybully and Quanta75 pass at neither (level 0 1 and 1 open, level
+     2 2 and 3). Three per-board rules were measured and none is taken;
+     `PASSIVES_FIRST_LEVEL` stays 2. (1) The placer's objective prefers
+     level 2 on every seed of every board where level 0 routes better
+     (the full halos double the decoupling relations' term), and the tight
+     seat on jetson. (2) "Level 0 where every passive seats there" gets the
+     seven right, but SNSP-CPU-01's passives seat at level 0 on all nine
+     seeds and route worse there. Its proxy from skel5's rows: stage 1
+     +0.4 % (p 0.64), stage 2 +1.5 % (p 0.56): DSP -60 %, SNSP +47.5 %.
+     (3) The passives' twin (branch passives-twin, not for merge): the
+     race probes the first-ranked placement's passives placed again at
+     its skeleton's level. Stage 1 on the five dense boards it can change:
+     +0.1 %, p 0.94, kept on 2 of 25 rows, +6.3 % CPU; on the seven boards
+     DSP-ADAU1452 7 to 4, nothing else moves. Open: a judge that tells
+     DSP-ADAU1452 from SNSP-CPU-01. Whole first routes of both levels
+     would, on skel5's rows, at the cost of a second first route.
      Measured and not taken: `join_pins` 0 (fixes
      SNSP-CPU-01 and split72_left, loses the 4in1-mini: +3.0 % against
      the race).
@@ -951,8 +974,9 @@ experiments (2026-11-04)" below):
   places plain, byte for byte the switch off's (`board-placer.json`'s
   `skeleton_race.budget_ok`). A level guard (placer.md "The level guard
   (2026-11-05)") was built, measured and removed. On branch
-  skeleton-race-5 (2026-11-06, decided, to be merged): the passives start no looser
-  than level 2 (`PASSIVES_FIRST_LEVEL`), and the regions the lowering
+  skeleton-race-5 (2026-11-06, merged): the passives start no looser
+  than level 2 (`PASSIVES_FIRST_LEVEL`; a per-board level measured on
+  2026-11-07 and not found, placer.md "The passives' level per board"), and the regions the lowering
   gives an outline's pieces (`Constraints::automatic_regions`) do not
   keep passives in the skeleton (placer.md "The passives' first level";
   the known residual: DSP-ADAU1452's level-0 seat and its gain).

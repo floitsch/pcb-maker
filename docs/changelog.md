@@ -11,6 +11,32 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Measured on 2026-11-07 (the passives' level per board: no rule found; `PASSIVES_FIRST_LEVEL` stays 2)
+
+Branch passives-level (docs only; docs/placer.md "The passives' level per
+board (2026-11-07): no rule found"; everything in `build/pass1/`).
+
+- **The seven boards that flipped between the nightlies of 2026-11-06
+  (level 0) and 2026-11-07 (level 2)**, on one binary (KiCad unconnected,
+  level 2 / level 0):
+  - level 0 better: DSP-ADAU1452 7 / 0 (strict pass), Quanta75 3 / 1,
+    capybully 2 / 1;
+  - level 2 better: MokyaLora 0 (pass) / 1, jetson 1 / 17;
+  - equal: USB_Cable_Tester and zpn_devboard pass at both levels.
+- **The placer's objective is blind to the level**: it prefers level 2 on
+  every seed of DSP-ADAU1452, Quanta75 and MokyaLora (level 0 +8 % to
+  +106 %), and jetson's tight seat.
+- **The seating rule** (level 0 where every passive seats there) loses
+  SNSP-CPU-01, whose passives seat at level 0 on all nine seeds. Its proxy
+  from skel5's rows: stage 1 +0.4 % (p 0.64), stage 2 +1.5 % (p 0.56;
+  DSP -60 %, SNSP +47.5 %).
+- **The passives' twin** (branch passives-twin, b1720820, not for merge):
+  the race probes the first-ranked placement's passives placed again at
+  its skeleton's level. On the seven boards DSP-ADAU1452 7 to 4, nothing
+  else changes. Stage 1 on the five dense boards it can change: +0.1 %,
+  sign-flip p 0.94; kept on 2 of 25 rows; CPU +6.3 %.
+- About 22 CPU hours.
+
 ## Measured on 2026-11-07 (nightly: layout sweep v34, matched designer tier)
 
 Written by the nightly from `build/nightly/2026-11-07/` (main 406dcb9;

@@ -8420,6 +8420,146 @@ rows, 13 layouts, 12 place checks), variant 2's six place checks 0.3; in
 all about 49 CPU hours, at most
 six layouts at once, beside another agent's pair layouts.
 
+### The passives' level per board (2026-11-07): no rule found
+
+Branch passives-level (this section only). The twin's code is on branch
+passives-twin (b1720820, not for merge). Everything is in `build/pass1/`.
+
+The two nightlies after the passives' first level (11-06 at level 0,
+x1923; 11-07 at level 2, x1928's rule) flipped seven boards: DSP-ADAU1452,
+capybully and Quanta75_BareRP2040 one way; USB_Cable_Tester, zpn_devboard,
+MokyaLora and jetson the other. The question was whether the level can be
+chosen per board. The answer, on today's code: neither the placer's
+objective, nor a seating rule, nor a routed judge picks it better than
+the constant. `PASSIVES_FIRST_LEVEL` stays 2.
+
+**The seven boards on one binary.** `pcb-maker-probe-a` (main c72313de
+with a test-only environment switch) laid out each board as the sweep does
+(tasks v7, `--quality`, 2 threads, reference rates, seed 1;
+`build/pass1/j1`). KiCad unconnected / strict pass / first-route open:
+
+| board | level 2 (main) | level 0 | the twin (below) |
+| --- | --- | --- | --- |
+| USB_Cable_Tester PCB | 0 / pass / 0 | 0 / pass / 0 | 0 / pass / 0 |
+| zpn_devboard | 0 / pass / 0 | 0 / pass / 0 (passives at 1) | 0 / pass / 0 |
+| MokyaLora | 0 / pass / 1 | 1 / no / 1 (walked to 1) | 0 / pass / 1 |
+| DSP-ADAU1452 | 7 / no / 32 | **0 / pass / 24** | 4 / no / 33 |
+| Quanta75_BareRP2040 | 3 / no / 11 | 1 / no / 9 | 3 / no / 11 |
+| capybully | 2 / no / 0 | 1 / no / 0 | 2 / no / 0 |
+| jetson-nano-baseboard | 1 / no / 6 | 17 / no / 18 (skip to 5) | 1 / no / 6 |
+| strict passes, unconnected | 3, 13 | 3, 20 | 3, 10 |
+
+- Today's router no longer gives capybully or Quanta75 a strict pass at
+  either level.
+- USB_Cable_Tester passes at both levels: its 11-06 loss was the router's.
+- zpn_devboard passes at both levels: on 11-06 it ran no skeleton (the
+  region bug).
+- So the flips that are the level's are DSP-ADAU1452 (level 0) against
+  MokyaLora and jetson (level 2). Level 0 also routes better on capybully
+  and Quanta75, by one and two connections.
+- jetson at level 0 is the first night's loss again (no room at full
+  halos, the skip to level 5).
+
+**The placer's objective is blind to the level.** In the race arm each
+seed placed the passives at both levels. The arm logged the objective of
+each: the weighted wire, the relations, the hard constraints and the
+crossings at their weight (`anneal::objective` on the unrelaxed problem).
+Seeds where level 0's objective is lower, and the median objectives:
+
+| board | seeds | level 0 lower | level 2 | level 0 |
+| --- | ---: | ---: | ---: | ---: |
+| DSP-ADAU1452 | 3 | 0 | 6052 | 7708 (+27 %) |
+| Quanta75_BareRP2040 | 6 | 0 | 5531 | 6383 (+15 %) |
+| capybully | 16 | 2 | 938 | 1014 (+8 %) |
+| USB_Cable_Tester PCB | 16 | 1 | 1713 | 1798 (+5 %) |
+| MokyaLora | 7 | 0 | 6589 | 13092 (+99 %) |
+| zpn_devboard | 7 | 0 | 9414 | 19350 (+106 %) |
+| jetson-nano-baseboard | 3 | 3 (the level-5 tight seat) | 24944 | 22710 (-9 %) |
+
+- The full halos keep the decoupling capacitors from their pins. On DSP
+  the relations term doubles (seed 1: 1966 against 3836).
+- So the objective prefers level 2 wherever level 0 is the better route.
+  It prefers the tight seat where that is the worse route (jetson).
+- Kept by the objective, the race arm equals level 2 on six boards. On
+  jetson it is the tight seat's 16 open.
+
+**The seating rule** (level 0 where every passive seats at the skeleton's
+level, else level 2) gets all seven boards right. Its counterexample is
+SNSP-CPU-01. On today's code SNSP's passives seat at level 0 on all nine
+seeds of a place check (`build/pass1/place/SNSP-CPU-01`). In skel5's
+stage 2 level 2 was the better route there on five of five seeds.
+
+A proxy of the rule from skel5's rows: x1927's rows on the three dense
+boards whose passives seat at level 0 (DSP-ADAU1452, split72_left,
+SNSP-CPU-01), the fix's rows elsewhere (video walks at level 0, so it
+stays at level 2). Against the fix:
+- Stage 1, first-route open: +0.4 %, sign-flip p 0.64.
+- Stage 2, KiCad unconnected: +1.5 %, p 0.56.
+  - DSP-ADAU1452: -60 % (median 7 to 0, weight 4).
+  - SNSP-CPU-01: +47.5 % (49 to 75, weight 11).
+  - split72_left: -4.7 %.
+
+It moves which boards pass and is not better. Not built.
+
+**The routed judge (the twin)**, branch passives-twin:
+- `Config::last_level` stops a placement's walk at a level.
+- `skeleton::place_twin` places a placement's passives again around its
+  held skeleton, at the skeleton's own level and no other. Its work is
+  capped at twice the passives' level-2 work (`TWIN_WORK_FACTOR`). It
+  returns the twin only where every part seats.
+- The layout's race places the twin of its first-ranked placement and
+  probes it right after that placement (one more 75 s probe). It keeps
+  the twin only by its usual margin. The twin's work is charged to the
+  clock.
+- Four unit tests.
+
+On the seven boards (the table's last column, `build/pass1/j2`):
+- The race kept the twin on DSP-ADAU1452 (probe 166 against 418 open
+  after the rip-up) and on MokyaLora (seated at level 0, still a pass).
+- DSP-ADAU1452 ended at 4 open, not level 0's 0.
+- On Quanta75 and capybully the twin's probe was worse, and level 2 was
+  kept.
+- jetson's twin did not seat. It was dropped after 89 s of work.
+- CPU of the seven layouts: 8042 to 8406 s (+4.5 %).
+
+Stage 1 (`build/pass1/s1`; `screen.py`, five seed pairs, first route, the
+twin against main's code):
+- Run only on the five dense boards whose placement it can change. The
+  4in1, the 4in1-mini, Glasgow and protoesp seat their skeletons at level
+  2 or later and have no twin. The panel and SmartSpin2k run no race over
+  skeletons.
+- The twin seated on 20 of 25 rows; video's never seats (63 to 125 s
+  spent each).
+- The race kept it on two rows, both DSP-ADAU1452: seed 1, first route 32
+  to 33; seed 401, 36 to 36.
+- `placer_ab.py compare --metric first_open`: weighted **+0.1 %**,
+  sign-flip p 0.94, the noise file's p 0.52. No board better, DSP-ADAU1452
+  and video worse by a terminal or so, three equal.
+- CPU 21 414 to 22 761 s (+6.3 %).
+
+Not better, so not taken. Even where its routed outcome is better
+(DSP-ADAU1452), the probe judges the twin on a 75 s route, and on the
+dense set it changed almost nothing.
+
+**What is left.** DSP-ADAU1452's level-0 pass is real: 0 open on one
+binary against level 2's 7, and skel5's stage 2 had five of five seeds.
+But no rule found here tells it from SNSP-CPU-01 without moving the loss
+to SNSP:
+- the objective is blind to the level;
+- the area test (variant 2) and the seating rule see both boards as
+  fitting at level 0;
+- the 75 s probe does not separate the twins.
+
+A judge by whole first routes would separate DSP and SNSP on skel5's rows
+(level 0 better on DSP's seeds 1, 301 and 401, level 2 on all of SNSP's).
+It costs a second first route (DSP's took 201 s of work) and would still
+choose wrong on DSP's seed 201 (first route 32 against 19, KiCad 0
+against 4). It was not built.
+
+CPU: the seven boards in four arms 32 000 s, stage 1 44 200 s, the place
+check and the builds about 0.8 h: about 22 CPU hours, at most four
+layouts at once and eight during stage 1, beside other agents' pools.
+
 ## Footprints without a courtyard, and their slots (2026-11-04)
 
 Fresh agent trial 4 (docs/reviews/2026-11-04-fresh-agent-trial-4.md,
