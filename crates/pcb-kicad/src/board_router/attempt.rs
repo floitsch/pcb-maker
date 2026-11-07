@@ -92,12 +92,10 @@ pub(crate) fn emit_routes(
         }
         // The joint: no wider than the route's track (its end is a node
         // legal for that width, a neighbour's joint perhaps 0.4 mm away).
-        if let Some((end, width)) = surface
-            && !exit.pieces.iter().any(|(start, stop)| {
-                core::geometry::point_segment_distance(end, *start, *stop) <= exit.width / 2.0
-            })
+        if let Some(joint) = surface
+            && !joint.touches
         {
-            items.push(segment(end, exit.landing, width.min(exit.width)));
+            items.push(segment(joint.at, exit.landing, joint.width.min(exit.width)));
         }
         if through && let Some((at, diameter, drill, span)) = exit.via {
             pad_vias[net] += 1;

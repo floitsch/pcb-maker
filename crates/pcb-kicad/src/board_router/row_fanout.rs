@@ -1401,36 +1401,72 @@ pub(crate) fn exits_of(board: &core::Board) -> Vec<ExitCopper> {
     exits.into_values().collect()
 }
 
-/// How the net's route uses an exit: (on the surface: the route's segment
-/// end at the landing and that segment's width, if any; through the via
-/// off the pad's layer).
+/// Where a route meets an exit's landing on the surface (`exit_use`).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ExitJoint {
+    /// The point of the route's segment nearest the landing.
+    pub at: [f64; 2],
+    /// That segment's width.
+    pub width: f64,
+    /// Whether KiCad sees the two touch already: the landing (the exit's
+    /// end) inside the segment, or an end of the segment inside the exit.
+    pub touches: bool,
+}
+
+/// How the net's route uses an exit: (on the surface: where its segment
+/// meets the landing, if one does; through the via off the pad's layer).
+/// A segment meets the landing within the reach the router's terminal
+/// nodes have (`joins_copper`: the class's half width less 0.02 mm from
+/// the landing's copper; the class's track may be wider than the segment,
+/// a narrowed signal's), at an end or in its middle (a straight run on
+/// through the landing's node is one segment).
 pub(crate) fn exit_use(
     board: &core::Board,
     exit: &ExitCopper,
     route: &core::NetRoute,
-) -> (Option<([f64; 2], f64)>, bool) {
+) -> (Option<ExitJoint>, bool) {
     const TOUCH: f64 = 1.0e-6;
-    // A route ends on the landing within the reach the router's terminal
-    // nodes have (`joins_copper`: the class's half width less 0.02 mm from
-    // the landing's copper; the class's track may be wider than the
-    // segment the route ends with, a narrowed signal's).
     let class = board.classes[board.nets[exit.net as usize].class].trace_width;
     let surface = route
         .segments
         .iter()
         .filter(|segment| segment.layer == exit.layer)
-        .flat_map(|segment| {
-            let reach =
-                exit.width / 2.0 + segment.width.max(exit.width).max(class) / 2.0 + TOUCH;
-            [segment.start, segment.end]
-                .into_iter()
-                .filter(move |end| core::geometry::distance(*end, exit.landing) <= reach)
-                .map(move |end| (end, segment.width))
+        .filter_map(|segment| {
+            let reach = exit.width / 2.0 + segment.width.max(exit.width).max(class) / 2.0 + TOUCH;
+            let distance =
+                core::geometry::point_segment_distance(exit.landing, segment.start, segment.end);
+            if distance > reach {
+                return None;
+            }
+            let (a, b) = (segment.start, segment.end);
+            let d = [b[0] - a[0], b[1] - a[1]];
+            let length = d[0] * d[0] + d[1] * d[1];
+            let t = if length > 0.0 {
+                (((exit.landing[0] - a[0]) * d[0] + (exit.landing[1] - a[1]) * d[1]) / length)
+                    .clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let at = [a[0] + d[0] * t, a[1] + d[1] * t];
+            let inside_exit = |point: [f64; 2]| {
+                exit.pieces.iter().any(|(start, stop)| {
+                    core::geometry::point_segment_distance(point, *start, *stop) <= exit.width / 2.0
+                })
+            };
+            let touches = distance <= segment.width / 2.0
+                || inside_exit(segment.start)
+                || inside_exit(segment.end);
+            Some((
+                distance,
+                ExitJoint {
+                    at,
+                    width: segment.width,
+                    touches,
+                },
+            ))
         })
-        .min_by(|a, b| {
-            core::geometry::distance(a.0, exit.landing)
-                .total_cmp(&core::geometry::distance(b.0, exit.landing))
-        });
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, joint)| joint);
     let through = exit.via.is_some_and(|(at, diameter, _, span)| {
         let radius = diameter / 2.0;
         let on = |layer: usize| span.is_none_or(|span| span.contains(layer));
@@ -1836,9 +1872,34 @@ mod tests {
         };
         assert_eq!(
             exit_use(&board, &n1, &result.routes[net("N1")]),
-            (Some((from, 0.2)), false)
+            (
+                Some(ExitJoint {
+                    at: from,
+                    width: 0.2,
+                    touches: false
+                }),
+                false
+            )
         );
         assert_eq!(exit_use(&board, &n2, &result.routes[net("N2")]).0, None);
+        // N3's route runs on past its landing, 0.12 mm to the side: one
+        // segment whose middle meets the landing, joined at its foot.
+        let n3 = exit("N3");
+        let side = n3.landing[0] + 0.12;
+        result.routes[net("N3")] = core::NetRoute {
+            segments: vec![core::Segment {
+                layer: 0,
+                start: [side, n3.landing[1] + 0.3],
+                end: [side, n3.landing[1] - 5.0],
+                width: 0.2,
+            }],
+            vias: Vec::new(),
+        };
+        let joint = exit_use(&board, &n3, &result.routes[net("N3")]).0.unwrap();
+        assert!(!joint.touches);
+        assert!(
+            (joint.at[0] - side).abs() < 1.0e-9 && (joint.at[1] - n3.landing[1]).abs() < 1.0e-9
+        );
         let names: Vec<String> = vec!["F.Cu".into(), "B.Cu".into()];
         emit_routes(&mut pcb, &board, &result, &names, false).unwrap();
         let segments: Vec<(String, [f64; 2], [f64; 2])> = pcb
@@ -1871,6 +1932,11 @@ mod tests {
             segments
                 .iter()
                 .any(|(_, a, b)| near(*a, from) && near(*b, n1.landing))
+        );
+        assert!(
+            segments
+                .iter()
+                .any(|(_, a, b)| near(*a, joint.at) && near(*b, n3.landing))
         );
         // N2's exit is dropped.
         assert!(!segments.iter().any(|(_, _, b)| near(*b, n2.landing)));
