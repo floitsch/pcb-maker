@@ -488,8 +488,9 @@ pub struct KiCadBoardRouterConfig {
     pub trouble_repair: Option<bool>,
     /// The residue renegotiated in windows after the trouble repair
     /// (router `residue_window`; docs/router.md, "The residue in a
-    /// window"): unset, on in route mode's ladder and off elsewhere;
-    /// `PCB_ROUTER_RESIDUE` overrides this.
+    /// window"): unset, the router's default (off: on the designer tier
+    /// of 2026-11-07 it added a pass and lost one on top of the leader
+    /// first); `PCB_ROUTER_RESIDUE` overrides this.
     #[serde(default)]
     pub residue_window: Option<bool>,
     /// Router `thermal_guard_cost`.

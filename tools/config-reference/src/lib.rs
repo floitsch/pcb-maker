@@ -470,7 +470,7 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_ROUTER_RESIDUE",
         Kind::Switch,
-        "`0` or `1`: the residue renegotiated in windows after the trouble repair (router `residue_window`; wins over the router setting `residue_window`; default on in route mode's ladder, off elsewhere).",
+        "`0` or `1`: the residue renegotiated in windows after the trouble repair (router `residue_window`; wins over the router setting `residue_window`; default off).",
     ),
     (
         "PCB_LADDER_LEADER_FIRST",

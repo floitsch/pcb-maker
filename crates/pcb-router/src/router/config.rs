@@ -129,8 +129,9 @@ pub struct Config {
     /// the box around an open net's pads loses its branches there, the
     /// history inside is reset and they are negotiated again jointly;
     /// kept only when the open terminals drop and nothing else opens
-    /// (`renegotiate_residue`, router/residue.rs). Off by default; the
-    /// KiCad adapter's route mode turns it on (`residue_window`).
+    /// (`renegotiate_residue`, router/residue.rs). Off by default (the
+    /// designer tier of 2026-11-07: on top of the leader first one pass
+    /// gained, one lost).
     /// `PCB_ROUTER_RESIDUE` overrides it (`0` off, `1` on).
     pub residue_window: bool,
     /// The clean-up keeps a change only if no pour net has more pads off
