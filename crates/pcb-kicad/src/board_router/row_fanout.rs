@@ -191,6 +191,10 @@ struct Context<'a> {
     hole_to_hole: f64,
     outline: &'a [[f64; 2]],
     edge_clearance: f64,
+    /// Per obstacle its box (the tests skip what lies beyond reach).
+    boxes: Vec<core::geometry::Aabb>,
+    /// The largest clearance any rule asks: beyond it nothing is near.
+    margin: f64,
 }
 
 impl Context<'_> {
@@ -225,11 +229,18 @@ impl Context<'_> {
     ) -> bool {
         *work += near.len() as u64;
         let half = width / 2.0;
+        // Nothing beyond the largest clearance a rule asks is near.
+        let reach = core::geometry::Aabb {
+            minimum: [a[0].min(b[0]), a[1].min(b[1])],
+            maximum: [a[0].max(b[0]), a[1].max(b[1])],
+        }
+        .inflated(half + self.margin);
         near.iter().all(|&index| {
             let obstacle = &self.obstacles[index];
             if obstacle.net == Some(net)
                 || !obstacle.blocks_tracks
                 || obstacle.layers & (1 << layer) == 0
+                || !self.boxes[index].intersects(reach)
             {
                 return true;
             }
@@ -304,10 +315,16 @@ impl Context<'_> {
         work: &mut u64,
     ) -> bool {
         *work += near.len() as u64;
+        let reach = core::geometry::Aabb {
+            minimum: at,
+            maximum: at,
+        }
+        .inflated(radius + hole + self.margin + self.hole_to_hole);
         near.iter().all(|&index| {
             let obstacle = &self.obstacles[index];
             if !obstacle.blocks_vias
                 || (layers != core::LayerMask::MAX && obstacle.layers & layers == 0)
+                || !self.boxes[index].intersects(reach)
             {
                 return true;
             }
@@ -340,8 +357,12 @@ impl Context<'_> {
         work: &mut u64,
     ) -> bool {
         *work += planned.len() as u64;
+        let reach = candidate
+            .shape
+            .aabb()
+            .inflated(self.margin + self.hole_to_hole);
         planned.iter().all(|other| {
-            if other.layers & candidate.layers == 0 {
+            if other.layers & candidate.layers == 0 || !other.shape.aabb().intersects(reach) {
                 return true;
             }
             let distance = core::verify::shape_distance(&candidate.shape, &other.shape);
@@ -478,6 +499,20 @@ pub(crate) fn plan(
         hole_to_hole: config.hole_to_hole_clearance_mm,
         outline,
         edge_clearance: config.edge_clearance_mm + outline::ARC_TOLERANCE,
+        boxes: obstacles
+            .iter()
+            .map(|obstacle| obstacle.shape.aabb())
+            .collect(),
+        margin: obstacles
+            .iter()
+            .map(|obstacle| {
+                obstacle
+                    .clearance
+                    .max(obstacle.clearance_override.unwrap_or(0.0))
+            })
+            .chain(classes.iter().map(|class| class.clearance))
+            .fold(config.hole_clearance_mm, f64::max)
+            + 0.01,
     };
     let neck = config
         .neck_width_mm
