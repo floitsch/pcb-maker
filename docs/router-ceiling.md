@@ -679,6 +679,20 @@ their passes, 20 -> 29 unconnected. The rule's "none lost"
 fails, so it is not the default; the channels' lines (F23) measured on
 two boards and left out.
 
+**Status (2026-11-08, branch pin-lines-default): on by default where the
+rows are open** (router.md, "Lattice lines where the rows are open
+(2026-11-08)"). The losses were not the lines' geometry but routes moved
+on boards near their limit (taking away the bands a board did not need
+lost three passes more); so the ladder turns the lines on only after its
+leader's run, when KiCad's open pads lie in parts whose rows the regular
+lattice misses. Designer tier against the knockout fix alone: 75 -> 77
+strict (OpenAirScope, koeg-board), none lost, 2707 -> 2682 unconnected;
+RP2040_base 36 -> 20, vaio_re 11 -> 3. Bug 2 had a second half: the
+knockout plate's margin is a ninth of the height and a face's lines sit
+higher than the stroke font's (Quanta75's via at the plate's top); fixed
+for knockout plates and faces, it costs Quanta75_BareRP2040's pass (1
+open at the RP2040's row, its routes moved).
+
 ## The estimate
 
 Per design, by the boards of its class (a board counts where the

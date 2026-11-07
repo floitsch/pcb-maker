@@ -11,6 +11,43 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-08 (lattice lines where the rows are open, on by default; knockout plates and faces as KiCad draws them)
+
+Branch pin-lines-default (docs/router.md "Lattice lines where the rows
+are open (2026-11-08)" and "Knockout plates and faces as KiCad draws
+them (2026-11-08)"; router-ceiling.md design 3; everything in
+`build/lat2/`).
+
+- **Knockout plates and faces** (`drawn_graphic_shapes`,
+  `footprint_text_box`, `knockout_margin`, `drawn_text_box`): Quanta75's
+  via at the '0bsilab' plate was a model too small at the plate's top
+  (y 83.15 against KiCad's 82.78 mm). KiCad's plate grows the glyphs by
+  the larger of half the (clamped) pen and a ninth of the height, in the
+  text's frame, and a face's lines sit as measured on pcbnew's polygons
+  of 3150 test texts and every copper and mask text of three tiers. The
+  box of before stays where it holds the drawn one; plain texts keep the
+  stroke box with all of KiCad's descenders (not a line break, not a text
+  variable). Designer tier with lines off: 76 -> 75 strict (Quanta75_Bare
+  0 -> 1 open at its RP2040 row; no plate finding), 2707 -> 2708;
+  short tier and fingerprints identical.
+- **Bands only for parts with a missed exit** (`pin_lines::warp`): a part
+  the regular lattice holds within its exits' slack is a band of no
+  shift. Measured on its own (lines on every attempt): it does not stop
+  the losses (split42_left and split72_left lost, split72_right's gain
+  gone): the losses are routes moved, not geometry.
+- **Lines where the rows are open** (`Ladder::pin_lines_from_here`,
+  `LadderRunner::missed_row_parts`, `open_pad_parts`): with `pin_lines`
+  unset, the route-mode ladder turns the lines on after its leader's run
+  when KiCad's open pads lie in parts whose rows the regular lattice
+  misses. Designer tier against the fix alone: 75 -> 77 strict
+  (OpenAirScope, koeg-board), none lost, 2708 -> 2683 unconnected
+  (RP2040_base 36 -> 20, vaio_re 11 -> 3); the trigger fired on 11 of the
+  32 boards whose lattice the lines change; expansion tier, short tier and
+  fingerprints identical. CPU (pinned pairs): RP2040_base -17 % and -18 %, ATAT1800 +2 % and +1 %.
+- `pin_lines`: unset is now the ladder's choice (true: every attempt,
+  false: never); agents.md and the config reference say so;
+  `PCB_ROUTER_PIN_LINES` overrides as before.
+
 ## Committed on 2026-11-07 (lattice lines at pin rows: design 3, off by default as the setting `pin_lines`)
 
 Branch row-lattice (docs/router.md "Lattice lines at pin rows

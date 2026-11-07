@@ -10,6 +10,18 @@ used to be here; code comments and docs that cite `docs/handover.md,
 
 ## State on 2026-11-05
 
+- **Lattice lines where the rows are open (branch pin-lines-default,
+  2026-11-08).** The lines' losses of 2026-11-07 were routes moved on
+  boards near their limit, not the lines' geometry; the route-mode ladder
+  now turns them on itself after its leader's run, when KiCad's open pads
+  are in parts whose rows the regular lattice misses (`pin_lines` unset;
+  true and false as before). Designer tier against the knockout fix
+  alone: 75 -> 77 strict (OpenAirScope, koeg-board), none lost, 2707 ->
+  2682 unconnected. The knockout fix (a knockout plate's margin and a
+  face's line layout as KiCad draws them: Quanta75's via at the '0bsilab'
+  plate) loses Quanta75_BareRP2040 (76 -> 75; 1 open at its RP2040 row).
+  Open problem 2.
+
 - **Lattice lines at pin rows (branch row-lattice, 2026-11-07).** Design 3
   of the router's ceiling: the lattice's lines are per-axis tables, and a
   fine-pitch part's rows get the lattice at their own phase (a band) or
@@ -394,7 +406,12 @@ ranks what keeps the designer tier's 41 failing boards open.
    default (`pin_lines`): a part's exact-fit rows get the lattice at their
    own phase. It closes the rows the regular lattice's phase held
    (RP2040_base 36 -> 5, the census's no-straight-way pads 78 -> 44 on
-   the row boards); over the designer tier +3 strict -2. Left of the
+   the row boards); over the designer tier +3 strict -2. Since 2026-11-08
+   the ladder turns it on by itself after its leader's run where KiCad's
+   open pads are at rows the regular lattice misses (router.md, "Lattice
+   lines where the rows are open (2026-11-08)": +2 strict, none lost;
+   RP2040_base 36 -> 20 that way, 5 with the lines from the start: the
+   leader's run without them is the price of not moving other boards). Left of the
    rows: the crossing pairs and the closed ways (unchanged by it), the
    no-way pads that ask for no line (OpenRX's U201/U301, DSP-ADAU1452),
    and a tight two-track channel (the keyboard's F23, which the channels'
@@ -839,7 +856,10 @@ ranks what keeps the designer tier's 41 failing boards open.
     in a window (2026-11-07: built, measured, removed)"). Design 2 (prepared
     fan-outs for fine-pitch rows) was measured and taken out; design 3
     (lattice lines at pin rows) landed off by default as the setting
-    `pin_lines` (designer tier +3 -2 strict; open problem 2). Pad access was diagnosed again on
+    `pin_lines` (designer tier +3 -2 strict; open problem 2) and on
+    2026-11-08 became the ladder's own choice where the rows are open
+    (+2 strict, none lost, against the knockout fix of bug 2's second
+    half, which costs Quanta75_BareRP2040's pass). Pad access was diagnosed again on
     2026-11-07 (router.md, "What walls a pad"; router-ceiling.md, "Status
     of pad access"). Of the census's eight boards, three are the input's
     by their walled pads (Hub, osprey, the keyboard's RESET), and katia

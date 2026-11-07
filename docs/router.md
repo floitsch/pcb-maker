@@ -801,6 +801,77 @@ Checked with kicad-cli 10.0.7 on boards made for each (the unit tests in
   (MIDAS-MK1.1's first complete attempt comes later: 191 to 634 s of
   work); OpenFC's four cached layer labels change nothing. The short
   tier's MIDAS-MK1.1 layout: 1 open both, vias 242 to 244.
+- **Knockout plates and faces as KiCad draws them (2026-11-08).**
+  Quanta75_BareRP2040 with pin lines on (2026-11-07) had an I2C1-SDA via
+  at (82.10, 82.51) shorted to the '0bsilab' knockout plate on F.Cu
+  (shorting_items 1) and bridged to it on F.Mask (solder_mask_bridge 7).
+  The plate was modelled on both layers, but too small: pcbnew 10.0.7's
+  plate (its `TransformShapeToPolygon`) is x 81.01 to 116.35, y 82.78 to
+  91.89 mm; the model's (the stroke font's box grown by the thickness)
+  ended at y 83.15, and the via kept its 0.2 mm from that. Two errors,
+  measured on pcbnew's polygons of 3150 texts made for it (the stroke
+  font and a face KiCad does not have, five sizes and thicknesses, every
+  justification, 0, 30, 90 and 180 degrees, one to three lines) and of
+  every text on a copper or mask layer of the designer, expansion and
+  short tiers (`build/lat2/plates*.json`, `survey*.json`):
+  - *the plate's margin* is the larger of half the pen (the thickness
+    clamped to a quarter of the smaller of height and width) and a ninth
+    of the height (`knockout_margin`: 0.778 mm on the 7 mm '0bsilab', not
+    its 0.6 mm thickness), grown in the text's frame (a turned plate's
+    corners were left out by growing its board-axis box);
+  - *a face's layout* is not the stroke font's: KiCad sets the lines of a
+    face (the stand-in Noto Sans here) as a block of one height per line
+    and 1.68 heights between them (the stroke font 1.61), a centred
+    anchor 0.085 heights below the block's middle (0.0425), a bottom one
+    0.17 heights above its baseline (0.126), a top one at its top (0.045
+    below), and its glyphs reach 0.073 heights above the capitals (`b`,
+    `l`, `f`; the stroke font's brackets 0.143), accented capitals 0.32,
+    descenders 0.34 below the baseline (`drawn_text_box`).
+  A knockout text (a board's or a footprint's, cached or not) is now
+  that box grown by the margin, beside the cached glyphs' box grown the
+  same way; a cached text without knockout is its glyphs, its lines'
+  boxes (copper) and the drawn box. Where the box of before (the stroke
+  font's, a plate grown by the thickness) holds the drawn box without its
+  room (`drawn_text_extent`, `covers`), the box of before stays: a
+  change of a text's shape moves routes even where nothing touched it
+  (with every face drawn anew, MIDAS-MK1.1's layout in the short tier
+  went 0 -> 5 open, GND islands, where its box only shrank; the four
+  MIDAS boards keep their boxes now). Every one of the 10708 test texts and
+  every text of the three tiers lies inside the model (but the expansion
+  tier's ZSWatch `${REVISION}`, a text variable KiCad expands, a gap of its
+  own). A plain stroke text keeps the stroke box of before
+  (`plain_text_box`), with every glyph KiCad draws below the baseline now
+  a descender (`/`, `\`, `#`, `$`, `@`, `_`, the brackets: protoesp's
+  "CH340/1" on F.Mask reached 0.165 mm below the box); the box holds every
+  plain text of the three tiers within 0.08 mm (the top of a `4`). The
+  first build drew plain texts with KiCad's layout too and moved routes on
+  the 21 designer boards that carry a text: DSP-ADAU1452 lost its pass to
+  an open item far from any text and Sisu went 1 -> 4, where no board had
+  a finding at a plain text (`build/lat2/k1-off`). The labels and the
+  placer's marks keep the earlier box (`copper_graphic_shapes`). Tests:
+  `a_via_at_quanta75s_knockout_plate_is_refused_on_copper_and_mask` (the
+  via of the run refused on the plate, KiCad's corners inside the model
+  on both layers, a via 0.8 mm above KiCad's plate let through) and the
+  text tests beside it.
+  Measured (the designer tier at scale 0.647, pin lines off, against
+  x1934's off rows; `build/lat2/k2-off`, `k3-off`, `k4-off`): 21 of the
+  109 boards carry a text on a copper or mask layer, 3 a knockout plate
+  (both Quanta75, SNSP-CPU-1CHIP); the shapes change on 7 (both
+  Quanta75, SNSP-CPU-1CHIP, 4in1-mini, 4in1-panel and OpenRX-panel by
+  their faces, protoesp by its `/`), the other 102 lower as before.
+  **75 strict (76), 2708 unconnected (2707)**: Quanta75_BareRP2040 is
+  lost, 0 -> 1 open (U1.45, +1V1: a pad of the RP2040's row at x 201, far
+  from every text; no finding at the plate any more), its routes moved
+  where the plate now keeps them out (main's passed by the strip KiCad
+  forbids without touching it); the Stamp, SNSP-CPU-1CHIP and protoesp
+  route differently with the same verdict, 4in1-mini, 4in1-panel and
+  OpenRX-panel as before. With pin lines on, the Quanta75 board has no
+  plate finding either (shorting 1 and bridges 7 to none; 2 open at U1's
+  row, `build/lat2/k1-on`). The short tier (main x1935 against the branch,
+  one binary each, layout mode) and the fingerprints are identical. The
+  rule (lose nothing) fails on that one board, the board the fix is for;
+  without the fix any route by a knockout plate or a face is checked
+  against a box KiCad does not draw.
 - **Padstacks** (KiCad 9's `(padstack (mode front_inner_back) (layer
   "Inner" ...) (layer "B.Cu" ...))`, `(mode custom)` per copper layer): the
   pad's other shapes are copper of its net on their layers
@@ -8176,7 +8247,9 @@ cores, then swapped; user CPU seconds of the route): RP2040_base 870.8 and
 (RP2040_base 961 -> 655 s of work, ATAT1800 982 -> 459 s), not because a
 search is cheaper.
 
-**Decision: off by default; the setting stays for agents** (the router
+**Decision: off by default; the setting stays for agents** (superseded
+on 2026-11-08: the ladder turns the lines on where the rows are open,
+below) (the router
 settings' `pin_lines`, `PCB_ROUTER_PIN_LINES=1`). The rule (on only if
 the designer tier gains strict passes with none lost and the guards hold)
 fails on its second clause: +3 -2 on the tier (Quanta75_BareRP2040 and
@@ -8197,6 +8270,135 @@ rung's); the report could name the rows the lattice misses
 (`pin_lines::missing`) so that an agent sees when to set it; the copper
 text plate's extent (Quanta75) is a modelling gap of its own.
 
+
+## Lattice lines where the rows are open (2026-11-08)
+
+The lines of 2026-11-07 (above) gained three strict passes and lost two
+on the designer tier. Where they cost (split72_left 0 -> 1, 4in1-panel
+34 -> 41, katia 15 -> 17, link, Batch_1, Hub and Sisu +1, jetson and
+Sisu at the fingerprints' quarter budget) the cost is not the lines'
+geometry: **any change of a board's lattice moves its routes, and on a
+board near its limit that is a coin flip**. What was found:
+
+- *The ladder moves first.* split72_left with the lines: its first
+  attempt went better (6 -> 2 open), the rungs after it took more of the
+  budget (411 s of work against 172 s), and the narrow-signal step, which
+  closed the board without lines in 363 s, had 178 s and left 64 open.
+  Sisu's leader became another rung (pours connected -> as tracks). The
+  open items on these boards are not at the rows the lines are for.
+- *Bands a board did not need* exist (a part held within its exits'
+  slack by the regular lattice got a band all the same; 0.1 and 0.05 mm
+  on Hub, 0.05 mm on split72_left, 0.1 mm on split72_right, 0.125 mm on
+  Batch_1 and katia), but taking them away does not help: with bands
+  only for parts with a missed exit (the rule kept, `warp`: a held part is
+  a band of no shift) the 14 boards whose lattice that changes lose three
+  passes (Quanta75_BareRP2040, split42_left 0 -> 2, split72_left 0 -> 1)
+  and split72_right's gain (it came from such a band: x1934's 0.1 mm band
+  on y held every exit within its slack), 4in1-panel 34 -> 43, katia 17,
+  link 1 -> 3 (`build/lat2/a1-on`, against x1934's rows). Single lines,
+  the 10 % cap and the measured footprints are the same story: they move
+  routes, and nothing ties the boards lost to one of them.
+- *Where the lines pay*, the open pads are at the rows the regular
+  lattice misses: OpenAirScope's U14, koeg's U7, RP2040_base's U15 and
+  U19, vaio_re's U6 (KiCad's unconnected items of the board without
+  lines, against `pin_lines::missing` on the regular lattice).
+
+So the tool decides per board, from what the board left open (`Ladder::
+pin_lines_from_here`, route mode, the setting `pin_lines` unset): after
+the leader's run (its probe's continuation, or the rungs on the regular
+lattice where there are no probes), if KiCad's open pads of the best
+board lie in parts whose pin rows the regular lattice misses an exit of
+(`LadderRunner::missed_row_parts`: the board lowered once more, not
+charged, `pin_lines::missing` on `Grid::choose`'s lattice; `open_pad_parts`
+reads the report), the rest of the ladder runs on the lattice with the
+lines: the seed round, the finer pitches, the other rungs and the steps
+that vary the best attempt. The leader's board stays a candidate and the
+ladder keeps the best as before. A board complete after its leader's run,
+or whose open pads are elsewhere, routes as without lines, to the bit.
+`pin_lines` true puts the lines on every attempt (2026-11-07's rule),
+false never; `PCB_ROUTER_PIN_LINES` (0 or 1) overrides both. A layout's
+ladder is unchanged (the lines only after the leader's run, which a
+layout's ladder does not have).
+
+**Measured** (the designer tier at scale 0.647, route mode, 970.5 s of
+work, rates pinned; the 32 boards whose lattice the lines change at any
+pitch, binary k2 + bands + the trigger, `build/lat2/b1-auto`; the other 77
+route as without lines by construction: no lattice changes). Against the
+knockout fix alone ("Knockout plates and faces as KiCad draws them" above; the Quanta75 boards on the fix's final build, `k3-auto`):
+
+| | strict | KiCad unconnected |
+| --- | ---: | ---: |
+| x1934 (lines off) | 76 | 2707 |
+| the knockout fix | 75 | 2708 |
+| the fix and lines where the rows are open | **77** | **2683** |
+| (x1934 with the lines on every attempt) | (77) | (2677) |
+
+The trigger fired on 11 boards; 24 of the 32 route exactly as without
+lines (pass, unconnected and vias the same). KiCad unconnected / strict:
+
+| Board | open at | x1934 off | the fix | lines where open | x1934 lines on |
+| --- | --- | --- | --- | --- | --- |
+| OpenAirScope | U14 | 1 / no | 1 / no | 0 / **pass** (its seed round on the lines, 0 open at 163 s; 334 s of work in all, was 819) | 0 / pass |
+| koeg-board-pcb | U7 | 2 / no | 2 / no | 0 / **pass** (the 0.075 mm rung) | 0 / pass |
+| RP2040_base | U15, U19 | 36 / no | 36 / no | **20** / no | 5 / no |
+| vaio_re | U6 | 11 / no | 11 / no | **3** / no | 3 / no |
+| module | U800 | 3 / no | 3 / no | 3 / no | 1 / no |
+| 4in1-panel | U2, U5, U9 | 34 / no | 34 / no | 34 / no | 41 / no |
+| katia | J7, J8 | 15 / no | 15 / no | 15 / no | 17 / no |
+| reCamera | MIC1 | 4 / no | 4 / no | 4 / no | 4 / no |
+| TelemetryOnboard | U2 | pass | pass | pass | pass |
+| ATAT1800 | J1, U4 to U10 | pass | pass | pass (269 vias, 228) | pass |
+| Quanta75_BareRP2040 | U1 | 0 / pass | 1 / no | 3 / no | 2 / no (the plate) |
+
+**+2 strict and none lost against the fix alone; against x1934 +2 -1,
+the one lost the knockout fix's** (Quanta75_BareRP2040, which fails with
+the fix with lines or without). The boards that lost a pass to the lines
+of 2026-11-07 do not get them: split72_left and split72_right pass or
+fail as without lines (split72_right's gain was a band's coin flip),
+4in1-panel and katia keep their counts. What it gives up: RP2040_base
+gets the lines after a leader that spent 250 s without them (20 open, 5
+with them from the start), module's 1 and split72_right's pass.
+
+**The guards** (the branch's final build unless named):
+- *The expansion tier* (46 boards, 30 s, route mode; the trigger's build
+  `b1`, whose text model differs from the final one only on ZSWatch's
+  variable text, where the final one is main's): identical to x1934's off
+  arm row for row (25 strict, 557 unconnected). At 30 s the leader's run
+  takes the whole budget, so the lines never run: the three passes the
+  lines on every attempt gained there (EwoudVV bms, ED052TC4-Adapter,
+  power-manifold backplane, all won by the leader's own run) are not
+  taken.
+- *The short tier* (12 layouts, main x1935 against the branch on x1935,
+  1 x 2 each): identical (9 strict, 16 unconnected). A layout's ladder has
+  no leader's run, and since the box of before stays where it holds,
+  MIDAS-MK1.1's face keeps its box (with every face drawn anew its layout
+  went 0 -> 5 open: GND islands).
+- *The fingerprints* (Castor, k30-SBC, jetson, Sisu; route mode from
+  v16, a quarter budget, 1 x 4): identical to build/lad1/fp-head (20
+  unconnected; the lines of 2026-11-07 left 29). jetson's leader left
+  IC7 and J1 open at missed rows, but its run took the quarter budget.
+- *CPU* (two pinned pairs each, one binary, the lines off and the default
+  side by side on disjoint cores, then swapped; CPU seconds of the
+  route): RP2040_base 718.9 and 704.0 -> 596.0 and 576.5 (-17 %, -18 %;
+  961 -> 766 s of work, the ladder ends sooner), ATAT1800 946.2 and
+  920.3 -> 964.0 and 931.9 (+2 %, +1 %; the same work, the lines after
+  its leader). The trigger's lowering is not charged (a lowering and the
+  lines' arithmetic once per board, on boards whose leader left pads
+  open).
+
+**Decision: the lines where the rows are open, on by default** (the
+setting unset; true and false as before). Judged on its own (against the
+knockout fix) it gains two strict passes and loses none, and the
+expansion tier, the short tier and the fingerprints do not move. The
+knockout fix, judged on its own, loses Quanta75_BareRP2040 (76 -> 75);
+together 76 -> 77 strict, 2707 -> 2683 unconnected.
+
+**Next.** RP2040_base shows the price of waiting for the leader: 20 open
+where the lines from the start give 5; a leader whose probe already
+leaves pads open at missed rows could take the lines for its own
+continuation (the trigger at the probes, not after the continuation).
+The expansion tier's 30 s boards never reach the lines for the same
+reason.
 
 ## Blind, buried and micro vias (2026-11-05)
 
