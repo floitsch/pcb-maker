@@ -1402,29 +1402,32 @@ pub(crate) fn exits_of(board: &core::Board) -> Vec<ExitCopper> {
 }
 
 /// How the net's route uses an exit: (on the surface: the route's segment
-/// end at the landing, if any; through the via off the pad's layer).
+/// end at the landing and that segment's width, if any; through the via
+/// off the pad's layer).
 pub(crate) fn exit_use(
     board: &core::Board,
     exit: &ExitCopper,
     route: &core::NetRoute,
-) -> (Option<[f64; 2]>, bool) {
+) -> (Option<([f64; 2], f64)>, bool) {
     const TOUCH: f64 = 1.0e-6;
     // A route ends on the landing within the reach the router's terminal
-    // nodes have (`joins_copper`: the track's half width less 0.02 mm from
-    // the landing's copper).
+    // nodes have (`joins_copper`: the class's half width less 0.02 mm from
+    // the landing's copper; the class's track may be wider than the
+    // segment the route ends with, a narrowed signal's).
     let surface = route
         .segments
         .iter()
         .filter(|segment| segment.layer == exit.layer)
         .flat_map(|segment| {
-            let reach = exit.width / 2.0 + segment.width / 2.0 + TOUCH;
+            let reach = exit.width / 2.0 + segment.width.max(exit.width) / 2.0 + TOUCH;
             [segment.start, segment.end]
                 .into_iter()
                 .filter(move |end| core::geometry::distance(*end, exit.landing) <= reach)
+                .map(move |end| (end, segment.width))
         })
         .min_by(|a, b| {
-            core::geometry::distance(*a, exit.landing)
-                .total_cmp(&core::geometry::distance(*b, exit.landing))
+            core::geometry::distance(a.0, exit.landing)
+                .total_cmp(&core::geometry::distance(b.0, exit.landing))
         });
     let through = exit.via.is_some_and(|(at, diameter, _, span)| {
         let radius = diameter / 2.0;
@@ -1831,7 +1834,7 @@ mod tests {
         };
         assert_eq!(
             exit_use(&board, &n1, &result.routes[net("N1")]),
-            (Some(from), false)
+            (Some((from, 0.2)), false)
         );
         assert_eq!(exit_use(&board, &n2, &result.routes[net("N2")]).0, None);
         let names: Vec<String> = vec!["F.Cu".into(), "B.Cu".into()];

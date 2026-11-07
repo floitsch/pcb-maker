@@ -78,24 +78,26 @@ pub(crate) fn emit_routes(
         if surface.is_none() && !through {
             continue;
         }
-        let segment = |start: [f64; 2], end: [f64; 2]| {
+        let segment = |start: [f64; 2], end: [f64; 2], width: f64| {
             supplemental_segment_expr(&SupplementalSegment {
                 connection: board.nets[net].name.clone(),
                 start: nanometres(start),
                 end: nanometres(end),
-                width: exit.width,
+                width,
                 layer: layer_names[exit.layer].clone(),
             })
         };
         for (start, end) in &exit.pieces {
-            items.push(segment(*start, *end));
+            items.push(segment(*start, *end, exit.width));
         }
-        if let Some(end) = surface
+        // The joint: no wider than the route's track (its end is a node
+        // legal for that width, a neighbour's joint perhaps 0.4 mm away).
+        if let Some((end, width)) = surface
             && !exit.pieces.iter().any(|(start, stop)| {
                 core::geometry::point_segment_distance(end, *start, *stop) <= exit.width / 2.0
             })
         {
-            items.push(segment(end, exit.landing));
+            items.push(segment(end, exit.landing, width.min(exit.width)));
         }
         if through && let Some((at, diameter, drill, span)) = exit.via {
             pad_vias[net] += 1;
