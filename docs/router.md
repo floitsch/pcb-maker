@@ -7962,6 +7962,105 @@ on a merge (test
 What the rows need next is decided inside the negotiation, not before
 it: open problem 2.
 
+## Lattice lines at pin rows (2026-11-07)
+
+Design 3 of the router's ceiling (docs/router-ceiling.md): give the search
+the geometry of a pin row instead of a plan for it. The regular lattice has
+one pitch and one phase per axis (`Grid::choose`, the narrow pads' vote);
+a row whose rules are an exact fit (RP2040's 0.4 mm QFN-56 at 0.2 mm track
+and clearance) can only be left along a line through its pads' centres, and
+two parts of such rows at different phases cannot both have them. The
+change puts lattice lines where the pins are; the search, the negotiation
+and the writer keep their arithmetic.
+
+**What the pins ask for** (`pin_lines::pin_lines`). Per pad of a part with
+four copper pads or more (`MIN_PART_PADS`, the fan-out plan's rule; a
+passive's two pads and a SOT-23 ask for nothing), per axis: its nearest
+facing pad on each side (sharing a layer, overlapping it across the axis,
+at most `ROW_GAP` 0.8 mm away) bound
+- *the exit*: the band a track of the pad's class (else its neck) leaving
+  the pad straight keeps its clearances in, inside the pad: the pad's
+  centre where the band holds it;
+- *the channel* to the next pad: the band a track passing between the two
+  keeps (the narrower of the two nets' tracks; between pads of no net the
+  board's common class), as many tracks as fit, each with an even share of
+  the play as its slack, so that any choice within the slacks keeps the
+  tracks' spacing (the keyboard's F23 and ANT: two 0.127 mm tracks 0.254 to
+  0.369 mm apart).
+A line is asked for only where its slack is under half a pitch: any lattice
+of the pitch has a line within a wider one.
+
+**Where the lines go** (`pin_lines::warp`, per axis).
+1. *Bands*: a part whose exit lines on the axis all lie at one phase of the
+   pitch (to their slack) is a band: its exits' extent and `BAND_MARGIN`
+   (1 mm) around. The most lines first, a band meeting an accepted one of
+   another phase is not taken (a part the lattice already holds is a band
+   of no shift: it keeps others' bands off its rows). Every regular line in
+   a band is shifted by the part's phase (within half a pitch either way):
+   inside it the lattice is the regular one at the part's phase, and only
+   the band's two edges are a step that is not the pitch.
+2. *Single lines*, for the asked lines no band and no regular line holds
+   (exits first, then the narrowest): added between their neighbours where
+   both are `MIN_GAP` (a quarter pitch) away, else the nearer regular line
+   no pin holds is moved onto them; at most `MAX_ADDED` (10 %) of an axis's
+   lines are added.
+The first build added and moved single lines only. On RP2040_base it took
+the board from 36 to 21 (exits) and 18 (exits and channels) KiCad
+unconnected items where the oracle below reached 4: single moved and added
+lines make every column they touch irregular across the whole board, and
+parallel diagonal runs through irregular columns do not keep their spacing.
+Bands keep the rows' surroundings a regular lattice: 5.
+
+**The lattice** (`Grid::warp`, `Warp`). Indices stay row-major over
+`nx` by `ny`, and a neighbour is still one index step away: what changes
+is where a line lies. `Warp` holds per axis every line's coordinate (mm,
+and whole nanometres), the shortest and longest step, and a prefix count of
+the steps that are not the pitch. `center`, `coordinate`, `index_of`,
+`node_range` and `nearest_node` read the tables (binary search) where the
+lattice is warped and keep the regular arithmetic, to the bit, where it is
+not; a regular line in the table keeps `origin + k * pitch` to the bit.
+`Grid::window` cuts the tables for `pad_exits`'s probe. The static maps'
+key includes the lines.
+
+**Step costs.** A step costs what it costs on the regular lattice (a pitch
+times the layer's axis or diagonal factor), whatever its length: the
+search's heuristics (the octile bound over index distances, the coarse
+distance transform over 8-node blocks) stay admissible and the search code
+stays as it is. Inside a band the steps are the pitch; a band's edge and a
+single line are the only steps that differ, and a run across them is
+charged one step per line (a shifted band leaves the count of lines as it
+was; an added line adds one step).
+
+**Exact footprints where the lines are not a pitch apart.** Occupancy
+stamps are offset lists computed for the regular lattice (`disc`,
+`diagonal_extra`, `diagonal_block`); they hold wherever every step within a
+footprint's reach is the pitch (`Grid::uniform_around`, two prefix-count
+lookups). Elsewhere `mark_footprint` measures the footprint on the lines
+(`Grid::disc_cells`: the nodes closer than the radius, in nanometres;
+`segment_cells`: the nodes a diagonal step passes closer than the radius
+strictly between its ends; `diagonal_start_cells`: the starts of the
+diagonal steps of an orientation that pass a node so). The minimum distance
+between two segments is attained at an end of one of them, so the node
+discs, a diagonal step's own cells and the reverse diagonal map stay exact
+with steps of any length (an axis step passes no node closer than its ends
+on any tensor lattice). On the regular lattice the measured footprints are
+the offsets cell for cell (test
+`measured_footprints_are_the_offsets_on_the_regular_lattice`). A leading
+edge (`Fresh`) is used only where the node before was in a regular window
+too. Escape stubs off the lines are measured as before (`stub_footprint`
+on the tables), a stub along a line counts its nodes on the tables; the
+sagitta margins of the static maps and the escape stubs' snapping margin
+follow the longest step, the via hop reach and the cell windows the
+shortest. The writer ends a segment where a run of one index direction
+bends in millimetres (two diagonal steps through cells of different
+widths are not one line).
+
+**The finer pitches.** The lines are placed on every lattice the ladder
+builds (the regular pitch and the finer rungs' 0.075 and 0.05 mm, each at
+its own phases).
+
+MEASURED-PLACEHOLDER
+
 ## Blind, buried and micro vias (2026-11-05)
 
 The question (from the BGA work: "with through vias only, at 0.8 mm only
