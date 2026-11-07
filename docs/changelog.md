@@ -11,6 +11,60 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-07 (pad access: what walls a pad; plated pads apart from SMD pads)
+
+Branch pad-access (docs/router.md "What walls a pad (2026-11-07)",
+router-ceiling.md "Status of pad access"; everything in `build/pad1/`).
+
+- **The census's eight pad-access boards, diagnosed again on main
+  69c35f67** (x1930, route mode, scale 0.647, the WHY flags):
+  - **The input's.** Hub: two GND zone pieces, as on the designer's
+    board. The keyboard's RESET pads: no legal exit; the designer's via
+    is 0.077 to 0.088 mm from four items where 0.127 is asked. osprey's
+    antenna feed: every point touches the footprint's no-net polygon.
+    The motherboard's WLCSP middle balls: no legal via.
+  - **Ours.**
+    - Sisu's last item is congestion.
+    - The keyboard's F23: the lattice (two necked tracks in a 0.369 mm
+      band; 0.125 mm pitches miss it by 4 um), not a neck.
+    - WLED's LDO1 pads lie under a second footprint of the same
+      reference without nets.
+    - katia's USB-C pads are walled by USB_D's warning-rated 0.4 mm
+      clearance (katia is the input's by its GND).
+    - The motherboard's edge balls were walled by "Pad to Track
+      clearance" applied to SMD pads.
+    - RP2040_base's pads are the rows' exact fit (design 2).
+- **`dead_pads[].wall`** (`Router::dead_pad_wall`): per layer, the item
+  nearest to being cleared at the pad's best point for the narrowest
+  track, or what blocks the stubs from a legal track end. Diagnostics
+  only; no route changes.
+- **Plated pads apart from SMD pads** (`rules::PLATED`,
+  `Obstacle::plated`): a dru rule on `A.isPlated()` holds for plated pads
+  and vias only. On the designer tier only two boards change (main x1930
+  against the branch, 0.647):
+  - the laptop power board 1 open -> **0, strict pass**;
+  - the motherboard 15 -> 2 open (B2 twice, the input's).
+
+  So the tier goes **75 -> 76 strict**, 2723 -> 2709 unconnected. The
+  expansion, short and fingerprint tiers have no board with such a rule
+  (identical by construction; the fingerprints were run: identical).
+  CPU: CPUPAIRS.
+- **Measured, not taken: a plain pad leaving from the free part of its
+  copper** (branch pad-access-starts, 503e0ae8). Designer tier 75 -> 75
+  strict, 2723 -> 2711 unconnected, WLED 2 -> 0 open with a
+  connection_width finding (a pour neck). Expansion 25 -> 26 strict
+  (LC_PAMV4b). Short identical but WLED's layout (13 -> 9 open, 11 new
+  findings).
+- **Not built:**
+  - a neck for a way narrower than the class: no board needs it;
+  - a path through a footprint's copper: not legal;
+  - the minimum clearance where a warning-rated clearance walls pads.
+    The step runs on katia since the leader first, but its attempt (175
+    s) ends worse (129 against 124 open) and is not kept. USB_D at 0.25
+    mm from the first attempt gives katia 15 -> 12, with no pass. Only
+    katia has such a pad.
+- About 40 CPU hours.
+
 ## Measured on 2026-11-07 (design 2 of the router's ceiling, prepared fan-outs for fine-pitch rows: out)
 
 Branch row-fanout; router.md "Prepared fan-outs for fine-pitch rows

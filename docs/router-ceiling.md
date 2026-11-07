@@ -271,6 +271,42 @@ for want of work), the laptop motherboard (WLCSP-9 balls: the designer's
 0.4/0.3 via in the middle ball breaks the board's annular minimum, its
 own board has annular_width 199) and RP2040_base.
 
+**Status of pad access (2026-11-07, branch pad-access; router.md "What
+walls a pad").** The eight boards were diagnosed again on main 69c35f67,
+and the census's reading changes:
+- Hub's and Sisu's pads connect since the fixes of 2026-11-06. Hub's
+  last two items are GND zone pieces that the designer's board leaves
+  open too (the input's); Sisu's last item is congestion.
+- The keyboard's RESET pads have no legal exit at all; the designer's
+  via breaks the 0.127 mm clearance by 0.04 to 0.05 mm (the input's).
+  F23 is not walled: two necked tracks share its channel, and the 0.125
+  mm lattice misses the band they need by 4 um. That is the lattice's
+  problem, not the neck's.
+- osprey's feed pad touches the antenna's no-net polygon everywhere (the
+  input's: any track shorts it, as the designer's does).
+- WLED's LDO1 pads lie under a second footprint of the same reference
+  without nets (ours).
+- katia's USB-C pads are walled by USB_D's warning-rated 0.4 mm
+  clearance. The board is the input's by its GND.
+- The motherboard's WLCSP middle balls have no legal via (the input's).
+  Its edge balls were walled by a dru rule on plated pads that the router
+  held for SMD pads too (ours: fixed).
+- RP2040_base's eight pads are the rows' exact fit (design 2).
+
+What the branch takes:
+- **Dead pads say what walls them** (`dead_pads[].wall`).
+- **Plated pads are apart from SMD pads in the rules.** On the designer
+  tier: **75 -> 76 strict** (the laptop power board), 2723 -> 2709
+  unconnected, the motherboard 15 -> 2. No other board of the tiers
+  changes.
+
+What it does not take:
+- **A plain pad leaving from the free part of its copper** (branch
+  pad-access-starts). WLED 2 -> 0 open but strict-failed by a pour neck,
+  75 -> 75 strict on the tier: measured, not taken.
+- **The minimum clearance where a warning-rated clearance walls pads.**
+  Only katia has such a pad, and katia is the input's.
+
 **Starved thermals and copper texts (2 + 2 boards; ours, bugs).** Below.
 
 ## The budget test

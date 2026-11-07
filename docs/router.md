@@ -1011,7 +1011,8 @@ KiCad 10.0.7's DRC reads it:
   graphic no item kind, the fill brush keeps its class): KiCad applies a
   net-conditioned rule to every copper item of the net. A fourth item
   kind (a graphic or a fill, matched only by rules without a type
-  condition) would carry them; the table of kinds is 3 x 3 today. For clearance, hole clearance, edge clearance and hole
+  condition) would carry them; the table of kinds is 4 x 4 today
+  (track, via, SMD pad, plated pad). For clearance, hole clearance, edge clearance and hole
   to hole, a rule does not count where a later rule with a minimum of the
   same constraint surely matches (JLCPCB's template ends with "Min.
   Spacing" 0.127 mm on everything, after "Pad to Track" 0.2 mm: KiCad
@@ -1035,8 +1036,13 @@ KiCad 10.0.7's DRC reads it:
   track or a via against a track, a via, an SMD or a plated pad) on each
   layer and lists the layers it holds on; a rule true for every kind on
   every layer that raising a set of nets keeps goes to the per-net
-  clearances as before. The router's pads are one kind: a rule on SMD
-  pads holds for plated pads too (`approximated`). A rule whose project
+  clearances as before. SMD and plated pads are two kinds of the router
+  (`rules::PAD`, `rules::PLATED`, `Obstacle::plated` for KiCad's
+  `thru_hole` pads; since 2026-11-07, "What walls a pad" below): a rule
+  on `A.isPlated()` holds for plated pads and vias only, as in KiCad;
+  until then the router had one pad kind and kept such a rule from both
+  (`approximated`), and the laptop motherboard's "Pad to Track
+  clearance" (0.2 mm) walled its 0.4 mm WLCSP balls. A rule whose project
   severity (or its own `(severity ...)`) is below an error is not
   lowered (hole_to_hole is a warning by KiCad's default, also under its
   KiCad 8 name `hole_near_hole`). Every constraint of every rule is in
@@ -8360,6 +8366,147 @@ without them.
 178; left: two GND zone pieces and two of U14's SPI pads, congestion).
 No other board of the designer, expansion and short tiers changed by
 it (rows identical but where another fix applies).
+
+### What walls a pad (2026-11-07)
+
+Branch pad-access. The router-ceiling census put five of the designer
+tier's failing boards in pad access (Hub, Sisu, the laptop keyboard,
+osprey, WLED_Matrix), and pad access was the second class of katia,
+the laptop motherboard and RP2040_base. Hub's X2SON-4 contacts and Sisu's
+dome switches were fixed on 2026-11-06 (the section above and "Large pads
+inside a ring"). The eight boards were routed again in route mode on
+today's main: x1930, whose code is 69c35f67's; the designer's placement,
+scale 0.647, 970.5 s of work, 1 thread, rates pinned,
+`PCB_ROUTER_TROUBLE_WHY` and `PCB_ROUTER_CORRIDOR_CENSUS`;
+`build/pad1/why-base`. Each walled pad was then measured on the
+designer's board with pcbnew under its project's rules:
+
+| Board | KiCad open (main) | What walls the pad | The designer's way | Whose | This branch |
+| --- | ---: | --- | --- | --- | ---: |
+| Hub | 2 | Nothing. The X2SON pads connect since 2026-11-06; both items are GND zone pieces | The designer's own board leaves the same two zone items open | the input's | 2 |
+| Sisu_SSE-9 | 1 (+ skew 5) | Nothing. The dome switches connect since 2026-11-06; the modem's RESET (Q4.3 to U11.R13) is congestion | | ours: congestion | 1 |
+| laptop keyboard | 2 | **U2's RESET pads** (AC9, AC11, AC13 of the aQFN-73) have no legal exit. To the left, the AD column's gaps are 0.25 mm; to the right, the exposed pad is 0.2 mm away. The column holds AC5 above and three single-pad pins below. A 0.127 mm track needs 0.381 mm. The smallest legal via (0.5/0.3) needs 0.754 mm, and the pocket between AC5 and AC9 is 0.7 mm wide. A via in the pad comes 0.075 mm from the exposed pad, where 0.127 is asked | 0.2 mm tracks along the column to a 0.6/0.3 via. The via is 0.088 mm from AD6 and AD8, 0.078 from AC5 and 0.077 from the exposed pad, under the class's 0.127 (clearance is an error on this board) | the input's | 2 |
+| | | **F23 (VSS_PA)** is not walled. Its way out, the 0.5 mm channel between E24 and H23, holds the class's 0.2 mm track, but ANT leaves H23 into the same channel. Two 0.127 mm tracks need 0.254 mm between centres in a band of 0.369 mm: two pitches of the kept attempt's 0.125 mm lattice are 4 um short, three are too wide | both tracks necked to 0.127 mm, 0.309 mm apart | ours: the lattice (0.075 mm was not tried: 389 s projected against the 240 s refine budget) | |
+| osprey_rev_a | 1 | AE1.1, the antenna's feed (a 0.5 mm square on B.Cu): every point of it touches the footprint's own polygon of no net (0.000 mm) | a 0.5 mm track out of the pad through the polygon, which is KiCad's shorting_items on the designer's board | the input's. Any track shorts the antenna's copper; the per-type rule would pass it, the strict rule not | 1 |
+| WLED_Matrix | 2 | LDO1.2 and LDO1.3 (SOT-23). A second footprint of the same reference without nets (another orientation, at 42.75, 12.39) overlaps both. Each pad's centre lies inside a pad of no net, and only a strip along its far edge keeps 0.127 mm: LDO1.2's track end fits in the top 30 um | 0.15 mm tracks from the pads' centres (clearance 0, the designer's own finding) | ours | 2 (0 on pad-access-starts, below) |
+| katia | 15 | **J7 and J8** (USB-C, a 0.5 mm row of 0.3 mm pads): the D+ and D- pads alternate, each 0.348 mm from the next, where USB_D's 0.4 mm clearance asks 0.451 for a 0.102 mm track. CC1 beside them is walled by the same clearance: 10 items in all. Also open: the halves' GND (the designer's own), XOUT twice, KEY6 and KEY10 | 0.2 mm tracks straight out, 0.25 mm from the neighbours: a warning under the project's severities | ours, but the board is the input's (its GND) | 15 |
+| laptop motherboard | 15 | **U7 and U13** (WLCSP-9, 0.3 mm balls at 0.4 mm). The middle balls B2 have no legal exit: there are 0.095 mm between balls. The smallest legal via, 0.45 mm by the project's rule, comes 0.023 mm from the edge balls where 0.11 is asked, and its 0.2 mm hole 0.148 mm where 0.25 is. The edge balls were walled by the dru's "Pad to Track clearance" (0.2 mm), which KiCad holds for plated pads and vias only (`A.isPlated()`), and the router held for every pad | B2: a 0.4/0.3 via in the ball, with annular 0.05 against the minimum 0.1 and its hole 0.098 mm from the neighbours | B2: the input's. The edge balls: ours, a rule lowering's approximation | **2** (B2 twice) |
+| RP2040_base | 36 | 8 pads of the two QFN-56 (0.4 mm rows at 0.2/0.2, an exact fit) whose escape pocket the 0.1 mm lattice closes, with no way out at the corridor search's 0.5 um either | the rows' exact centre lines | ours: the rows (router-ceiling.md design 2, `row_fanout`) | 36 |
+
+**What the census got right and wrong.** Of the census's eight boards,
+three are the input's (Hub, osprey, and the keyboard by its RESET pads).
+katia and the motherboard are the input's too, by another item. Sisu's
+last item is congestion, and RP2040_base's items are the rows. Of ours:
+- the keyboard's F23 is the lattice's, not a neck. Its way out holds the
+  class's width; it necks only to share the channel with ANT, which the
+  neck zones already allow. The census misread it.
+- WLED's two LDO1 pads are a pad whose centre lies in another item's
+  clearance.
+- the motherboard's edge balls are a rule the router held more widely
+  than KiCad does.
+- katia's pads are walled by a clearance the project rates a warning.
+
+**What walls a pad, in words** (`Router::dead_pad_wall`,
+router/escapes.rs; `DeadPad::wall`, which board-router.json writes as
+`diagnostics.dead_pads[].wall`; agents.md). Before this change, WLED's
+LDO1.2 had no node, and the diagnostics named only `near: ["LDO1.3"]`:
+the other footprint's pad under the same reference. Now each dead pad
+says per layer whether any point of its contact keeps every clearance
+for the net's narrowest track (its neck). The contact is the pad's
+copper, or a custom pad's anchor, sampled on the raster `contact_starts`
+uses.
+- If no point keeps every clearance, the wall names the item nearest to
+  being cleared at the best point, with its net and place, how far it is
+  and what is asked. An example from katia: "no point of the pad keeps
+  the clearances for a 0.102 mm track: the best, (198.464, 108.845), has
+  J7.A7 (Left Board/USB/DATA-, at 198.963, 109.386) 0.348 mm away where
+  a 0.102 mm track asks 0.451".
+- If one does, the wall names what blocks the narrowest stubs from there
+  to the three nearest nodes the class may use, or says that no such
+  node lies within 2 mm.
+
+The wall is computed once per attempt, on the dead pads only: at most
+61 x 61 points against the items within 3 mm. It changes no route. The
+fixture is `a_dead_pad_names_what_walls_it`.
+
+**Plated pads apart from SMD pads** (`rules::PLATED`,
+`Obstacle::plated`, project_rules/dru.rs). The table of pair rules now
+tells a plated pad from an SMD pad, as KiCad's `isPlated()` does
+("Project rules" above). On the designer tier this changes the two
+boards whose dru carries such a rule, the laptop motherboard and the
+laptop power board; the expansion, short and fingerprint tiers have no
+such board. Route mode at scale 0.647, main (x1930) against the branch:
+
+| Board | main: open / strict | branch: open / strict | vias | work |
+| --- | --- | --- | --- | --- |
+| byrantech laptop power | 1 / no (U4.5, a 0.4 mm QFN row) | **0 / pass** | 107 -> 120 | 871 -> 733 s |
+| byrantech laptop motherboard | 15 / no | 2 / no (B2 twice, the input's) | 368 -> 340 | 493 -> 669 s |
+
+The power board passed on the nightlies of 2026-11-01 to 11-06 at
+scales 0.673 to 0.675 and on main 66115bad at 0.647, and failed at 0.647
+since; under the plated rule it passes at 0.647. The test is
+`a_rule_on_plated_pads_leaves_smd_pads_alone`.
+
+**A pad's centre in another item's clearance: measured, not taken**
+(branch pad-access-starts, 503e0ae8). Since 2026-11-06 a custom pad
+whose anchor's centre is not clear starts its escape stubs from the
+points of its anchor that are clear (`contact_starts`). The trial did
+the same for any pad, starting from its copper, because KiCad joins a
+track whose end lies anywhere in a pad. It acts only on a pad with no
+node whose centre is not clear for its narrowest track; such a pad was
+dead before. The results:
+- **On the eight boards:** WLED 2 -> 0 open (a per-type pass), the
+  motherboard 15 -> 5 (before the plated rule), katia 15 -> 15 (CC1
+  reached, the D pads not), the other five rows identical.
+- **On the designer tier** (all 109 boards, on-arm
+  `build/pad1/designer-on`; the off arm is main x1930 on the three
+  boards where it fires, `build/pad1/designer-off3`, and identical by
+  construction elsewhere, because with no start found the code path is
+  main's): **75 -> 75 strict**, 75 -> 76 per type (WLED), 2723 -> 2711
+  unconnected. WLED loses the strict pass to one connection_width
+  finding, a GND pour neck (0.114 mm) that the neck repair leaves.
+- **The guards:**
+  - The expansion tier at 30 s: 25 -> 26 strict (LC_PAMV4b), 557 ->
+    552 unconnected (pdlc 10 -> 6), no pass lost.
+  - The short tier: identical except WLED's layout, 13 -> 9 open with
+    connection_width 10 and via_dangling 1 new.
+  - The fingerprints: identical.
+
+By the rule (a strict pass gained on the designer tier, none lost) it
+is not taken, and no switch is kept. Next for it, if it is taken up
+again: WLED's pour neck, which is what stands between it and a pass.
+
+**Not built.**
+- *(a) A way out narrower than the class.* No board of the eight needs
+  it. The keyboard's F23 leaves at the class's width. Where a pad's gap
+  is narrower, the neck zones (`neck_reach`, 1.5 mm) and the escape
+  stubs at the neck width (x1924) already exist. The neck is bounded by
+  the board's minimum track width (`neck_width_mm`: the project's
+  `min_track_width`, 0.127 mm where the project states none).
+- *(c) Through the footprint's own copper.* osprey's antenna polygon
+  has no net, so any track to its feed shorts it in KiCad's DRC; the
+  designer's board has that very shorting_items. Not legal, so not
+  built.
+- *(b) The minimum-clearance step where a warning-rated clearance
+  walls pads.*
+  - On the census's binary (406dcb94) the step did not run on katia for
+    want of work: 64 s were left after three connect rungs of 190 to
+    236 s.
+  - Since the leader first (2026-11-07) those rungs are gated, and the
+    narrow-signal step runs with the minimum clearance (0.102 mm) in
+    it. But its attempt (175 s of work, against the leader's 498 s)
+    ends with 129 open by the router's count against the leader's 124,
+    and is not kept.
+  - With the class's clearance relaxed from the first attempt instead
+    (USB_D at the designer's 0.25 mm, through the router config's
+    `net_classes`; `build/pad1/katia-relaxed-out`), no pad is dead and
+    KiCad's count goes 15 -> 12 open (J8's DATA- twice, the rest
+    congestion and the GND pieces). No pass: the halves' GND is the
+    designer's.
+  - Six of the tier's boards rate clearance as a warning or ignore it
+    (the three 0xCB boards, katia, link, the A13 module), and only
+    katia has a pad walled by a clearance. So no mechanism of this kind
+    can gain a strict pass on the tier, and none was built.
 
 ## What the routes look like (2026-11-05)
 

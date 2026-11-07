@@ -10,6 +10,13 @@ used to be here; code comments and docs that cite `docs/handover.md,
 
 ## State on 2026-11-05
 
+- **Pad access (branch pad-access, 2026-11-07).** Dead pads now carry
+  `wall`, which says what walls them. A dru clearance on `A.isPlated()`
+  now holds for plated pads and vias only, as in KiCad. With that the
+  laptop power board passes on the designer tier (75 -> 76 strict), and
+  the motherboard goes 15 -> 2 open (its WLCSP middle balls are the
+  input's). Open problem 18.
+
 - **main 1318b334 (x1911).** The numbers are the nightly of 2026-11-04
   (main 688b59c, x1887), the newest that has finished: it ran before
   nearly all of 2026-11-04's work (the prepared BGA fan-outs, the room
@@ -759,7 +766,20 @@ ranks what keeps the designer tier's 41 failing boards open.
     lost), the residue in a window in but off (`residue_window`: +4 -1
     alone, +1 -1 on top of the leader first; its windows stall at the
     price cap where the board-wide negotiation did). Design 2 (prepared
-    fan-outs for fine-pitch rows) is next.
+    fan-outs for fine-pitch rows) is next. Pad access was diagnosed again on
+    2026-11-07 (router.md, "What walls a pad"; router-ceiling.md, "Status
+    of pad access"). Of the census's eight boards, three are the input's
+    by their walled pads (Hub, osprey, the keyboard's RESET), and katia
+    and the motherboard are the input's by another item. Two changes
+    went in:
+    - dead pads say what walls them (`dead_pads[].wall`);
+    - plated pads are apart from SMD pads in the rules (KiCad's
+      `isPlated()`): the designer tier 75 -> **76 strict** (the laptop
+      power board), the motherboard 15 -> 2.
+
+    A plain pad leaving from the free part of its copper (WLED's LDO1)
+    was measured and not taken: the tier stays at 75 strict, and WLED
+    still fails on a pour neck (branch pad-access-starts).
 
 ## Where things are
 
