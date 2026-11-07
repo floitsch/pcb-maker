@@ -1865,6 +1865,12 @@ pub struct Router {
     in_residue: bool,
     /// The residue's windows of the last `finish` (`Diagnostics::residue`).
     residue_windows: Vec<residue::ResidueWindow>,
+    /// Whether the residue's windows of the last `finish` that ran them
+    /// completed the board (`Diagnostics::residue_completed`).
+    residue_completed: bool,
+    /// Whether the last `finish` left out the polish because the residue
+    /// completed the board (`Diagnostics::residue_polish_deferred`).
+    residue_polish_deferred: bool,
     /// Which of its searches a hard route makes while the trouble
     /// repair routes its victims again (`TroubleSettings::local`);
     /// `HardScope::Full` elsewhere.

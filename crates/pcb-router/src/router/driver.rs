@@ -481,6 +481,8 @@ impl Router {
             repair: self.repair_entries.clone(),
             released: self.released.clone(),
             residue: self.residue_windows.clone(),
+            residue_completed: self.residue_completed,
+            residue_polish_deferred: self.residue_polish_deferred,
         }
     }
 

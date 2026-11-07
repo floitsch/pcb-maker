@@ -20,8 +20,19 @@
 //! residue in a window").
 //!
 //! Its work is the attempt's (search work of the same router) within a
-//! limit of its own: `RESIDUE_SHARE` of what the attempt's work deadline
-//! leaves, at least what the hard repair and the trouble repair took.
+//! limit of its own (`residue_limit`): `RESIDUE_SHARE` of what the
+//! attempt's work deadline leaves, at least what the hard repair and the
+//! trouble repair took; with `Config::residue_keeps_step`, at most what
+//! leaves under the deadline as much as the attempt has taken with it
+//! (route mode's narrow-signal step keeps the first attempt's work).
+//!
+//! A board the windows complete is complete by the router's count only:
+//! the pours' stitching at the end and KiCad can still find it open
+//! (poly_kybd_split72_left, 2026-11-07: the window closed the last two
+//! terminals, the via reduction and the polish took 470 s of work, the
+//! stitching left 6 pour pads cut off and KiCad found them). So `finish`
+//! does not polish it (`Diagnostics::residue_polish_deferred`); the caller
+//! checks the board and polishes it (`polish`) when the check confirms it.
 
 use super::*;
 
@@ -36,6 +47,21 @@ pub const RESIDUE_MARGINS_MM: [f64; 3] = [2.0, 4.0, 8.0];
 /// The residue's work limit, as a share of what the attempt's work
 /// deadline leaves (`residue_budget`).
 pub const RESIDUE_SHARE: f64 = 1.0 / 3.0;
+
+/// The residue's work limit with `left` of work under the deadline, the
+/// attempt's work `used` so far and the repairs' work `repairs`:
+/// `RESIDUE_SHARE` of `left`, at least `repairs`, never beyond `left`;
+/// with `keeps_step` at most what leaves as much under the deadline as
+/// the attempt will have taken with the residue (`left - r >= used + r`).
+pub(super) fn residue_limit(left: f64, used: f64, repairs: f64, keeps_step: bool) -> f64 {
+    let left = left.max(0.0);
+    let limit = (left * RESIDUE_SHARE).max(repairs).min(left);
+    if keeps_step {
+        limit.min(((left - used) / 2.0).max(0.0))
+    } else {
+        limit
+    }
+}
 
 /// `PCB_ROUTER_RESIDUE`: unset, the configuration decides; `0` or empty
 /// off; anything else on.
@@ -306,23 +332,28 @@ impl Router {
     /// (the hard and the trouble repair's work), never beyond the deadline.
     fn residue_budget(&self, repairs: f64) -> f64 {
         match self.config.deadline_work {
-            Some(limit) => {
-                let left = (limit - self.deadline_used()).max(0.0);
-                (left * RESIDUE_SHARE).max(repairs).min(left)
-            }
+            Some(limit) => residue_limit(
+                limit - self.deadline_used(),
+                self.deadline_used(),
+                repairs,
+                self.config.residue_keeps_step,
+            ),
             None => self.negotiation_seconds.max(repairs),
         }
     }
 
     /// The residue in windows (see the module), within its work limit
     /// (`residue_budget` of `repairs`). Returns the open terminals it
-    /// closed.
+    /// closed. With nothing open (or past the deadline) it does not run
+    /// and the record of the last run stays (`residue_windows`,
+    /// `residue_completed`: a `polish` after it reports them).
     pub(super) fn renegotiate_residue(&mut self, order: &[NetId], repairs: f64) -> usize {
-        self.residue_windows.clear();
         let targets = self.residue_targets(order);
         if targets.is_empty() || self.past_deadline() {
             return 0;
         }
+        self.residue_windows.clear();
+        self.residue_completed = false;
         if targets.len() > RESIDUE_MAX_NETS {
             if self.config.verbose {
                 eprintln!(
@@ -404,6 +435,7 @@ impl Router {
                 self.residue_windows.push(record);
             }
         }
+        self.residue_completed = closed > 0 && self.quality().0 == 0;
         if self.config.verbose && !self.residue_windows.is_empty() {
             eprintln!(
                 "residue: {closed} open terminals closed in {} windows ({} kept), {:.1} s of work of its {budget:.1} s",

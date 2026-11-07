@@ -2935,7 +2935,7 @@ mod memory_limit_tests {
         quiet.verbose = false;
         let report = core::router::Router::new(&board, &quiet).memory_report();
         assert!(maps_mb_of(&report).is_some(), "{report}");
-        let (result, maps) = route_measured(&board, &quiet);
+        let (result, maps) = route_measured(&board, &quiet, None);
         assert!(maps >= 0.0);
         assert_eq!(result.routes.len(), board.nets.len());
     }
@@ -3828,7 +3828,7 @@ mod terminal_tests {
         );
         let mut quiet = core_config(&config);
         quiet.verbose = false;
-        let (result, _) = route_measured(&tied, &quiet);
+        let (result, _) = route_measured(&tied, &quiet, None);
         for (index, net) in tied.nets.iter().enumerate() {
             assert!(
                 matches!(result.status[index], core::NetStatus::Routed),
@@ -3849,7 +3849,7 @@ mod terminal_tests {
         let copper = tie_copper(&untied);
         assert_eq!(copper.len(), 1);
         assert!(copper[0].shape.contains([9.6, 5.0]));
-        let (result, _) = route_measured(&untied, &quiet);
+        let (result, _) = route_measured(&untied, &quiet, None);
         assert!(
             result
                 .status
@@ -4565,4 +4565,24 @@ fn strip_keeps_the_tracks_of_the_nets_it_is_told_to_keep() {
     let counts = write_kicad_board_without_tracks_except(&source, &output, &[]).unwrap();
     assert_eq!(counts, [0, 5]);
     fs::remove_dir_all(&directory).unwrap();
+}
+
+/// A board the residue completed by the router's count is polished only
+/// when KiCad's check, as the ladder checks an attempt, finds nothing
+/// open: the router's own count at the end of its run (after the pours'
+/// stitching) first, then KiCad's; without a check the router's count
+/// alone does not let it be polished (poly_kybd_split72_left,
+/// 2026-11-07: complete by the router's count after the residue, 6 open
+/// after the stitching and 6 by KiCad).
+#[test]
+fn a_board_the_residue_completed_is_polished_only_when_kicad_confirms_it() {
+    use super::attempt::{ResidueVerdict, residue_verdict};
+    assert_eq!(residue_verdict(0, Some(0)), ResidueVerdict::Confirmed);
+    assert_eq!(
+        residue_verdict(0, Some(12)),
+        ResidueVerdict::OpenByKiCad(12)
+    );
+    assert_eq!(residue_verdict(6, Some(0)), ResidueVerdict::OpenByRouter(6));
+    assert_eq!(residue_verdict(6, None), ResidueVerdict::OpenByRouter(6));
+    assert_eq!(residue_verdict(0, None), ResidueVerdict::Unchecked);
 }

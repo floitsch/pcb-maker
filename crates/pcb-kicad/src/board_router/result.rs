@@ -555,6 +555,14 @@ pub struct KiCadRoutingDiagnostics {
     /// "The residue in a window"), in the order they ran.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub residue: Vec<KiCadResidueWindow>,
+    /// The residue's windows completed the board by the router's count;
+    /// `residue_unpolished`: its polish did not run (the router's count at
+    /// the end or KiCad's check found it open, or no check ran; the log's
+    /// "residue: the board it completed ..." line says which).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub residue_completed: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub residue_unpolished: bool,
 }
 
 /// A window of the residue (router `ResidueWindow`).
@@ -908,5 +916,7 @@ pub(super) fn diagnostics(
                 work_seconds: (window.work * 100.0).round() / 100.0,
             })
             .collect(),
+        residue_completed: result.diagnostics.residue_completed,
+        residue_unpolished: result.diagnostics.residue_polish_deferred,
     }
 }

@@ -322,6 +322,17 @@ pub struct KiCadBoardRouterConfig {
     /// rung probes, not read from a file.
     #[serde(skip)]
     pub limits_count_all: bool,
+    /// The router's residue leaves under its work deadline at least as
+    /// much as the attempt has taken with it (router
+    /// `residue_keeps_step`): set by the ladder on the attempts before it
+    /// keeps work for the narrow-signal step, not read from a file.
+    #[serde(skip)]
+    pub residue_keeps_step: bool,
+    /// A board the router's residue completed by its own count is checked
+    /// by KiCad before its polish (`confirm_residue`): set by the ladder
+    /// where it checks its attempts, not read from a file.
+    #[serde(skip)]
+    pub residue_check: bool,
     /// KiCad checks only the attempts among this many best by the
     /// router's count (`CheckGate`; set by the layout for its final
     /// ladder, not read from a file).

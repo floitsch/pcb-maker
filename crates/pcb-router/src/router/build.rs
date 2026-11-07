@@ -379,6 +379,8 @@ impl Router {
             in_via_reduction: false,
             in_residue: false,
             residue_windows: Vec::new(),
+            residue_completed: false,
+            residue_polish_deferred: false,
             hard_scope: HardScope::Full,
             in_trial: false,
             buses: Vec::new(),

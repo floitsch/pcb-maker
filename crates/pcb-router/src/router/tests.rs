@@ -6642,3 +6642,63 @@ fn the_residue_restores_what_it_cannot_close() {
     assert_eq!(windows[0].bounds, [5.0, -3.0, 25.0, 13.0]);
     assert_eq!(windows[0].open_after, windows[0].open_before);
 }
+
+/// A board the residue completes is complete by the router's count
+/// only: that `finish` leaves out the clean-up, the via reduction and the
+/// polish and says so; `polish`, once the caller's check confirmed the
+/// board, runs them, the residue's record kept.
+#[test]
+fn a_board_the_residue_completes_is_not_polished_until_it_is_confirmed() {
+    let mut router = pocketed_gap_with_a_open(true);
+    router.config.residue_window = true;
+    router.config.trouble_repair = false;
+    // The residue's work limit without a deadline: the negotiation's.
+    router.negotiation_seconds = 10.0;
+    let result = router.finish(&[0, 1]);
+    assert!(result.diagnostics.residue_completed, "{:?}", result.status);
+    assert!(result.diagnostics.residue_polish_deferred);
+    assert_eq!(result.diagnostics.residue.len(), 1);
+    // No clean-up (phase 2: the clean-up, the bend round, the
+    // straightening) and no via reduction (phase 3).
+    assert_eq!(router.profile.phase_expansions[2], 0);
+    assert_eq!(router.profile.phase_expansions[3], 0);
+    let polished = router.polish();
+    assert!(polished.diagnostics.residue_completed);
+    assert!(!polished.diagnostics.residue_polish_deferred);
+    assert_eq!(polished.diagnostics.residue.len(), 1);
+    assert!(router.profile.phase_expansions[2] > 0);
+    assert!((0..2).all(|net| router.nets[net].complete));
+}
+
+/// A board the residue leaves open is polished as before (nothing
+/// deferred).
+#[test]
+fn a_board_the_residue_leaves_open_is_finished_as_before() {
+    let mut router = pocketed_gap_with_a_open(false);
+    router.config.residue_window = true;
+    router.config.trouble_repair = false;
+    router.negotiation_seconds = 10.0;
+    let result = router.finish(&[0, 1]);
+    assert!(!result.diagnostics.residue_completed);
+    assert!(!result.diagnostics.residue_polish_deferred);
+}
+
+/// The residue's work limit: a third of what the deadline leaves, at
+/// least the repairs', never beyond what is left; keeping a step's work
+/// (`residue_keeps_step`), it leaves under the deadline at least as much
+/// as the attempt will have taken with it.
+#[test]
+fn the_residue_leaves_the_narrow_steps_work_when_asked() {
+    assert!((residue::residue_limit(600.0, 250.0, 20.0, false) - 200.0).abs() < 1e-9);
+    assert!((residue::residue_limit(600.0, 250.0, 250.0, false) - 250.0).abs() < 1e-9);
+    assert!((residue::residue_limit(100.0, 250.0, 250.0, false) - 100.0).abs() < 1e-9);
+    // poly_kybd_split72_left's continuation: 500 s left, 250 s taken.
+    let kept = residue::residue_limit(500.0, 250.0, 20.0, true);
+    assert!((kept - 125.0).abs() < 1e-9);
+    assert!(500.0 - kept >= 250.0 + kept - 1e-9);
+    // The step's work wins over the repairs' floor.
+    assert!((residue::residue_limit(500.0, 250.0, 200.0, true) - 125.0).abs() < 1e-9);
+    // Nothing when the attempt took more than is left.
+    assert_eq!(residue::residue_limit(200.0, 250.0, 20.0, true), 0.0);
+    assert_eq!(residue::residue_limit(-5.0, 0.0, 20.0, false), 0.0);
+}

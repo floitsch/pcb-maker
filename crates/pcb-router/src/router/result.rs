@@ -83,6 +83,13 @@ pub struct Diagnostics {
     /// The residue's windows (`Config::residue_window`), in the order they
     /// ran. A record, not an input.
     pub residue: Vec<super::ResidueWindow>,
+    /// The residue's windows closed the board's last open terminals by
+    /// the router's count (in the `finish` that ran them).
+    pub residue_completed: bool,
+    /// This `finish` left out the polish for it (`Config::residue_window`):
+    /// the caller polishes (`Router::polish`) once its check confirms the
+    /// board complete.
+    pub residue_polish_deferred: bool,
 }
 
 /// A net as the hard repair found it (`Diagnostics::repair`).

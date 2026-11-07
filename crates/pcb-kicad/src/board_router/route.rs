@@ -549,6 +549,9 @@ impl LadderRunner for KiCadRunner<'_> {
         &self,
         mut router: core::router::Router,
         limits: ResumeLimits,
+        board: &core::Board,
+        attempt: &KiCadBoardRouterConfig,
+        directory: &Path,
     ) -> (core::RoutingResult, RouterWork) {
         // The continuation's limits are search work (the ladder's shares
         // by the routers' proportion of search), whatever the probe's.
@@ -558,6 +561,18 @@ impl LadderRunner for KiCadRunner<'_> {
             router.config_mut().deadline_work = Some(deadline);
         }
         let routed = router.resume(limits.negotiation);
+        // A board the residue completed by the router's count: KiCad's
+        // check before its polish (`confirm_residue`).
+        let check = attempt.residue_check.then(|| ResidueCheck {
+            pcb: self.parsed,
+            board,
+            layer_names: &self.layer_names,
+            source_directory: self.source_directory,
+            board_id: self.board_id,
+            directory: residue_check_directory(directory),
+            config: attempt,
+        });
+        let routed = confirm_residue(&mut router, routed, check.as_ref());
         let work = self.work(&router);
         (routed, work)
     }
@@ -648,6 +663,7 @@ pub(super) fn route_seeds(
     first: u64,
     count: usize,
     side_by_side: usize,
+    check: Option<&ResidueCheck>,
 ) -> (core::RoutingResult, f64) {
     // In waves of `side_by_side` (memory), in seed order.
     let seeds: Vec<u64> = (first..first + count.max(1) as u64).collect();
@@ -666,7 +682,11 @@ pub(super) fn route_seeds(
                     let mut seeded = config.clone();
                     seeded.seed = (index > 0).then_some(index);
                     seeded.verbose = config.verbose && index == first;
-                    scope.spawn(move || (seeded.seed, route_measured(board, &seeded)))
+                    // Each seed's residue check in its own directory.
+                    let check = check.map(|check| check.at(&format!("seed-{index}")));
+                    scope.spawn(move || {
+                        (seeded.seed, route_measured(board, &seeded, check.as_ref()))
+                    })
                 })
                 .collect();
             handles
@@ -779,6 +799,7 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
         deadline_work: config.router_deadline_work,
         net_rules: config.net_rules.clone(),
         limits_count_all: config.limits_count_all,
+        residue_keeps_step: config.residue_keeps_step,
         ..core::Config::default()
     };
     if let Some(via_cost) = config.via_cost_mm {
