@@ -14,7 +14,7 @@
     },
     {
       "constraint": "clearance",
-      "detail": "clearance 0.4 mm as a pair rule: between sets of nets, 2 nets (track to track, track to via, track to pad, via to track, via to via, via to pad; every layer)",
+      "detail": "clearance 0.4 mm as a pair rule: between sets of nets, 2 nets (track to track, track to via, track to pad, track to plated pad, via to track, via to via, via to pad, via to plated pad; every layer)",
       "rule": "PA to PB",
       "status": "applied"
     }

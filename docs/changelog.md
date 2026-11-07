@@ -48,7 +48,12 @@ router-ceiling.md "Status of pad access"; everything in `build/pad1/`).
   So the tier goes **75 -> 76 strict**, 2723 -> 2709 unconnected. The
   expansion, short and fingerprint tiers have no board with such a rule
   (identical by construction; the fingerprints were run: identical).
-  CPU: CPUPAIRS.
+  CPU in two pinned pairs (x1930 and
+  the branch at once on cores 8,9 / 10,11 and 12,13 / 14,15, then
+  swapped; user CPU seconds): the power board 576.8 and 568.6 -> 511.2
+  and 494.2 (-11 %, -13 %); the motherboard 464.9 and 469.8 -> 564.5 and
+  580.2 (+21 %, +23 %: it routes the 13 connections it reaches, 493 ->
+  669 s of work within the same bound).
 - **Measured, not taken: a plain pad leaving from the free part of its
   copper** (branch pad-access-starts, 503e0ae8). Designer tier 75 -> 75
   strict, 2723 -> 2711 unconnected, WLED 2 -> 0 open with a
@@ -63,7 +68,7 @@ router-ceiling.md "Status of pad access"; everything in `build/pad1/`).
     s) ends worse (129 against 124 open) and is not kept. USB_D at 0.25
     mm from the first attempt gives katia 15 -> 12, with no pass. Only
     katia has such a pad.
-- About 40 CPU hours.
+- About 22 CPU hours.
 
 ## Measured on 2026-11-07 (design 2 of the router's ceiling, prepared fan-outs for fine-pitch rows: out)
 

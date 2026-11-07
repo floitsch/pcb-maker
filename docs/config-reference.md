@@ -24,7 +24,7 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 111 | 92 | 19 | 111 | 57 |
+| [Router settings](#router-settings) | 111 | 92 | 19 | 111 | 59 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 2 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 1 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
@@ -82,7 +82,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `plane_cut_cost` | `Option<f64>` | unset | router.md | Cost factor of a track (or via) cutting a plane (default 3). |
 | `pour_integrity` | `Option<f64>` | unset | router.md | How much a two-layer pour's integrity counts (default 0: off; boards of other layer counts are not affected): the router prices a cut by what it severs of a pour (a corridor that joins the fill's pieces costs more than a nick in a wide area; `pcb_router::Config::pour_integrity`), also for pour nets routed as tracks, and the ladder ranks equally open attempts by the pours' integrity (`pours`: the share outside the largest piece and the piece count) before their vias and copper. |
 | `present_cap` | `Option<f64>` | unset | - | Router `present_cap`: the highest price of sharing (default 1e4). |
-| `neck_width_mm` | `Option<f64>` | unset | - | Narrowest track the board allows (neck-downs out of small pads). |
+| `neck_width_mm` | `Option<f64>` | unset | router.md | Narrowest track the board allows (neck-downs out of small pads). |
 | `min_connection_mm` | `Option<f64>` | unset | router.md | The board setup's minimum connection width (`rules.min_connection`) as a floor on every track width the router chooses: class widths, the narrow-signal width, neck-downs, stubs and spokes. Set from the project when KiCad's connection_width check reports at error or warning severity (error only with `PCB_MIN_CONNECTION_FLOOR=errors`; `project_rules::connection_width_floor`, `apply_width_floor`); `None`: no floor. |
 | `connection_width_severity` | `Option<String>` | unset | - | The project's severity of connection_width findings (`error`, `warning`, `ignore`), for the rules summary. |
 | `cleanup_via_cost_mm` | `Option<f64>` | unset | - | Router `cleanup_via_cost`: the via cost while cleaning up (default 25). |
@@ -157,7 +157,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `tighten` | `bool` | `false` | - | Pull the lattice router's tracks tight afterwards (any-angle tracks with arcs, as the topological engine draws them), wherever the result stays legal. |
 | `pours` | `KiCadPourMode` | `"auto"` | router.md, placer.md | How nets with copper pours are connected. |
 | `add_pours` | `Vec<KiCadPourRequest>` | `[]` | router.md | Copper pours to add before routing, such as a ground plane on the bottom: each covers the board outline on its layers. |
-| `net_classes` | `Vec<crate::net_classes::KiCadNetClassRequest>` | `[]` | - | Net classes to add: track width, clearance and vias for named nets, ahead of the project's own classes and written into its `.kicad_pro`. |
+| `net_classes` | `Vec<crate::net_classes::KiCadNetClassRequest>` | `[]` | router.md | Net classes to add: track width, clearance and vias for named nets, ahead of the project's own classes and written into its `.kicad_pro`. |
 | `pin_swaps` | `Option<PathBuf>` | unset | placer.md | Interchangeable pins (`pin-swaps.json`; relative to the source directory). The nets on them are permuted before routing, in the board and the schematic. |
 | `pin_swap` | `KiCadPinSwapConfig` | its own table | - | The pin-swap estimate's settings, for `pin_swaps`. |
 | `project_rules` (internal) | `Option<crate::project_rules::KiCadProjectRulesReport>` | unset (internal) | - | What the project's rules gave the router beyond its classes (`project_rules`; reported in `rules`, not read from a file). |

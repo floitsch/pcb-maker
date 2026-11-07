@@ -8445,7 +8445,12 @@ such board. Route mode at scale 0.647, main (x1930) against the branch:
 The power board passed on the nightlies of 2026-11-01 to 11-06 at
 scales 0.673 to 0.675 and on main 66115bad at 0.647, and failed at 0.647
 since; under the plated rule it passes at 0.647. The test is
-`a_rule_on_plated_pads_leaves_smd_pads_alone`.
+`a_rule_on_plated_pads_leaves_smd_pads_alone`. CPU in two pinned pairs
+(main and the branch side by side on disjoint cores, then swapped; user
+CPU seconds): power 576.8 and 568.6 -> 511.2 and 494.2; the motherboard
+464.9 and 469.8 -> 564.5 and 580.2. The motherboard does more work
+because it now routes the 13 connections it reaches: 493 -> 669 s of
+work, within the same bound.
 
 **A pad's centre in another item's clearance: measured, not taken**
 (branch pad-access-starts, 503e0ae8). Since 2026-11-06 a custom pad
