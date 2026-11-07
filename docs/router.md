@@ -7755,6 +7755,87 @@ turns it off. Open: the placer's room for the outer rings' escapes.
 Blind and micro vias for the dog-bones: "Blind, buried and micro vias
 (2026-11-05)" below.
 
+## Prepared fan-outs for fine-pitch rows (2026-11-07)
+
+Design 2 of the router ceiling (docs/router-ceiling.md): the BGA method
+("Prepared fan-outs for BGAs" above) for the rows of fine-pitch parts.
+Two earlier repairs of the rows were removed on 2026-11-04 ("Fan-out
+before negotiation", "Crossings decided in the repair"): the first
+reserved each pad's way out by a cost, so the negotiation still traded
+which pad of a crossing pair stays open; the second decided the layer
+change inside the repair, and its via landed on the other layer's routes.
+This one fixes copper before routing, at exact geometry, and decides the
+layer changes by the row's planar order with the via's landing checked
+first.
+
+**The plan** (`row_fanout`, router settings, `PCB_ROUTER_ROW_FANOUT`;
+board_router/row_fanout.rs). In the lowering, after the BGA plan, for
+every footprint of four SMD pads or more (the exposed pad left out):
+
+- *Rows*: per layer, the pads whose long axis (a square pad: the side of
+  the centres' box it lies on) points out of one side of the part, in
+  order along that side; adjacent pads at most 1.05 x 0.65 mm apart and
+  in line. A row is fine-pitch when its pitch is under 0.645 mm (the
+  census's 0.65 mm, `FINE_PITCH`, without the 0.65 mm parts whose
+  centres lie a nanometre either side of it).
+- *Roles*: a pad of a signal net with a pad on another part gets an
+  exit of copper; a pour net's pad, a pair's (`diff_pair_of`) and a
+  custom pad (joined at its anchor) a corridor: a straight path the
+  other exits keep their clearance from, no copper; a pad of no net, of
+  a net of one pad, or of a net whose other pads are its part's own,
+  nothing.
+- *Exits at exact geometry*: a stub from the pad's centre straight out,
+  at the class's width where that clears the neighbouring pads, else at
+  the neck, to a landing at least `MIN_EXIT` (0.25 mm) beyond the row's
+  tips where the track the search starts with (the neck where the
+  router's neck zone holds the pad, the class's width elsewhere) is
+  legal with `RHO` (0.09 mm, half the diagonal of the coarsest default
+  lattice, 0.127 mm) to spare: some lattice node lies there whatever the
+  lattice's phase. Tested off the lattice against the lowered board's
+  copper, holes, rule areas and edge with no margin (an exact fit
+  passes, as `stub_is_clear`).
+- *The fan*: where two adjacent landings need more room than the pitch
+  gives (two half tracks, a clearance and `RHO`: 0.49 mm at 0.2/0.2, so
+  every 0.4 mm row), the exits fan from the row's middle: each pad's
+  stub turns 45 degrees away from the middle by the room its side needs,
+  the outer pads first, an inner pad that turns too later by as much as
+  two parallel diagonals need to keep their clearance, and the pads
+  that do not turn land beyond their neighbours' corners. One base
+  depth for the row's turns, the first in 0.02 mm steps at which every
+  exit, every landing and every pair of exits keep their rules.
+- *The order*: the signal pads' targets (the nearest pad of the net on
+  another part) as angles from the part's centre against the pads'
+  order along the row; the longest increasing run stays on the layer, a
+  pad outside it whose target crosses its signal neighbour's dives.
+- *The via*: a diver's stub goes on beyond its landing, outward, to the
+  first site (0.05 mm steps, at most 2 mm) where a via (the largest of
+  the class's and the project's sizes, the shortest span the board
+  allows) keeps every rule against the lowered board on every layer it
+  spans and against the planned exits and landings, and where a
+  straight run of the net's track 0.5 mm beyond the via's ring leaves it
+  on another layer the net may route on (not another net's exclusive
+  plane): the landing, checked before. A diver without such a site stays
+  on the surface with its exit.
+- *All or nothing*: a row any of whose exits or landings the board's
+  copper or another exit closes is left to the search whole.
+- *The hand-over*: each exit is fixed copper of its net (`<pad> row
+  exit` segments, a `<pad> row landing` disc at its end); the landing is
+  copper the pad's terminal reaches (`Board::terminal_copper`), so the
+  search starts on its nodes and every other net keeps clear of the
+  exit from the start; a diver's via is the pad's terminal on the other
+  layers, as a dog-bone's. `emit_routes` writes an exit only where the
+  net's route ends on its landing (then joining the route's end to the
+  landing where KiCad would not see them touch) or uses its via off the
+  pad's layer (then the via too); an exit the routes did not take is
+  dropped.
+- *Work*: the plan's distance tests and the obstacles it visits, one
+  lowering expression each, on the lowering's work, for a part where a
+  row is planned.
+- `PCB_ROUTER_ROW_FANOUT_WHY` prints each row's plan once a process;
+  `PCB_ROUTER_ROW_FANOUT_DIVE=0` plans the rows on the surface alone.
+
+MEASUREMENTS-PLACEHOLDER
+
 ## Blind, buried and micro vias (2026-11-05)
 
 The question (from the BGA work: "with through vias only, at 0.8 mm only

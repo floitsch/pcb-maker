@@ -73,6 +73,15 @@ fn dives_on() -> bool {
 /// Adjacent pads closer than this (centre to centre) make a row
 /// fine-pitch (router/fanout.rs `FINE_PITCH`, the census's).
 const FINE_PITCH: f64 = 0.65;
+/// `MIN_EXIT`, or `PCB_ROUTER_ROW_FANOUT_MIN_EXIT` (mm; an experiment's
+/// knob).
+fn min_exit() -> f64 {
+    std::env::var("PCB_ROUTER_ROW_FANOUT_MIN_EXIT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(MIN_EXIT)
+}
+
 /// Adjacent pads up to this many times `FINE_PITCH` apart stay in one row
 /// (a 0.65 mm part's pads, centres a nanometre either side of it, are one
 /// row, and not a fine-pitch one).
@@ -83,7 +92,7 @@ const MIN_PART_PADS: usize = 4;
 /// search starts from: half the diagonal of the coarsest default lattice
 /// (0.127 mm), so some node within it lies inside the landing's legal disc
 /// whatever the lattice's phase.
-const RHO: f64 = 0.09;
+pub(crate) const RHO: f64 = 0.09;
 /// How far an exit may come short of a clearance: floating point noise
 /// (the router's `STUB_FIT`): an exact fit passes, as in KiCad.
 const FIT: f64 = 1.0e-6;
@@ -984,9 +993,10 @@ fn plan_row(
     // The first base (in steps beyond the tips) at which every exit, its
     // landing and every pair keep their rules.
     let mut chosen: Option<(f64, Vec<Vec<[f64; 2]>>)> = None;
-    let mut base = tip + MIN_EXIT;
+    let min_exit = min_exit();
+    let mut base = tip + min_exit;
     let mut refusal = String::from("no base depth clears the row");
-    while base <= tip + MIN_EXIT + REACH + 1.0e-9 {
+    while base <= tip + min_exit + REACH + 1.0e-9 {
         let paths: Vec<Vec<[f64; 2]>> = members.iter().map(|m| path_of(m, base)).collect();
         let mut ok = true;
         let mut trial: Vec<Planned> = Vec::new();
@@ -1467,7 +1477,9 @@ pub(crate) fn exit_use(
         .iter()
         .filter(|segment| segment.layer == exit.layer)
         .filter_map(|segment| {
-            let reach = exit.width / 2.0 + segment.width.max(exit.width).max(class) / 2.0 + TOUCH;
+            let reach = exit.width / 2.0
+                + segment.width.max(exit.width).max(class).max(2.0 * RHO) / 2.0
+                + TOUCH;
             let distance =
                 core::geometry::point_segment_distance(exit.landing, segment.start, segment.end);
             if distance > reach {

@@ -216,6 +216,15 @@ pub(crate) fn keep_existing_copper(board: &mut core::Board, whole_pieces: bool) 
                 existing.padstack &= host_of[existing.host] == existing.host;
                 existing.host = renumbered[host_of[existing.host]];
             }
+            // So does the copper the terminals reach (a row exit's landing,
+            // `row_fanout`).
+            for extra in board
+                .terminal_copper
+                .iter_mut()
+                .filter(|extra| extra.net == net && extra.terminal < terminals)
+            {
+                extra.terminal = renumbered[host_of[extra.terminal]];
+            }
             let mut index = 0;
             board.nets[net as usize].terminals.retain(|_| {
                 index += 1;

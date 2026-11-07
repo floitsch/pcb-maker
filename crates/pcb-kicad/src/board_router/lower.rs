@@ -2135,15 +2135,29 @@ fn lower_board(
                     "row exit",
                 ));
             }
+            // The landing: copper as wide as the lattice's room (a route's
+            // end node lies within it, so the router's copper check sees the
+            // two touch; KiCad gets a joint, `emit_routes`), and the target
+            // the terminal reaches, a disc whose joining reach (the class's
+            // half width less 0.02 mm, `joins_copper`) is that room.
             let end = *exit.path.last().unwrap_or(&[0.0, 0.0]);
+            obstacles.push(copper(
+                core::Shape::Circle {
+                    center: end,
+                    radius: (exit.width / 2.0).max(row_fanout::RHO),
+                },
+                surface,
+                "row landing",
+            ));
+            let class_width = classes[nets[exit.net as usize].class].trace_width;
             let landing = obstacles.len();
             obstacles.push(copper(
                 core::Shape::Circle {
                     center: end,
-                    radius: exit.width / 2.0,
+                    radius: (row_fanout::RHO + 0.02 - class_width / 2.0).max(1.0e-4),
                 },
                 surface,
-                "row landing",
+                "row target",
             ));
             let terminals = &nets[exit.net as usize].terminals;
             let host = terminals
