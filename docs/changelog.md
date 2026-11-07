@@ -114,6 +114,14 @@ Branch global-start (docs/placer.md "The global placement's start
   every pair sum falls; 19.6 CPU hours. SmartSpin2k's +92 % (the panel
   copies solved against their regions' borders) fixed before landing: as
   landed -8.9 %, p 0.007.
+- **Stage 2** (full layouts, the eleven dense boards, five seed pairs, off
+  x1933 against the branch on x1933): KiCad unconnected -6.8 %, sign-flip
+  p 0.020, sum of medians 558 to 458, every pair sum falls; strict passes
+  5 to 6 (DSP-ADAU1452 seed 1), rows with a KiCad error 5 to 1; first-route
+  open 4653 to 3696; CPU 67 597 to 68 925 s. The short tier: strict passes
+  7 to 9, unconnected 21 to 16; WLED_Matrix has 9 `connection_width`
+  errors (GND pour necks) on the tier's seed, as off has at two other
+  seeds (two of five seeds in each arm).
 - **Instruments**: the trace's `start` stage, the kept skeleton's stages
   (`skeleton_*`) and `global_history` (the descent's overflow, lambda,
   gamma, gradient sums, wirelength every ten iterations); stages.py's

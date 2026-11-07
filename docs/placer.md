@@ -10172,16 +10172,78 @@ first-route open terminals:
   video's skeleton), or the passives' start from the netlist with the
   held bodies as obstacles.
 
+**Stage 2** (the full protocol: the eleven dense boards at the task
+budgets, full layouts, seeds 1 to 401, `screen.py --full --quality`, tasks
+v7 at the reference rates, `--expected-gb` from the nightly's measured
+peaks; off `build/glob1/pcb-maker-off` = main x1933 (742d5249), on
+`build/glob1/pcb-maker-f` = this branch at 2ba48262 on x1933, the same
+router; 3 then 12 in flight, `build/glob1/stage2`, 2026-11-07 18:23 to
+22:05). KiCad unconnected, off / on:
+
+| Board | s1 off / on | s101 off / on | s201 off / on | s301 off / on | s401 off / on | median off / on | mean change | relative (weight) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4in1 | 109 / 79 | 77 / 53 | 80 / 74 | 97 / 74 | 83 / 63 | 83 / 74 | -20.6 | -16.6 % (58) |
+| 4in1-mini | 77 / 88 | 75 / 80 | 103 / 119 | 58 / 72 | 66 / 96 | 75 / 88 | +15.2 | +16.6 % (71) |
+| DSP-ADAU1452 | 7 / 0 | 5 / 3 | 4 / 1 | 15 / 2 | 12 / 1 | 7 / 1 | -7.2 | -51.4 % (4) |
+| MegaDrive | 105 / 57 | 133 / 35 | 111 / 35 | 131 / 43 | 100 / 66 | 111 / 43 | -68.8 | -54.2 % (21) |
+| panel | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | +0.0 | - (noise mean 0, weight 0) |
+| poly_kybd_split72_left | 23 / 17 | 24 / 17 | 7 / 15 | 19 / 15 | 29 / 18 | 23 / 17 | -4.0 | -13.5 % (29) |
+| protoesp | 30 / 48 | 41 / 20 | 37 / 21 | 26 / 15 | 31 / 19 | 31 / 20 | -8.4 | -11.9 % (50) |
+| revC3 | 83 / 85 | 76 / 75 | 66 / 67 | 69 / 80 | 68 / 66 | 69 / 75 | +2.2 | +1.5 % (88) |
+| SmartSpin2k_Panelized | 51 / 51 | 40 / 40 | 24 / 24 | 37 / 37 | 90 / 90 | 40 / 40 | +0.0 | +0.0 % (3) |
+| SNSP-CPU-01 | 61 / 2 | 35 / 18 | 48 / 8 | 63 / 17 | 49 / 4 | 49 / 8 | -41.4 | -49.9 % (11) |
+| video | 70 / 79 | 118 / 115 | 55 / 92 | 27 / 78 | 119 / 120 | 70 / 92 | +19.0 | +7.9 % (16) |
+
+- **BETTER**: weighted **-6.8 %** (the noise file's 90 % interval -12.4
+  to -1.2 %), **sign-flip p 0.020** (the rule's 0.03), the noise file's p
+  0.024; sum of medians 558 to 458 (-17.9 %); every pair sum falls (616 to
+  506, 624 to 456, 535 to 456, 542 to 433, 647 to 543). Six boards better,
+  three worse, two equal.
+- **Where it wins**: MegaDrive -54 % (better on all five seeds, 111 to 43
+  by the median), SNSP-CPU-01 -50 % (all five; 61 to 2 on seed 1),
+  DSP-ADAU1452 -51 % (7 to 1; complete on seed 1), the 4in1 -17 % (all
+  five), split72_left -14 %, protoesp -12 %. **Where it loses**: the
+  4in1-mini +17 % (all five seeds; its first route +5 %, the skeleton
+  race's pick above), video +8 % (70 to 92 by the median: within 3 on
+  two seeds, 70 to 79, 55 to 92 and 27 to 78 on three), Glasgow +1.5 %
+  (within 2 on four seeds, 69 to 80 on one).
+- **Strict passes** (and per-type passes, the same): off 5 (the panel's
+  five), on 6 (the panel's five and DSP-ADAU1452's seed 1); **none lost**.
+  Rows with a KiCad error: off 5 (DSP-ADAU1452 on every seed: clearance
+  and mask bridges at the fiducials), on 1 (DSP-ADAU1452 seed 201, one
+  clearance).
+- **The other measures, summed or the median over the 55 rows**:
+  first-route open terminals 4653 to 3696 (-20.6 %), vias (median) 409 to
+  412, length (median) 6357 to 6138 mm.
+- **CPU**: layouts off 67 597 s, on 68 925 s (+2.0 %; 37.9 CPU hours for
+  the 110); placement (board-layout.json's `placement_seconds`, work
+  seconds) off 7756 s, on 7434 s.
+
+**The short tier** (`--tier short --quality`, 3 x 2, the same two
+binaries, `build/glob1/short-off`, `short-on`): strict passes **off 7,
+on 9**, none lost (MIDAS-MK1.1-revA 1 to 0 unconnected and
+framework_mobo_lefthalf 1 to 0 gain theirs); unconnected 21 to 16,
+first-route open 40 to 34; CPU 2472 and 2677 s, placement 419 and 428 s.
+One new KiCad error: WLED_Matrix (incomplete in both arms, 13 to 10
+unconnected) has 9 `connection_width` errors on, none off: the GND pour's
+necks between parts on F.Cu and B.Cu (0.069 to 0.109 mm where the board
+asks 0.127). At four more placer seeds (101 to 401, the tier's task
+and budget, `build/glob1/wled`) off has them on two (3 and 2 errors) and
+on on one (6): with the tier's seed two of five in each arm. The necks
+are the board's pour between close parts at some seeds, not the lever's
+(unconnected off 12, 11, 12, 19; on 9, 14, 19, 10).
+
 **Decision.** The netlist's start is the global placement's code path
-since 2026-11-07, without a switch (`PCB_PLACER_NETLIST_START` is gone).
-What it changes: the coarse arrangement is the netlist's (the active
-parts nearer the designer's on every stage-0 row, the race's seeds
-agreeing 0.48 to 0.85), and the first route falls by 7.9 % on the dense
-boards as screened, 8.9 % as landed. Stage 2 (full layouts, KiCad unconnected, the short tier's
-strict passes) is the coordinator's call. Open: the passives' stall
-around a held skeleton (the 4in1, overflow 0.62 to 0.65 at the stop),
-video's skeleton that no longer fits at full halos (its seeds are the
-plain fallback), the 4in1-mini.
+since 2026-11-07, without a switch (`PCB_PLACER_NETLIST_START` is gone),
+pending the coordinator's merge. Stage 1: -7.9 % first-route open
+terminals (as landed -8.9 %, p 0.007); stage 2: -6.8 % KiCad unconnected
+at p 0.020, no strict pass lost on the dense set or the short tier (5 to
+6 and 7 to 9). What it changes: the coarse arrangement is the netlist's
+(the active parts nearer the designer's on every stage-0 row, the race's
+seeds agreeing 0.48 to 0.85). Open: the 4in1-mini (+17 % in full
+layouts: the race's tight skeletons), video (+8 %), the passives' stall
+around a held skeleton (the 4in1), video's skeleton that no longer fits
+at full halos, WLED's pour necks.
 
 ## What went wrong on the way (kept as lessons)
 

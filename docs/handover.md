@@ -156,8 +156,14 @@ used to be here; code comments and docs that cite `docs/handover.md,
   Stage 1: **-7.9 %** first-route open terminals, sign-flip p 0.014
   (MegaDrive -47 %, SNSP-CPU-01 -41 %, the 4in1 -26 %; the 4in1-mini
   +5 %); as landed, with the panel copies' starts kept (SmartSpin2k
-  equal to off), -8.9 %, p 0.007. On by default, no switch; stage 2
-  pending.
+  equal to off), -8.9 %, p 0.007. **Stage 2: BETTER**, KiCad unconnected
+  -6.8 %, sign-flip p 0.020, sum of medians 558 to 458, every pair sum
+  falls (MegaDrive -54 %, SNSP-CPU-01 -50 %, DSP-ADAU1452 -51 %, the 4in1
+  -17 %; the 4in1-mini +17 %, video +8 %); strict passes dense 5 to 6,
+  short tier 7 to 9, none lost; CPU +2 %. One new KiCad error type on the
+  short tier: WLED_Matrix's GND pour necks (`connection_width`, 9 on the
+  tier's seed), which off has too at other seeds (two of five seeds in
+  each arm). On by default, no switch, pending the merge.
 - **In flight**: "Working on it" below.
 
 ## The flow in one paragraph
@@ -619,8 +625,12 @@ ranks what keeps the designer tier's 41 failing boards open.
    at the stop 0.040 and 0.060 (the bins not needed). Stage 1: -7.9 %,
    sign-flip p 0.014, every pair sum falls; SmartSpin2k's +92 % was the
    panel copies' own starts, fixed before landing (equal to off on all
-   five seeds; as landed -8.9 %, p 0.007). **On, no switch**;
-   stage 2 is next. Left: the passives' global placement around a held
+   five seeds; as landed -8.9 %, p 0.007). Stage 2 (full layouts against
+   x1933): KiCad unconnected -6.8 %, sign-flip p 0.020, no strict pass
+   lost (dense 5 to 6, short tier 7 to 9), the 4in1-mini +17 % and video
+   +8 % the losers; WLED_Matrix's GND pour-neck `connection_width`
+   errors on the short tier's seed are the board's (two of five seeds in
+   each arm). **On, no switch.** Left: the passives' global placement around a held
    skeleton stalls at overflow 0.62 to 0.65 on the 4in1 (their netlist
    spots lie inside the ICs they serve), video's skeleton no longer fits
    at full halos (the plain fallback is kept), the 4in1-mini +5 %.
