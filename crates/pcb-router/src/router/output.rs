@@ -47,27 +47,8 @@ impl Router {
                 if terminal == NO_TERMINAL || terminal == PLANE_TERMINAL || terminal == FREE_END {
                     return;
                 }
+                let anchor = description.terminals[terminal as usize].anchor;
                 let center = self.grid.center_of(node.cell as usize);
-                // A node on a padstack's copper merged into the terminal on
-                // another layer away from the terminal's anchor (a row
-                // exit's via, pcb-kicad's `row_fanout`) stubs to that
-                // copper's anchor, not to a place on that layer without the
-                // pad's copper.
-                let own_anchor = description.terminals[terminal as usize].anchor;
-                let anchor = self
-                    .board
-                    .merged_pads
-                    .iter()
-                    .find(|merged| {
-                        let shape = &self.board.obstacles[merged.pad].shape;
-                        merged.net == net
-                            && merged.host == terminal as usize
-                            && merged.padstack
-                            && merged.layers & (1 << node.layer) != 0
-                            && shape.contains(center)
-                            && !shape.contains(own_anchor)
-                    })
-                    .map_or(own_anchor, |merged| merged.anchor);
                 // A node on kept copper the terminal reaches
                 // (`Board::terminal_copper`) and not on its pad is joined
                 // there: no stub to the pad's centre.
@@ -83,14 +64,11 @@ impl Router {
                             extra.net == net
                                 && extra.terminal == terminal as usize
                                 && copper.layers & (1 << node.layer) != 0
-                                && match extra.reach {
-                                    Some(reach) => copper.shape.distance_to_point(center) <= reach,
-                                    None => joins_copper(
-                                        &copper.shape,
-                                        center,
-                                        self.width_on(description.class, node.layer as usize),
-                                    ),
-                                }
+                                && joins_copper(
+                                    &copper.shape,
+                                    center,
+                                    self.width_on(description.class, node.layer as usize),
+                                )
                         })
                     {
                         return;

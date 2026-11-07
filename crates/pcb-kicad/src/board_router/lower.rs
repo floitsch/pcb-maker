@@ -367,10 +367,6 @@ fn lower_board(
     // for the plan once the board's copper is lowered.
     let fanout_on = bga_fanout::bga_fanout_on(config);
     let mut fanout_parts: Vec<bga_fanout::FanoutPart> = Vec::new();
-    // With prepared row fan-outs (`row_fanout`): every footprint's SMD
-    // pads and its rotation.
-    let row_on = row_fanout::row_fanout_on(config);
-    let mut row_parts: Vec<row_fanout::RowPart> = Vec::new();
     // The pads holding a via already (`pad_vias`).
     let mut holding_vias: BTreeSet<usize> = BTreeSet::new();
     for via in plan_vias_in_pads(pcb, config).vias {
@@ -1228,20 +1224,6 @@ fn lower_board(
                             .collect(),
                     });
                 }
-                if row_on && footprint_pads.iter().filter(|pad| pad.smd).count() >= 4 {
-                    let exposed = exposed_pad(&footprint_pads);
-                    row_parts.push(row_fanout::RowPart {
-                        reference: reference.to_string(),
-                        angle: footprint_at[2],
-                        pads: footprint_pads
-                            .iter()
-                            .zip(&footprint_copper)
-                            .enumerate()
-                            .filter(|(index, (pad, _))| pad.smd && !exposed.contains(index))
-                            .map(|(_, (_, copper))| copper[0])
-                            .collect(),
-                    });
-                }
                 if config.via_in_pad != Some(KiCadViaInPad::All(true)) {
                     let exposed = exposed_pad(&footprint_pads);
                     for (index, pad) in footprint_pads.iter().enumerate() {
@@ -2088,137 +2070,6 @@ fn lower_board(
             }
         }
     }
-    // Prepared row fan-outs (`row_fanout`): the exits of the fine-pitch
-    // rows' pads, fixed copper of their nets that their terminals reach;
-    // a diver's via the pad's terminal on the other layers.
-    let mut terminal_copper: Vec<core::TerminalCopper> = Vec::new();
-    if row_on && !row_parts.is_empty() {
-        let plan = row_fanout::plan(
-            &row_parts,
-            &obstacles,
-            &nets,
-            &classes,
-            &no_via_pads,
-            &holding_vias,
-            (&via_spans, &planes),
-            &loops.outline,
-            layers.len(),
-            config,
-        );
-        row_fanout::report(&plan);
-        fanout_work += plan.work;
-        let all = layers.all();
-        for exit in plan.exits {
-            let net = Some(exit.net);
-            let surface = 1 << exit.layer;
-            let copper =
-                |shape: core::Shape, layers: core::LayerMask, suffix: &str| core::Obstacle {
-                    shape,
-                    layers,
-                    kind: core::ObstacleKind::Copper,
-                    net,
-                    clearance: 0.0,
-                    clearance_override: None,
-                    blocks_tracks: true,
-                    blocks_vias: true,
-                    // The pad's obstacle in the label: a panel repeats
-                    // references (`exits_of` keys the exits by it).
-                    label: format!("{}#{} {suffix}", exit.label, exit.pad),
-                };
-            // The surface path ends at the landing (a diver's at its via).
-            for piece in exit.path.windows(2) {
-                obstacles.push(copper(
-                    core::Shape::Capsule {
-                        start: piece[0],
-                        end: piece[1],
-                        radius: exit.width / 2.0,
-                    },
-                    surface,
-                    "row exit",
-                ));
-            }
-            // The landing: copper as wide as the lattice's room, which the
-            // terminal reaches from every node inside it (`reach`), so a
-            // route's end node always lies in it, whatever width the route
-            // ends with (the router's copper check sees them touch; KiCad
-            // gets a joint, `emit_routes`).
-            let end = *exit.path.last().unwrap_or(&[0.0, 0.0]);
-            let landing = obstacles.len();
-            obstacles.push(copper(
-                core::Shape::Circle {
-                    center: end,
-                    radius: (exit.width / 2.0).max(row_fanout::LANDING),
-                },
-                surface,
-                "row landing",
-            ));
-            let terminals = &nets[exit.net as usize].terminals;
-            let host = terminals
-                .iter()
-                .position(|terminal| terminal.pad == exit.pad)
-                .map(|host| (host, terminals[host].anchor))
-                .or_else(|| {
-                    merged_pads
-                        .iter()
-                        .find(|merged| merged.net == exit.net && merged.pad == exit.pad)
-                        .map(|merged| (merged.host, merged.anchor))
-                });
-            if let Some((host, _)) = host {
-                terminal_copper.push(core::TerminalCopper {
-                    net: exit.net,
-                    terminal: host,
-                    obstacle: landing,
-                    reach: Some(0.0),
-                });
-            }
-            let Some(via) = exit.via else {
-                continue;
-            };
-            let all = via.span.map_or(all, |span| span.mask());
-            let ring = core::Shape::Circle {
-                center: via.at,
-                radius: via.diameter / 2.0,
-            };
-            obstacles.push(copper(ring.clone(), surface, "row via ring"));
-            let other = obstacles.len();
-            if all & !surface != 0 {
-                obstacles.push(copper(ring, all & !surface, "row via"));
-            }
-            obstacles.push(core::Obstacle {
-                shape: core::Shape::Circle {
-                    center: via.at,
-                    radius: via.drill / 2.0,
-                },
-                layers: all,
-                kind: core::ObstacleKind::Hole,
-                net,
-                clearance: 0.0,
-                clearance_override: None,
-                blocks_tracks: true,
-                blocks_vias: true,
-                label: format!("{}#{} row hole", exit.label, exit.pad),
-            });
-            if all & !surface == 0 {
-                continue;
-            }
-            // The via is the pad's terminal on the other layers, solid to
-            // a pour there.
-            solid_pad_obstacles.push(other);
-            // Its anchor is the via's centre: a route's stub to the anchor
-            // on another layer ends in the via, not under the pad.
-            if let Some((host, _)) = host {
-                nets[exit.net as usize].terminals[host].layers |= all;
-                merged_pads.push(core::MergedPad {
-                    net: exit.net,
-                    host,
-                    pad: other,
-                    anchor: via.at,
-                    layers: all & !surface,
-                    padstack: true,
-                });
-            }
-        }
-    }
     let mut lowered = Lowered {
         board: core::Board {
             layer_count: layers.len(),
@@ -2260,7 +2111,7 @@ fn lower_board(
             },
             fill_passes,
             pin_row_gaps,
-            terminal_copper,
+            terminal_copper: Vec::new(),
             attachment: Default::default(),
             via_spans,
         },

@@ -2226,7 +2226,6 @@ fn merge_net_terminals(
             net,
             terminal: pad.host,
             obstacle: pad.pad,
-            reach: None,
         });
     }
     let mut index = 0;

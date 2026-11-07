@@ -208,21 +208,6 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "set: the router prints one `corridor census:` line per escape pad and lattice on stderr (its escape nodes' pocket open or closed on the lattice, and whether a corridor stub leaves it); `experiments/corridors/census.py` reads them (docs/router.md, \"Corridors of pocketed pads (2026-11-05)\").",
     ),
     (
-        "PCB_ROUTER_ROW_FANOUT",
-        Kind::Switch,
-        "overrides the router's `row_fanout` (`0` off, anything else on; off by default): before routing, every signal pad of a row whose adjacent pads lie closer than 0.65 mm gets its exit at exact geometry, jointly with its neighbours (straight out beyond the row's tips, fanned where the pitch is narrower than two tracks, a clearance and the lattice's room), and the pads whose targets cross the row's order a via beyond the row whose landing on another layer is checked first; fixed copper of the pad's net that its route may end on, written only where the route uses it; a row the plan cannot serve whole is left to the search (docs/router.md, \"Prepared fan-outs for fine-pitch rows (2026-11-07)\").",
-    ),
-    (
-        "PCB_ROUTER_ROW_FANOUT_MIN_EXIT",
-        Kind::Switch,
-        "with `row_fanout` on: how far beyond a row's tips its exits reach at least, in mm (default 0.25; an experiment's knob).",
-    ),
-    (
-        "PCB_ROUTER_ROW_FANOUT_DIVE",
-        Kind::Switch,
-        "with `row_fanout` on: `0` plans the rows on the surface alone (no diver's via; an experiment's switch).",
-    ),
-    (
         "PCB_ROUTER_BGA_FANOUT",
         Kind::Switch,
         "overrides the router's `bga_fanout` (`0` off, anything else on; on by default): before routing, the inner balls of every grid array (those no track between the outer balls serves) whose net's own via does not fit a diagonal gap get a stub and a through via in a diagonal gap, the largest of the class's and the project's via sizes that keeps every clearance, as fixed copper of the ball's net that its route may end on; written only where the route uses it; the placer keeps the far side free under those vias (docs/router.md, \"Prepared fan-outs for BGAs (2026-11-04)\").",
@@ -296,11 +281,6 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "PCB_ROUTER_TROUBLE_WHY",
         Kind::Diagnostic,
         "the trouble-makers' repair prints every exchange's outcome (kept, or why refused; a refusal names the nets left in conflict and what their conflicts name), and after the repair the crossing census: every open pad of a fine-pitch row, what closes its straight ways out, and whether a row neighbour's target crosses its own (docs/router.md, \"Crossings decided in the repair (2026-11-03)\").",
-    ),
-    (
-        "PCB_ROUTER_ROW_FANOUT_WHY",
-        Kind::Diagnostic,
-        "the prepared row fan-outs (`row_fanout`) print each fine-pitch row's plan once a process: its part, layer, pads and pitch, the exits planned, whether they fan, the divers, and why a row was left to the search.",
     ),
     (
         "PCB_ROUTER_BGA_FANOUT_WHY",

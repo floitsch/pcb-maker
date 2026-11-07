@@ -216,8 +216,8 @@ pub(crate) fn keep_existing_copper(board: &mut core::Board, whole_pieces: bool) 
                 existing.padstack &= host_of[existing.host] == existing.host;
                 existing.host = renumbered[host_of[existing.host]];
             }
-            // So does the copper the terminals reach (a row exit's landing,
-            // `row_fanout`).
+            // So does the copper the terminals reach (`terminal_copper`: a
+            // pair's coupled run, merged again on a board with kept copper).
             for extra in board
                 .terminal_copper
                 .iter_mut()
@@ -247,7 +247,6 @@ pub(crate) fn keep_existing_copper(board: &mut core::Board, whole_pieces: bool) 
                         net,
                         terminal: renumbered[piece],
                         obstacle: index,
-                        reach: None,
                     });
                 }
             }
@@ -285,7 +284,6 @@ pub(crate) fn keep_existing_copper(board: &mut core::Board, whole_pieces: bool) 
                             net,
                             terminal,
                             obstacle: other,
-                            reach: None,
                         });
                     }
                 }
@@ -416,6 +414,31 @@ mod tests {
         let mut stripped = pcb.clone();
         assert_eq!(strip_tracks(&mut stripped), 4);
         assert_eq!(count_tracks(&stripped), [0, 0, 0]);
+    }
+
+    #[test]
+    fn copper_a_terminal_reaches_follows_it_when_kept_copper_merges_terminals() {
+        let mut board = lowered(BOARD);
+        let (a, description) = net(&board, "A");
+        // J3 (the third terminal) reaches its own pad's copper.
+        let pad = description.terminals[2].pad;
+        assert!(description.terminals[2].label.starts_with("J3"));
+        board.terminal_copper.push(core::TerminalCopper {
+            net: a,
+            terminal: 2,
+            obstacle: pad,
+        });
+        keep_existing_copper(&mut board, false);
+        // J2 merged into J1: J3 is the second terminal now, and so is the
+        // copper's.
+        let (_, description) = net(&board, "A");
+        assert!(description.terminals[1].label.starts_with("J3"));
+        let extra = board
+            .terminal_copper
+            .iter()
+            .find(|extra| extra.obstacle == pad)
+            .unwrap();
+        assert_eq!(extra.terminal, 1);
     }
 
     #[test]

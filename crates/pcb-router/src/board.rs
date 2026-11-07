@@ -372,16 +372,11 @@ impl Board {
 /// terminal's own, so that a search may end anywhere on the piece (a
 /// differential pair's coupled run, whose two ends the pads' stubs join;
 /// a pad merged into the terminal), on the obstacle's layers.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TerminalCopper {
     pub net: NetId,
     pub terminal: usize,
     pub obstacle: usize,
-    /// How far from the copper a lattice node joins it (mm); None: the
-    /// net's half track width less 0.02 mm (`joins_copper`). A row exit's
-    /// landing (pcb-kicad's `row_fanout`) sets it so that every node it
-    /// joins lies inside its copper, whatever width the route ends with.
-    pub reach: Option<f64>,
 }
 
 /// The gap between two adjacent SMD pads of one footprint on one layer

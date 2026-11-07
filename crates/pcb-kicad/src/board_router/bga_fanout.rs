@@ -212,12 +212,7 @@ fn clusters(values: &mut [f64], tolerance: f64) -> Vec<usize> {
 
 /// A pad's half extent from its centre along `direction` (bisection on
 /// its copper).
-pub(crate) fn half_extent(
-    shape: &core::Shape,
-    center: [f64; 2],
-    direction: [f64; 2],
-    limit: f64,
-) -> f64 {
+fn half_extent(shape: &core::Shape, center: [f64; 2], direction: [f64; 2], limit: f64) -> f64 {
     let (mut inside, mut outside) = (0.0, limit);
     for _ in 0..30 {
         let middle = (inside + outside) / 2.0;
@@ -398,7 +393,7 @@ fn search_via_fits(
 
 /// The via sizes to try, largest first: the class's and the project's
 /// predefined sizes within the board's via minimums.
-pub(crate) fn via_sizes(config: &KiCadBoardRouterConfig, class: &core::RuleClass) -> Vec<[f64; 2]> {
+fn via_sizes(config: &KiCadBoardRouterConfig, class: &core::RuleClass) -> Vec<[f64; 2]> {
     let (predefined, minimums) = config
         .project_rules
         .as_ref()

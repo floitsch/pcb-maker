@@ -507,7 +507,6 @@ mod tests {
                     net: 0,
                     terminal: 1,
                     obstacle: 3,
-                    reach: None,
                 }],
             }]
         }
@@ -615,7 +614,6 @@ mod tests {
                 net: 0,
                 terminal: 1,
                 obstacle: 3,
-                reach: None,
             }],
             attachment: Default::default(),
             via_spans: Vec::new(),

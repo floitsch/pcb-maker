@@ -74,9 +74,7 @@ impl Router {
             };
             for extra in extras {
                 let copper = &self.board.obstacles[extra.obstacle];
-                let reach = extra
-                    .reach
-                    .unwrap_or(self.board.classes[description.class].trace_width / 2.0);
+                let reach = self.board.classes[description.class].trace_width / 2.0;
                 let Some((x0, y0, x1, y1)) =
                     self.grid.node_range(copper.shape.aabb().inflated(reach))
                 else {
@@ -96,17 +94,13 @@ impl Router {
                                 layer: layer as u8,
                                 cell: cell as u32,
                             };
-                            let joins = match extra.reach {
-                                Some(reach) => {
-                                    copper.shape.distance_to_point(self.grid.center(x, y)) <= reach
-                                }
-                                None => joins_copper(
+                            if statics.trace_allowed(layer, cell, net)
+                                && joins_copper(
                                     &copper.shape,
                                     self.grid.center(x, y),
                                     self.width_on(description.class, layer),
-                                ),
-                            };
-                            if statics.trace_allowed(layer, cell, net) && joins && seen.insert(node)
+                                )
+                                && seen.insert(node)
                             {
                                 nodes.push(node);
                             }
