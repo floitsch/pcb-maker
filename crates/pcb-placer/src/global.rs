@@ -20,7 +20,7 @@ use crate::problem::{Point, Pose, Problem, point_in_polygon, rotate};
 use std::collections::BTreeMap;
 
 /// The netlist start's share of the common start's noise
-/// (`GlobalConfig::netlist_start`).
+/// (`initial::quadratic_start`).
 const NETLIST_NOISE: f64 = 0.1;
 
 /// A pin on a net: its position and, for a movable body's pin, the body and
@@ -71,10 +71,6 @@ pub struct GlobalConfig {
     /// it starts at its pose's centre without the start's noise. `None`:
     /// every part from the start point.
     pub warm: Option<std::sync::Arc<Vec<bool>>>,
-    /// The parts start where the netlist's quadratic wirelength puts them
-    /// (`initial::quadratic_start`), the start's noise a tenth of the
-    /// common start's: the arrangement is the netlist's, not the noise's.
-    pub netlist_start: bool,
 }
 
 impl Default for GlobalConfig {
@@ -93,7 +89,6 @@ impl Default for GlobalConfig {
             frame_interval: 5,
             seed: 1,
             warm: None,
-            netlist_start: false,
         }
     }
 }
@@ -630,13 +625,24 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
         })
         .collect();
     let nets = problem.net_weights.len();
-    if config.netlist_start {
-        // The noise drawn above, a tenth of it, around the netlist's
-        // positions: it breaks ties (parts on the same nets), not the
-        // arrangement.
+    {
+        // The parts start where the netlist's quadratic wirelength puts
+        // them (`initial::quadratic_start`), with a tenth of the noise
+        // drawn above: it breaks ties (parts on the same nets), not the
+        // arrangement. From one point with the whole noise the arrangement
+        // was the noise's (docs/placer.md, "The global placement's start
+        // (2026-11-07)").
         let count = movable.len();
         let warm = |index: usize| config.warm.as_ref().is_some_and(|warm| warm[index]);
-        let held: Vec<bool> = movable.iter().map(|index| warm(*index)).collect();
+        // A part with a start of its own (a panel copy's, at its region's
+        // centre) begins there as before: solved, the copies' parts were
+        // projected against their regions' borders and piled up there
+        // (SmartSpin2k, stage 1: 33 to 51 first-route open terminals
+        // became 65 to 90).
+        let held: Vec<bool> = movable
+            .iter()
+            .map(|index| warm(*index) || starts.contains_key(index))
+            .collect();
         let anchor: Vec<Point> = movable
             .iter()
             .map(|index| starts.get(index).copied().unwrap_or(start))

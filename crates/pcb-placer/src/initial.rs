@@ -504,7 +504,6 @@ mod tests {
         problem.constraints.edges.push((links[3], Edge::Top, 0.5));
         let start = |seed: u64| {
             let config = GlobalConfig {
-                netlist_start: true,
                 seed,
                 ..GlobalConfig::default()
             };
@@ -527,14 +526,5 @@ mod tests {
             let top = problem.components[links[3]].center(result.start[links[3]])[1];
             assert!(top < 3.0, "seed {seed}: the edge part at y {top}");
         }
-        // Without it the start is the common point and its noise.
-        let plain = global_place(&problem, &GlobalConfig::default());
-        let spread = links
-            .iter()
-            .map(|index| problem.components[*index].center(plain.start[*index])[0])
-            .fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), x| {
-                (low.min(x), high.max(x))
-            });
-        assert!(spread.1 - spread.0 < 0.05 * 40.0 + 1.0e-9, "{spread:?}");
     }
 }
