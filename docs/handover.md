@@ -10,6 +10,15 @@ used to be here; code comments and docs that cite `docs/handover.md,
 
 ## State on 2026-11-05
 
+- **Lattice lines at pin rows (branch row-lattice, 2026-11-07).** Design 3
+  of the router's ceiling: the lattice's lines are per-axis tables, and a
+  fine-pitch part's rows get the lattice at their own phase (a band) or
+  single lines. RP2040_base 36 -> 5 open, vaio_re 11 -> 3; the designer
+  tier 76 -> 77 strict (+3 -2), 2709 -> 2679 unconnected; the expansion
+  tier 25 -> 28 strict. Off by default by the rule (two passes lost); the
+  router setting `pin_lines` for boards whose open items are such rows.
+  Open problem 2.
+
 - **Pad access (branch pad-access, 2026-11-07).** Dead pads now carry
   `wall`, which says what walls them. A dru clearance on `A.isPlated()`
   now holds for plated pads and vias only, as in KiCad. With that the
@@ -360,6 +369,16 @@ ranks what keeps the designer tier's 41 failing boards open.
    before the negotiation, like the reserved corridors before it, costs
    the boards more room than it gives the rows; what is left is the
    crossing decided inside the negotiation.
+   A fourth, the lattice's geometry rather than a plan (design 3, router.md
+   "Lattice lines at pin rows (2026-11-07)"), lands as a setting, off by
+   default (`pin_lines`): a part's exact-fit rows get the lattice at their
+   own phase. It closes the rows the regular lattice's phase held
+   (RP2040_base 36 -> 5, the census's no-straight-way pads 78 -> 44 on
+   the row boards); over the designer tier +3 strict -2. Left of the
+   rows: the crossing pairs and the closed ways (unchanged by it), the
+   no-way pads that ask for no line (OpenRX's U201/U301, DSP-ADAU1452),
+   and a tight two-track channel (the keyboard's F23, which the channels'
+   lines connect; left out, the board fails on the input's RESET).
 3. **The ladder's judge.** On 21 boards with every rung continued to its
    final (2026-10-13), today's judge (unfinished nets after the probe)
    picks the best rung 16 times; no other count does better, and a class
@@ -774,7 +793,9 @@ ranks what keeps the designer tier's 41 failing boards open.
     its windows stall at the price cap where the board-wide negotiation
     did, also with the price started at a tenth; router.md, "The residue
     in a window (2026-11-07: built, measured, removed)"). Design 2 (prepared
-    fan-outs for fine-pitch rows) is next. Pad access was diagnosed again on
+    fan-outs for fine-pitch rows) was measured and taken out; design 3
+    (lattice lines at pin rows) landed off by default as the setting
+    `pin_lines` (designer tier +3 -2 strict; open problem 2). Pad access was diagnosed again on
     2026-11-07 (router.md, "What walls a pad"; router-ceiling.md, "Status
     of pad access"). Of the census's eight boards, three are the input's
     by their walled pads (Hub, osprey, the keyboard's RESET), and katia
@@ -1110,7 +1131,7 @@ Switches and experiment hooks (change the result):
 - `PCB_ROUTER_TROUBLE`: overrides the router's `trouble_repair` (`0` off, anything else on): the trouble-makers' repair after the hard repair (an open net routed through others at a price, the nets it displaces routed again hard, kept when the open terminals drop; docs/experiments/human-level-routing.md).
 - `PCB_ROUTER_EXACT_ESCAPES`: overrides the router's `exact_escape_stubs` (`0` off, anything else on; on by default since 2026-10-26): escape stubs stamp exactly (along a lattice line as lattice nodes, oblique ones by their measured footprint) and a pad leaves by straight stubs along a lattice line where it has any; off, the stubs stamp the lattice's discs grown by the snapping error (docs/router.md, "Fine-pitch escapes").
 - `PCB_ROUTER_CORRIDOR_ESCAPES`: overrides the router's `corridor_escapes` (`0` off, anything else on; on by default since 2026-11-05): a pad without a legal node of its own whose escape nodes lie in a pocket the lattice closes leaves by a corridor stub off the lattice, a path through the region its track keeps its clearances in to a legal node beyond the pocket (OpenFC's U10.5; docs/router.md, "Corridors of pocketed pads (2026-11-05)").
-- `PCB_ROUTER_PIN_LINES`: overrides the router's `pin_lines` (`0` or `off`: the regular lattice; `exits`: lines through the pads of pin rows the lattice misses; `1` or `all`: those and the tracks of tight channels between pads; off by default): each part whose row exits share a phase gets the lattice at that phase over its rows and 1 mm around (a band), other exits and channel tracks a line added or moved onto them; the lattice's lines are then per-axis coordinate tables (docs/router.md, "Lattice lines at pin rows (2026-11-07)").
+- `PCB_ROUTER_PIN_LINES`: overrides the router settings' `pin_lines` (`0` or `off`: the regular lattice; `1` or `exits`: lattice lines through the pads of pin rows the regular lattice misses; off by default): a part whose row exits share a phase gets the lattice at that phase over its rows and 1 mm around (a band, where the narrow pads in it vote for that phase), other exits a line added or moved onto them; the lattice's lines are then per-axis coordinate tables (docs/router.md, "Lattice lines at pin rows (2026-11-07)").
 - `PCB_ROUTER_BGA_FANOUT`: overrides the router's `bga_fanout` (`0` off, anything else on; on by default): before routing, the inner balls of every grid array (those no track between the outer balls serves) whose net's own via does not fit a diagonal gap get a stub and a through via in a diagonal gap, the largest of the class's and the project's via sizes that keeps every clearance, as fixed copper of the ball's net that its route may end on; written only where the route uses it; the placer keeps the far side free under those vias (docs/router.md, "Prepared fan-outs for BGAs (2026-11-04)").
 - `PCB_ROUTER_BLIND_VIAS`: overrides the router's `blind_vias` (`0` off, anything else on; off by default): where the board allows via spans short of the stack (`via_spans`, the designer's blind, buried and micro vias, a KiCad 6 or 7 project's switches), a via takes the shortest allowed span holding the two layers it joins, copper and a hole only there, written as KiCad's blind, buried or micro via; a BGA's dog-bone takes the shortest span to a routable layer (docs/router.md, "Blind, buried and micro vias (2026-11-05)").
 - `PCB_LAYOUT_MOVE_DESCENT`: overrides the layout's `move_descent` (`0` off, anything else on with layout.json's settings or the defaults): the move descent after the first route (docs/experiments/move-descent.md).
@@ -1171,7 +1192,7 @@ Switches and experiment hooks (change the result):
 Diagnostics (stderr unless said; the result does not change):
 
 - `PCB_ROUTER_CORRIDOR_CENSUS`: set: the router prints one `corridor census:` line per escape pad and lattice on stderr (its escape nodes' pocket open or closed on the lattice, and whether a corridor stub leaves it); `experiments/corridors/census.py` reads them (docs/router.md, "Corridors of pocketed pads (2026-11-05)").
-- `PCB_ROUTER_PIN_LINES_PROBE`: set: the router prints `pin lines:` lines on stderr for each lattice it builds and the finer pitches 0.075 and 0.05 mm: the lines the pin rows and pad gaps ask for, which the regular lattice misses, and what the bands and single lines would place (`2`: every missed line too) (docs/router.md, "Lattice lines at pin rows (2026-11-07)").
+- `PCB_ROUTER_PIN_LINES_PROBE`: set: the router prints `pin lines:` lines on stderr for each lattice it builds and the finer pitches 0.075 and 0.05 mm: the lines the pin rows and pad gaps ask for, which the regular lattice misses, and what the bands and single lines would place for the exits (`2`: every missed line too) (docs/router.md, "Lattice lines at pin rows (2026-11-07)").
 - `PCB_ROUTER_TROUBLE_WHY`: the trouble-makers' repair prints every exchange's outcome (kept, or why refused; a refusal names the nets left in conflict and what their conflicts name), and after the repair the crossing census: every open pad of a fine-pitch row, what closes its straight ways out, and whether a row neighbour's target crosses its own (docs/router.md, "Crossings decided in the repair (2026-11-03)").
 - `PCB_ROUTER_BGA_FANOUT_WHY`: the prepared fan-outs (`bga_fanout`) print each grid array's plan once a process: pitch, rows and columns, the rings that leave on the surface, the inner balls, the dog-bones planned by via size, the balls kept (a via in the pad) and those no gap fits.
 - `PCB_ROUTER_NET_WORK`: `<file>`: the search expansions per net over the process (every router, every phase), written to the file as JSON at each router's finish; the last write holds the whole run (docs/router.md, "Prepared fan-outs for BGAs (2026-11-04)").

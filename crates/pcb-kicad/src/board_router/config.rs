@@ -446,6 +446,17 @@ pub struct KiCadBoardRouterConfig {
     /// `PCB_ROUTER_EXACT_ESCAPES` overrides this.
     #[serde(default)]
     pub exact_escape_stubs: Option<bool>,
+    /// Lattice lines at pin rows (router `pin_lines`; docs/router.md,
+    /// "Lattice lines at pin rows (2026-11-07)"): true puts lines through
+    /// the pads of fine-pitch rows the regular lattice misses (a part's
+    /// rows at its own phase over a band, else single lines), for a board
+    /// whose exact-fit rows lie at different phases (RP2040_base's two
+    /// QFN-56: 36 to 5 open on the designer's placement); unset or false,
+    /// the regular lattice (the default: on the designer tier it gains
+    /// three strict passes and loses two). `PCB_ROUTER_PIN_LINES`
+    /// overrides this.
+    #[serde(default)]
+    pub pin_lines: Option<bool>,
     /// Prepared fan-outs for BGAs (board_router/bga_fanout.rs; docs/router.md,
     /// "Prepared fan-outs for BGAs (2026-11-04)"): before routing, every
     /// ball of a grid array's inner rings (those no track between the outer

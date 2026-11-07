@@ -850,6 +850,15 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     {
         router_config.exact_escape_stubs = exact;
     }
+    if let Some(pin_lines) = config.pin_lines
+        && core::pin_lines::lines_override().is_none()
+    {
+        router_config.pin_lines = if pin_lines {
+            core::pin_lines::Lines::Exits
+        } else {
+            core::pin_lines::Lines::Off
+        };
+    }
     if let Some(fixed) = config.fixed_plane_stubs {
         router_config.fixed_plane_stubs = fixed;
     }

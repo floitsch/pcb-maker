@@ -161,10 +161,12 @@ pub struct Config {
     /// centre line: OpenFC's U10), to a legal node beyond. On by default;
     /// `PCB_ROUTER_CORRIDOR_ESCAPES=0` turns it off (A/B on one binary).
     pub corridor_escapes: bool,
-    /// Lattice lines where the pins are (`crate::pin_lines`): a pin row's
-    /// pad centres and a tight channel's tracks get lines of their own
-    /// where the regular lattice has none within their slack.
-    /// `PCB_ROUTER_PIN_LINES` overrides it.
+    /// Lattice lines where the pins are (`crate::pin_lines`): the pads of
+    /// pin rows the regular lattice misses get lines through their centres
+    /// (a part's rows at its own phase over a band, else single lines).
+    /// Off by default (docs/router.md, "Lattice lines at pin rows
+    /// (2026-11-07)"); the KiCad router settings' `pin_lines` and
+    /// `PCB_ROUTER_PIN_LINES` set it.
     pub pin_lines: crate::pin_lines::Lines,
     /// The pour model as the measurement of a written board takes it
     /// (`measured_board`'s starved thermals, its solid step, and

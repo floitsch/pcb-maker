@@ -11,6 +11,38 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-07 (lattice lines at pin rows: design 3, off by default as the setting `pin_lines`)
+
+Branch row-lattice (docs/router.md "Lattice lines at pin rows
+(2026-11-07)", router-ceiling.md "Design 3"; everything in
+`build/lat1/row/`).
+
+- **The probe** (`PCB_ROUTER_PIN_LINES_PROBE`, `pin_lines::pin_lines`):
+  the lines a board's pin rows (exits) and pad gaps (channel tracks) ask
+  for; the regular lattice misses an exit line on 25 of the 109 designer
+  boards. RP2040_base's two QFN-56 lie 0.021/0.024 and 0.035/0 mm off the
+  0.1 mm lattice. The oracle (the two parts moved onto it): 36 -> 4 open.
+- **The lattice as tables** (`Grid::warp`, `Warp`): per-axis line
+  coordinates, indices and neighbours unchanged; `center`, `coordinate`,
+  `index_of`, `node_range`, `nearest_node`, `window` on the tables;
+  `uniform_around` says where the regular offsets hold. Footprints
+  measured on the lines elsewhere (`disc_cells`, `segment_cells`,
+  `diagonal_start_cells`; equal to the offsets on the regular lattice,
+  test). Steps cost what they cost; the writer ends a segment where a run
+  bends in millimetres.
+- **Placement** (`pin_lines::warp`): bands (a part's rows at its phase
+  and 1 mm around, where the band's narrow pads vote for it), then single
+  lines added or moved. Single lines alone: RP2040_base 36 -> 21; bands:
+  5. The channels' lines (`all`): RP2040_base 12, the keyboard's F23
+  connected; left out.
+- **Measured** (scale 0.647, off and on one binary): designer tier 76 ->
+  77 strict (+OpenAirScope, koeg-board, split72_right; -Quanta75_BareRP2040,
+  split72_left), 2709 -> 2679 unconnected; expansion 25 -> 28 strict, 557
+  -> 524; short tier identical; CPU in pinned pairs RP2040_base -26/-29 %,
+  ATAT1800 -50/-51 % (the ladder ends sooner).
+- **Decision**: off by default (the rule's "none lost" fails); the KiCad
+  router settings' `pin_lines` (agents.md) and `PCB_ROUTER_PIN_LINES`.
+
 ## Committed on 2026-11-07 (the residue in a window: judged by KiCad, measured again, removed)
 
 Branch residue-kicad-judged; router.md "The residue in a window

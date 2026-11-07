@@ -403,10 +403,10 @@ fn round_nm(value: f64) -> f64 {
 pub enum Lines {
     /// None: the regular lattice.
     Off,
-    /// The pads' straight exits out of their rows.
+    /// The pads' straight exits out of their rows. (Lines for the tracks
+    /// of tight channels between pads were measured and left out:
+    /// docs/router.md, "Lattice lines at pin rows (2026-11-07)".)
     Exits,
-    /// The exits and the tracks of tight channels between pads.
-    All,
 }
 
 /// The router's lattice for `board`: the regular one (`Grid::choose` of
@@ -427,13 +427,12 @@ pub fn lattice(board: &Board, pitches: &[f64], which: Lines) -> crate::grid::Gri
     grid
 }
 
-/// `PCB_ROUTER_PIN_LINES`: `0` (off), `exits` or `1`/`all` in place of
-/// the setting, for a measurement.
+/// `PCB_ROUTER_PIN_LINES`: `0` (off) or `1` (the exits' lines) in place
+/// of the setting.
 pub fn lines_override() -> Option<Lines> {
     match std::env::var("PCB_ROUTER_PIN_LINES").ok()?.as_str() {
         "0" | "off" => Some(Lines::Off),
-        "exits" => Some(Lines::Exits),
-        "1" | "all" => Some(Lines::All),
+        "1" | "exits" => Some(Lines::Exits),
         _ => None,
     }
 }
@@ -514,9 +513,7 @@ pub fn warp(
         return (None, placed);
     }
     let mut lines = pin_lines(board, grid.pitch);
-    if which == Lines::Exits {
-        lines.retain(|line| line.kind == LineKind::Exit);
-    }
+    lines.retain(|line| line.kind == LineKind::Exit);
     let min_gap = MIN_GAP * grid.pitch;
     let counts = [grid.nx, grid.ny];
     let mut result: [Vec<f64>; 2] = [Vec::new(), Vec::new()];
@@ -750,7 +747,8 @@ pub fn probe(board: &Board, grid: &crate::grid::Grid) {
     let lines = pin_lines(board, grid.pitch);
     let missed = missing(&lines, grid);
     let added = positions(&missed, 0.005);
-    for which in [Lines::Exits, Lines::All] {
+    {
+        let which = Lines::Exits;
         let (warp, placed) = warp(board, grid, which);
         eprintln!(
             "pin lines: pitch {} lattice {} x {}: {which:?}: x {:?}, y {:?}; lattice {} x {}",
@@ -1033,135 +1031,6 @@ mod tests {
         assert!((y[1] - 1.5).abs() < 1.0e-9);
     }
 
-    /// A gap of 0.75 mm in a wall of pads (a four-pad part) that two
-    /// 0.127 mm tracks at 0.127 mm clearance pass only 0.254 to 0.369 mm
-    /// apart: the laptop keyboard's F23 and ANT. One layer, a 0.125 mm
-    /// lattice: two of its lines are 0.25 or 0.375 mm apart, so one net
-    /// stays open whatever the phase; with the channel's lines both route,
-    /// and the routes keep every clearance.
-    fn wall_board(offset: f64) -> Board {
-        let class = RuleClass {
-            trace_width: 0.127,
-            clearance: 0.127,
-            via_diameter: 0.6,
-            via_drill: 0.3,
-            layers: 0,
-        };
-        let pad = |shape: Shape, net: Option<u32>, label: &str| Obstacle {
-            shape,
-            layers: 1,
-            kind: ObstacleKind::Copper,
-            net,
-            clearance: 0.0,
-            clearance_override: None,
-            plated: false,
-            blocks_tracks: true,
-            blocks_vias: true,
-            label: label.to_string(),
-        };
-        let gap_low = 1.6 + offset;
-        let mut obstacles = vec![
-            // The wall: two pads of U1 (no net), the gap between them.
-            pad(
-                rect([(gap_low - 2.0) / 2.0, 5.0], [gap_low + 2.0, 0.4]),
-                None,
-                "U1.1",
-            ),
-            pad(
-                rect(
-                    [(gap_low + 0.75 + 6.0) / 2.0, 5.0],
-                    [6.0 - gap_low - 0.75, 0.4],
-                ),
-                None,
-                "U1.2",
-            ),
-            pad(rect([0.5, 9.5], [0.2, 0.2]), None, "U1.3"),
-            pad(rect([3.5, 9.5], [0.2, 0.2]), None, "U1.4"),
-        ];
-        let mut nets = Vec::new();
-        for (net, x) in [(0u32, gap_low - 0.6), (1, gap_low + 1.35)] {
-            let mut terminals = Vec::new();
-            for (end, y) in [2.0, 8.0].into_iter().enumerate() {
-                obstacles.push(pad(
-                    rect([x, y], [0.6, 0.6]),
-                    Some(net),
-                    &format!("P{net}.{end}"),
-                ));
-                terminals.push(Terminal {
-                    anchor: [x, y],
-                    layers: 1,
-                    pad: obstacles.len() - 1,
-                    contact: None,
-                    label: format!("P{net}.{end}"),
-                });
-            }
-            nets.push(Net {
-                name: format!("N{net}"),
-                class: 0,
-                terminals,
-            });
-        }
-        Board {
-            layer_count: 1,
-            outline: vec![[0.0, 0.0], [4.0, 0.0], [4.0, 10.0], [0.0, 10.0]],
-            edge_clearance: 0.1,
-            hole_clearance: 0.1,
-            hole_to_hole: 0.1,
-            classes: vec![class],
-            neck_width: 0.0,
-            obstacles,
-            nets,
-            planes: Vec::new(),
-            solid_pads: Vec::new(),
-            isolated_pads: Vec::new(),
-            solid_pad_obstacles: Vec::new(),
-            isolated_pad_obstacles: Vec::new(),
-            pad_spokes: Default::default(),
-            merged_pads: Vec::new(),
-            no_via_pads: Vec::new(),
-            fill_passes: Vec::new(),
-            pin_row_gaps: Vec::new(),
-            terminal_copper: Vec::new(),
-            attachment: Default::default(),
-            via_spans: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn two_tracks_pass_a_channel_the_regular_lattice_holds_one_of() {
-        let open_at = |which: Lines| {
-            let config = crate::Config {
-                pitches: vec![0.125],
-                pin_lines: which,
-                ..crate::Config::default()
-            };
-            let mut open = Vec::new();
-            for step in 0..5 {
-                let offset = step as f64 * 0.025;
-                let board = wall_board(offset);
-                let result = crate::route(&board, &config);
-                let violations = crate::verify(&board, &result.routes);
-                assert!(
-                    violations.is_empty(),
-                    "{which:?} offset {offset}: {violations:?}"
-                );
-                assert_eq!(result.grid.warp.is_some(), which != Lines::Off);
-                let routed = result
-                    .status
-                    .iter()
-                    .filter(|status| **status == crate::NetStatus::Routed)
-                    .count();
-                if routed < 2 {
-                    open.push(offset);
-                }
-            }
-            open
-        };
-        assert_eq!(open_at(Lines::Off).len(), 5);
-        let open = open_at(Lines::All);
-        assert!(open.is_empty(), "open at offsets {open:?}");
-    }
-
     #[test]
     fn a_warped_lattice_keeps_its_regular_lines_and_indexes_by_its_tables() {
         // Exact-fit rows at a phase the lattice misses: the warp moves or
@@ -1254,6 +1123,82 @@ mod tests {
         // Off, or a board whose rows the lattice holds: no warp.
         assert!(super::lattice(&board, &[0.1], Lines::Off).warp.is_none());
         let aligned = row_board([2.0, 3.0], 6, 0.4, [0.2, 0.8], 0.2, 0.2);
-        assert!(super::lattice(&aligned, &[0.1], Lines::All).warp.is_none());
+        assert!(
+            super::lattice(&aligned, &[0.1], Lines::Exits)
+                .warp
+                .is_none()
+        );
+    }
+
+    /// Two exact-fit rows (0.4 mm pitch, 0.2 mm pads, track and clearance)
+    /// of two parts at phases 0.033 mm apart, one layer: the longer row
+    /// decides the regular lattice's phase, and the other's pads leave only
+    /// along their centre lines, each to a pad of its net fanned out
+    /// below. Without pin lines the misaligned row's pads stay open; with
+    /// the exits' lines (the row's band) every net routes, and the routes
+    /// keep every clearance.
+    #[test]
+    fn an_exact_fit_row_off_the_lattice_routes_with_its_band() {
+        let mut board = row_board([2.033, 3.0], 6, 0.4, [0.2, 0.8], 0.2, 0.2);
+        board.layer_count = 1;
+        board.outline = vec![[0.0, 0.0], [10.0, 0.0], [10.0, 9.0], [0.0, 9.0]];
+        for obstacle in &mut board.obstacles {
+            obstacle.layers = 1;
+        }
+        for net in &mut board.nets {
+            net.terminals[0].layers = 1;
+        }
+        let other = row_board([6.0, 1.0], 8, 0.4, [0.2, 0.8], 0.2, 0.2);
+        for (index, mut net) in other.nets.into_iter().enumerate() {
+            let mut obstacle = other.obstacles[index].clone();
+            obstacle.label = format!("U2.{}", index + 1);
+            obstacle.net = Some(board.nets.len() as u32);
+            obstacle.layers = 1;
+            board.obstacles.push(obstacle);
+            net.terminals[0].pad = board.obstacles.len() - 1;
+            net.terminals[0].label = format!("U2.{}", index + 1);
+            net.terminals[0].layers = 1;
+            board.nets.push(net);
+        }
+        // Each U1 pad's net goes to a pad 1 mm apart from the next, 4 mm
+        // below the row.
+        for index in 0..6 {
+            let at = [0.8 + index as f64 * 1.2, 7.5];
+            board.obstacles.push(Obstacle {
+                shape: rect(at, [0.6, 0.6]),
+                layers: 1,
+                kind: ObstacleKind::Copper,
+                net: Some(index as u32),
+                clearance: 0.0,
+                clearance_override: None,
+                plated: false,
+                blocks_tracks: true,
+                blocks_vias: true,
+                label: format!("P{index}.1"),
+            });
+            board.nets[index].terminals.push(Terminal {
+                anchor: at,
+                layers: 1,
+                pad: board.obstacles.len() - 1,
+                contact: None,
+                label: format!("P{index}.1"),
+            });
+        }
+        let open_with = |which: Lines| {
+            let config = crate::Config {
+                pitches: vec![0.1],
+                pin_lines: which,
+                ..crate::Config::default()
+            };
+            let result = crate::route(&board, &config);
+            let violations = crate::verify(&board, &result.routes);
+            assert!(violations.is_empty(), "{which:?}: {violations:?}");
+            assert_eq!(result.grid.warp.is_some(), which == Lines::Exits);
+            (0..6)
+                .filter(|net| result.status[*net] != crate::NetStatus::Routed)
+                .count()
+        };
+        assert!(open_with(Lines::Off) > 0);
+        assert_eq!(open_with(Lines::Exits), 0);
     }
 }

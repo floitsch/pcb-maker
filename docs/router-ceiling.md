@@ -648,6 +648,36 @@ room the negotiation used (jetson's tracks rung 4 -> 24 open). Taken
 out; the census refresh (the rows, the designer's own exits) is in
 router.md's section.
 
+## Design 3: lattice lines at pin rows (the geometry, not a plan)
+
+**What the evidence says.** Design 2's lesson was that fixed exits take
+room the negotiation needs; the rows' remaining failures are geometric:
+RP2040_base's two QFN-56 (0.4 mm rows at 0.2/0.2, an exact fit) lie at
+phases the one regular lattice cannot both hold (U19 0.021/0.024 mm off
+the 0.1 mm lattice, U15 0.035 mm), and the keyboard's F23 needs two
+necked tracks 0.254 to 0.369 mm apart that a 0.125 mm lattice misses by
+4 um. Moving the two QFNs onto the lattice in the board file (the oracle)
+takes RP2040_base from 36 to 4 open.
+
+**What changes** (docs/router.md, "Lattice lines at pin rows
+(2026-11-07)"). The lattice's lines become per-axis coordinate tables
+(`Grid::warp`), indices and step costs unchanged; a part whose row exits
+share a phase gets the lattice at that phase over its rows and 1 mm
+around (a band, taken where the band's narrow pads vote for it), other
+exits single lines; footprints are measured on the lines where they are
+not a pitch apart (exact as before; on the regular lattice the measured
+footprints are the offsets cell for cell). The off path is main's code.
+
+**Status (2026-11-07, branch row-lattice): measured; off by default, a
+router setting for agents** (`pin_lines`). On the rows: RP2040_base 36 ->
+5, vaio_re 11 -> 3, the census's no-straight-way pads 78 -> 44 on the
+fourteen row boards. On the designer tier (scale 0.647): 76 -> 77 strict
+(OpenAirScope, koeg-board, split72_right gained; Quanta75_BareRP2040 and
+split72_left lost), 2709 -> 2679 unconnected; the expansion tier 25 -> 28
+strict with none lost; the short tier unchanged. The rule's "none lost"
+fails, so it is not the default; the channels' lines (F23) measured on
+two boards and left out.
+
 ## The estimate
 
 Per design, by the boards of its class (a board counts where the

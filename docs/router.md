@@ -7973,7 +7973,8 @@ two parts of such rows at different phases cannot both have them. The
 change puts lattice lines where the pins are; the search, the negotiation
 and the writer keep their arithmetic.
 
-**What the pins ask for** (`pin_lines::pin_lines`). Per pad of a part with
+**What the pins ask for** (`pin_lines::pin_lines`; the setting places
+the exits' lines only, the channels' were measured and left out, below). Per pad of a part with
 four copper pads or more (`MIN_PART_PADS`, the fan-out plan's rule; a
 passive's two pads and a SOT-23 ask for nothing), per axis: its nearest
 facing pad on each side (sharing a layer, overlapping it across the axis,
@@ -7998,18 +7999,23 @@ of the pitch has a line within a wider one.
    of no shift: it keeps others' bands off its rows). Every regular line in
    a band is shifted by the part's phase (within half a pitch either way):
    inside it the lattice is the regular one at the part's phase, and only
-   the band's two edges are a step that is not the pitch.
-2. *Single lines*, for the asked lines no band and no regular line holds
-   (exits first, then the narrowest): added between their neighbours where
+   the band's two edges are a step that is not the pitch. A band is taken
+   only where the narrow pads inside it (narrower than 0.35 mm across the
+   axis, the pads `Grid::choose` counts) vote for the part's phase rather
+   than the lattice's: on 4in1-panel the first bands shifted 433 of 645
+   lines of an axis across the panel's copies and the board went 34 -> 63
+   open; with the vote 41.
+2. *Single lines*, for the exits no band and no regular line holds: added between their neighbours where
    both are `MIN_GAP` (a quarter pitch) away, else the nearer regular line
    no pin holds is moved onto them; at most `MAX_ADDED` (10 %) of an axis's
    lines are added.
 The first build added and moved single lines only. On RP2040_base it took
-the board from 36 to 21 (exits) and 18 (exits and channels) KiCad
-unconnected items where the oracle below reached 4: single moved and added
+the board from 36 to 21 KiCad unconnected items (exits; 18 with the
+channels' lines) where the oracle below reached 4: single moved and added
 lines make every column they touch irregular across the whole board, and
-parallel diagonal runs through irregular columns do not keep their spacing.
-Bands keep the rows' surroundings a regular lattice: 5.
+parallel diagonal runs through irregular columns do not keep their
+spacing. Bands keep the rows' surroundings a regular lattice: 5 (12 with
+the channels' lines on top).
 
 **The lattice** (`Grid::warp`, `Warp`). Indices stay row-major over
 `nx` by `ny`, and a neighbour is still one index step away: what changes
@@ -8057,9 +8063,133 @@ widths are not one line).
 
 **The finer pitches.** The lines are placed on every lattice the ladder
 builds (the regular pitch and the finer rungs' 0.075 and 0.05 mm, each at
-its own phases).
+its phases). The finer rungs do not become unnecessary: where a band
+aligns a row the regular rung usually wins earlier (RP2040_base, ATAT1800,
+koeg-board and OpenAirScope stop with less work), but BAGEL's 0.075 mm rung
+and Glasgow's are as before; a row whose pitch is no multiple of the
+lattice's (0.4 mm on 0.125) gets single lines, not a band.
 
-MEASURED-PLACEHOLDER
+**The probe** (`PCB_ROUTER_PIN_LINES_PROBE`; `build/lat1/row/probe2`,
+`probe4`, the 109 designer-tier placements). 87 boards ask for lines at
+the regular pitch (2270 exits, 9934 channel tracks); the regular lattice
+misses an exit line on 25 and some line on 81. With the exits only, the
+lattice changes on 32 boards (any of the ladder's pitches) and on 24 at
+the regular pitch, by 0 to +2.3 % nodes (ATAT1800: 3952 x 1227 -> 3973 x
+1248); a finer rung by at most +3.4 % (RP2040_base at 0.075 mm). On
+RP2040_base the regular 0.1 mm lattice misses all 56 exits of U19 (0.021
+mm off in x, 0.024 in y) and U15's 28 in x (0.035 mm); at 0.05 mm still
+U15's 56 and U19's 28. Its 0.1 mm lattice gets three bands (144 and 72
+lines shifted) and no node more.
+
+**The oracle** (`build/lat1/row/o1`). U19 and U15 moved in the board file
+by those offsets onto the lattice, routed at the tier's conditions (scale
+0.647, 970.5 s of work, one thread, rates pinned): 36 -> **4** KiCad
+unconnected, the census's "no straight way out" 35 -> 2. The lattice's
+phase was what held the rows.
+
+**The rows** (route mode at the designer tier's conditions,
+`PCB_ROUTER_TROUBLE_WHY`; off and exits on one binary, `pin_lines` the
+only difference; `build/lat1/row/b16-*`, `tier-*`; binary c, the 4in1-panel
+and the six other boards the tier reran on c; KiCad unconnected / strict;
+the census per open pad of the kept attempt (the nearest attempt before
+it with a census where a step was kept): no straight way out / every way
+closed / a crossing pair):
+
+| Board | off | exits | rows (off -> exits) |
+| --- | --- | --- | --- |
+| RP2040_base | 36 / no | **5** / no | 35/0/0 -> 1/2/0 |
+| vaio_re | 11 / no | **3** / no | 1/4/3 -> 1/2/5 |
+| poly_corne_split42_right | 2 / no | 1 / no (0 / **pass** on binary b, before the band vote) | 1/0/1 -> 0/0/1 |
+| eurorack-pmod-pcb | 1 / no | 1 / no | 1/4/2 -> 1/3/0 |
+| 4in1-panel | 34 / no | 41 / no (63 before the vote) | 1/12/8 -> 2/12/7 |
+| Sisu_SSE-9 | 1 / no | 2 / no | 0/0/0 -> 0/0/0 |
+| laptop keyboard | 2 / no | 2 / no | 3/1/4 -> 3/1/4 |
+| glasgow revC3, video, DSP-ADAU1452, BAGEL-MK1.1-Avocado, 4in1, 4in1-mini, OpenRX-panel-rev2, two molecules | the same | the same (no lattice changed but Glasgow's 0.075 mm rung, which did not run) | the same |
+
+Over the fourteen boards (molecules aside) the census's open row pads go
+no straight way out 78 -> 44, every way closed 61 -> 60, crossing pairs
+40 -> 39; KiCad unconnected 1230 -> 1198. The rows the lattice held keep
+their items: OpenRX's U201/U301 and DSP-ADAU1452's "no straight way" pads
+ask for no line (their exits have room or are walled by other copper),
+and the crossing pairs are the negotiation's. **The keyboard's F23**
+connects only with the channels' lines (`all` on the branch: 2 -> 1, the
+RESET item the input's); the exits leave it open.
+
+**The designer tier** (109 boards at scale 0.647). Off is main's code by
+construction where no lattice changes; on the 32 boards whose lattices the
+exits change both arms ran on binary c, and the off arm equals main's rows
+(build/pad1's designer runs and the plated rows: the same strict passes and
+2709 unconnected). The other 77 boards route byte for byte as main.
+
+| | strict | per type | KiCad unconnected |
+| --- | ---: | ---: | ---: |
+| main (off) | 76 | | 2709 |
+| exits | **77** | | **2679** |
+
+Changed boards (off -> exits, KiCad unconnected / strict):
+
+| Board | off | exits | why |
+| --- | --- | --- | --- |
+| OpenAirScope | 1 / no | 0 / **pass** | 7 single lines at 0.1 mm; the regular rung completes at 282 s of work (819 s) |
+| koeg-board-pcb | 2 / no | 0 / **pass** | 5 lines added and 1 moved at 0.1 mm; 368 s of work (817) |
+| poly_kybd_split72_right | 1 / no | 0 / **pass** | the RP2040's band on y at 0.1 mm (30 lines), 20 single lines at 0.075 mm |
+| Quanta75_BareRP2040 | 0 / pass | 2 / **no** (shorting_items 1, solder_mask_bridge 7) | three bands at 0.1 mm; KiCad finds an I2C1-SDA via at (82.10, 82.51) shorted to the '0bsilab' knockout plate (router-ceiling's bug 2: the router models the plate by a box of the stand-in font KiCad draws) and the mask bridges with it; two pads stay open |
+| poly_kybd_split72_left | 0 / pass | 1 / **no** | the same band at 0.1 mm, 2 lines added; 19 at 0.075 mm |
+| RP2040_base | 36 / no | 5 / no | the rows |
+| vaio_re | 11 / no | 3 / no | one line |
+| vd-rd module | 3 / no | 1 / no | 15 lines at 0.075 mm, a band at 0.05 mm |
+| poly_corne_split42_right | 2 / no | 1 / no | the band on y at 0.1 mm; 0 / pass on binary b, before the vote |
+| 4in1-panel | 34 / no | 41 / no | five bands (433 lines shifted on y) |
+| katia | 15 / no | 17 / no | a band (the input's by its GND) |
+| link, Batch_1, Hub, Sisu_SSE-9 | 1, 2, 2, 1 | 2, 3, 3, 2 | routes moved |
+| ATAT1800, TelemetryOnboard, MotionCube, krishveercard, silkscreen_pcb, little_red_rover, two chiffre, corne_left, bumwings core, ghoul | pass each | pass each | ATAT1800 at 459 s of work (982) |
+| reCamera, SUMEC, eurorack, Quanta75 RP2040Stamp, capybully, the keyboard, Glasgow | the same open | the same | |
+
+So +3 strict passes and -2, 2709 -> 2679 unconnected.
+
+**The guards** (pin lines on against main's code):
+- *The expansion tier* (46 boards, 30 s, route mode; both arms on binary
+  b; the off arm equals build/lad1/expansion-head row for row): 25 ->
+  **28 strict** (EwoudVV bms 7 -> 0, ED052TC4-Adapter 4 -> 0,
+  power-manifold backplane 2 -> 0), none lost, 557 -> 524 unconnected
+  (driver_cplex_rp2040 87 -> 66, MSign 19 -> 13; worse:
+  rpi_cm5_dronecarrier 1 -> 8).
+- *The short tier* (12 layouts at its budget, 1 x 2): identical to
+  build/lad1/short-head row for row (7 strict, 21 open): no layout's
+  lattice got a line its result shows.
+- *The fingerprints* (Castor, k30-SBC, jetson, Sisu; route mode from v16,
+  1 x 4, a quarter budget): FINGERPRINTS-PLACEHOLDER
+
+**Work and CPU.** The lines cost no search work of their own: a step
+costs what it cost. The measured footprints run only in windows that are
+not regular (inside a band none; at its edges and around single lines).
+Two pinned pairs each (one binary, off and exits side by side on disjoint
+cores, then swapped; user CPU seconds of the route): RP2040_base 870.8 and
+857.1 -> 643.3 and 607.4 (-26 %, -29 %), ATAT1800 1189.2 and 1227.6 ->
+593.1 and 597.7 (-50 %, -51 %); both because the ladder ends sooner
+(RP2040_base 961 -> 655 s of work, ATAT1800 982 -> 459 s), not because a
+search is cheaper.
+
+**Decision: off by default; the setting stays for agents** (the router
+settings' `pin_lines`, `PCB_ROUTER_PIN_LINES=1`). The rule (on only if
+the designer tier gains strict passes with none lost and the guards hold)
+fails on its second clause: +3 -2 on the tier (Quanta75_BareRP2040 and
+split72_left lost), though the expansion tier gains three with none lost
+and the short tier does not move. What it does is per board: where the
+open items are pads of exact-fit rows at a phase the lattice misses
+(RP2040_base 36 -> 5, vaio_re 11 -> 3, module 3 -> 1) it is the lever the
+rows lacked; elsewhere it moves routes like any lattice change. Agents
+get it as a setting with that use (agents.md). The channels' lines
+(`all`) are out: RP2040_base 5 -> 12 with them, and the one channel they
+were for (F23) is on a board the input fails.
+
+**Next.** The remaining no-way pads of the census are not the lattice's
+(OpenRX's U201/U301, DSP-ADAU1452's: room or other copper); a band could
+be chosen per rung rather than per board (split72's losses are its finer
+rung's); the report could name the rows the lattice misses
+(`pin_lines::missing`) so that an agent sees when to set it; the copper
+text plate's extent (Quanta75) is a modelling gap of its own.
+
 
 ## Blind, buried and micro vias (2026-11-05)
 
