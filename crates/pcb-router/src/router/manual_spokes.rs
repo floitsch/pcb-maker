@@ -280,7 +280,7 @@ impl Router {
         let cells = self.grid.cells();
         let nx = self.grid.nx as i64;
         let ny = self.grid.ny as i64;
-        let reach = (2.5 / self.grid.pitch).ceil() as i64;
+        let reach = (2.5 / self.grid.steps().0).ceil() as i64;
         let mut added = 0;
         {
             // Per pad and layer: tracks tried; a failed try ends its tries.

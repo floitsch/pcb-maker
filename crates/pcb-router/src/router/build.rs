@@ -105,7 +105,7 @@ impl Router {
     /// copper layers).
     pub fn try_new(board: &Board, config: &Config) -> Result<Self, String> {
         crate::grid::check_capacity(board)?;
-        Grid::choose(board, &config.pitches).check_size()?;
+        crate::pin_lines::lattice(board, &config.pitches, config.pin_lines).check_size()?;
         Ok(Self::new(board, config))
     }
 
@@ -130,7 +130,7 @@ impl Router {
         let built = std::time::Instant::now();
         let (board, neck_of, class_rules) = Self::with_neck_classes(board, config);
         let board = &board;
-        let grid = Grid::choose(board, &config.pitches);
+        let grid = crate::pin_lines::lattice(board, &config.pitches, config.pin_lines);
         // Before any map is allocated (pcb-kicad's lowering refuses a
         // board whose lattice does not fit the memory first).
         if let Err(message) = grid.check_size() {
@@ -177,7 +177,10 @@ impl Router {
             } else {
                 0
             };
-        let step = grid.pitch * std::f64::consts::SQRT_2;
+        // The longest step (on a lattice with lines at the pins, where
+        // the lines are not a pitch apart: the snapping error is its).
+        let longest = grid.steps().1;
+        let step = longest * std::f64::consts::SQRT_2;
         let variants = class_rules
             .as_ref()
             .map_or(1, |split| split.resolved.variants);
@@ -234,7 +237,7 @@ impl Router {
                         // `diagonal_extra`; the search checks the cells a
                         // diagonal step cuts).
                         let with_margin = |radius: f64| radius;
-                        let snap = grid.pitch * 0.75 + step * step / (4.0 * grid.pitch);
+                        let snap = longest * 0.75 + step * step / (4.0 * longest);
                         let trace_radius =
                             own.trace_width / 2.0 + other.trace_width / 2.0 + trace_clearance;
                         // Copper keeps the copper clearance from a via's
@@ -249,6 +252,14 @@ impl Router {
                             (own.via_diameter / 2.0 + other.trace_width / 2.0 + rule(VIA, TRACK))
                                 .max(own.via_drill / 2.0 + other.trace_width / 2.0 + hole);
                         let via_clearance = rule(VIA, VIA);
+                        let trace_to_trace_radius =
+                            own.trace_width / 2.0 + other.trace_width / 2.0 + trace_clearance;
+                        let via_to_via_radius = (own.via_diameter / 2.0
+                            + other.via_diameter / 2.0
+                            + via_clearance)
+                            .max(own.via_drill / 2.0 + other.via_drill / 2.0 + board.hole_to_hole)
+                            .max(own.via_drill / 2.0 + other.via_diameter / 2.0 + hole)
+                            .max(own.via_diameter / 2.0 + other.via_drill / 2.0 + hole);
                         Stamps {
                             diagonal_to_trace: diagonal_extra(trace_radius, grid.pitch),
                             diagonal_to_via: diagonal_extra(via_radius, grid.pitch),
@@ -262,27 +273,23 @@ impl Router {
                             stub_diagonal_block: diagonal_block(trace_radius + snap, grid.pitch),
                             stub_to_trace: disc(trace_radius + snap, grid.pitch),
                             stub_to_via: disc(with_margin(via_radius) + snap, grid.pitch),
-                            trace_to_trace: disc(
-                                with_margin(
-                                    own.trace_width / 2.0
-                                        + other.trace_width / 2.0
-                                        + trace_clearance,
-                                ),
-                                grid.pitch,
-                            ),
+                            trace_to_trace: disc(with_margin(trace_to_trace_radius), grid.pitch),
                             trace_to_via: disc(with_margin(via_radius), grid.pitch),
                             via_to_trace: disc(with_margin(own_via_radius), grid.pitch),
-                            via_to_via: disc(
-                                (own.via_diameter / 2.0 + other.via_diameter / 2.0 + via_clearance)
-                                    .max(
-                                        own.via_drill / 2.0
-                                            + other.via_drill / 2.0
-                                            + board.hole_to_hole,
-                                    )
-                                    .max(own.via_drill / 2.0 + other.via_diameter / 2.0 + hole)
-                                    .max(own.via_diameter / 2.0 + other.via_drill / 2.0 + hole),
-                                grid.pitch,
-                            ),
+                            via_to_via: disc(via_to_via_radius, grid.pitch),
+                            radii: Radii {
+                                stub_to_trace: radius_nm(trace_radius + snap),
+                                stub_to_via: radius_nm(with_margin(via_radius) + snap),
+                                trace_to_trace: radius_nm(with_margin(trace_to_trace_radius)),
+                                trace_to_via: radius_nm(with_margin(via_radius)),
+                                via_to_trace: radius_nm(with_margin(own_via_radius)),
+                                via_to_via: radius_nm(via_to_via_radius),
+                                diagonal_to_trace: radius_nm(trace_radius),
+                                diagonal_to_via: radius_nm(via_radius),
+                                diagonal_block: radius_nm(trace_radius),
+                                diagonal_block_via: radius_nm(own_via_radius),
+                                stub_diagonal_block: radius_nm(trace_radius + snap),
+                            },
                             fresh: Fresh::default(),
                         }
                     })
@@ -776,7 +783,9 @@ impl Router {
         self.pin_row_nets.push((0, 0));
         self.pin_row_costs.push(0.0);
         self.pin_row_cleanup_costs.push(0.0);
-        let pitch = self.grid.pitch;
+        // Half the longest step around the gap's line (lines at the pins
+        // may lie farther apart than the pitch).
+        let pitch = self.grid.steps().1;
         let owner = |net: Option<NetId>| net.map_or(0, crate::grid::owner);
         // The negotiation's gaps first: of a node's gaps the first stays,
         // so a clean-up-only gap takes no node of one charged everywhere
@@ -1386,6 +1395,11 @@ fn statics_key(board: &Board, grid: &Grid, searched: &[bool], rules: Option<&Cla
     for obstacle in &board.obstacles {
         let _ = write!(feed, "{obstacle:?}");
     }
+    // The lines where the pins are (a lattice of the same pitch, origin
+    // and size may hold other lines).
+    if let Some(warp) = &grid.warp {
+        let _ = write!(feed, "warp {:?}", warp.nm);
+    }
     ((feed.0[0].finish() as u128) << 64) | feed.0[1].finish() as u128
 }
 
@@ -1516,7 +1530,7 @@ fn statics_inputs(
     config: &Config,
 ) -> (Board, Grid, Vec<bool>, Option<Arc<ClassRules>>) {
     let (board, neck_of, class_rules) = Router::with_neck_classes(board, config);
-    let grid = Grid::choose(&board, &config.pitches);
+    let grid = crate::pin_lines::lattice(&board, &config.pitches, config.pin_lines);
     let searched = searched_classes(&board, &neck_of);
     (board, grid, searched, class_rules)
 }

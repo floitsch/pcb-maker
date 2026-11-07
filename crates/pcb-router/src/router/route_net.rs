@@ -331,8 +331,8 @@ impl Router {
                     }
                     let anchor = self.board.nets[net as usize].terminals[element].anchor;
                     points.push((
-                        ((anchor[0] - self.grid.origin[0]) / self.grid.pitch).round() as i32,
-                        ((anchor[1] - self.grid.origin[1]) / self.grid.pitch).round() as i32,
+                        self.grid.index_of(0, anchor[0]).round() as i32,
+                        self.grid.index_of(1, anchor[1]).round() as i32,
                         // Rounding the anchor to a node costs at most one pitch.
                         net_state.terminal_reach[element] + pitch,
                     ));

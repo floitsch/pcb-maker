@@ -272,7 +272,7 @@ impl Router {
         let terminal_base = pours.pieces + 1;
         let branch_base = terminal_base + terminal_count;
         let mut parent: Vec<usize> = (0..branch_base + state.branches.len()).collect();
-        let reach = (0.8 / self.grid.pitch).ceil() as usize;
+        let reach = (0.8 / self.grid.steps().0).ceil() as usize;
         let near = crate::pour::NearOrder::new(reach);
         let union = |parent: &mut Vec<usize>, a: usize, b: usize| {
             let (a, b) = (find(parent, a), find(parent, b));

@@ -1696,6 +1696,18 @@ impl Router {
                         copper + self.board.classes[state.plane_class[layer]].trace_width / 2.0;
                     let cells = (reach / pitch).floor() as i64;
                     let (x, y) = self.grid.xy(node.cell as usize);
+                    if self.grid.warp.is_some() {
+                        // Lines at the pins: the nodes within the reach,
+                        // measured (`disc_cells` leaves the radius out).
+                        self.grid
+                            .disc_cells(x, y, (reach * 1.0e6).round() as i64 + 1, |cell| {
+                                let piece = labels[cell];
+                                if piece != 0 {
+                                    add(&mut seen, piece, run, &mut marks);
+                                }
+                            });
+                        continue;
+                    }
                     for dy in -cells..=cells {
                         for dx in -cells..=cells {
                             if ((dx * dx + dy * dy) as f64) * pitch * pitch > reach * reach {

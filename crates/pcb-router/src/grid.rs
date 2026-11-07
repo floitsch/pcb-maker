@@ -187,6 +187,81 @@ pub struct Grid {
     pub pitch: f64,
     pub nx: usize,
     pub ny: usize,
+    /// Lattice lines where the pins are (`crate::pin_lines`): the lines'
+    /// coordinates per axis where they are not `origin + k * pitch`; `None`
+    /// for the regular lattice. Indices stay row-major over `nx` by `ny`,
+    /// and every neighbour is still one index step away: only the
+    /// coordinates of the lines differ (docs/router.md, "Lattice lines at
+    /// pin rows (2026-11-07)").
+    pub warp: Option<std::sync::Arc<Warp>>,
+}
+
+/// The coordinates of a lattice whose lines are not all `pitch` apart
+/// (`Grid::warp`).
+#[derive(Debug, PartialEq)]
+pub struct Warp {
+    /// Per axis, every line's coordinate in mm, ascending: a regular line
+    /// keeps `origin + k * pitch` to the bit, an added or moved line lies
+    /// on whole nanometres.
+    pub lines: [Vec<f64>; 2],
+    /// The same in whole nanometres.
+    pub nm: [Vec<i64>; 2],
+    /// Per axis and line `i`: how many of the steps up to it (from line
+    /// `i - 1` to `i`, for `1..=i`) are not the pitch. A window of lines
+    /// with none is a piece of the regular lattice, where the footprints'
+    /// offsets hold.
+    pub breaks: [Vec<u32>; 2],
+    /// The shortest and the longest step between neighbouring lines (mm).
+    pub min_step: f64,
+    pub max_step: f64,
+    /// Lines added and regular lines moved, per axis.
+    pub added: [usize; 2],
+    pub moved: [usize; 2],
+}
+
+impl Warp {
+    /// The warp of `lines` (per axis, ascending, whole nanometres where not
+    /// regular) on a lattice of `pitch`.
+    pub fn new(lines: [Vec<f64>; 2], pitch: f64, added: [usize; 2], moved: [usize; 2]) -> Self {
+        let pitch_nm = (pitch * 1.0e6).round() as i64;
+        let nm = lines.each_ref().map(|lines| {
+            lines
+                .iter()
+                .map(|value| (value * 1.0e6).round() as i64)
+                .collect::<Vec<_>>()
+        });
+        let mut min_step = f64::INFINITY;
+        let mut max_step: f64 = 0.0;
+        let breaks = nm.each_ref().map(|nm| {
+            let mut count = 0u32;
+            let mut prefix = Vec::with_capacity(nm.len());
+            for (index, value) in nm.iter().enumerate() {
+                if index > 0 {
+                    let step = value - nm[index - 1];
+                    if step != pitch_nm {
+                        count += 1;
+                    }
+                    min_step = min_step.min(step as f64 / 1.0e6);
+                    max_step = max_step.max(step as f64 / 1.0e6);
+                }
+                prefix.push(count);
+            }
+            prefix
+        });
+        Self {
+            lines,
+            nm,
+            breaks,
+            min_step: if min_step.is_finite() {
+                min_step
+            } else {
+                pitch
+            },
+            max_step: max_step.max(pitch),
+            added,
+            moved,
+        }
+    }
 }
 
 /// Channels between neighbouring pads that a track of the narrowest class
@@ -335,10 +410,263 @@ impl Grid {
     }
 
     pub fn center(&self, x: usize, y: usize) -> Point {
-        [
-            self.origin[0] + x as f64 * self.pitch,
-            self.origin[1] + y as f64 * self.pitch,
-        ]
+        match &self.warp {
+            None => [
+                self.origin[0] + x as f64 * self.pitch,
+                self.origin[1] + y as f64 * self.pitch,
+            ],
+            Some(warp) => [warp.lines[0][x], warp.lines[1][y]],
+        }
+    }
+
+    /// The coordinate of line `index` on `axis` (0: x), also beyond the
+    /// lattice (a pitch a line past its ends).
+    pub fn coordinate(&self, axis: usize, index: i64) -> f64 {
+        match &self.warp {
+            None => self.origin[axis] + index as f64 * self.pitch,
+            Some(warp) => {
+                let lines = &warp.lines[axis];
+                let last = lines.len() as i64 - 1;
+                if index < 0 {
+                    lines[0] + index as f64 * self.pitch
+                } else if index > last {
+                    lines[last as usize] + (index - last) as f64 * self.pitch
+                } else {
+                    lines[index as usize]
+                }
+            }
+        }
+    }
+
+    /// `coordinate` in whole nanometres.
+    pub fn coordinate_nm(&self, axis: usize, index: i64) -> i64 {
+        match &self.warp {
+            Some(warp) if index >= 0 && (index as usize) < warp.nm[axis].len() => {
+                warp.nm[axis][index as usize]
+            }
+            _ => (self.coordinate(axis, index) * 1.0e6).round() as i64,
+        }
+    }
+
+    /// The fractional index of `value` on `axis`: `(value - origin) /
+    /// pitch` on the regular lattice; between two lines of a warped one
+    /// the fraction of their step (beyond its ends by the pitch).
+    pub fn index_of(&self, axis: usize, value: f64) -> f64 {
+        match &self.warp {
+            None => (value - self.origin[axis]) / self.pitch,
+            Some(warp) => {
+                let lines = &warp.lines[axis];
+                let last = lines.len() - 1;
+                if value <= lines[0] {
+                    return (value - lines[0]) / self.pitch;
+                }
+                if value >= lines[last] {
+                    return last as f64 + (value - lines[last]) / self.pitch;
+                }
+                let above = lines.partition_point(|line| *line <= value);
+                let below = above - 1;
+                below as f64 + (value - lines[below]) / (lines[above] - lines[below])
+            }
+        }
+    }
+
+    /// The shortest and the longest step between neighbouring lines.
+    pub fn steps(&self) -> (f64, f64) {
+        self.warp.as_ref().map_or((self.pitch, self.pitch), |warp| {
+            (warp.min_step, warp.max_step)
+        })
+    }
+
+    /// Whether every step between the lines within `reach` of `(x, y)` on
+    /// both axes is the pitch: there a footprint's offsets (computed for
+    /// the regular lattice) are exact.
+    #[inline]
+    pub fn uniform_around(&self, x: usize, y: usize, reach: i64) -> bool {
+        let Some(warp) = &self.warp else {
+            return true;
+        };
+        let reach = reach.max(0) as usize;
+        [(x, 0), (y, 1)].iter().all(|&(at, axis)| {
+            let breaks = &warp.breaks[axis];
+            let low = at.saturating_sub(reach);
+            let high = (at + reach).min(breaks.len() - 1);
+            breaks[high] == breaks[low]
+        })
+    }
+
+    /// The index range of the lines on `axis` within `[low, high]` (nm),
+    /// clamped to the lattice; None when no line lies there.
+    fn lines_within_nm(&self, axis: usize, low: i64, high: i64) -> Option<(usize, usize)> {
+        let count = if axis == 0 { self.nx } else { self.ny };
+        let (first, last) = match &self.warp {
+            Some(warp) => {
+                let nm = &warp.nm[axis];
+                (
+                    nm.partition_point(|line| *line < low),
+                    nm.partition_point(|line| *line <= high),
+                )
+            }
+            None => {
+                let origin = (self.origin[axis] * 1.0e6).round() as i64;
+                let pitch = (self.pitch * 1.0e6).round() as i64;
+                let first = (low - origin + pitch - 1).div_euclid(pitch).max(0) as usize;
+                let last = ((high - origin).div_euclid(pitch) + 1).max(0) as usize;
+                (first.min(count), last.min(count))
+            }
+        };
+        (first < last).then_some((first, last - 1))
+    }
+
+    /// Calls `mark` with every node closer than `radius_nm` to the node
+    /// `(x, y)`, in whole nanometres (a node at the radius is not: two
+    /// tracks at exactly their clearance are legal). On the regular lattice
+    /// these are `disc`'s offsets; this is the footprint where the lines
+    /// are not a pitch apart.
+    pub fn disc_cells(&self, x: usize, y: usize, radius_nm: i64, mut mark: impl FnMut(usize)) {
+        let (cx, cy) = (
+            self.coordinate_nm(0, x as i64),
+            self.coordinate_nm(1, y as i64),
+        );
+        let r2 = radius_nm as i128 * radius_nm as i128;
+        let Some((y0, y1)) = self.lines_within_nm(1, cy - radius_nm, cy + radius_nm) else {
+            return;
+        };
+        let Some((x0, x1)) = self.lines_within_nm(0, cx - radius_nm, cx + radius_nm) else {
+            return;
+        };
+        for ty in y0..=y1 {
+            let dy = (self.coordinate_nm(1, ty as i64) - cy) as i128;
+            for tx in x0..=x1 {
+                let dx = (self.coordinate_nm(0, tx as i64) - cx) as i128;
+                if dx * dx + dy * dy < r2 {
+                    mark(self.index(tx, ty));
+                }
+            }
+        }
+    }
+
+    /// Whether the node at `(px, py)` (nm) lies closer than `radius_nm` to
+    /// the segment from `a` to `b` (nm) at a point strictly between its
+    /// ends: the nodes a diagonal step passes closer than its ends do
+    /// (elsewhere the nodes' own discs hold the rule).
+    #[inline]
+    fn passes_inside(a: [i64; 2], b: [i64; 2], p: [i64; 2], radius_nm: i64) -> bool {
+        let u = [(b[0] - a[0]) as i128, (b[1] - a[1]) as i128];
+        let w = [(p[0] - a[0]) as i128, (p[1] - a[1]) as i128];
+        let along = w[0] * u[0] + w[1] * u[1];
+        let length2 = u[0] * u[0] + u[1] * u[1];
+        if along <= 0 || along >= length2 {
+            return false;
+        }
+        let cross = w[0] * u[1] - w[1] * u[0];
+        cross * cross < radius_nm as i128 * radius_nm as i128 * length2
+    }
+
+    /// Calls `mark` with every node the step from `(x, y)` by `(sx, sy)`
+    /// passes closer than `radius_nm` at a point between its ends (the
+    /// regular lattice's `diagonal_extra`, mirrored by the step).
+    pub fn segment_cells(
+        &self,
+        (x, y): (usize, usize),
+        (sx, sy): (i64, i64),
+        radius_nm: i64,
+        mut mark: impl FnMut(usize),
+    ) {
+        let a = [
+            self.coordinate_nm(0, x as i64),
+            self.coordinate_nm(1, y as i64),
+        ];
+        let b = [
+            self.coordinate_nm(0, x as i64 + sx),
+            self.coordinate_nm(1, y as i64 + sy),
+        ];
+        let Some((x0, x1)) =
+            self.lines_within_nm(0, a[0].min(b[0]) - radius_nm, a[0].max(b[0]) + radius_nm)
+        else {
+            return;
+        };
+        let Some((y0, y1)) =
+            self.lines_within_nm(1, a[1].min(b[1]) - radius_nm, a[1].max(b[1]) + radius_nm)
+        else {
+            return;
+        };
+        for ty in y0..=y1 {
+            let py = self.coordinate_nm(1, ty as i64);
+            for tx in x0..=x1 {
+                let p = [self.coordinate_nm(0, tx as i64), py];
+                if Self::passes_inside(a, b, p, radius_nm) {
+                    mark(self.index(tx, ty));
+                }
+            }
+        }
+    }
+
+    /// Calls `mark` with the start of every diagonal step of `orientation`
+    /// (0: `(+1, +1)`, 1: `(+1, -1)`) that passes the node `(x, y)` closer
+    /// than `radius_nm` between its ends (the regular lattice's
+    /// `diagonal_block`).
+    pub fn diagonal_start_cells(
+        &self,
+        (x, y): (usize, usize),
+        orientation: usize,
+        radius_nm: i64,
+        mut mark: impl FnMut(usize),
+    ) {
+        let p = [
+            self.coordinate_nm(0, x as i64),
+            self.coordinate_nm(1, y as i64),
+        ];
+        let sy: i64 = if orientation == 0 { 1 } else { -1 };
+        // A step passing within the radius starts within the radius and a
+        // step of the node's box: at most a line beyond either way.
+        let Some((x0, x1)) = self.lines_within_nm(0, p[0] - radius_nm, p[0] + radius_nm) else {
+            return;
+        };
+        let Some((y0, y1)) = self.lines_within_nm(1, p[1] - radius_nm, p[1] + radius_nm) else {
+            return;
+        };
+        let (x0, y0) = (x0.saturating_sub(1), y0.saturating_sub(1));
+        let (x1, y1) = ((x1 + 1).min(self.nx - 1), (y1 + 1).min(self.ny - 1));
+        for ty in y0..=y1 {
+            let end_y = ty as i64 + sy;
+            if end_y < 0 || end_y >= self.ny as i64 {
+                continue;
+            }
+            let (ay, by) = (
+                self.coordinate_nm(1, ty as i64),
+                self.coordinate_nm(1, end_y),
+            );
+            for tx in x0..=x1 {
+                if tx + 1 >= self.nx {
+                    continue;
+                }
+                let a = [self.coordinate_nm(0, tx as i64), ay];
+                let b = [self.coordinate_nm(0, tx as i64 + 1), by];
+                if Self::passes_inside(a, b, p, radius_nm) {
+                    mark(self.index(tx, ty));
+                }
+            }
+        }
+    }
+
+    /// The lattice of the nodes `x0..=x1` by `y0..=y1` of this one.
+    pub fn window(&self, x0: usize, y0: usize, x1: usize, y1: usize) -> Grid {
+        Grid {
+            origin: self.center(x0, y0),
+            pitch: self.pitch,
+            nx: x1 - x0 + 1,
+            ny: y1 - y0 + 1,
+            warp: self.warp.as_ref().and_then(|warp| {
+                let lines = [
+                    warp.lines[0][x0..=x1].to_vec(),
+                    warp.lines[1][y0..=y1].to_vec(),
+                ];
+                let window = Warp::new(lines, self.pitch, [0, 0], [0, 0]);
+                // A window of the regular lattice is regular.
+                (window.breaks[0].last() != Some(&0) || window.breaks[1].last() != Some(&0))
+                    .then(|| std::sync::Arc::new(window))
+            }),
+        }
     }
 
     pub fn center_of(&self, index: usize) -> Point {
@@ -357,6 +685,16 @@ impl Grid {
 
     /// Inclusive node range whose centres can lie inside `bounds`.
     pub fn node_range(&self, bounds: Aabb) -> Option<(usize, usize, usize, usize)> {
+        if let Some(warp) = &self.warp {
+            let range = |axis: usize| {
+                let lines = &warp.lines[axis];
+                let low = lines.partition_point(|line| *line < bounds.minimum[axis]);
+                let high = lines.partition_point(|line| *line <= bounds.maximum[axis]);
+                (low < high).then_some((low, high - 1))
+            };
+            let ((x0, x1), (y0, y1)) = (range(0)?, range(1)?);
+            return Some((x0, y0, x1, y1));
+        }
         let low = |value: f64, origin: f64| ((value - origin) / self.pitch).ceil();
         let high = |value: f64, origin: f64| ((value - origin) / self.pitch).floor();
         let x0 = low(bounds.minimum[0], self.origin[0]).max(0.0);
@@ -367,6 +705,29 @@ impl Grid {
     }
 
     pub fn nearest_node(&self, point: Point) -> Option<usize> {
+        if let Some(warp) = &self.warp {
+            let nearest = |axis: usize| {
+                let lines = &warp.lines[axis];
+                let last = lines.len() - 1;
+                let value = point[axis];
+                // Half a pitch beyond the ends, as on the regular lattice.
+                if !(value >= lines[0] - self.pitch / 2.0 && value < lines[last] + self.pitch / 2.0)
+                {
+                    return None;
+                }
+                let above = lines.partition_point(|line| *line < value).min(last);
+                let below = above.saturating_sub(1);
+                Some(
+                    if (value - lines[below]).abs() <= (lines[above] - value).abs() {
+                        below
+                    } else {
+                        above
+                    },
+                )
+            };
+            let (x, y) = (nearest(0)?, nearest(1)?);
+            return Some(self.index(x, y));
+        }
         let x = ((point[0] - self.origin[0]) / self.pitch).round();
         let y = ((point[1] - self.origin[1]) / self.pitch).round();
         (x >= 0.0 && y >= 0.0 && (x as usize) < self.nx && (y as usize) < self.ny)
@@ -520,6 +881,7 @@ impl Grid {
             pitch,
             nx,
             ny,
+            warp: None,
         }
     }
 }
@@ -837,7 +1199,10 @@ impl StaticMaps {
         };
         let half_on = |layer: usize| half_widths.get(layer).copied().unwrap_or(half_width);
         let via_radius = rules.via_diameter / 2.0;
-        let step = grid.pitch * std::f64::consts::SQRT_2;
+        // The longest step (lines at the pins may lie farther apart than
+        // the pitch): the sagitta margins below follow it.
+        let longest = grid.steps().1;
+        let step = longest * std::f64::consts::SQRT_2;
 
         // What the build does, counted (`tests`, `vertex_tests`): the
         // outline's crossings per row, its edges' neighbourhoods, every
@@ -847,13 +1212,22 @@ impl StaticMaps {
         let mut tight_tests = 0u64;
         let mut inside = vec![false; cells];
         for y in 0..grid.ny {
-            let line = grid.origin[1] + y as f64 * grid.pitch;
+            let line = grid.coordinate(1, y as i64);
             let mut crossings: Vec<f64> = polygon_edges(&board.outline)
                 .filter(|(a, b)| (a[1] > line) != (b[1] > line))
                 .map(|(a, b)| a[0] + (line - a[1]) / (b[1] - a[1]) * (b[0] - a[0]))
                 .collect();
             crossings.sort_by(f64::total_cmp);
             for span in crossings.as_chunks::<2>().0 {
+                if let Some(warp) = &grid.warp {
+                    let lines = &warp.lines[0];
+                    let x0 = lines.partition_point(|line| *line < span[0]);
+                    let x1 = lines.partition_point(|line| *line <= span[1]);
+                    for x in x0..x1 {
+                        inside[grid.index(x, y)] = true;
+                    }
+                    continue;
+                }
                 let x0 = ((span[0] - grid.origin[0]) / grid.pitch).ceil().max(0.0) as usize;
                 let x1 = ((span[1] - grid.origin[0]) / grid.pitch).floor();
                 if x1 < 0.0 {
@@ -902,7 +1276,7 @@ impl StaticMaps {
         let via_edge = via_radius + board.edge_clearance + SAFETY;
         // A unit step between two legal nodes can cut an outline corner by
         // at most the sagitta of that chord.
-        let edge_margin = step * step / (8.0 * trace_edge.max(grid.pitch));
+        let edge_margin = step * step / (8.0 * trace_edge.max(longest));
         // Per layer, where the widths differ: the edge distance of every
         // node near the outline, for the layers' own zones below.
         let mut edge_distance: Vec<(usize, f64)> = Vec::new();
@@ -948,7 +1322,7 @@ impl StaticMaps {
                 break;
             }
             let trace_edge = half_on(layer) + board.edge_clearance + SAFETY;
-            let edge_margin = step * step / (8.0 * trace_edge.max(grid.pitch));
+            let edge_margin = step * step / (8.0 * trace_edge.max(longest));
             for &(index, distance) in &edge_distance {
                 if distance < trace_edge + edge_margin {
                     map[index] = BLOCKED16;
@@ -1478,7 +1852,7 @@ impl PolygonField {
                 minimum: [a[0].min(b[0]), a[1].min(b[1])],
                 maximum: [a[0].max(b[0]), a[1].max(b[1])],
             }
-            .inflated(cap + grid.pitch);
+            .inflated(cap + grid.steps().1);
             let Some((ex0, ey0, ex1, ey1)) = grid.node_range(near) else {
                 continue;
             };
@@ -1666,6 +2040,7 @@ mod tests {
             pitch: 0.1,
             nx: 140,
             ny: 120,
+            warp: None,
         };
         for (points, cap) in [
             (star([7.0, 6.0], 64, 5.0, 3.5), 0.45),

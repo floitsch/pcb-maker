@@ -142,14 +142,27 @@ impl Router {
                             continue;
                         }
                         let (x, y) = self.grid.xy(cell);
-                        let blocked = offsets.iter().any(|(dx, dy)| {
-                            let (ox, oy) = (x as i64 + dx, y as i64 + dy);
-                            ox >= 0
-                                && oy >= 0
-                                && ox < nx
-                                && oy < ny
-                                && other_at(self.grid.index(ox as usize, oy as usize))
-                        });
+                        let blocked = if self.grid.warp.is_some() {
+                            // Lines at the pins: the nodes within the
+                            // radius, measured.
+                            let mut blocked = false;
+                            self.grid.disc_cells(
+                                x,
+                                y,
+                                ((radius - 1.0e-9) * 1.0e6).round() as i64,
+                                |cell| blocked |= other_at(cell),
+                            );
+                            blocked
+                        } else {
+                            offsets.iter().any(|(dx, dy)| {
+                                let (ox, oy) = (x as i64 + dx, y as i64 + dy);
+                                ox >= 0
+                                    && oy >= 0
+                                    && ox < nx
+                                    && oy < ny
+                                    && other_at(self.grid.index(ox as usize, oy as usize))
+                            })
+                        };
                         if !blocked {
                             if reclaimed.is_empty() {
                                 *reclaimed = vec![false; cells];

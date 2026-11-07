@@ -85,7 +85,7 @@ impl Router {
                 .map(|class| class.via_diameter + class.trace_width + class.clearance)
                 .fold(0.0f64, f64::max)
                 + self.board.hole_clearance.max(self.board.hole_to_hole);
-            (2.0 * widest / self.grid.pitch).ceil() as usize + 3
+            (2.0 * widest / self.grid.steps().0).ceil() as usize + 3
         };
         let started = self.clock();
         let pour_work_before = self.pour_work_seconds();

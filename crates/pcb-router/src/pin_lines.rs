@@ -95,6 +95,17 @@ pub fn pin_lines(board: &Board, pitch: f64) -> Vec<PinLine> {
         return Vec::new();
     }
     let neck = (board.neck_width > 0.0).then_some(board.neck_width);
+    // Between pads of no net: the track of the class most nets have (the
+    // board's default), not a neck class the router adds.
+    let mut members = vec![0usize; board.classes.len()];
+    for net in &board.nets {
+        if let Some(count) = members.get_mut(net.class) {
+            *count += 1;
+        }
+    }
+    let common = (0..board.classes.len())
+        .max_by_key(|class| (members[*class], std::cmp::Reverse(*class)))
+        .map(|class| board.classes[class].trace_width);
     // Which obstacle is which net's pad.
     let mut pad_net: Vec<Option<(usize, [f64; 2])>> = vec![None; board.obstacles.len()];
     for (net, description) in board.nets.iter().enumerate() {
@@ -191,13 +202,15 @@ pub fn pin_lines(board: &Board, pitch: f64) -> Vec<PinLine> {
         if !pad.pin || !pad.row {
             continue;
         }
-        let (bx, by) = (
-            ((pad.bounds.minimum[0] + pad.bounds.maximum[0]) / 2.0 / cell).floor() as i64,
-            ((pad.bounds.minimum[1] + pad.bounds.maximum[1]) / 2.0 / cell).floor() as i64,
-        );
+        // Every pad whose box, grown by the gap, shares a bucket with this
+        // pad's box.
         let mut candidates: Vec<usize> = Vec::new();
-        for x in bx - 1..=bx + 1 {
-            for y in by - 1..=by + 1 {
+        for x in (pad.bounds.minimum[0] / cell).floor() as i64
+            ..=(pad.bounds.maximum[0] / cell).floor() as i64
+        {
+            for y in (pad.bounds.minimum[1] / cell).floor() as i64
+                ..=(pad.bounds.maximum[1] / cell).floor() as i64
+            {
                 if let Some(found) = buckets.get(&(x, y)) {
                     candidates.extend(found.iter().copied());
                 }
@@ -282,13 +295,14 @@ pub fn pin_lines(board: &Board, pitch: f64) -> Vec<PinLine> {
             // net leaves with.
             if let Some((them, _)) = sides[1] {
                 let them = &pads[them];
+                // Between pads of no net: the common class's track.
                 let Some(width) = pad
                     .widths
                     .iter()
                     .chain(them.widths.iter())
                     .copied()
                     .reduce(f64::min)
-                    .or(neck)
+                    .or(common)
                 else {
                     continue;
                 };
@@ -384,6 +398,297 @@ fn round_nm(value: f64) -> f64 {
     (value * 1.0e6).round() / 1.0e6
 }
 
+/// Which pins' lines the lattice gets (`Config::pin_lines`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lines {
+    /// None: the regular lattice.
+    Off,
+    /// The pads' straight exits out of their rows.
+    Exits,
+    /// The exits and the tracks of tight channels between pads.
+    All,
+}
+
+/// The router's lattice for `board`: the regular one (`Grid::choose` of
+/// `pitches`) with the lines `which` pins ask for (`warp`).
+pub fn lattice(board: &Board, pitches: &[f64], which: Lines) -> crate::grid::Grid {
+    let mut grid = crate::grid::Grid::choose(board, pitches);
+    // A lattice the maps cannot hold is refused before anything is
+    // allocated; the lines are not looked for.
+    if which == Lines::Off || grid.check_size().is_err() {
+        return grid;
+    }
+    if let (Some(warp), _) = warp(board, &grid, which) {
+        grid.nx = warp.lines[0].len();
+        grid.ny = warp.lines[1].len();
+        grid.origin = [warp.lines[0][0], warp.lines[1][0]];
+        grid.warp = Some(std::sync::Arc::new(warp));
+    }
+    grid
+}
+
+/// `PCB_ROUTER_PIN_LINES`: `0` (off), `exits` or `1`/`all` in place of
+/// the setting, for a measurement.
+pub fn lines_override() -> Option<Lines> {
+    match std::env::var("PCB_ROUTER_PIN_LINES").ok()?.as_str() {
+        "0" | "off" => Some(Lines::Off),
+        "exits" => Some(Lines::Exits),
+        "1" | "all" => Some(Lines::All),
+        _ => None,
+    }
+}
+
+/// A line is not added closer than this many pitches to another; a
+/// regular line that near a needed position moves onto it instead.
+pub const MIN_GAP: f64 = 0.25;
+
+/// A part's band (its rows' lines at its phase) reaches this far beyond
+/// its outermost exit line, mm: its tracks leave the rows and turn inside
+/// a piece of the regular lattice.
+pub const BAND_MARGIN: f64 = 1.0;
+
+/// At most this share of an axis's lines is added (exits first, then the
+/// channels by their slack).
+pub const MAX_ADDED: f64 = 0.1;
+
+/// What `warp` did, for the reports.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Placed {
+    /// Lines the pins asked for that the regular lattice holds already.
+    pub held: usize,
+    pub added: usize,
+    pub moved: usize,
+    /// Bands of a part's rows at the part's phase (`BAND_MARGIN`), and the
+    /// regular lines they shifted.
+    pub bands: usize,
+    pub shifted: usize,
+    /// Asked for and neither held, added nor moved (too close to a line
+    /// another pin holds, or past the cap).
+    pub left: usize,
+}
+
+/// Groups of lines on one axis whose slack intervals meet: their common
+/// interval, whether any is an exit, and the narrowest slack.
+fn groups(lines: &[PinLine], axis: usize) -> Vec<(f64, f64, bool)> {
+    let mut intervals: Vec<(f64, f64, bool)> = lines
+        .iter()
+        .filter(|line| line.axis == axis)
+        .map(|line| {
+            (
+                line.at - line.slack,
+                line.at + line.slack,
+                line.kind == LineKind::Exit,
+            )
+        })
+        .collect();
+    intervals.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    let mut out: Vec<(f64, f64, bool)> = Vec::new();
+    for (low, high, exit) in intervals {
+        match out.last_mut() {
+            Some(group) if low <= group.1 + ON_LINE => {
+                group.0 = group.0.max(low);
+                group.1 = group.1.min(high);
+                group.2 |= exit;
+            }
+            _ => out.push((low, high, exit)),
+        }
+    }
+    out
+}
+
+/// The lattice `grid` (regular) with lines where `board`'s pins ask for
+/// them (`which`): per axis, a needed line the regular lattice misses is
+/// added between its neighbours, or a regular line closer than `MIN_GAP`
+/// pitches is moved onto it; a regular line that holds a needed one stays.
+/// `None` where nothing changes.
+pub fn warp(
+    board: &Board,
+    grid: &crate::grid::Grid,
+    which: Lines,
+) -> (Option<crate::grid::Warp>, [Placed; 2]) {
+    let mut placed = [Placed::default(); 2];
+    if which == Lines::Off || grid.warp.is_some() {
+        return (None, placed);
+    }
+    let mut lines = pin_lines(board, grid.pitch);
+    if which == Lines::Exits {
+        lines.retain(|line| line.kind == LineKind::Exit);
+    }
+    let min_gap = MIN_GAP * grid.pitch;
+    let counts = [grid.nx, grid.ny];
+    let mut result: [Vec<f64>; 2] = [Vec::new(), Vec::new()];
+    let mut changed = false;
+    for axis in 0..2 {
+        // (value, pinned, regular)
+        let mut axis_lines: Vec<(f64, bool, bool)> = (0..counts[axis])
+            .map(|index| (grid.origin[axis] + index as f64 * grid.pitch, false, true))
+            .collect();
+        // Bands first: a part whose exits on this axis all lie at one
+        // phase of the pitch that the lattice misses gets the lattice of
+        // that phase over its rows and `BAND_MARGIN` around them (its
+        // lines shifted together, a piece of the regular lattice inside;
+        // only the band's two edges are a step that is not the pitch).
+        // A band that meets another of a different phase is left to the
+        // lines one by one below.
+        let pitch_nm = (grid.pitch * 1.0e6).round() as i64;
+        let origin_nm = (grid.origin[axis] * 1.0e6).round() as i64;
+        let mut parts: std::collections::BTreeMap<&str, Vec<&PinLine>> = Default::default();
+        for line in lines
+            .iter()
+            .filter(|line| line.axis == axis && line.kind == LineKind::Exit)
+        {
+            parts.entry(part_of(&line.label)).or_default().push(line);
+        }
+        let mut bands: Vec<(i64, i64, i64, usize)> = Vec::new();
+        for part_lines in parts.values() {
+            // (A part the lattice holds is a band of no shift: it keeps
+            // others' bands off its rows.)
+            if part_lines.len() < MIN_PART_PADS {
+                continue;
+            }
+            let residue = |line: &PinLine| {
+                ((line.at * 1.0e6).round() as i64 - origin_nm).rem_euclid(pitch_nm)
+            };
+            let first = residue(part_lines[0]);
+            let tolerance = |line: &PinLine| (line.slack * 1.0e6).floor() as i64;
+            let one_phase = part_lines.iter().all(|line| {
+                let offset = (residue(line) - first).rem_euclid(pitch_nm);
+                offset.min(pitch_nm - offset) <= tolerance(line).min(tolerance(part_lines[0]))
+            });
+            if !one_phase {
+                continue;
+            }
+            // The shift of the regular lines onto that phase, within half
+            // a pitch either way.
+            let shift = if first * 2 > pitch_nm {
+                first - pitch_nm
+            } else {
+                first
+            };
+            let low = part_lines
+                .iter()
+                .map(|line| (line.at * 1.0e6).round() as i64)
+                .min()
+                .unwrap_or(0)
+                - (BAND_MARGIN * 1.0e6) as i64;
+            let high = part_lines
+                .iter()
+                .map(|line| (line.at * 1.0e6).round() as i64)
+                .max()
+                .unwrap_or(0)
+                + (BAND_MARGIN * 1.0e6) as i64;
+            bands.push((low, high, shift, part_lines.len()));
+        }
+        // The most lines first; a band meeting an accepted one of another
+        // phase (or ending closer than the gap to one) is not taken, one
+        // of its phase merges.
+        bands.sort_by(|a, b| b.3.cmp(&a.3).then(a.0.cmp(&b.0)));
+        let mut accepted: Vec<(i64, i64, i64)> = Vec::new();
+        let gap_nm = (min_gap * 1.0e6) as i64 + pitch_nm;
+        for (low, high, shift, _) in bands {
+            let meets =
+                |other: &(i64, i64, i64)| low <= other.1 + gap_nm && other.0 <= high + gap_nm;
+            if accepted
+                .iter()
+                .any(|other| meets(other) && other.2 != shift)
+            {
+                continue;
+            }
+            let (mut low, mut high) = (low, high);
+            accepted.retain(|other| {
+                if meets(other) {
+                    low = low.min(other.0);
+                    high = high.max(other.1);
+                    false
+                } else {
+                    true
+                }
+            });
+            accepted.push((low, high, shift));
+        }
+        accepted.retain(|band| band.2 != 0);
+        for (low, high, shift) in &accepted {
+            for (index, line) in axis_lines.iter_mut().enumerate() {
+                let at = origin_nm + index as i64 * pitch_nm;
+                if (*low..=*high).contains(&at) {
+                    *line = ((at + shift) as f64 / 1.0e6, true, false);
+                    placed[axis].shifted += 1;
+                }
+            }
+        }
+        placed[axis].bands = accepted.len();
+        let mut wanted = groups(&lines, axis);
+        let within = |axis_lines: &[(f64, bool, bool)], low: f64, high: f64| {
+            let first = axis_lines.partition_point(|line| line.0 < low - ON_LINE);
+            (first < axis_lines.len() && axis_lines[first].0 <= high + ON_LINE).then_some(first)
+        };
+        // Those the regular lattice holds pin their line.
+        wanted.retain(|&(low, high, _)| match within(&axis_lines, low, high) {
+            Some(index) => {
+                axis_lines[index].1 = true;
+                placed[axis].held += 1;
+                false
+            }
+            None => true,
+        });
+        // Exits first, then the narrowest.
+        wanted.sort_by(|a, b| b.2.cmp(&a.2).then((a.1 - a.0).total_cmp(&(b.1 - b.0))));
+        let cap = ((counts[axis] as f64 * MAX_ADDED).floor() as usize).max(4);
+        for (low, high, _) in wanted {
+            if let Some(index) = within(&axis_lines, low, high) {
+                axis_lines[index].1 = true;
+                placed[axis].held += 1;
+                continue;
+            }
+            let target = round_nm((low + high) / 2.0);
+            let above = axis_lines.partition_point(|line| line.0 < target);
+            if above == 0 || above >= axis_lines.len() {
+                placed[axis].left += 1;
+                continue;
+            }
+            let below = above - 1;
+            let (gap_below, gap_above) =
+                (target - axis_lines[below].0, axis_lines[above].0 - target);
+            if gap_below >= min_gap && gap_above >= min_gap {
+                if placed[axis].added < cap {
+                    axis_lines.insert(above, (target, true, false));
+                    placed[axis].added += 1;
+                } else {
+                    placed[axis].left += 1;
+                }
+                continue;
+            }
+            // Move the nearer line onto it, where it is a regular line no
+            // pin holds and its own neighbours stay `min_gap` away.
+            let nearer = if gap_below <= gap_above { below } else { above };
+            let (value, pinned, regular) = axis_lines[nearer];
+            let room = (nearer == 0 || target - axis_lines[nearer - 1].0 >= min_gap)
+                && (nearer + 1 >= axis_lines.len() || axis_lines[nearer + 1].0 - target >= min_gap);
+            if !pinned && regular && room && (value - target).abs() < min_gap + ON_LINE {
+                axis_lines[nearer] = (target, true, false);
+                placed[axis].moved += 1;
+            } else {
+                placed[axis].left += 1;
+            }
+        }
+        changed |= placed[axis].added + placed[axis].moved + placed[axis].shifted > 0;
+        result[axis] = axis_lines.into_iter().map(|line| line.0).collect();
+    }
+    if !changed {
+        return (None, placed);
+    }
+    let warp = crate::grid::Warp::new(
+        result,
+        grid.pitch,
+        [placed[0].added, placed[1].added],
+        [
+            placed[0].moved + placed[0].shifted,
+            placed[1].moved + placed[1].shifted,
+        ],
+    );
+    (Some(warp), placed)
+}
+
 /// `PCB_ROUTER_PIN_LINES_PROBE`: what lines the pins of `board` ask for on
 /// `grid`, which the regular lattice misses and what adding them costs,
 /// on stderr (once per pitch and board size in a process).
@@ -398,9 +703,27 @@ pub fn probe(board: &Board, grid: &crate::grid::Grid) {
         }
         seen.push(key);
     }
+    let regular = crate::grid::Grid {
+        warp: None,
+        ..crate::grid::Grid::choose(board, &[grid.pitch])
+    };
+    let grid = if grid.warp.is_some() { &regular } else { grid };
     let lines = pin_lines(board, grid.pitch);
     let missed = missing(&lines, grid);
     let added = positions(&missed, 0.005);
+    for which in [Lines::Exits, Lines::All] {
+        let (warp, placed) = warp(board, grid, which);
+        eprintln!(
+            "pin lines: pitch {} lattice {} x {}: {which:?}: x {:?}, y {:?}; lattice {} x {}",
+            grid.pitch,
+            grid.nx,
+            grid.ny,
+            placed[0],
+            placed[1],
+            warp.as_ref().map_or(grid.nx, |warp| warp.lines[0].len()),
+            warp.as_ref().map_or(grid.ny, |warp| warp.lines[1].len()),
+        );
+    }
     let count = |kind: LineKind, axis: usize, of: &[&PinLine]| {
         of.iter()
             .filter(|line| line.kind == kind && line.axis == axis)
@@ -599,6 +922,7 @@ mod tests {
             pitch: 0.1,
             nx: 100,
             ny: 100,
+            warp: None,
         };
         assert_eq!(missing(&lines, &grid(0.0)).len(), 5);
         assert!(missing(&lines, &grid(0.03)).is_empty());
@@ -609,12 +933,13 @@ mod tests {
         // The laptop keyboard's F23: a gap of 0.75 mm between two pads
         // holds two 0.127 mm tracks at 0.127 mm clearance, 0.254 mm apart
         // in a band of 0.369 mm, which a 0.125 mm lattice cannot hold.
-        let mut board = row_board([3.0, 3.0], 2, 0.75 + 0.3, [0.3, 0.3], 0.2, 0.127);
+        // (Four pads: a part of fewer has no row.)
+        let mut board = row_board([3.0, 3.0], 4, 0.75 + 0.3, [0.3, 0.3], 0.2, 0.127);
         board.neck_width = 0.127;
         let lines = pin_lines(&board, 0.125);
         let channel: Vec<&PinLine> = lines
             .iter()
-            .filter(|line| line.kind == LineKind::Channel && line.axis == 0)
+            .filter(|line| line.kind == LineKind::Channel && line.axis == 0 && line.label == "U1.1")
             .collect();
         assert_eq!(channel.len(), 2, "{lines:?}");
         // The band between the pads' edges at 3.15 and 3.9, 0.369 mm wide:
@@ -635,6 +960,7 @@ mod tests {
             pitch: 0.125,
             nx: 100,
             ny: 100,
+            warp: None,
         };
         for step in 0..25 {
             let channel: Vec<PinLine> = channel.iter().map(|line| (*line).clone()).collect();
@@ -666,5 +992,229 @@ mod tests {
         assert_eq!(y.len(), 2, "{y:?}");
         assert!((y[0] - 1.0075).abs() < 1.0e-9);
         assert!((y[1] - 1.5).abs() < 1.0e-9);
+    }
+
+    /// A gap of 0.75 mm in a wall of pads (a four-pad part) that two
+    /// 0.127 mm tracks at 0.127 mm clearance pass only 0.254 to 0.369 mm
+    /// apart: the laptop keyboard's F23 and ANT. One layer, a 0.125 mm
+    /// lattice: two of its lines are 0.25 or 0.375 mm apart, so one net
+    /// stays open whatever the phase; with the channel's lines both route,
+    /// and the routes keep every clearance.
+    fn wall_board(offset: f64) -> Board {
+        let class = RuleClass {
+            trace_width: 0.127,
+            clearance: 0.127,
+            via_diameter: 0.6,
+            via_drill: 0.3,
+            layers: 0,
+        };
+        let pad = |shape: Shape, net: Option<u32>, label: &str| Obstacle {
+            shape,
+            layers: 1,
+            kind: ObstacleKind::Copper,
+            net,
+            clearance: 0.0,
+            clearance_override: None,
+            plated: false,
+            blocks_tracks: true,
+            blocks_vias: true,
+            label: label.to_string(),
+        };
+        let gap_low = 1.6 + offset;
+        let mut obstacles = vec![
+            // The wall: two pads of U1 (no net), the gap between them.
+            pad(
+                rect([(gap_low - 2.0) / 2.0, 5.0], [gap_low + 2.0, 0.4]),
+                None,
+                "U1.1",
+            ),
+            pad(
+                rect(
+                    [(gap_low + 0.75 + 6.0) / 2.0, 5.0],
+                    [6.0 - gap_low - 0.75, 0.4],
+                ),
+                None,
+                "U1.2",
+            ),
+            pad(rect([0.5, 9.5], [0.2, 0.2]), None, "U1.3"),
+            pad(rect([3.5, 9.5], [0.2, 0.2]), None, "U1.4"),
+        ];
+        let mut nets = Vec::new();
+        for (net, x) in [(0u32, gap_low - 0.6), (1, gap_low + 1.35)] {
+            let mut terminals = Vec::new();
+            for (end, y) in [2.0, 8.0].into_iter().enumerate() {
+                obstacles.push(pad(
+                    rect([x, y], [0.6, 0.6]),
+                    Some(net),
+                    &format!("P{net}.{end}"),
+                ));
+                terminals.push(Terminal {
+                    anchor: [x, y],
+                    layers: 1,
+                    pad: obstacles.len() - 1,
+                    contact: None,
+                    label: format!("P{net}.{end}"),
+                });
+            }
+            nets.push(Net {
+                name: format!("N{net}"),
+                class: 0,
+                terminals,
+            });
+        }
+        Board {
+            layer_count: 1,
+            outline: vec![[0.0, 0.0], [4.0, 0.0], [4.0, 10.0], [0.0, 10.0]],
+            edge_clearance: 0.1,
+            hole_clearance: 0.1,
+            hole_to_hole: 0.1,
+            classes: vec![class],
+            neck_width: 0.0,
+            obstacles,
+            nets,
+            planes: Vec::new(),
+            solid_pads: Vec::new(),
+            isolated_pads: Vec::new(),
+            solid_pad_obstacles: Vec::new(),
+            isolated_pad_obstacles: Vec::new(),
+            pad_spokes: Default::default(),
+            merged_pads: Vec::new(),
+            no_via_pads: Vec::new(),
+            fill_passes: Vec::new(),
+            pin_row_gaps: Vec::new(),
+            terminal_copper: Vec::new(),
+            attachment: Default::default(),
+            via_spans: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn two_tracks_pass_a_channel_the_regular_lattice_holds_one_of() {
+        let open_at = |which: Lines| {
+            let config = crate::Config {
+                pitches: vec![0.125],
+                pin_lines: which,
+                ..crate::Config::default()
+            };
+            let mut open = Vec::new();
+            for step in 0..5 {
+                let offset = step as f64 * 0.025;
+                let board = wall_board(offset);
+                let result = crate::route(&board, &config);
+                let violations = crate::verify(&board, &result.routes);
+                assert!(
+                    violations.is_empty(),
+                    "{which:?} offset {offset}: {violations:?}"
+                );
+                assert_eq!(result.grid.warp.is_some(), which != Lines::Off);
+                let routed = result
+                    .status
+                    .iter()
+                    .filter(|status| **status == crate::NetStatus::Routed)
+                    .count();
+                if routed < 2 {
+                    open.push(offset);
+                }
+            }
+            open
+        };
+        assert_eq!(open_at(Lines::Off).len(), 5);
+        let open = open_at(Lines::All);
+        assert!(open.is_empty(), "open at offsets {open:?}");
+    }
+
+    #[test]
+    fn a_warped_lattice_keeps_its_regular_lines_and_indexes_by_its_tables() {
+        // Exact-fit rows at a phase the lattice misses: the warp moves or
+        // adds lines onto every pad centre and leaves the other lines.
+        let mut board = row_board([2.033, 3.0], 6, 0.4, [0.2, 0.8], 0.2, 0.2);
+        // A longer row of another part at phase 0 decides the regular
+        // lattice's phase.
+        let other = row_board([6.6, 7.0], 10, 0.4, [0.2, 0.8], 0.2, 0.2);
+        for (index, mut net) in other.nets.into_iter().enumerate() {
+            let mut obstacle = other.obstacles[index].clone();
+            obstacle.label = format!("U2.{}", index + 1);
+            obstacle.net = Some(board.nets.len() as u32);
+            board.obstacles.push(obstacle);
+            net.terminals[0].pad = board.obstacles.len() - 1;
+            net.terminals[0].label = format!("U2.{}", index + 1);
+            board.nets.push(net);
+        }
+        let grid = crate::grid::Grid::choose(&board, &[0.1]);
+        assert!(
+            (grid.origin[0] - 2.0)
+                .rem_euclid(0.1)
+                .min((2.0 - grid.origin[0]).rem_euclid(0.1))
+                < 1.0e-9
+        );
+        let regular = crate::grid::Grid {
+            warp: None,
+            ..grid.clone()
+        };
+        let lattice = lattice(&board, &[0.1], Lines::Exits);
+        let warp = lattice.warp.clone().expect("lines added");
+        for index in 0..6 {
+            let at = 2.033 + 0.4 * index as f64;
+            assert!(
+                warp.lines[0].iter().any(|line| (line - at).abs() < 1.0e-9),
+                "no line at {at}"
+            );
+        }
+        // The row's band (its exits and `BAND_MARGIN` around) is the
+        // lattice at the row's phase; outside it every line is a regular
+        // one, to the bit.
+        let regular_lines: Vec<f64> = (0..regular.nx)
+            .map(|index| regular.origin[0] + index as f64 * regular.pitch)
+            .collect();
+        let band = 2.033 - BAND_MARGIN - 1.0e-6..=2.033 + 2.0 + BAND_MARGIN + 1.0e-6;
+        for line in &warp.lines[0] {
+            if band.contains(line) {
+                let phase = (line - 2.033).rem_euclid(0.1);
+                assert!(
+                    phase.min(0.1 - phase) < 1.0e-9,
+                    "{line} off the row's phase"
+                );
+            } else {
+                assert!(
+                    regular_lines.contains(line),
+                    "{line} moved outside the band"
+                );
+            }
+        }
+        assert_eq!(warp.lines[0].len(), regular.nx);
+        assert_eq!(lattice.nx, warp.lines[0].len());
+        // The tables: centres, the nearest node, ranges and fractions.
+        let first = warp.lines[0]
+            .iter()
+            .position(|line| (line - 2.033).abs() < 1.0e-9)
+            .unwrap();
+        let cell = lattice.nearest_node([2.034, 3.0]).unwrap();
+        assert_eq!(lattice.xy(cell).0, first);
+        assert!((lattice.center(first, 0)[0] - 2.033).abs() < 1.0e-9);
+        assert!((lattice.index_of(0, 2.033) - first as f64).abs() < 1.0e-9);
+        let (x0, _, x1, _) = lattice
+            .node_range(crate::geometry::Aabb {
+                minimum: [2.0, 0.0],
+                maximum: [2.1, 1.0],
+            })
+            .unwrap();
+        assert!(warp.lines[0][x0] >= 2.0 && warp.lines[0][x1] <= 2.1);
+        assert!(warp.lines[0][x0 - 1] < 2.0 && warp.lines[0][x1 + 1] > 2.1);
+        // Steps: none shorter than the gap, none longer than a pitch and a
+        // half (a band's edge); far from the row the lattice is regular.
+        assert!(warp.min_step >= MIN_GAP * 0.1 - 1.0e-9);
+        assert!(warp.max_step <= 0.1 * 1.5 + 1.0e-9);
+        assert!(lattice.uniform_around(5, 5, 3));
+        // Inside the band a piece of the regular lattice; at its edge not.
+        assert!(lattice.uniform_around(first, 30, 3));
+        let edge = warp.lines[0]
+            .iter()
+            .position(|line| (line - 5.033).abs() < 1.0e-9)
+            .unwrap();
+        assert!(!lattice.uniform_around(edge, 30, 1));
+        // Off, or a board whose rows the lattice holds: no warp.
+        assert!(super::lattice(&board, &[0.1], Lines::Off).warp.is_none());
+        let aligned = row_board([2.0, 3.0], 6, 0.4, [0.2, 0.8], 0.2, 0.2);
+        assert!(super::lattice(&aligned, &[0.1], Lines::All).warp.is_none());
     }
 }

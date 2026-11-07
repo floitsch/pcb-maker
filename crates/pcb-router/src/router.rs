@@ -448,6 +448,25 @@ struct Stamps {
     /// What the node footprints add to the same footprint stamped at the
     /// node before (see `Fresh`).
     fresh: Fresh,
+    /// The radius each footprint was computed for, for a lattice whose
+    /// lines are not a pitch apart (`Shape`).
+    radii: Radii,
+}
+
+/// `Stamps`' radii in whole nanometres, one a footprint.
+#[derive(Clone, Copy, Debug, Default)]
+struct Radii {
+    stub_to_trace: i64,
+    stub_to_via: i64,
+    trace_to_trace: i64,
+    trace_to_via: i64,
+    via_to_trace: i64,
+    via_to_via: i64,
+    diagonal_to_trace: i64,
+    diagonal_to_via: i64,
+    diagonal_block: i64,
+    diagonal_block_via: i64,
+    stub_diagonal_block: i64,
 }
 
 /// The offsets of a footprint that the same footprint, stamped one step
@@ -714,9 +733,33 @@ impl Iterator for StampIter<'_> {
     }
 }
 
+/// What a footprint's offsets stand for, for a lattice whose lines are not
+/// a pitch apart (`Grid::warp`): there the cells are measured instead.
+#[derive(Clone, Copy, Debug)]
+enum Shape {
+    /// The nodes closer than the radius (nm) to the node: `disc`.
+    Disc(i64),
+    /// The nodes a diagonal step from the node by the mirroring passes
+    /// closer than the radius between its ends: `diagonal_extra`.
+    Segment(i64),
+    /// The starts of the diagonal steps of an orientation that pass the
+    /// node closer than the radius between their ends: `diagonal_block`.
+    Starts(usize, i64),
+}
+
+/// The radius of a footprint in whole nanometres, as `disc` rounds it.
+fn radius_nm(radius: f64) -> i64 {
+    (radius * 1.0e6).round() as i64
+}
+
 /// Marks the offsets around `cell`, mirrored by (`sx`, `sy`), in `map`'s
 /// bitset of `marks` (`words` a map) and lists the newly marked cells of
-/// `map` in `stamped`.
+/// `map` in `stamped`. With `exact` (the lattice and what the offsets
+/// stand for), a cell whose surroundings within `reach` and a step are
+/// not a piece of the regular lattice (`Grid::uniform_around`) has its
+/// footprint measured on the lattice's lines instead: there the offsets,
+/// and a leading edge (`Fresh`) the node before would have covered, do
+/// not hold.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn mark_footprint(
@@ -729,10 +772,33 @@ fn mark_footprint(
     (sx, sy): (i64, i64),
     (nx, ny): (i64, i64),
     reach: i64,
+    exact: Option<(&Grid, Shape)>,
 ) {
     let marks = &mut marks[map * words..(map + 1) * words];
     let x = cell as i64 % nx;
     let y = cell as i64 / nx;
+    if let Some((grid, shape)) = exact
+        && grid.warp.is_some()
+        && !grid.uniform_around(x as usize, y as usize, reach.saturating_add(1))
+    {
+        let mut mark = |target: usize| {
+            let bit = 1u64 << (target % 64);
+            let word = &mut marks[target / 64];
+            if *word & bit == 0 {
+                *word |= bit;
+                stamped.push(map as u32, target as u32);
+            }
+        };
+        let at = (x as usize, y as usize);
+        match shape {
+            Shape::Disc(radius) => grid.disc_cells(at.0, at.1, radius, mark),
+            Shape::Segment(radius) => grid.segment_cells(at, (sx, sy), radius, mark),
+            Shape::Starts(orientation, radius) => {
+                grid.diagonal_start_cells(at, orientation, radius, &mut mark)
+            }
+        }
+        return;
+    }
     if x >= reach
         && y >= reach
         && x + reach < nx

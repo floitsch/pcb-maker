@@ -226,7 +226,7 @@ impl Router {
                         }
                         for exit in &exits {
                             if crate::geometry::distance(*exit, center)
-                                > 1.5 * self.grid.pitch + 0.15
+                                > 1.5 * self.grid.steps().1 + 0.15
                             {
                                 continue;
                             }
@@ -350,8 +350,22 @@ impl Router {
             0
         };
         let offset = polyline[0][axis] - polyline[1][axis];
-        let steps = (offset.abs() / self.grid.pitch - 1.0e-9).ceil().max(0.0) as i64;
         let sign = if offset < 0.0 { -1 } else { 1 };
+        // Lines from the end node towards the start, up to the first at or
+        // beyond it (on the regular lattice `ceil(|offset| / pitch)`).
+        let steps = if self.grid.warp.is_none() {
+            (offset.abs() / self.grid.pitch - 1.0e-9).ceil().max(0.0) as i64
+        } else {
+            let along = if axis == 0 { x as i64 } else { y as i64 };
+            let end_at = self.grid.coordinate(axis, along);
+            let mut steps = 0i64;
+            while (self.grid.coordinate(axis, along + sign * steps) - end_at).abs()
+                < offset.abs() - 1.0e-9 * self.grid.pitch
+            {
+                steps += 1;
+            }
+            steps
+        };
         let mut cells = Vec::with_capacity(steps as usize + 1);
         for step in (0..=steps).rev() {
             let (cx, cy) = if axis == 0 {
@@ -373,7 +387,7 @@ impl Router {
         let mut cells: Vec<u32> = Vec::new();
         for pair in polyline.windows(2) {
             let length = crate::geometry::distance(pair[0], pair[1]);
-            let samples = (length / (self.grid.pitch / 2.0)).ceil().max(1.0) as usize;
+            let samples = (length / (self.grid.steps().0 / 2.0)).ceil().max(1.0) as usize;
             for index in 0..=samples {
                 let t = index as f64 / samples as f64;
                 if let Some(cell) = self.grid.nearest_node([
@@ -826,18 +840,13 @@ pub(super) fn stub_footprint(
             maximum[axis] = maximum[axis].max(point[axis]);
         }
     }
-    let index = |value: f64, axis: usize| (value - grid.origin[axis]) / grid.pitch;
-    let margin = (reach / grid.pitch).ceil() as i64 + 1;
+    let index = |value: f64, axis: usize| grid.index_of(axis, value);
+    let margin = (reach / grid.steps().0).ceil() as i64 + 1;
     let x0 = index(minimum[0], 0).floor() as i64 - margin;
     let x1 = index(maximum[0], 0).ceil() as i64 + margin;
     let y0 = index(minimum[1], 1).floor() as i64 - margin;
     let y1 = index(maximum[1], 1).ceil() as i64 + margin;
-    let at = |x: i64, y: i64| {
-        [
-            grid.origin[0] + x as f64 * grid.pitch,
-            grid.origin[1] + y as f64 * grid.pitch,
-        ]
-    };
+    let at = |x: i64, y: i64| [grid.coordinate(0, x), grid.coordinate(1, y)];
     let to_point = |point: crate::geometry::Point| {
         polyline
             .windows(2)

@@ -49,7 +49,11 @@ impl TileFrame {
 /// (neck classes added first, as the router does), as tiles.
 pub fn tile_frame(board: &Board, config: &super::Config) -> TileFrame {
     let (board, _, _) = Router::with_neck_classes(board, config);
-    TileFrame::of_grid(&Grid::choose(&board, &config.pitches))
+    TileFrame::of_grid(&crate::pin_lines::lattice(
+        &board,
+        &config.pitches,
+        config.pin_lines,
+    ))
 }
 
 /// Per-tile maps of where negotiation fought, after a probe. Maps are

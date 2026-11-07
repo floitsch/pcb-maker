@@ -156,6 +156,7 @@ impl Router {
                 .as_ref()
                 .map_or(0, |split| split.resolved.layer_variant[layer])
         };
+        let grid = &self.grid;
         for querying in 0..self.board.classes.len() {
             let marks = &mut self.stamp_mark;
             let base = querying * (layers + 1);
@@ -197,10 +198,22 @@ impl Router {
                             // The lattice's discs grown by the snapping
                             // error, at every sampled node.
                             for cell in cells {
-                                for (map, offsets) in [
-                                    (Some(map), &stub_stamps.stub_to_trace),
-                                    (Some(base + layers), &stub_stamps.stub_to_via),
-                                    (layer_via(end.layer as usize), &stub_stamps.stub_to_via),
+                                for (map, offsets, radius) in [
+                                    (
+                                        Some(map),
+                                        &stub_stamps.stub_to_trace,
+                                        stub_stamps.radii.stub_to_trace,
+                                    ),
+                                    (
+                                        Some(base + layers),
+                                        &stub_stamps.stub_to_via,
+                                        stub_stamps.radii.stub_to_via,
+                                    ),
+                                    (
+                                        layer_via(end.layer as usize),
+                                        &stub_stamps.stub_to_via,
+                                        stub_stamps.radii.stub_to_via,
+                                    ),
                                 ] {
                                     let Some(map) = map else {
                                         continue;
@@ -215,6 +228,7 @@ impl Router {
                                         (1, 1),
                                         size,
                                         reach,
+                                        Some((grid, Shape::Disc(radius))),
                                     );
                                 }
                                 for orientation in 0..2 {
@@ -230,6 +244,13 @@ impl Router {
                                         (1, 1),
                                         size,
                                         reach,
+                                        Some((
+                                            grid,
+                                            Shape::Starts(
+                                                orientation,
+                                                stub_stamps.radii.stub_diagonal_block,
+                                            ),
+                                        )),
                                     );
                                 }
                             }
@@ -248,6 +269,7 @@ impl Router {
                                     (1, 1),
                                     size,
                                     reach,
+                                    Some((grid, Shape::Disc(stub_stamps.radii.trace_to_trace))),
                                 );
                                 for map in [Some(base + layers), layer_via(end.layer as usize)]
                                     .into_iter()
@@ -263,6 +285,7 @@ impl Router {
                                         (1, 1),
                                         size,
                                         reach,
+                                        Some((grid, Shape::Disc(stub_stamps.radii.trace_to_via))),
                                     );
                                 }
                                 for orientation in 0..2 {
@@ -278,6 +301,13 @@ impl Router {
                                         (1, 1),
                                         size,
                                         reach,
+                                        Some((
+                                            grid,
+                                            Shape::Starts(
+                                                orientation,
+                                                stub_stamps.radii.diagonal_block,
+                                            ),
+                                        )),
                                     );
                                 }
                             }
@@ -321,6 +351,7 @@ impl Router {
                                     (1, 1),
                                     size,
                                     unbounded,
+                                    None,
                                 );
                             }
                         }
@@ -379,6 +410,7 @@ impl Router {
                         (1, 1),
                         size,
                         reach,
+                        Some((grid, Shape::Disc(own.radii.trace_to_trace))),
                     );
                     let map = base + layers;
                     let offsets = match step {
@@ -395,6 +427,7 @@ impl Router {
                         (1, 1),
                         size,
                         reach,
+                        Some((grid, Shape::Disc(own.radii.trace_to_via))),
                     );
                     if let Some(map) = layer_via(node.layer as usize) {
                         // The layer's own map had the node before stamp
@@ -413,6 +446,7 @@ impl Router {
                             (1, 1),
                             size,
                             reach,
+                            Some((grid, Shape::Disc(own.radii.trace_to_via))),
                         );
                     }
                     for orientation in 0..2 {
@@ -435,6 +469,7 @@ impl Router {
                             (1, 1),
                             size,
                             reach,
+                            Some((grid, Shape::Starts(orientation, own.radii.diagonal_block))),
                         );
                     }
                     // A via through several layers at one cell: the via
@@ -472,6 +507,7 @@ impl Router {
                                 (1, 1),
                                 size,
                                 stamps.fresh.reach,
+                                Some((grid, Shape::Disc(stamps.radii.via_to_trace))),
                             );
                         }
                         // Via to via is the largest of every layer's.
@@ -488,6 +524,7 @@ impl Router {
                             (1, 1),
                             size,
                             reach,
+                            Some((grid, Shape::Disc(stamps.radii.via_to_via))),
                         );
                         // With spans, on each layer it pierces: two vias
                         // meet only where both are (KiCad keeps neither
@@ -510,6 +547,7 @@ impl Router {
                                 (1, 1),
                                 size,
                                 reach,
+                                Some((grid, Shape::Disc(stamps.radii.via_to_via))),
                             );
                         }
                         for layer in 0..layers {
@@ -537,6 +575,10 @@ impl Router {
                                     (1, 1),
                                     size,
                                     stamps.fresh.reach,
+                                    Some((
+                                        grid,
+                                        Shape::Starts(orientation, stamps.radii.diagonal_block_via),
+                                    )),
                                 );
                             }
                         }
@@ -557,6 +599,7 @@ impl Router {
                             step,
                             size,
                             reach,
+                            Some((grid, Shape::Segment(own.radii.diagonal_to_trace))),
                         );
                         for map in [Some(base + layers), layer_via(node.layer as usize)]
                             .into_iter()
@@ -572,6 +615,7 @@ impl Router {
                                 step,
                                 size,
                                 reach,
+                                Some((grid, Shape::Segment(own.radii.diagonal_to_via))),
                             );
                         }
                     }

@@ -852,6 +852,7 @@ pub fn route(board: &Board, config: &Config) -> RoutingResult {
             pitch: 0.0,
             nx: 0,
             ny: 0,
+            warp: None,
         },
         congestion: Vec::new(),
         routes: routes.0,

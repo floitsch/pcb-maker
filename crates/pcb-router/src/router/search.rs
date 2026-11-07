@@ -62,10 +62,24 @@ impl Router {
                         continue;
                     }
                     let (x, y) = (pair[0].cell as i64 % nx, pair[0].cell as i64 / nx);
-                    for (dx, dy) in &stamps.via_to_via {
-                        let (tx, ty) = (x + *dx as i64, y + *dy as i64);
-                        if tx >= 0 && ty >= 0 && tx < nx && ty < ny && (*dx != 0 || *dy != 0) {
-                            near[(ty * nx + tx) as usize] = generation;
+                    if self.grid.warp.is_some()
+                        && !self
+                            .grid
+                            .uniform_around(x as usize, y as usize, stamps.fresh.reach)
+                    {
+                        // Lines at the pins: the via's footprint measured.
+                        self.grid.disc_cells(
+                            x as usize,
+                            y as usize,
+                            stamps.radii.via_to_via,
+                            |cell| near[cell] = generation,
+                        );
+                    } else {
+                        for (dx, dy) in &stamps.via_to_via {
+                            let (tx, ty) = (x + *dx as i64, y + *dy as i64);
+                            if tx >= 0 && ty >= 0 && tx < nx && ty < ny && (*dx != 0 || *dy != 0) {
+                                near[(ty * nx + tx) as usize] = generation;
+                            }
                         }
                     }
                     near[pair[0].cell as usize] = 0;
@@ -922,7 +936,9 @@ impl Router {
     fn hop_reach(&self, class: usize) -> (usize, f64) {
         let rules = self.board.classes[class];
         let reach = rules.via_drill + self.board.hole_to_hole.max(0.0);
-        ((reach / self.grid.pitch).ceil() as usize, reach)
+        // The shortest step: lines at the pins may lie closer than the
+        // pitch.
+        ((reach / self.grid.steps().0).ceil() as usize, reach)
     }
 
     /// Whether a retained branch is still legal against the fixed copper.

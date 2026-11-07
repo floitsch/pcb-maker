@@ -161,6 +161,11 @@ pub struct Config {
     /// centre line: OpenFC's U10), to a legal node beyond. On by default;
     /// `PCB_ROUTER_CORRIDOR_ESCAPES=0` turns it off (A/B on one binary).
     pub corridor_escapes: bool,
+    /// Lattice lines where the pins are (`crate::pin_lines`): a pin row's
+    /// pad centres and a tight channel's tracks get lines of their own
+    /// where the regular lattice has none within their slack.
+    /// `PCB_ROUTER_PIN_LINES` overrides it.
+    pub pin_lines: crate::pin_lines::Lines,
     /// The pour model as the measurement of a written board takes it
     /// (`measured_board`'s starved thermals, its solid step, and
     /// dump-pour-map), closer to KiCad's DRC than routing's: a pad merged
@@ -422,6 +427,7 @@ impl Default for Config {
             escape_stub_mm: 0.0,
             exact_escape_stubs: super::escapes::exact_escapes_override().unwrap_or(true),
             corridor_escapes: super::corridors::corridor_escapes_override().unwrap_or(true),
+            pin_lines: crate::pin_lines::lines_override().unwrap_or(crate::pin_lines::Lines::Off),
             min_spokes: 2,
             measured_thermals: std::env::var_os("PCB_ROUTER_MEASURED_THERMALS").is_some(),
             global_routing: false,

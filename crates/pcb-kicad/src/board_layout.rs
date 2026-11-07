@@ -835,9 +835,9 @@ fn body_congestion(
     let range = |axis: usize, size: usize| {
         let low = center[axis] - half[axis] - margin;
         let high = center[axis] + half[axis] + margin;
-        let first = ((low - grid.origin[axis]) / grid.pitch).ceil().max(0.0) as usize;
-        let last = (((high - grid.origin[axis]) / grid.pitch).floor().max(0.0) as usize)
-            .min(size.saturating_sub(1));
+        let first = grid.index_of(axis, low).ceil().max(0.0) as usize;
+        let last =
+            (grid.index_of(axis, high).floor().max(0.0) as usize).min(size.saturating_sub(1));
         (first, last)
     };
     let (x0, x1) = range(0, grid.nx);

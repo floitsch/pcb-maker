@@ -174,7 +174,7 @@ pub fn work_nanos(counts: &ProbeCounts) -> f64 {
 impl ExitProbe {
     pub fn new(board: &Board, config: &Config) -> Self {
         let (board, neck_of, class_rules) = Router::with_neck_classes(board, config);
-        let grid = Grid::choose(&board, &config.pitches);
+        let grid = crate::pin_lines::lattice(&board, &config.pitches, config.pin_lines);
         let mut poured = vec![false; board.nets.len()];
         for plane in board.planes.iter().filter(|plane| plane.connect) {
             if let Some(entry) = poured.get_mut(plane.net as usize) {
@@ -310,12 +310,7 @@ impl ExitProbe {
         let Some((x0, y0, x1, y1)) = self.grid.node_range(window) else {
             return Vec::new();
         };
-        let grid = Grid {
-            origin: self.grid.center(x0, y0),
-            pitch: self.grid.pitch,
-            nx: x1 - x0 + 1,
-            ny: y1 - y0 + 1,
-        };
+        let grid = self.grid.window(x0, y0, x1, y1);
         let mut counts = ProbeCounts {
             windows: 1,
             ..Default::default()

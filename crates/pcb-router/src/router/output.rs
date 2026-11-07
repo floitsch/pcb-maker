@@ -219,8 +219,17 @@ impl Router {
         // node checked at the full width and the narrow one reaches it.
         let mut start = 0;
         for index in 1..nodes.len() {
+            // On a lattice with lines at the pins two steps of one
+            // direction are not always on one line: a segment ends where
+            // the run bends in millimetres too.
             let turning = index + 1 < nodes.len()
-                && delta(nodes[index - 1], nodes[index]) != delta(nodes[index], nodes[index + 1]);
+                && (delta(nodes[index - 1], nodes[index]) != delta(nodes[index], nodes[index + 1])
+                    || (self.grid.warp.is_some()
+                        && !self.collinear(
+                            nodes[start].cell,
+                            nodes[index].cell,
+                            nodes[index + 1].cell,
+                        )));
             let last = index + 1 == nodes.len();
             let width_edge = widths[index] >= wide
                 && ((index + 1 < nodes.len() && widths[index + 1] < wide)
@@ -239,5 +248,19 @@ impl Router {
                 start = index;
             }
         }
+    }
+
+    /// Whether the nodes `c` lies on the line through `a` and `b`, to the
+    /// nanometre.
+    fn collinear(&self, a: u32, b: u32, c: u32) -> bool {
+        let at = |cell: u32| {
+            let (x, y) = self.grid.xy(cell as usize);
+            [
+                self.grid.coordinate_nm(0, x as i64) as i128,
+                self.grid.coordinate_nm(1, y as i64) as i128,
+            ]
+        };
+        let (a, b, c) = (at(a), at(b), at(c));
+        (b[0] - a[0]) * (c[1] - a[1]) == (b[1] - a[1]) * (c[0] - a[0])
     }
 }

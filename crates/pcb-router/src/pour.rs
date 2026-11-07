@@ -457,6 +457,7 @@ mod tests {
             pitch: 0.1,
             nx,
             ny,
+            warp: None,
         };
         let pours = PourMap {
             solid: vec![Vec::new()],
@@ -548,6 +549,7 @@ mod tests {
                 pitch: 0.1,
                 nx,
                 ny,
+                warp: None,
             };
             // A diagonal step allowed by its start and orientation alone,
             // about half of them.

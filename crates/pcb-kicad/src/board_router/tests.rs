@@ -1575,6 +1575,7 @@ mod pour_request_tests {
             pitch,
             nx: 99,
             ny: 99,
+            warp: None,
         };
         let node = grid.nearest_node(at).unwrap();
         assert!(core::geometry::distance(grid.center_of(node), at) < 1.0e-9);
@@ -1926,6 +1927,7 @@ mod pour_request_tests {
             pitch,
             nx: 299,
             ny: 99,
+            warp: None,
         };
         let maps =
             core::grid::StaticMaps::build(&board, &grid, board.nets[signal as usize].class, true);

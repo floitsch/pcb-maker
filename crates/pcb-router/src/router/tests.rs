@@ -7,6 +7,74 @@ use super::*;
 /// A walk stamped with each footprint's leading edge after the first
 /// node lists the same cells in the same order as with whole footprints,
 /// near the lattice's edges too.
+/// On the regular lattice the footprints measured on the lines
+/// (`Grid::disc_cells`, `segment_cells`, `diagonal_start_cells`: what a
+/// lattice with lines at the pins stamps where its lines are not a pitch
+/// apart) are the offsets `disc`, `diagonal_extra` and `diagonal_block`.
+#[test]
+fn measured_footprints_are_the_offsets_on_the_regular_lattice() {
+    for (pitch, radius) in [
+        (0.1, 0.33),
+        (0.1, 0.3),
+        (0.125, 0.4135),
+        (0.127, 0.2),
+        (0.075, 0.35),
+    ] {
+        let grid = crate::grid::Grid {
+            origin: [1.0, 2.0],
+            pitch,
+            nx: 41,
+            ny: 37,
+            warp: None,
+        };
+        let (x, y) = (20usize, 18usize);
+        let index =
+            |dx: i32, dy: i32| grid.index((x as i32 + dx) as usize, (y as i32 + dy) as usize);
+        let sorted = |mut cells: Vec<usize>| {
+            cells.sort_unstable();
+            cells
+        };
+        let mut measured = Vec::new();
+        grid.disc_cells(x, y, radius_nm(radius), |cell| measured.push(cell));
+        let offsets: Vec<usize> = disc(radius, pitch)
+            .iter()
+            .map(|(dx, dy)| index(*dx, *dy))
+            .collect();
+        assert_eq!(sorted(measured), sorted(offsets), "disc {pitch} {radius}");
+        for (sx, sy) in [(1i64, 1i64), (1, -1), (-1, 1), (-1, -1)] {
+            let mut measured = Vec::new();
+            grid.segment_cells((x, y), (sx, sy), radius_nm(radius), |cell| {
+                measured.push(cell)
+            });
+            let offsets: Vec<usize> = diagonal_extra(radius, pitch)
+                .iter()
+                .map(|(dx, dy)| index(dx * sx as i32, dy * sy as i32))
+                .collect();
+            assert_eq!(
+                sorted(measured),
+                sorted(offsets),
+                "segment {pitch} {radius} {sx} {sy}"
+            );
+        }
+        let blocks = diagonal_block(radius, pitch);
+        for orientation in 0..2 {
+            let mut measured = Vec::new();
+            grid.diagonal_start_cells((x, y), orientation, radius_nm(radius), |cell| {
+                measured.push(cell)
+            });
+            let offsets: Vec<usize> = blocks[orientation]
+                .iter()
+                .map(|(dx, dy)| index(*dx, *dy))
+                .collect();
+            assert_eq!(
+                sorted(measured),
+                sorted(offsets),
+                "starts {pitch} {radius} {orientation}"
+            );
+        }
+    }
+}
+
 #[test]
 fn fresh_footprints_mark_as_whole_ones() {
     let (nx, ny) = (23i64, 17i64);
@@ -27,6 +95,7 @@ fn fresh_footprints_mark_as_whole_ones() {
         diagonal_block_via: [Vec::new(), Vec::new()],
         stub_diagonal_block: [Vec::new(), Vec::new()],
         fresh: Fresh::default(),
+        radii: Radii::default(),
     };
     let fresh = Fresh::of(&stamps);
     let mut state = 0x2545_f491_4f6c_dd1du64;
@@ -61,6 +130,7 @@ fn fresh_footprints_mark_as_whole_ones() {
                 (1, 1),
                 (nx, ny),
                 fresh.reach,
+                None,
             );
             let offsets = if index == 0 {
                 &disc_offsets
@@ -82,6 +152,7 @@ fn fresh_footprints_mark_as_whole_ones() {
                 (1, 1),
                 (nx, ny),
                 fresh.reach,
+                None,
             );
         }
         assert_eq!(
@@ -5255,6 +5326,7 @@ fn an_oblique_stubs_footprint_is_measured() {
         pitch: 0.1,
         nx: 40,
         ny: 40,
+        warp: None,
     };
     let (radius, via_radius) = (0.4, 0.55);
     let polyline = [[1.25, 1.0], [1.2, 0.5]];
