@@ -334,9 +334,9 @@ mod tests {
     /// order (component `order[k]` is the k-th link of the chain) and
     /// stacked at the centre.
     fn chain() -> (Problem, Vec<usize>) {
-        let order = vec![4, 1, 6, 2, 5, 3];
+        let order = [4, 1, 6, 2, 5, 3];
         let mut components = vec![part(0, true)];
-        let mut link = vec![0; 7];
+        let mut link = [0; 7];
         for (index, k) in order.iter().enumerate() {
             link[*k] = index + 1;
         }

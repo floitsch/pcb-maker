@@ -9946,6 +9946,140 @@ problem 4 (b)) is not worth its 24 CPU hours on this evidence. Glasgow's
 refinement (40 terminals from the legalised designer's placement) stays
 a separate suspect, untested.
 
+## The global placement's start (2026-11-07)
+
+Branch global-start (everything in `build/glob1/`). "Where the
+arrangement is lost (2026-11-04)" found the coarse arrangement of the
+active parts decided by the global placement's start: every part began
+at one point (the fixed parts' pin centroid halfway to the board's
+centre) with a noise of 5 % of the board's size, and the descent spread
+them in the order the noise gave them. The bet: start the descent where
+the netlist puts the parts, as RePlAce's initial placement does.
+
+**The netlist's start** (`initial::quadratic_start`, under
+`GlobalConfig::netlist_start`): the movable parts' centres that minimise
+the nets' quadratic wirelength in the bound-to-bound model (each net's
+pins tied to its two outermost pins with weights `2 w / ((p - 1) d)`, `d`
+at least 1/200 of the board's larger side, linearised again from the
+solution up to twelve times), the fixed parts' pins as anchors, every
+part pulled to its own start point by a thousandth of the mean net
+stiffness (a board without fixed pins, a part without nets). Each axis is
+solved by conjugate gradients with a diagonal preconditioner. A part its
+constraints move (an edge, a region, the board's bounds; the descent's
+own clamp) is anchored at that projection in the solves after it, so
+its neighbours follow it towards its edge. The start's noise is drawn as
+before and a tenth of it added: it breaks ties (parts on the same nets
+solve to the same spot), not the arrangement. Its work is booked (a
+matrix entry visited a unit; a few thousandths of one global iteration's).
+It reaches every global placement: the plain seeds', the skeleton's (the
+race over skeletons' phase 1 is `place` on the skeleton's problem) and
+the passives' around the held skeleton.
+
+**The instruments.** No placement changes with them (the place checks of
+the 4in1 and Glasgow at seed 1 by main's x1932 and by this branch with
+the switch off wrote byte-identical boards).
+
+- The trace (`PCB_PLACER_TRACE`) has two more kinds of stage: `start`
+  (the poses the global placement's descent starts from), and under the
+  race over skeletons the kept skeleton's stages before the whole
+  placement's (`skeleton_start`, `skeleton_global`, `skeleton_annealed`,
+  `skeleton_legal`, `skeleton_final`; the race's phase 2 holds the
+  skeleton, so the active parts' `global` there is the skeleton's final
+  poses). `global_history` holds each global placement's descent every
+  ten iterations and at its last: the overflow, the density weight
+  `lambda`, the wirelength's smoothing `gamma`, the absolute sums of the
+  wire gradient and of the density gradient times `lambda`, the
+  wirelength.
+- `stages.py` measures every stage a trace holds, has the variant
+  `netlist` (`PCB_PLACER_NETLIST_START=1`) and a table of the descents
+  (iterations, the overflow at the stop, lambda's growth, where the wire
+  gradient's share of the gradient falls below a half, a tenth and a
+  hundredth).
+
+**Stage 0** (the four boards of the diagnosis at layout seeds 1 and 101,
+its inputs, place checks only, `build/glob1/s0`, binary
+`build/glob1/pcb-maker-a`; 24 place checks, the variants below
+included, about 2.7 CPU hours). The active parts against the
+designer's (displacement share / pairwise rank correlation; a shuffle
+about 1.4 / 0, the designer's 0 / 1), the kept seed; the seeds' pairwise
+agreement among the race's seeds; the placer's objective at the end
+(the anneal's, as in "The objective at the designer's arrangement and
+ours") against ours at the same layout seed; the overflow where the
+whole placement's global placement stopped (on skeleton seeds that is
+the passives' around the held skeleton):
+
+| board | seed | arm | kept skeleton's global | global | final | seeds agree: global / final | objective final / ours | overflow at the stop (global) |
+| --- | --- | --- | --- | --- | --- | --- | ---: | ---: |
+| video | 1 | ours | 0.79 / 0.33 | 0.68 / 0.31 | 0.68 / 0.31 | 0.17 / 0.49 | 1.00 | 0.047 |
+| video | 1 | netlist | - | 0.62 / 0.55 | 0.52 / 0.54 | 0.46 / 0.48 | 1.07 | 0.040 |
+| video | 101 | ours | 0.78 / 0.19 | 0.71 / 0.20 | 0.71 / 0.20 | 0.33 / 0.33 | 1.00 | 0.082 |
+| video | 101 | netlist | - | 0.59 / 0.56 | 0.52 / 0.59 | 0.55 / 0.59 | 1.10 | 0.060 |
+| 4in1 | 1 | ours | 0.58 / 0.50 | 0.64 / 0.43 | 0.64 / 0.43 | 0.31 / 0.32 | 1.00 | 0.052 |
+| 4in1 | 1 | netlist | 0.56 / 0.51 | 0.53 / 0.59 | 0.54 / 0.59 | 0.65 / 0.65 | 0.56 | 0.651 |
+| 4in1 | 101 | ours | 0.92 / 0.23 | 0.87 / 0.23 | 0.87 / 0.23 | 0.38 / 0.40 | 1.00 | 0.060 |
+| 4in1 | 101 | netlist | 0.55 / 0.51 | 0.46 / 0.67 | 0.46 / 0.67 | 0.69 / 0.69 | 0.44 | 0.621 |
+| revC3 | 1 | ours | 0.89 / 0.19 | 0.84 / 0.22 | 0.84 / 0.22 | 0.23 / 0.23 | 1.00 | 0.049 |
+| revC3 | 1 | netlist | 0.74 / 0.30 | 0.58 / 0.45 | 0.58 / 0.45 | 0.66 / 0.66 | 0.90 | 0.055 |
+| revC3 | 101 | ours | 0.97 / 0.18 | 0.73 / 0.31 | 0.73 / 0.31 | 0.26 / 0.26 | 1.00 | 0.066 |
+| revC3 | 101 | netlist | 0.73 / 0.32 | 0.65 / 0.38 | 0.65 / 0.38 | 0.66 / 0.66 | 0.87 | 0.060 |
+| SNSP-CPU-01 | 1 | ours | 0.76 / 0.31 | 0.68 / 0.35 | 0.68 / 0.35 | 0.77 / 0.77 | 1.00 | 0.040 |
+| SNSP-CPU-01 | 1 | netlist | 0.62 / 0.41 | 0.50 / 0.53 | 0.49 / 0.53 | 0.85 / 0.85 | 0.77 | 0.053 |
+| SNSP-CPU-01 | 101 | ours | 0.76 / 0.30 | 0.64 / 0.44 | 0.64 / 0.45 | 0.77 / 0.77 | 1.00 | 0.040 |
+| SNSP-CPU-01 | 101 | netlist | 0.61 / 0.43 | 0.52 / 0.50 | 0.52 / 0.50 | 0.86 / 0.85 | 0.96 | 0.035 |
+
+- **The arrangement is the netlist's.** At the end the active parts lie
+  nearer the designer's on all eight rows (share 0.46 to 0.65 against
+  0.64 to 0.87, pairwise 0.38 to 0.67 against 0.20 to 0.45); on the
+  boards where ours is a shuffle's distance at its global placement
+  (video, Glasgow: pairwise 0.18 to 0.33) the netlist's global placement
+  is at 0.30 to 0.56.
+- **The seeds agree**: 0.48 to 0.85 at the end against 0.23 to 0.77
+  (the 4in1 0.65 and 0.69 against 0.32 and 0.40, Glasgow 0.66 against
+  0.23 and 0.26; video 0.48 and 0.59 against 0.49 and 0.33). The
+  skeletons' starts agree to 0.97 to 1.00: the race's seeds start from
+  one arrangement, and the noise and the anneal decide the rest.
+- **The objective falls on three boards**: 0.56 and 0.44 of ours on the
+  4in1 (the decoupling relations 11 680 and 10 646 against 20 901 and
+  24 863, the crossings half), 0.90 and 0.87 on Glasgow, 0.77 and 0.96 on
+  SNSP-CPU-01. **Video rises**: 1.07 and 1.10 (crossings 28 770 and
+  36 987 against 26 076 and 28 968). Video's own two seeds differ by 18 %
+  (49 131 and 57 960); on video the netlist's skeleton seats no memory
+  module bank at full halos and the kept seeds are the plain fallback,
+  where ours kept a skeleton on both.
+- **The descent's schedule (candidate b) is not the loss.** While the
+  overflow is above 0.1 the wire gradient's share of the gradient has a
+  median of 0.42 to 0.50 on the 4in1, Glasgow and SNSP-CPU-01 (the
+  skeletons' descents 0.47 to 0.52, never under 0.27): `lambda`'s growth
+  of 1.03 an iteration is matched by the density gradient's fall, and
+  the wires have their say while the parts spread. Video's is lower (its
+  skeletons 0.23 and 0.33, falling to 0.00 and 0.01 at overflow 0.14 to
+  0.15 where they stall; the netlist's plain descents 0.34 and 0.23),
+  the trapped passives below too (0.02 and 0.03). On the boards
+  where ours is at shuffle level the arrangement is decided at the
+  start, not by the schedule.
+- **Video's overflow at the stop** is 0.040 and 0.060 from the netlist's
+  start (ours 0.047 and 0.082 on this binary: the stall stop under the
+  race ends it); the bins (candidate c) were not needed for it.
+- **A defect left**: the passives' global placement around a held
+  skeleton stalls at overflow 0.62 to 0.65 on the 4in1 (ours 0.05): a
+  passive's netlist position lies inside the held IC it serves, where
+  the density does not push it out before the stall stop (100
+  iterations without progress). The anneal and the legaliser seat them;
+  the objective is still 0.44 to 0.56 of ours. Two variants were
+  measured and not taken: the netlist's positions pushed out of every
+  fixed body by the shortest way (`netpush`: Glasgow back to 0.66 / 0.29
+  and objective 1.04 and 0.96, video 1.07 and 1.25, the 4in1's stall
+  unchanged on seed 1), and four times the noise (video 1.15 and 1.04,
+  its arrangement 0.63 / 0.32 and 0.67 / 0.45: the noise gives back the
+  arrangement and not the objective).
+
+By the rule set for stage 0 (nearer the designer's where ours is at
+shuffle level, the seeds agreeing better than 0.12 to 0.38, the objective
+at the end not above ours) the netlist's start passes on the
+arrangement and the agreement on all four boards and on the objective
+on three; video's objective rises by less than its own seed spread.
+Stage 1 below.
+
 ## What went wrong on the way (kept as lessons)
 
 - A density target below 1 can never be met when every part is larger than a
