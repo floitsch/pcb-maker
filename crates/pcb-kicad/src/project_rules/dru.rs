@@ -1151,7 +1151,8 @@ pub(crate) struct PairClearance {
     /// Indices into `BoardFacts::nets`; `None`: every item, of no net too.
     pub first: Option<Vec<usize>>,
     pub second: Option<Vec<usize>>,
-    /// Bit `3 * a + b` for kinds `ROUTED_KINDS[a]` and `OTHER_KINDS[b]`
+    /// Bit `4 * a + b` for kinds `ROUTED_KINDS[a]` and B's (track, via,
+    /// SMD pad, plated pad)
     /// (pcb_router::rules::kind_bit).
     pub kinds: u16,
     /// Bit per index of `BoardFacts::copper_layers`; all of them for a
@@ -1161,7 +1162,8 @@ pub(crate) struct PairClearance {
 }
 
 /// The kinds the router lays (A of a clearance) and the kinds they meet
-/// (B), in the router's order (pcb_router::rules::TRACK, VIA, PAD).
+/// (B), in the router's order (pcb_router::rules::TRACK, VIA, PAD,
+/// PLATED).
 const ROUTED_KINDS: [Kind; 2] = [Kind::Track, Kind::Via];
 
 /// The rules a .kicad_dru gives the router.
@@ -1984,16 +1986,26 @@ fn lower_constraint(
             } else {
                 (1u32 << board.copper_layers.len()) - 1
             };
-            let pad_kinds: Vec<Kind> = [Kind::SmdPad, Kind::PlatedPad]
-                .into_iter()
-                .filter(|kind| board.pad_kinds.contains(kind))
-                .collect();
-            let other_kinds: [Vec<Kind>; 3] = [vec![Kind::Track], vec![Kind::Via], pad_kinds];
-            // Whether the rule tells SMD from plated pads apart somewhere
-            // (the router's pads are one kind: it keeps the rule from both).
-            let mut pad_types_differ = false;
-            let mut masks = |a: usize, b: usize| -> [[u32; 3]; 2] {
-                let mut result = [[0u32; 3]; 2];
+            // The router's kinds of item B (pcb_router::rules::TRACK, VIA,
+            // PAD, PLATED): SMD and plated pads apart, as KiCad's
+            // `isPlated()` tells them (until 2026-11-07 one kind, the
+            // rule from both: the laptop motherboard's "Pad to Track
+            // clearance" walled its SMD balls).
+            let present = |kind: Kind| -> Vec<Kind> {
+                if board.pad_kinds.contains(&kind) {
+                    vec![kind]
+                } else {
+                    Vec::new()
+                }
+            };
+            let other_kinds: [Vec<Kind>; 4] = [
+                vec![Kind::Track],
+                vec![Kind::Via],
+                present(Kind::SmdPad),
+                present(Kind::PlatedPad),
+            ];
+            let masks = |a: usize, b: usize| -> [[u32; 4]; 2] {
+                let mut result = [[0u32; 4]; 2];
                 for (ai, a_kind) in ROUTED_KINDS.iter().enumerate() {
                     for (bi, b_kinds) in other_kinds.iter().enumerate() {
                         let mut per_kind = Vec::new();
@@ -2025,9 +2037,6 @@ fn lower_constraint(
                                 }
                             }
                             per_kind.push(mask);
-                        }
-                        if per_kind.windows(2).any(|pair| pair[0] != pair[1]) {
-                            pad_types_differ = true;
                         }
                         result[ai][bi] = per_kind.into_iter().fold(0, |all, mask| all | mask);
                     }
@@ -2112,7 +2121,7 @@ fn lower_constraint(
                     for (ai, row) in table.iter().enumerate() {
                         for (bi, mask) in row.iter().enumerate() {
                             if *mask != 0 {
-                                *by_layers.entry(*mask).or_default() |= 1 << (ai * 3 + bi);
+                                *by_layers.entry(*mask).or_default() |= 1 << (ai * 4 + bi);
                             }
                         }
                     }
@@ -2131,11 +2140,11 @@ fn lower_constraint(
                         }
                     }
                 }
-                let kind_names = ["track", "via", "pad"];
+                let kind_names = ["track", "via", "pad", "plated pad"];
                 let mut kinds_text: Vec<String> = Vec::new();
                 for ai in 0..2 {
-                    for bi in 0..3 {
-                        if kinds_seen & (1 << (ai * 3 + bi)) != 0 {
+                    for bi in 0..4 {
+                        if kinds_seen & (1 << (ai * 4 + bi)) != 0 {
                             kinds_text.push(format!("{} to {}", kind_names[ai], kind_names[bi]));
                         }
                     }
@@ -2154,7 +2163,7 @@ fn lower_constraint(
                         .collect::<Vec<_>>()
                         .join(", ")
                 };
-                let mut detail = format!(
+                let detail = format!(
                     "clearance {} as a pair rule: {} ({}; {})",
                     mm(value),
                     if groups.len() == 1 {
@@ -2167,19 +2176,7 @@ fn lower_constraint(
                     kinds_text.join(", "),
                     layers_text
                 );
-                if pad_types_differ {
-                    detail.push_str(" (SMD and plated pads alike: the router has one pad kind)");
-                }
-                lowered.note(
-                    rule,
-                    constraint,
-                    if pad_types_differ {
-                        "approximated"
-                    } else {
-                        "applied"
-                    },
-                    detail,
-                );
+                lowered.note(rule, constraint, "applied", detail);
                 return;
             };
             let every = raise.len() == groups.len();
@@ -2895,7 +2892,7 @@ mod tests {
         assert!(rules.unmodelled.is_empty());
         assert_eq!(rules.pair_clearances.len(), 2);
         for pair in &rules.pair_clearances {
-            assert_eq!(pair.kinds, 0b111_111);
+            assert_eq!(pair.kinds, 0b1111_1111);
             assert_eq!(pair.layers, 0b11);
             assert_eq!(pair.clearance, 4.0);
         }
@@ -2969,7 +2966,7 @@ mod tests {
             [PairClearance {
                 first: None,
                 second: None,
-                kinds: 1 << 2,
+                kinds: 1 << 2 | 1 << 3,
                 layers: 0b11,
                 clearance: 0.2,
             }]
@@ -3000,14 +2997,39 @@ mod tests {
         assert_eq!(inner.clearance_all, 0.0);
         assert_eq!(inner.report[0].status, "applied");
         assert_eq!(inner.pair_clearances[0].layers, 0b0110);
-        assert_eq!(inner.pair_clearances[0].kinds, 0b111_111);
-        // An SMD pad rule holds for plated pads too (one pad kind).
+        assert_eq!(inner.pair_clearances[0].kinds, 0b1111_1111);
+        // An SMD pad rule holds for SMD pads only (until 2026-11-07 for
+        // plated pads too: the router had one pad kind).
         let smd = lowered(
             "(rule smd (condition \"A.Pad_Type == 'SMD' && B.Type == 'track'\") (constraint clearance (min 0.3)))",
             &board,
         );
-        assert_eq!(smd.report[0].status, "approximated");
+        assert_eq!(smd.report[0].status, "applied");
         assert_eq!(smd.pair_clearances[0].kinds, 1 << 2);
+    }
+
+    #[test]
+    fn a_rule_on_plated_pads_leaves_smd_pads_alone() {
+        // The laptop motherboard's "Pad to Track clearance": KiCad's
+        // `isPlated()` holds for plated pads and vias, never for an SMD
+        // pad, so its 0.4 mm WLCSP balls keep the class's 0.11 mm.
+        let board = board(&[("A", &["Default"]), ("B", &["Default"])]);
+        let rules = lowered(
+            "(rule \"Pad to Track\" (constraint clearance (min 0.2mm)) (condition \"A.isPlated() && B.Type == 'track'\"))",
+            &board,
+        );
+        assert_eq!(rules.report[0].status, "applied");
+        assert!(!rules.report[0].detail.contains("alike"));
+        assert_eq!(rules.pair_clearances.len(), 1);
+        // Tracks against plated pads and against vias, vias against
+        // tracks: not against SMD pads.
+        use pcb_router::rules::{PAD, PLATED, TRACK, VIA, kind_bit};
+        let kinds = rules.pair_clearances[0].kinds;
+        assert_eq!(
+            kinds,
+            kind_bit(TRACK, PLATED) | kind_bit(TRACK, VIA) | kind_bit(VIA, TRACK)
+        );
+        assert_eq!(kinds & kind_bit(TRACK, PAD), 0);
     }
 
     #[test]
@@ -3036,13 +3058,14 @@ mod tests {
             rules
                 .pair_clearances
                 .iter()
-                .any(|pair| pair.clearance == 0.2 && pair.kinds == 1 << 2)
+                .any(|pair| pair.clearance == 0.2 && pair.kinds == 1 << 2 | 1 << 3)
         );
         assert!(
             rules
                 .pair_clearances
                 .iter()
-                .any(|pair| pair.clearance == 0.127 && pair.kinds == 0b111_111 & !(1 << 2))
+                .any(|pair| pair.clearance == 0.127
+                    && pair.kinds == 0b1111_1111 & !(1 << 2 | 1 << 3))
         );
         // A later rule on some nets takes their pairs only: the general
         // 0.3 holds between A and B, not with HV.

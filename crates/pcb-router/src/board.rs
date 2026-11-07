@@ -51,6 +51,10 @@ pub struct Obstacle {
     /// the object's net class (KiCad: a positive override wins, also when
     /// it is smaller).
     pub clearance_override: Option<f64>,
+    /// A pad with a plated hole (KiCad's `thru_hole` pad): the rules'
+    /// `isPlated()` holds for it and not for an SMD pad
+    /// (`crate::rules::PLATED`).
+    pub plated: bool,
     pub blocks_tracks: bool,
     pub blocks_vias: bool,
     /// Human-readable owner, for reports only.

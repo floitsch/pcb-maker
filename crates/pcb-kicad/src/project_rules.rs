@@ -2350,22 +2350,18 @@ mod tests {
         );
         // The later rules take tracks against pads and vias against vias
         // from it (KiCad applies the last matching rule).
-        use pcb_router::rules::{ALL_KINDS, PAD, TRACK, VIA, kind_bit};
-        assert!(
-            isolation
-                .iter()
-                .all(|rule| rule.kinds == ALL_KINDS & !kind_bit(TRACK, PAD) & !kind_bit(VIA, VIA))
-        );
+        use pcb_router::rules::{ALL_KINDS, PAD, PLATED, TRACK, VIA, kind_bit};
+        let pads = kind_bit(TRACK, PAD) | kind_bit(TRACK, PLATED);
+        for rule in &isolation {
+            assert_eq!(rule.kinds, ALL_KINDS & !pads & !kind_bit(VIA, VIA));
+        }
         let pad = net_rules
             .clearances
             .iter()
             .find(|rule| rule.clearance == 0.2)
             .unwrap();
         assert_eq!((&pad.first, &pad.second), (&None, &None));
-        assert_eq!(
-            pad.kinds,
-            pcb_router::rules::kind_bit(pcb_router::rules::TRACK, pcb_router::rules::PAD)
-        );
+        assert_eq!(pad.kinds, pads);
         let vias = net_rules
             .clearances
             .iter()

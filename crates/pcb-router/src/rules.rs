@@ -23,16 +23,24 @@ use crate::board::{Board, Obstacle, ObstacleKind, RuleClass};
 pub const TRACK: usize = 0;
 pub const VIA: usize = 1;
 pub const PAD: usize = 2;
+/// A pad with a plated hole (`Obstacle::plated`): KiCad's `isPlated()`
+/// tells it from an SMD pad (the laptop motherboard's "Pad to Track
+/// clearance", 0.2 mm from plated pads only, had walled its 0.4 mm WLCSP
+/// balls while the router knew one kind of pad).
+pub const PLATED: usize = 3;
+
+/// The item kinds of a clearance's second side.
+const KINDS: usize = 4;
 
 /// The bit of `ClearanceRule::kinds` for an item of kind `first` (TRACK or
 /// VIA) of the rule's first side against one of kind `second` (TRACK,
-/// VIA or PAD) of its second.
+/// VIA, PAD or PLATED) of its second.
 pub const fn kind_bit(first: usize, second: usize) -> u16 {
-    1 << (first * 3 + second)
+    1 << (first * KINDS + second)
 }
 
 /// Every pair of kinds.
-pub const ALL_KINDS: u16 = 0b111_111;
+pub const ALL_KINDS: u16 = 0b1111_1111;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct NetRules {
@@ -135,7 +143,7 @@ pub struct Resolved {
     /// Per `NetId`: its width floor (0: none).
     pub width_floor: Vec<f64>,
     pub same_net_hole_to_hole: f64,
-    /// `[((a * groups + b) * 9 + kind_a * 3 + kind_b) * variants + variant]`.
+    /// `[((a * groups + b) * 16 + kind_a * 4 + kind_b) * variants + variant]`.
     table: Vec<f64>,
 }
 
@@ -226,7 +234,7 @@ impl Resolved {
             variant_layer.push(0);
         }
         let variants = layer_signatures.len().max(1);
-        let mut table = vec![0.0f64; groups * groups * 9 * variants];
+        let mut table = vec![0.0f64; groups * groups * KINDS * KINDS * variants];
         for (index, rule) in rules.clearances.iter().enumerate() {
             let firsts: Vec<usize> = (0..groups)
                 .filter(|group| signatures[*group][2 * index])
@@ -244,14 +252,17 @@ impl Resolved {
                 for &a in &firsts {
                     for &b in &seconds {
                         for kind_a in [TRACK, VIA] {
-                            for kind_b in [TRACK, VIA, PAD] {
+                            for kind_b in [TRACK, VIA, PAD, PLATED] {
                                 if rule.kinds & kind_bit(kind_a, kind_b) == 0 {
                                     continue;
                                 }
                                 for (g, h, k, l) in [(a, b, kind_a, kind_b), (b, a, kind_b, kind_a)]
                                 {
-                                    let slot = &mut table
-                                        [((g * groups + h) * 9 + k * 3 + l) * variants + variant];
+                                    let slot = &mut table[((g * groups + h) * KINDS * KINDS
+                                        + k * KINDS
+                                        + l)
+                                        * variants
+                                        + variant];
                                     *slot = (*slot).max(rule.clearance);
                                 }
                             }
@@ -284,7 +295,9 @@ impl Resolved {
     /// `variant` (0: nothing beyond the classes).
     #[inline]
     pub fn extra(&self, a: usize, kind_a: usize, b: usize, kind_b: usize, variant: usize) -> f64 {
-        self.table[((a * self.groups + b) * 9 + kind_a * 3 + kind_b) * self.variants + variant]
+        self.table[((a * self.groups + b) * KINDS * KINDS + kind_a * KINDS + kind_b)
+            * self.variants
+            + variant]
     }
 
     /// `extra` on `layer`.
@@ -329,6 +342,7 @@ pub fn obstacle_kind(obstacle: &Obstacle) -> Option<usize> {
         "existing track" => Some(TRACK),
         "existing via" => Some(VIA),
         label if label.starts_with("copper ") || label.contains(" copper ") => None,
+        _ if obstacle.plated => Some(PLATED),
         _ => Some(PAD),
     }
 }
@@ -543,9 +557,9 @@ impl ClassRules {
             // pad keeps what tracks of its net keep too (tuxkeychain's
             // 0.127 mm between outer-layer tracks over classes of 0.1:
             // stubs 0.104 mm from other nets' tracks next to their pads).
-            Some(PAD) => self
+            Some(pad @ (PAD | PLATED)) => self
                 .resolved
-                .extra_on(a, kind, b, PAD, layer)
+                .extra_on(a, kind, b, pad, layer)
                 .max(self.resolved.extra_on(a, kind, b, TRACK, layer)),
             Some(other) => self.resolved.extra_on(a, kind, b, other, layer),
             None => 0.0,

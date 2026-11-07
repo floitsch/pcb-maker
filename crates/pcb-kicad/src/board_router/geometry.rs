@@ -828,6 +828,7 @@ pub(super) fn rule_area_obstacle(
         net: None,
         clearance: 0.0,
         clearance_override: None,
+        plated: false,
         blocks_tracks,
         blocks_vias,
         label: form_atom(zone, "name", 1)

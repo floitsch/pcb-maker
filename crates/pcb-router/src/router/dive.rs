@@ -320,6 +320,7 @@ mod tests {
             net,
             clearance: 0.0,
             clearance_override: None,
+            plated: false,
             blocks_tracks: true,
             blocks_vias: true,
             label: label.into(),

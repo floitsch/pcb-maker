@@ -140,6 +140,7 @@ fn routers_of_other_inputs_do_not_share_static_maps() {
         net: None,
         clearance: 0.0,
         clearance_override: None,
+        plated: false,
         blocks_tracks: true,
         blocks_vias: true,
         label: "test keepout".into(),
