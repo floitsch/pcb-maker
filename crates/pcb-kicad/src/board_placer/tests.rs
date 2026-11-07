@@ -2949,7 +2949,9 @@ fn the_start_reads_the_designers_poses_and_the_trace_is_well_formed() {
         .iter()
         .map(|stage| stage.as_str().unwrap())
         .collect();
-    assert_eq!(stages, vec!["global", "annealed", "legal", "final"]);
+    assert_eq!(stages, vec!["start", "global", "annealed", "legal", "final"]);
+    // The descent's history: none ran, so none is kept.
+    assert!(seed["global_history"]["global"].as_array().unwrap().is_empty());
     for stage in &stages {
         for objective in ["objective", "objective_bare"] {
             let terms = &seed[objective][stage];
@@ -2972,5 +2974,6 @@ fn the_start_reads_the_designers_poses_and_the_trace_is_well_formed() {
     }
     // The start's poses are the global stage's (none ran).
     assert_eq!(parts[0]["poses"][0][0].as_f64(), Some(8.0));
+    assert_eq!(parts[0]["poses"][1][0].as_f64(), Some(8.0));
     let _ = fs::remove_dir_all(&root);
 }
