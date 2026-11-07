@@ -10137,6 +10137,41 @@ first-route open terminals:
   970 to 752 (-22.5 %), every pair sum falls; eight boards better, the
   4in1-mini worse, two equal.
 
+**Two diagnoses (no code changed by them).**
+
+- **The 4in1-mini's +5 % is the skeleton race's pick, not the start's
+  arrangement.** Its rows by what the race kept (stage 1, first-route
+  open terminals off / on): where off kept the plain fallback and on a
+  skeleton (level 7, the passives at 9), seeds 1, 301 and 401, 149 / 135,
+  108 / 134 and 123 / 154; where both kept the plain fallback (201) 156
+  / 147; where both kept a skeleton (101: on the fallback) 141 / 143.
+  Off falls back on four of five seeds (its passives find no room around
+  the skeleton, "A race over skeletons"), on on two: from the netlist's
+  start the 4in1-mini's passives seat around its skeleton more often, and
+  its skeletons at the tight levels route no better than its plain
+  placements (two of three worse). The race keeps three seeds there
+  (its budget). The lever would be the race's choice between a tight
+  skeleton and the plain seed on this board, not the start.
+- **The passives' stall around a held skeleton** (stage 0's 4in1 rows;
+  the trace's `start`, `skeleton_final` and `global` stages, a passive
+  counted inside a held part where its centre lies in that part's body):
+  from the netlist's start 117 and 163 of the 4in1's 176 passives begin
+  inside a held body (ours 88: the noise's clump lies over the skeleton
+  too), and 110 and 87 are still inside when the descent stops (ours 44),
+  most in the drivers and MOSFETs they serve (U5 13, Q13 13, U2 11). The
+  overflow falls from 0.91 to 0.70 in 20 iterations and then stays at
+  0.65 to 0.70 while `lambda` grows 54-fold; the race's stall stop (100
+  iterations without a 2 % fall, `GlobalConfig::stall_iterations`) ends
+  the descent at 136 and 180 iterations. The wires hold each passive at
+  the pins it serves, inside the body, and in a fixed body's bins (their
+  fixed charge capped at the bin's area) the field does not push it out
+  before the stall stop. On Glasgow and SNSP-CPU-01 the same count falls
+  to 16 and 12 and the descents reach 0.055 and 0.053. The legaliser
+  seats them, and the 4in1 still gains most (-25.9 %). Candidates, not
+  built: the passives' descent without the stall stop (it was set for
+  video's skeleton), or the passives' start from the netlist with the
+  held bodies as obstacles.
+
 **Decision.** The netlist's start is the global placement's code path
 since 2026-11-07, without a switch (`PCB_PLACER_NETLIST_START` is gone).
 What it changes: the coarse arrangement is the netlist's (the active

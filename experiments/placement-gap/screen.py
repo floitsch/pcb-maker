@@ -85,6 +85,8 @@ def units(arguments):
                            "--estimates", str(arguments.estimates), "--placer", json.dumps(placer)]
                 if arguments.reuse:
                     command += ["--reuse", arguments.reuse]
+                if getattr(arguments, "quality", False):
+                    command += ["--quality"]
                 if not arguments.full:
                     command += ["--layout", json.dumps({"stop_after_first_route": True})]
                 result.append((name, command, extra if side == "on" else dict.fromkeys(extra)))
@@ -113,6 +115,8 @@ def main():
                              "the nightly's sidecar is build/nightly/estimates.json)")
     parser.add_argument("--reuse", help="run.py's --reuse cache directory (one binary on both sides: rows whose "
                         "placement is the same reuse the earlier layout)")
+    parser.add_argument("--quality", action="store_true",
+                        help="run.py's --quality (the sweep's designer-vs-ours measures; the layout is the same)")
     parser.add_argument("--dry-run", action="store_true")
     arguments = parser.parse_args()
     out = Path(arguments.out)
