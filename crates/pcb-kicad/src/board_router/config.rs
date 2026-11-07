@@ -447,14 +447,15 @@ pub struct KiCadBoardRouterConfig {
     #[serde(default)]
     pub exact_escape_stubs: Option<bool>,
     /// Lattice lines at pin rows (router `pin_lines`; docs/router.md,
-    /// "Lattice lines at pin rows (2026-11-07)"): true puts lines through
-    /// the pads of fine-pitch rows the regular lattice misses (a part's
-    /// rows at its own phase over a band, else single lines), for a board
-    /// whose exact-fit rows lie at different phases (RP2040_base's two
-    /// QFN-56: 36 to 5 open on the designer's placement); unset or false,
-    /// the regular lattice (the default: on the designer tier it gains
-    /// three strict passes and loses two). `PCB_ROUTER_PIN_LINES`
-    /// overrides this.
+    /// "Lattice lines at pin rows (2026-11-07)" and "Lattice lines where
+    /// the rows are open (2026-11-08)"): lines through the pads of
+    /// fine-pitch rows the regular lattice misses (a part's rows at its
+    /// own phase over a band, else single lines). Unset (the default), the
+    /// route-mode ladder decides: after the leader's run, when KiCad's open
+    /// pads lie in parts whose rows the regular lattice misses, the rest
+    /// of the ladder runs with the lines (designer tier: OpenAirScope and
+    /// koeg-board pass, none lost); true puts them on every attempt, false
+    /// never. `PCB_ROUTER_PIN_LINES` (0 or 1) overrides this.
     #[serde(default)]
     pub pin_lines: Option<bool>,
     /// Prepared fan-outs for BGAs (board_router/bga_fanout.rs; docs/router.md,

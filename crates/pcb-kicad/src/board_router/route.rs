@@ -627,6 +627,24 @@ impl LadderRunner for KiCadRunner<'_> {
         MemoryLimits::read(self.memory_mb)
     }
 
+    fn missed_row_parts(&self, attempt: &KiCadBoardRouterConfig) -> Vec<String> {
+        let Ok(board) = lower(self.parsed, attempt, true).map(|lowered| lowered.board) else {
+            return Vec::new();
+        };
+        let grid = core::grid::Grid::choose(&board, &core_config(attempt).pitches);
+        let lines: Vec<core::pin_lines::PinLine> = core::pin_lines::pin_lines(&board, grid.pitch)
+            .into_iter()
+            .filter(|line| line.kind == core::pin_lines::LineKind::Exit)
+            .collect();
+        let mut parts: Vec<String> = core::pin_lines::missing(&lines, &grid)
+            .into_iter()
+            .map(|line| core::pin_lines::part_of(&line.label).to_string())
+            .collect();
+        parts.sort();
+        parts.dedup();
+        parts
+    }
+
     fn pour_loss(&self, directory: &Path, attempt: &KiCadBoardRouterConfig) -> Option<f64> {
         match measure_pours(directory, self.board_id, attempt) {
             Ok(pours) if !pours.is_empty() => Some(pour_loss(&pours)),

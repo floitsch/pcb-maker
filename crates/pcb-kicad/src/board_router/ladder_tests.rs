@@ -1461,3 +1461,22 @@ fn route_mode_charges_the_same_one_at_a_time_and_side_by_side() {
         assert!(work > 0.0);
     }
 }
+
+#[test]
+fn open_pad_parts_reads_the_footprints_of_kicads_unconnected_pads() {
+    // Quanta75_BareRP2040's report with pin lines on (2026-11-07): two
+    // items, one between two tracks of +1V1 (no pad), one at U1's pad 31.
+    let root = std::env::temp_dir().join(format!("pcb-maker-open-pads-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("drc.json"),
+        r#"{"violations": [], "unconnected_items": [
+             {"items": [{"description": "Track [+1V1] on B.Cu, length 1.0624 mm"}, {"description": "Track [+1V1] on B.Cu, length 0.9626 mm"}]},
+             {"items": [{"description": "Pad 31 [Row5] of U1 on B.Cu"}, {"description": "Track [Row5] on F.Cu, length 1.0393 mm"}]},
+             {"items": [{"description": "PTH pad 2 [/SWD] of J5"}, {"description": "Pad 25 [/SWD] of U1 on B.Cu"}]}]}"#,
+    )
+    .unwrap();
+    assert_eq!(open_pad_parts(&root), ["J5", "U1"]);
+    assert!(open_pad_parts(&root.join("none")).is_empty());
+    fs::remove_dir_all(&root).unwrap();
+}

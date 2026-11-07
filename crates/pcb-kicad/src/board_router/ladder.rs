@@ -140,6 +140,13 @@ pub(crate) trait LadderRunner: Sync {
     fn pour_loss(&self, _directory: &Path, _attempt: &KiCadBoardRouterConfig) -> Option<f64> {
         None
     }
+    /// The parts (footprint references) with a pin row whose straight exit
+    /// the regular lattice of `attempt` misses (`pin_lines::missing`): where
+    /// lattice lines at pin rows can open a pad. Not charged (a lowering
+    /// and the lines' arithmetic, once).
+    fn missed_row_parts(&self, _attempt: &KiCadBoardRouterConfig) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// The message of a caught panic.
@@ -275,6 +282,36 @@ pub(crate) fn ladder_pitches(config: &KiCadBoardRouterConfig) -> Vec<Option<Vec<
         }
     }
     pitches
+}
+
+/// The footprints (references) of the pads in KiCad's unconnected items
+/// of the report in `directory` ("Pad 45 [+1V1] of U1 on B.Cu"), sorted.
+pub(crate) fn open_pad_parts(directory: &Path) -> Vec<String> {
+    let Ok(text) = fs::read_to_string(directory.join("drc.json")) else {
+        return Vec::new();
+    };
+    let Ok(report) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return Vec::new();
+    };
+    let mut parts: Vec<String> = report["unconnected_items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item["items"].as_array())
+        .flatten()
+        .filter_map(|item| item["description"].as_str())
+        .filter(|description| {
+            let lower = description.to_ascii_lowercase();
+            lower.starts_with("pad ") || lower.contains(" pad ")
+        })
+        .filter_map(|description| {
+            let (_, after) = description.rsplit_once(" of ")?;
+            Some(after.split_whitespace().next()?.to_string())
+        })
+        .collect();
+    parts.sort();
+    parts.dedup();
+    parts
 }
 
 /// The leader first (`Ladder::leader_ladder`): a rung of another pour
@@ -513,6 +550,10 @@ pub(crate) struct Ladder<'a> {
     /// The configuration of the best attempt so far (and whether its pours
     /// connected), for the narrow-signal retry at the end.
     best_attempt: Option<(KiCadBoardRouterConfig, bool)>,
+    /// The attempts after the leader's run on the lattice with lines at
+    /// the pin rows (`pin_lines_from_here`): its open pads were at rows
+    /// the regular lattice misses.
+    pin_lines_on: bool,
     /// Steps that did not run, with why: the report's `skipped` when the
     /// board stays incomplete.
     pub(crate) skipped: Vec<String>,
@@ -686,6 +727,7 @@ impl<'a> Ladder<'a> {
             best_seeded: false,
             best: None,
             best_attempt: None,
+            pin_lines_on: false,
             skipped: Vec::new(),
             failed: Vec::new(),
             panic_at: None,
@@ -1314,7 +1356,51 @@ impl<'a> Ladder<'a> {
         if exclusive && attempt.exclusive_layers.is_none() {
             attempt.exclusive_layers = Some(if self.copper_layers >= 6 { 2 } else { 1 });
         }
+        if self.pin_lines_on {
+            attempt.pin_lines = Some(true);
+        }
         attempt
+    }
+
+    /// Route mode with `pin_lines` unset (and no `PCB_ROUTER_PIN_LINES`):
+    /// after the leader's run, whether KiCad's open pads of the best board
+    /// lie in parts whose pin rows the regular lattice misses an exit of
+    /// (`LadderRunner::missed_row_parts`). Then the rest of the ladder (the
+    /// seed round, the finer pitches, the other rungs and the steps after
+    /// them, which vary the best attempt) runs on the lattice with lines
+    /// at the pin rows; the leader's board stays a candidate. A board
+    /// complete after the leader's run, or whose open pads are elsewhere,
+    /// routes as without lines (docs/router.md, "Lattice lines where the
+    /// rows are open (2026-11-08)").
+    fn pin_lines_from_here<R: LadderRunner>(&mut self, runner: &R) {
+        let automatic =
+            self.config.pin_lines.is_none() && core::pin_lines::lines_override().is_none();
+        if !automatic || self.pin_lines_on || !self.open_best() {
+            return;
+        }
+        let Some((attempt, _)) = self.best_attempt.as_ref() else {
+            return;
+        };
+        let missed = runner.missed_row_parts(attempt);
+        if missed.is_empty() {
+            return;
+        }
+        let open = open_pad_parts(self.output_directory);
+        let at: Vec<&String> = open.iter().filter(|part| missed.contains(part)).collect();
+        if at.is_empty() {
+            return;
+        }
+        eprintln!(
+            "ladder: open pads at pin rows the regular lattice misses ({}): the rest of the ladder on the lattice with lines at the pin rows",
+            at.iter()
+                .map(|part| part.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        self.pin_lines_on = true;
+        if let Some((attempt, _)) = self.best_attempt.as_mut() {
+            attempt.pin_lines = Some(true);
+        }
     }
 
     /// Notes the first attempt's open count: the work kept for the
@@ -1883,6 +1969,7 @@ impl<'a> Ladder<'a> {
         let Some(leader) = self.probed_mode.or(self.best_mode) else {
             return Ok(());
         };
+        self.pin_lines_from_here(runner);
         let measures = if probed {
             self.probe_counts.clone()
         } else {

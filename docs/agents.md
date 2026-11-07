@@ -612,17 +612,20 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     let in (Glasgow: 343 -> 262 unconnected over three seeds). Arrays
     whose inner balls leave by vias in their pads or on the surface keep
     no room.
-  - `pin_lines` (default false; off by the evidence of 2026-11-07;
-    docs/router.md "Lattice lines at pin rows (2026-11-07)"): the router's
-    lattice gets lines through the pads of fine-pitch rows it misses. Try
-    it in route mode when the open connections are pads of a 0.4 to 0.5 mm
-    row with nothing else in the way, typically two such parts on one
-    board at different offsets (the census line `no straight way out`
-    under `PCB_ROUTER_TROUBLE_WHY`, or `dead_pads` on the row with no
-    wall named): each part whose pads share a phase gets the lattice at
-    that phase over its rows. Measured: RP2040_base's two RP2040 QFN-56
-    36 -> 5 open, vaio_re 11 -> 3; over the designer tier +3 strict passes
-    and -2 (other boards' routes move), so it is per board, not a default.
+  - `pin_lines` (default unset: the router decides; docs/router.md
+    "Lattice lines where the rows are open (2026-11-08)"): the router's
+    lattice gets lines through the pads of fine-pitch rows it misses. Unset,
+    route mode turns them on after the ladder's first (leader's) run when
+    KiCad's open pads are in such parts (the run log says `open pads at pin
+    rows the regular lattice misses (U19, U15)`), so a board that completes
+    without them never pays for them. Set it true in route mode when the
+    open connections are pads of a 0.4 to 0.5 mm row with nothing else in
+    the way and the leader's run took much of the budget (RP2040_base: 20
+    open with the default, 5 with the lines from the start; the census
+    line `no straight way out` under `PCB_ROUTER_TROUBLE_WHY`, or
+    `dead_pads` on the row with no wall named); on every attempt it moves
+    other boards' routes (+3 -2 strict passes over the designer tier).
+    False keeps the regular lattice.
   - `blind_vias` (default false; off by the evidence of 2026-11-05; docs/router.md "Blind, buried and
     micro vias"): on a board of three or more layers that allows them,
     a via that joins two layers pierces only the shortest allowed span

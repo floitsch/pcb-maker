@@ -164,9 +164,11 @@ pub struct Config {
     /// Lattice lines where the pins are (`crate::pin_lines`): the pads of
     /// pin rows the regular lattice misses get lines through their centres
     /// (a part's rows at its own phase over a band, else single lines).
-    /// Off by default (docs/router.md, "Lattice lines at pin rows
-    /// (2026-11-07)"); the KiCad router settings' `pin_lines` and
-    /// `PCB_ROUTER_PIN_LINES` set it.
+    /// Off by default here (docs/router.md, "Lattice lines at pin rows
+    /// (2026-11-07)"); the KiCad ladder turns it on after its leader's run
+    /// where the open pads are at such rows ("Lattice lines where the rows
+    /// are open (2026-11-08)"), and the KiCad router settings' `pin_lines`
+    /// and `PCB_ROUTER_PIN_LINES` set it.
     pub pin_lines: crate::pin_lines::Lines,
     /// The pour model as the measurement of a written board takes it
     /// (`measured_board`'s starved thermals, its solid step, and

@@ -571,8 +571,16 @@ pub fn warp(
                 continue;
             }
             // The shift of the regular lines onto that phase, within half
-            // a pitch either way.
-            let shift = if first * 2 > pitch_nm {
+            // a pitch either way; none where the regular lattice holds
+            // every exit of the part within its slack already (a band
+            // there only moved routes: docs/router.md, "Lattice lines
+            // where the rows are open (2026-11-08)").
+            let held = part_lines
+                .iter()
+                .all(|line| regular_has(grid.origin[axis], grid.pitch, line.at, line.slack));
+            let shift = if held {
+                0
+            } else if first * 2 > pitch_nm {
                 first - pitch_nm
             } else {
                 first
@@ -1128,6 +1136,32 @@ mod tests {
                 .warp
                 .is_none()
         );
+    }
+
+    #[test]
+    fn a_row_the_lattice_holds_within_its_slack_gets_no_band() {
+        // 0.4 mm pitch, 0.2 mm pads, 0.2 mm track at 0.17 mm clearance: each
+        // exit has 0.03 mm of slack. A row 0.01 mm off the lattice's phase is
+        // held (a band there only moved routes: x1934's Hub and
+        // split72_right at 0.1 mm); 0.033 mm off it is not.
+        let held = row_board([2.01, 3.0], 6, 0.4, [0.2, 0.8], 0.2, 0.17);
+        let grid = crate::grid::Grid {
+            origin: [0.0, 0.0],
+            pitch: 0.1,
+            nx: 100,
+            ny: 100,
+            warp: None,
+        };
+        let lines = pin_lines(&held, 0.1);
+        assert!(lines.iter().any(|line| line.kind == LineKind::Exit));
+        assert!(missing(&lines, &grid).is_empty());
+        let (warp, placed) = warp(&held, &grid, Lines::Exits);
+        assert!(warp.is_none(), "{placed:?}");
+        assert_eq!(placed[0].shifted, 0);
+        let off = row_board([2.033, 3.0], 6, 0.4, [0.2, 0.8], 0.2, 0.17);
+        let (warp, placed) = super::warp(&off, &grid, Lines::Exits);
+        assert!(warp.is_some());
+        assert_eq!(placed[0].bands, 1, "{placed:?}");
     }
 
     /// Two exact-fit rows (0.4 mm pitch, 0.2 mm pads, track and clearance)
