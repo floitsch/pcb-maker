@@ -73,6 +73,18 @@ fn dives_on() -> bool {
 /// Adjacent pads closer than this (centre to centre) make a row
 /// fine-pitch (router/fanout.rs `FINE_PITCH`, the census's).
 const FINE_PITCH: f64 = 0.65;
+/// A track of `width` of the net `name` on `layer` as the project's rules
+/// bound it there (`NetRules::layer_widths`, KiCad's `track_width` rules
+/// with a layer: a board's 0.127 mm minimum on the outer layers).
+fn width_on(config: &KiCadBoardRouterConfig, name: &str, layer: usize, width: f64) -> f64 {
+    config
+        .net_rules
+        .as_ref()
+        .and_then(|rules| rules.layer_widths.get(name))
+        .and_then(|widths| widths.get(layer))
+        .map_or(width, |bounds| width.min(bounds.max).max(bounds.min))
+}
+
 /// `MIN_EXIT`, or `PCB_ROUTER_ROW_FANOUT_MIN_EXIT` (mm; an experiment's
 /// knob).
 fn min_exit() -> f64 {
@@ -290,7 +302,10 @@ impl Context<'_> {
                 + match obstacle.kind {
                     core::ObstacleKind::Copper => self.clearance(net, obstacle),
                     core::ObstacleKind::Keepout => obstacle.clearance,
-                    core::ObstacleKind::Hole => self.hole_clearance.max(obstacle.clearance),
+                    core::ObstacleKind::Hole => self
+                        .hole_clearance
+                        .max(obstacle.clearance)
+                        .max(self.custom_clearance(Some(net), obstacle.net)),
                 };
             obstacle.shape.distance_to_segment(a, b) >= required
         }) && self.keeps_edge(a, b, half)
@@ -882,14 +897,17 @@ fn plan_row(
             continue;
         }
         let class = context.classes[description.class];
+        // The class's width as the project's rules hold it on the layer
+        // (`net_rules`' layer widths: KiCad's track width bounds).
+        let width = width_on(config, &description.name, layer, class.trace_width);
         // The landing's nodes are legal at the class's width (the router
         // tests a terminal's nodes on its class's maps, `prepare_net`).
-        let landing = class.trace_width;
+        let landing = width;
         members.push(Exit {
             pad: position,
             net,
             role,
-            width: class.trace_width,
+            width,
             class_width: landing,
             clearance: class.clearance,
             shift: 0.0,
@@ -952,9 +970,19 @@ fn plan_row(
             start,
             &near,
             work,
-        ) && neck < member.width
-        {
-            member.width = neck;
+        ) {
+            // The neck, no narrower than the project's rules allow the net
+            // on the layer.
+            let name = &context.nets[member.net as usize].name;
+            let floor = config
+                .net_rules
+                .as_ref()
+                .and_then(|rules| rules.width_floor.get(name).copied())
+                .unwrap_or(0.0);
+            let narrow = width_on(config, name, layer, neck).max(neck).max(floor);
+            if narrow < member.width {
+                member.width = narrow;
+            }
         }
     }
     // The fan: the spacing each pair of adjacent exits needs at their

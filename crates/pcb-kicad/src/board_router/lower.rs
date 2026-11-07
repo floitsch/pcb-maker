@@ -2121,7 +2121,9 @@ fn lower_board(
                     clearance_override: None,
                     blocks_tracks: true,
                     blocks_vias: true,
-                    label: format!("{} {suffix}", exit.label),
+                    // The pad's obstacle in the label: a panel repeats
+                    // references (`exits_of` keys the exits by it).
+                    label: format!("{}#{} {suffix}", exit.label, exit.pad),
                 };
             // The surface path ends at the landing (a diver's at its via).
             for piece in exit.path.windows(2) {
@@ -2194,7 +2196,7 @@ fn lower_board(
                 clearance_override: None,
                 blocks_tracks: true,
                 blocks_vias: true,
-                label: format!("{} row hole", exit.label),
+                label: format!("{}#{} row hole", exit.label, exit.pad),
             });
             if all & !surface == 0 {
                 continue;
