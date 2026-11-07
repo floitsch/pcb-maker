@@ -484,6 +484,26 @@ complete). Part 1 first (it moves only work), part 2 on top. Kill
 criterion: no strict pass gained over the 13 congestion and 5 budget
 boards, or a pass lost elsewhere.
 
+**Status (2026-11-07, branch leader-first).** Stage 1 run (router.md,
+"The leader first (2026-11-07)" and "The residue in a window", with the
+table per arm). Part 1, the leader first, is on by default: the designer
+tier 68 -> **71** strict (video, BAGEL-MK1.1-Avocado, DSP-ADAU1452),
+2756 -> 2750 unconnected, no pass lost, 5 % less ladder work on the 54
+boards that ran (base main 406dcb94, before the four bug fixes; the two
+were not measured together, their gaining boards differ). Part 2, the
+residue in a window, is in but off (`residue_window`,
+`PCB_ROUTER_RESIDUE=1`): alone it also reaches 71 (video, the corne's
+right half, BAGEL, DSP-ADAU1452; split72_left lost), on top of part 1
+it adds the corne and loses split72_left, so 71 either way. Against the
+estimate: part 1 gave 3 where 1 was expected (BAGEL and DSP-ADAU1452 by
+the leader's seed round and the admitted rungs' larger shares, not at
+3000 s); part 2's five congestion boards with at most three items
+(jetson, link, split72_right, Batch_1, protoesp) stay open (Batch_1
+3 -> 2 unconnected): their
+windows' joint negotiations stall at the price cap like the board-wide
+one (protoesp's log: 6 nets in conflict from iteration 20 on), and are
+restored.
+
 ## Design 2: prepared fan-outs for fine-pitch rows (the BGA method)
 
 **What the census says.** 69 items on 14 boards are pads of a 0.4 to

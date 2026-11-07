@@ -353,7 +353,13 @@ ranks what keeps the designer tier's 41 failing boards open.
    goes to rungs that end far worse (router-ceiling.md, design 1). The
    ladder stops at the first complete rung whatever its starved thermals
    (Castor: 20 starved kept against tracks' 12); rank by (open, starved)
-   before vias, and let a complete-but-starved rung be rivalled. Details
+   before vias, and let a complete-but-starved rung be rivalled. Since
+   2026-11-07 route mode runs the leader's variants first and the rungs
+   of other pour modes only where their probe left at most twice the
+   leader's unfinished nets (router.md, "The leader first"; designer
+   tier 68 -> 71 strict): the probe's misjudgment now also decides which
+   rungs run at all (module: connect kept out at 161 against tracks' 33,
+   1 -> 3 unconnected), so a better judge matters more. Details
    in [congestion-model.md](congestion-model.md) and the changelog's
    2026-10-13 sections.
 4. **Placement: 73 % of what stays open.** The matched designer tier of
@@ -714,7 +720,12 @@ ranks what keeps the designer tier's 41 failing boards open.
     ladder's work to the leader with the residue renegotiated in a
     window, and prepared fan-outs for fine-pitch rows (the BGA method).
     Problems 1, 2, 3, 5 and 6 above are the parts of it that were open
-    before.
+    before. Design 1 measured on 2026-11-07: the leader first on by
+    default (+3 strict: video, BAGEL-MK1.1-Avocado, DSP-ADAU1452, none
+    lost), the residue in a window in but off (`residue_window`: +4 -1
+    alone, +1 -1 on top of the leader first; its windows stall at the
+    price cap where the board-wide negotiation did). Design 2 (prepared
+    fan-outs for fine-pitch rows) is next.
 
 ## Where things are
 

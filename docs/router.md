@@ -2785,8 +2785,11 @@ on a two-layer board with pours, by how much of the pours they lost
 (`pour_rank`, 2026-10-22:
 "Why `plane_cut_cost` did nothing on the fence"), then vias and copper.
 
-After the rungs, the finer pitches and the best rung's seed rounds, a
-board still open gets one more attempt: the best attempt with the signal
+In route mode since 2026-11-07 the leader's variants come first and
+the rungs of other pour modes only where their probe was close ("The
+leader first (2026-11-07)" below). After the rungs, the finer pitches
+and the best rung's seed rounds, a board still open gets one more
+attempt: the best attempt with the signal
 nets of the Default class at the project's narrowest predefined width (its
 width menu, when that is narrower than Default's; poured nets, grounds,
 rails, nets whose width a custom rule gives and, since 2026-11-06, every
@@ -3086,6 +3089,122 @@ net), and every named class keeps its width. A board whose connections
 need a named class narrower gets it from the designer's rules (the
 class's width in the project, or a custom `track_width` rule giving it as
 `opt`), not from the step.
+
+### The leader first (2026-11-07)
+
+Until 2026-11-07 route mode's ladder spent its work in a fixed order:
+every pour mode on the regular pitch, then every pour mode on each finer
+pitch, then the best rung's seed rounds and the steps. On the designer
+tier's boards with open items of ours the kept attempt used a median
+15 % of the ladder's work while 28 % went to rungs that ended far worse,
+and every pass more work bought came from another try of the best rung's
+kind (router-ceiling.md, "The budget test"). Since then
+(`Ladder::leader_ladder`, board_router/ladder.rs; route mode on a board
+of two rungs or more; `leader_first`, default on, and
+`PCB_LADDER_LEADER_FIRST` 0 or 1 over it), once the leader's attempt
+leaves connections open:
+
+- **The leader** is the probed rung the ladder continued; on a board
+  without probes (fewer than four layers or 120 connections, or no room
+  for two routers) its rungs run on the regular pitch as before, side by
+  side, and the best of them leads. The last rung's immediate seed retry
+  is gone in this order (the leader's seed round replaces it).
+- **(A)** a seed round of the leader (`seed_round`), **(B)** the
+  leader's rung on each finer pitch the projection admits
+  (`pitch_skipped`, unchanged), **(C)** on a probed board the other
+  rungs on the regular pitch, **(D)** those rungs on the finer pitches
+  the leader ran on; then the best rung's seed rounds (up to three in
+  all) and the narrow-signal and minimum-clearance steps as before.
+- **The gate** (`leader_gate_admits`, `LEADER_GATE_FACTOR` 2): a rung of
+  another pour mode runs in (C) and (D) only where its probe left at
+  most twice the leader's unfinished nets (on a board without probes:
+  its regular attempt's open count against the leader's). A rung not
+  probed (the probing stopped at a rung that finished everything) runs.
+  A rung kept out is a line in `skipped` with both counts ("the rung
+  pours=connect did not run: its probe left 272 unfinished, more than 2
+  times the leader's 113 (pours=tracks; leader_first)"), and the log's
+  "ladder: the leader first: ..." line names the plan.
+- **The shares.** The bound is unchanged (`ladder_work_bound`, the
+  narrow-signal step's reserve first). (A) to (C) share what is left for
+  rungs and seeds evenly as each starts: the plan counts the seed round
+  as one attempt (its seeds split its share; as many seeds as the share
+  pays at the leader's cost, at most four), each finer pitch the
+  projection admits and each admitted regular rung; (D) has what they
+  leave. The judge is unchanged (open, starved, pours, vias, copper).
+  A layout's ladder (`deadline_work`) keeps the order before.
+
+Measured on the designer tier (route mode on the designer's placement,
+all 109 boards at scale 0.647, 970.5 s of work, 1 thread a board, rates
+pinned; main 406dcb94 as base, `build/lad1/`): the 54 boards that were
+not complete after one attempt ran in each arm, the other 55 are
+identical by construction (both parts act only after an attempt leaves
+connections open; every one of them had a single attempt in base too)
+and are taken from base.
+
+| Arm | Strict passes | Unconnected | Passes gained | Passes lost | Ladder work (54 boards) |
+| --- | ---: | ---: | --- | --- | ---: |
+| base (406dcb94) | 68 | 2756 | | | 39 707 s |
+| the leader first | **71** | 2750 | video, BAGEL-MK1.1-Avocado, DSP-ADAU1452 | none | 37 863 s |
+| the residue window alone | 71 | 2757 | video, poly_corne_split42_right, BAGEL, DSP-ADAU1452 | poly_kybd_split72_left | 38 084 s |
+| both | 71 | 2753 | the same four | poly_kybd_split72_left | 36 884 s |
+
+The leader first, board by board: video passes by its leader's seed
+round (the connect rungs, 272 to 305 unfinished at their probes against
+tracks' 113, do not run; the round's 2 seeds: 0 open), BAGEL by its
+leader's seed round too (3 seeds: 0 open, where base reached 4 open on
+the 0.075 mm lattice; 627 s of work against 967), DSP-ADAU1452 by the
+step on another rung (the plane stubs kept out, the two admitted rungs
+with larger shares: connect 20 open against base's 26, and the
+narrow-signal step varying it 0 open with 94 s of work where base's
+varied tracks to 2); Batch_1 3
+-> 2, osprey 2 -> 1, OpenESC's 4in1 15 -> 12 unconnected; module 1 -> 3
+(its connect rung, kept out at 161 unfinished against tracks' 33, was
+what the base's narrow step varied: the probe's misjudgment of open
+problem 3) and WLED_Matrix 1 -> 2; the census estimated one pass
+(video), three came. Guards on main 83ef270f against the branch: the
+expansion tier at 30 s 24 -> 25 strict (nervous-ecg), 558 -> 557
+unconnected, no pass lost; the short tier (layout mode) and the
+fingerprints at the quarter budget identical; CPU in two pinned pairs
+1511 -> 1397 s (video) and 1431 -> 1388 s (koeg-board).
+
+### The residue in a window (2026-11-07, off)
+
+`renegotiate_residue` (router/residue.rs; `residue_window`, off by
+default; `PCB_ROUTER_RESIDUE=1`), after the trouble repair in `finish`,
+when at most 12 nets are open (`RESIDUE_MAX_NETS`): per open net its
+open pads (those with a node) and the pads of its tree nearest them,
+their box grown by 2 mm, boxes that overlap merged into windows. Per
+window: every net routed as tracks (not given up, without a pour of its
+own) loses the branches with a node in the box and those left dangling
+at a junction on them (`rip_up_in`), the negotiation's history inside the
+box is reset (nodes, search records, tiles), the open nets and the
+ripped ones negotiate again jointly (`negotiate_from` from the price's
+start value, nested like the via reduction's, the board not judged
+hopeless) and are repaired hard (`resolve_remaining`). The round is kept
+only when the open terminals drop with no net more open than before, no
+conflict and no pour pad newly cut off from its main piece
+(`keep_residue`, `pour_stranded`); else everything is restored
+(`restore_lean`) and the window grows to 4, then 8 mm
+(`RESIDUE_MARGINS_MM`). Its work is the attempt's search and pour work,
+within a third of what the attempt's work deadline leaves and at least
+the hard and trouble repairs' work (`RESIDUE_SHARE`). The windows are in
+board-router.json's `diagnostics.residue` (nets, box, rounds, nets
+ripped up, open before and after, kept, work).
+
+On the designer tier (table above) it closes 46 to 53 terminals in 22
+to 24 of 93 to 97 windows over 77 attempts, for about 7000 s of work
+(19 % of the arm's ladder work); alone it passes video (its continuation
+closed: 2 -> 0 open), the corne's right half, BAGEL and DSP-ADAU1452, on
+top of the leader first only the corne. It loses poly_kybd_split72_left:
+the window closes the continuation's last two open terminals by the
+router's count (43 nets ripped up, 161 s of work), the complete board
+then gets the via reduction and the polish (732 s of work against 257),
+KiCad finds 12 open on it, and the narrow-signal step that completes the
+board in base is left 50 s. So it stays off: what it adds on the
+designer tier (one pass over the leader first) is what it loses. Next
+for it, if it is taken up again: judge a kept window by KiCad's count
+before the board's polish, and keep the via reduction's work out of an
+attempt the residue completed by the router's count only.
 
 ## Via reduction
 

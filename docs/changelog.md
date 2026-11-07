@@ -11,6 +11,59 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-07 (design 1 of the router's ceiling: the leader first on, the residue in a window off; designer tier 68 -> 71 strict)
+
+Branch leader-first; router.md "The leader first (2026-11-07)" and "The
+residue in a window (2026-11-07, off)", router-ceiling.md's status under
+design 1.
+
+- **The leader first** (board_router/ladder.rs, `leader_ladder`;
+  `leader_first`, default on; `PCB_LADDER_LEADER_FIRST`): in route mode
+  on a board of two rungs or more, the continued probe's rung (or the
+  best regular rung on a board without probes) gets a seed round and its
+  finer pitches first; the other pour modes run only where their probe
+  (or regular attempt) left at most twice the leader's unfinished nets,
+  on the regular pitch and then the finer pitches the leader ran; the
+  attempts share what is left evenly as they start (a seed round one
+  share). The bound, the judge, the steps and a layout's ladder are as
+  before; a board without probes loses the last rung's immediate seed
+  retry.
+- **The residue in a window** (router/residue.rs, `renegotiate_residue`;
+  `residue_window`, off; `PCB_ROUTER_RESIDUE=1`): after the trouble
+  repair, at most 12 open nets, per window every net routed as tracks
+  with copper in the box loses its branches there, the history inside is
+  reset, they negotiate jointly and are repaired hard; kept only when
+  the open terminals drop with nothing else opening.
+- **The designer tier** (route mode, 109 boards at 0.647, base main
+  406dcb94, before x1929's four bug fixes; the 54 boards not complete
+  after one attempt ran per arm, the rest identical by construction):
+  base 68 strict / 2756 unconnected; the leader first **71** / 2750
+  (video, BAGEL-MK1.1-Avocado, DSP-ADAU1452; none lost; module 1 -> 3,
+  WLED_Matrix 1 -> 2; ladder work on the 54 boards 39 707 -> 37 863 s);
+  the residue alone 71 / 2757 (video, poly_corne_split42_right, BAGEL,
+  DSP-ADAU1452 gained, poly_kybd_split72_left lost); both 71 / 2753 (the
+  corne gained over the leader first, split72_left lost: the residue
+  completes its continuation by the router's count, the via reduction
+  and polish then take the narrow-signal step's work, KiCad finds 12
+  open). The residue's windows: 22 to 24 kept of 93 to 97, about 7000 s
+  of the arm's work. Hence the leader first on, the residue off.
+- **Guards** (main 83ef270f = x1929 against the rebased branch head):
+  the expansion tier at 30 s 24 -> 25 strict (nervous-ecg 2 -> 0),
+  558 -> 557 unconnected (RS485M_Unit 2 -> 3), no pass lost; the short
+  tier identical (7 of 12, 21 unconnected; layout mode keeps its
+  ladder); the fingerprints at the quarter budget identical (Castor and
+  k30-SBC strict, jetson 13, Sisu 7). CPU, two pinned pairs at once
+  (cores 0-3 against 4-7, 1 thread a route, load about 22 with the
+  nightly): video 1511 -> 1397 cpu s (work 1043 -> 1027, and the board
+  passes on the rebased head too), koeg-board 1431 -> 1388 cpu s (work
+  976 -> 817; CPU per work 1.47 -> 1.70: the leader's seeds and the
+  admitted rungs do work the ladder's count leaves out, a thread to
+  follow); CPU holds.
+- Estimate against outcome: part 1 was estimated at one pass (video),
+  gave three; part 2 at two of five congestion boards, gave none of
+  them (their windows stall at the price cap as the board-wide
+  negotiation did) and its passes came from the budget boards.
+
 ## Measured on 2026-11-07 (the router ceiling's four plain bugs fixed: designer tier 68 -> 72 strict)
 
 Branch ceiling-bugs; docs/router-ceiling.md's "Plain bugs" has the
