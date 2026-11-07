@@ -11,6 +11,31 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Measured on 2026-11-07 (nightly: layout sweep v34, matched designer tier)
+
+Written by the nightly from `build/nightly/2026-11-07/` (main 406dcb9;
+[benchmarks.md](benchmarks.md#layout-sweep-v34-2026-11-07)). The guard
+held: every stage ran, no row was cut or killed, the sweep has at least
+100 rows with a result.
+
+- **Layout sweep v34**: **63 of 109 pass the strict rule** (63 per
+  type), 1957 unconnected in all, strict errors 26, 3 without a result.
+  Against the nightly of 2026-11-06: better 11, same 87, worse 8, strict
+  passes 63 -> 63 (gained USB_Cable_Tester PCB, zpn_devboard, MokyaLora;
+  lost DSP-ADAU1452, capybully, ghoul).
+- **Medians against the designer's**: vias x0.65, length x0.99, open
+  0.000 (mean 0.076), bends x1.00, stair-steps +29, crossings +1.
+- **Matched designer tier** (budget scale 0.662): 67 strict passes (70
+  per type); over the 100 target boards placement 70 %, routing 30 % of
+  the open connections.
+- **Placement costs most** on Batch_1 (+120: 123 / 3), OpenESC-30x30
+  4in1 (+94: 109 / 15), video (+69: 70 / 1), glasgow revC3 (+65: 83 /
+  18), SmartSpin2k_Panelized (+51: 51 / 0).
+- **Worse beyond noise**: poly_kybd_split72_left 5 -> 23,
+  poly_kybd_split72_right 24 -> 33, Quanta75_BareRP2040_JLCPCBAoptimized
+  0 -> 7, laptop motherboard 26 -> 31, ATAT1800 20 -> 22, capybully 0 ->
+  2, poly_corne_split42_right 25 -> 27.
+
 ## Committed on 2026-11-07 (design 1 of the router's ceiling: the leader first on, the residue in a window off; designer tier 68 -> 71 strict)
 
 Branch leader-first; router.md "The leader first (2026-11-07)" and "The

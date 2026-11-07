@@ -1,4 +1,4 @@
-# Hand-over (state as of 2026-11-06; measured by layout sweep v33, the nightly of 2026-11-06 on main 66115ba)
+# Hand-over (state as of 2026-11-07; measured by layout sweep v34, the nightly of 2026-11-07 on main 406dcb9)
 
 What the tool does today, which benchmarks count, what is known to be
 wrong, where everything is and how to work on it. What each round of work
@@ -194,7 +194,7 @@ The newest nightly measurement of main (scripts/nightly.sh; the table of
 the last 14 nights is in [benchmarks.md](benchmarks.md#nightly)):
 
 <!-- nightly-state:begin -->
-**Nightly** 2026-11-06 (main 66115bad368e, `build/nightly/2026-11-06/summary.md`): fingerprints identical; expansion 24/46 (strict 24), 558 open; short 7/12 (strict 7), 21 open; sweep 63/109 (strict 63), 2100 open; designer 71/109 (strict 68), 2756 open at 0.647; gap placement 74%, routing 26%.
+**Nightly** 2026-11-07 (main 406dcb94a0f6, `build/nightly/2026-11-07/summary.md`): fingerprints changed: jetson-nano-baseboard, Sisu_SSE-9, computie__k30-SBC, Castor_and_Pollux__mainboard; expansion 24/46 (strict 24), 558 open; short 7/12 (strict 7), 21 open; sweep 63/109 (strict 63), 1957 open; designer 70/109 (strict 67), 2756 open at 0.662; gap placement 70%, routing 30%.
 <!-- nightly-state:end -->
 
 What main does now, by the nightly of 2026-11-04 (main 688b59c, x1887;
@@ -217,20 +217,19 @@ short tier and the sweep, and OpenAirScope's (0 to 1) in the sweep
 packages measured their own changes on the short tier, the fingerprints
 and place checks (changelog, 2026-11-04 and 2026-11-05).
 
-**Layout sweep v33** (the nightly of 2026-11-06, main 66115ba, written
+**Layout sweep v34** (the nightly of 2026-11-07, main 406dcb9, written
 by the nightly): **63 of 109 pass the strict rule** (63 the per-type
-rule), 2100 unconnected in all, strict errors 29, no row cut or killed,
-3 without a result; medians against the designer's board: vias x0.68,
-length x1.02, open 0.000 (mean 0.080), bends x1.04, stair-steps +37.5,
-crossings +1. Against the nightly of 2026-11-05: better 16, same 70,
-worse 20, strict passes 61 -> 63 (gained framework_mobo_lefthalf,
-Explorer, DSP-ADAU1452, capybully, k30-SBC, ghoul; lost USB_Cable_Tester
-PCB, zpn_devboard, jetson-nano-baseboard, MokyaLora). The matched
-designer tier on the same binary (budget scale 0.647): 68 strict passes
-(71 per type); over the 100 target boards placement 74 %, routing 26 %
-of the open connections. `build/nightly/2026-11-06/`; table, gap split,
-the costliest placements and the losers in
-[benchmarks.md](benchmarks.md#layout-sweep-v33-2026-11-06).
+rule), 1957 unconnected in all, strict errors 26, no row cut or killed,
+3 without a result; medians against the designer's board: vias x0.65,
+length x0.99, open 0.000 (mean 0.076), bends x1.00, stair-steps +29,
+crossings +1. Against the nightly of 2026-11-06: better 11, same 87,
+worse 8, strict passes 63 -> 63 (gained USB_Cable_Tester PCB,
+zpn_devboard, MokyaLora; lost DSP-ADAU1452, capybully, ghoul). The
+matched designer tier on the same binary (budget scale 0.662): 67 strict
+passes (70 per type); over the 100 target boards placement 70 %, routing
+30 % of the open connections. `build/nightly/2026-11-07/`; table, gap
+split, the costliest placements and the losers in
+[benchmarks.md](benchmarks.md#layout-sweep-v34-2026-11-07).
 
 The sweeps before (v16 to v21 by hand, v22 to v29 written by the
 nightly), their tables, gap splits and triage are in
