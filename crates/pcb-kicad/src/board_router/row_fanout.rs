@@ -1447,8 +1447,7 @@ pub(crate) struct ExitJoint {
     pub at: [f64; 2],
     /// That segment's width.
     pub width: f64,
-    /// Whether KiCad sees the two touch already: the landing (the exit's
-    /// end) inside the segment, or an end of the segment inside the exit.
+    /// Whether the two meet already: the joint would have no length.
     pub touches: bool,
 }
 
@@ -1466,48 +1465,65 @@ pub(crate) fn exit_use(
 ) -> (Option<ExitJoint>, bool) {
     const TOUCH: f64 = 1.0e-6;
     let class = board.classes[board.nets[exit.net as usize].class].trace_width;
-    let surface = route
-        .segments
-        .iter()
-        .filter(|segment| segment.layer == exit.layer)
-        .filter_map(|segment| {
-            let reach = exit.width / 2.0
-                + segment.width.max(exit.width).max(class).max(2.0 * LANDING) / 2.0
-                + TOUCH;
-            let distance =
-                core::geometry::point_segment_distance(exit.landing, segment.start, segment.end);
-            if distance > reach {
-                return None;
-            }
-            let (a, b) = (segment.start, segment.end);
-            let d = [b[0] - a[0], b[1] - a[1]];
-            let length = d[0] * d[0] + d[1] * d[1];
-            let t = if length > 0.0 {
-                (((exit.landing[0] - a[0]) * d[0] + (exit.landing[1] - a[1]) * d[1]) / length)
-                    .clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-            let at = [a[0] + d[0] * t, a[1] + d[1] * t];
-            let inside_exit = |point: [f64; 2]| {
-                exit.pieces.iter().any(|(start, stop)| {
-                    core::geometry::point_segment_distance(point, *start, *stop) <= exit.width / 2.0
-                })
-            };
-            let touches = distance <= segment.width / 2.0
-                || inside_exit(segment.start)
-                || inside_exit(segment.end);
-            Some((
-                distance,
-                ExitJoint {
-                    at,
-                    width: segment.width,
-                    touches,
-                },
-            ))
+    let reach_of = |width: f64| {
+        exit.width / 2.0 + width.max(exit.width).max(class).max(2.0 * LANDING) / 2.0 + TOUCH
+    };
+    let on_layer = || {
+        route
+            .segments
+            .iter()
+            .filter(|segment| segment.layer == exit.layer)
+    };
+    // KiCad joins two tracks where an end of one lies on the other, but
+    // calls a track's end that lies on another's round end dangling: the
+    // joint runs from the landing to the route's end (an end beyond it),
+    // else to the nearest point of a segment that runs on through it.
+    let end = on_layer()
+        .flat_map(|segment| {
+            [segment.start, segment.end]
+                .into_iter()
+                .map(move |end| (end, segment.width))
         })
+        .map(|(end, width)| (core::geometry::distance(end, exit.landing), end, width))
+        .filter(|(distance, _, width)| *distance <= reach_of(*width))
         .min_by(|a, b| a.0.total_cmp(&b.0))
-        .map(|(_, joint)| joint);
+        .map(|(distance, at, width)| ExitJoint {
+            at,
+            width,
+            touches: distance <= TOUCH,
+        });
+    let surface = end.or_else(|| {
+        on_layer()
+            .filter_map(|segment| {
+                let distance = core::geometry::point_segment_distance(
+                    exit.landing,
+                    segment.start,
+                    segment.end,
+                );
+                if distance > reach_of(segment.width) {
+                    return None;
+                }
+                let (a, b) = (segment.start, segment.end);
+                let d = [b[0] - a[0], b[1] - a[1]];
+                let length = d[0] * d[0] + d[1] * d[1];
+                let t = if length > 0.0 {
+                    (((exit.landing[0] - a[0]) * d[0] + (exit.landing[1] - a[1]) * d[1]) / length)
+                        .clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                Some((
+                    distance,
+                    ExitJoint {
+                        at: [a[0] + d[0] * t, a[1] + d[1] * t],
+                        width: segment.width,
+                        touches: distance <= TOUCH,
+                    },
+                ))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, joint)| joint)
+    });
     let through = exit.via.is_some_and(|(at, diameter, _, span)| {
         let radius = diameter / 2.0;
         let on = |layer: usize| span.is_none_or(|span| span.contains(layer));

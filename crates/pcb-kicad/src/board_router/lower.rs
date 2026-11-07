@@ -2202,13 +2202,15 @@ fn lower_board(
             // The via is the pad's terminal on the other layers, solid to
             // a pour there.
             solid_pad_obstacles.push(other);
-            if let Some((host, anchor)) = host {
+            // Its anchor is the via's centre: a route's stub to the anchor
+            // on another layer ends in the via, not under the pad.
+            if let Some((host, _)) = host {
                 nets[exit.net as usize].terminals[host].layers |= all;
                 merged_pads.push(core::MergedPad {
                     net: exit.net,
                     host,
                     pad: other,
-                    anchor,
+                    anchor: via.at,
                     layers: all & !surface,
                     padstack: true,
                 });
