@@ -578,6 +578,46 @@ pub(crate) mod tests {
         fs::remove_dir_all(&directory).unwrap();
     }
 
+    /// A minimum width on the outer layers alone (the 4in1-mini's "2 oz
+    /// outer copper, track width", 0.16 mm) is the process's floor there,
+    /// not a width a class is for: no widths per layer, and no warning
+    /// for Default on the inner layers (trial 8: the verdict told the
+    /// agent to keep every net off In1.Cu to In4.Cu).
+    #[test]
+    fn a_minimum_width_on_some_layers_is_no_width_per_layer() {
+        let (directory, project) = impedance_project("floor");
+        fs::write(
+            directory.join("board.kicad_dru"),
+            r#"(version 1)
+(rule "2 oz outer copper, track width"
+  (constraint track_width (min 0.16mm))
+  (layer outer))"#,
+        )
+        .unwrap();
+        let report = report_of(&directory, &project);
+        assert!(report.layer_track_widths.is_empty(), "{:?}", report.layer_track_widths);
+        let text = fs::read_to_string(directory.join("board.kicad_pcb")).unwrap();
+        let classes = class_layers(&report, &parse(&text).unwrap());
+        let default = classes.iter().find(|class| class.class == "Default").unwrap();
+        assert_eq!(default.warning, None);
+        // A maximum on those layers is a width aimed at: kept.
+        fs::write(
+            directory.join("board.kicad_dru"),
+            r#"(version 1)
+(rule "RF: 50 ohm width on the outer layers"
+  (condition "A.hasNetclass('RF')")
+  (constraint track_width (min 0.1mm) (max 0.11mm))
+  (layer outer))"#,
+        )
+        .unwrap();
+        let report = report_of(&directory, &project);
+        assert_eq!(
+            report.layer_track_widths["RF_OUT"],
+            BTreeMap::from([("B.Cu".to_string(), 0.1), ("F.Cu".to_string(), 0.1)])
+        );
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
     #[test]
     fn a_class_on_a_layer_its_width_is_not_for_is_warned() {
         let (directory, project) = impedance_project("layers");

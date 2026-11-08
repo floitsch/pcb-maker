@@ -1190,9 +1190,10 @@ pub(crate) struct Lowered {
     pub layer_width_max: Vec<Vec<f64>>,
     pub layer_width_opt: Vec<Vec<Option<f64>>>,
     /// Per net and layer, the width of the last `track_width` rule on
-    /// some layers only that holds there (its opt, else its min, else its
-    /// max), whether or not it changes what the router does: the
-    /// designer's widths per layer, for the reports.
+    /// some layers only that holds there and aims at a width (an opt or a
+    /// maximum; a minimum alone is the process's floor on those layers):
+    /// its opt, else its min, else its max, whether or not it changes what
+    /// the router does: the designer's widths per layer, for the reports.
     pub rule_layer_widths: BTreeMap<usize, BTreeMap<usize, f64>>,
     pub via_diameter_min: Vec<f64>,
     pub via_diameter_min_all: f64,
@@ -2252,8 +2253,17 @@ fn lower_constraint(
                 Vec::new()
             };
             let by_layer = per_layer.windows(2).any(|pair| pair[0] != pair[1]);
+            // A width the rule aims at (an opt, or a maximum: an impedance's
+            // band) is the designer's width on those layers; a minimum alone
+            // is a floor for the process there (the 4in1-mini's "2 oz outer
+            // copper, track width", 0.16 mm on F.Cu and B.Cu, which the
+            // inner layers' 1 oz copper does not need), not a width the
+            // class is for (trial 8: the verdict told it to keep every
+            // net off the inner layers).
+            let aimed = constraint.opt.is_some() || constraint.max.is_some();
             if kind == "track_width"
                 && by_layer
+                && aimed
                 && let Some(width) = constraint.opt.or(constraint.min).or(constraint.max)
             {
                 for (layer, nets) in per_layer.iter().enumerate() {

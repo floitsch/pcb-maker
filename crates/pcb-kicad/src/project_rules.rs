@@ -110,9 +110,11 @@ pub struct KiCadProjectRulesReport {
     #[serde(skip)]
     pub class_values: BTreeMap<String, [Option<f64>; 2]>,
     /// Per net (as the router names it) that a custom `track_width` rule
-    /// bounds on some layers only: per such layer the width the rule sets
-    /// (its opt, else its min, else its max): the designer's widths per
-    /// layer, as for one impedance on outer and inner layers.
+    /// with an opt or a maximum bounds on some layers only: per such layer
+    /// the width the rule sets (its opt, else its min, else its max): the
+    /// designer's widths per layer, as for one impedance on outer and inner
+    /// layers (a minimum alone, a process floor such as 2 oz outer copper's,
+    /// is none).
     #[serde(skip)]
     pub layer_track_widths: BTreeMap<String, BTreeMap<String, f64>>,
     /// Per net a custom `disallow track` rule keeps off copper layers:
