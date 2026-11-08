@@ -843,13 +843,20 @@ pub(crate) mod tests {
         assert_eq!(widths.len(), 1, "{widths:?}");
         assert_eq!(widths[0].net, "VBAT");
         assert_eq!(widths[0].class, "Default");
-        assert_eq!((widths[0].designer_width_mm, widths[0].routed_width_mm), (2.0, 0.2));
+        assert_eq!(
+            (widths[0].designer_width_mm, widths[0].routed_width_mm),
+            (2.0, 0.2)
+        );
         assert_eq!(widths[0].unassigned_class.as_deref(), Some("VBAT"));
         let action = designer_widths_action(&widths).unwrap();
         assert!(
             action.contains("VBAT 2 mm on the designer's board -> 0.2 mm here (class Default)")
-                && action.contains(r#""net_classes": [{"name": "VBAT", "nets": ["VBAT"], "track_width_mm": 2}]"#)
-                && action.contains("the project defines the classes VBAT (2 mm) but assigns them no net"),
+                && action.contains(
+                    r#""net_classes": [{"name": "VBAT", "nets": ["VBAT"], "track_width_mm": 2}]"#
+                )
+                && action.contains(
+                    "the project defines the classes VBAT (2 mm) but assigns them no net"
+                ),
             "{action}"
         );
         // Kept at the designer's width: nothing to say.
@@ -875,10 +882,17 @@ pub(crate) mod tests {
         )
         .unwrap();
         let report = report_of(&directory, &project);
-        assert!(report.layer_track_widths.is_empty(), "{:?}", report.layer_track_widths);
+        assert!(
+            report.layer_track_widths.is_empty(),
+            "{:?}",
+            report.layer_track_widths
+        );
         let text = fs::read_to_string(directory.join("board.kicad_pcb")).unwrap();
         let classes = class_layers(&report, &parse(&text).unwrap());
-        let default = classes.iter().find(|class| class.class == "Default").unwrap();
+        let default = classes
+            .iter()
+            .find(|class| class.class == "Default")
+            .unwrap();
         assert_eq!(default.warning, None);
         // Nor an impedance to order on the release.
         assert!(report.layer_geometry_rules.is_empty());

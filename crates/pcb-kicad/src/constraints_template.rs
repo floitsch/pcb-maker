@@ -924,7 +924,12 @@ fn banks(
             .unwrap_or(members[0]);
         let pads = crate::placement_constraints::pad_boxes(footprints[leader])?;
         let Some(span) = pads.iter().map(|(bounds, ..)| *bounds).reduce(|a, b| {
-            [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])]
+            [
+                a[0].min(b[0]),
+                a[1].min(b[1]),
+                a[2].max(b[2]),
+                a[3].max(b[3]),
+            ]
         }) else {
             continue;
         };
@@ -998,7 +1003,8 @@ mod tests {
     #[test]
     fn a_bank_of_parts_on_two_nets_becomes_a_row() {
         let template = |count: usize| {
-            let dir = std::env::temp_dir().join(format!("ux8-template-bank-{count}-{}", std::process::id()));
+            let dir = std::env::temp_dir()
+                .join(format!("ux8-template-bank-{count}-{}", std::process::id()));
             let _ = fs::remove_dir_all(&dir);
             fs::create_dir_all(&dir).unwrap();
             // Turned 90 degrees: the pads (1.15 x 1.8, 2.95 mm apart) lie
@@ -1033,11 +1039,10 @@ mod tests {
         assert_eq!(row["row_pitch_mm"], 4.3);
         assert_eq!(row["columns"], 4);
         assert!(
-            six["comment"]
-                .as_array()
+            six["comment"].as_array().unwrap().iter().any(|line| line
+                .as_str()
                 .unwrap()
-                .iter()
-                .any(|line| line.as_str().unwrap().starts_with("row: 6 parts of C_1206_3216Metric on +BATT and GND")),
+                .starts_with("row: 6 parts of C_1206_3216Metric on +BATT and GND")),
             "{six}"
         );
         assert!(template(5).get("row").is_none());

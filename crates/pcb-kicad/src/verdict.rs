@@ -2955,7 +2955,9 @@ fn next_actions(
     }
     actions.extend(narrowed_action(&facts.narrowed));
     actions.extend(crate::class_view::class_layers_action(&facts.class_layers));
-    actions.extend(crate::class_view::designer_widths_action(&facts.designer_widths));
+    actions.extend(crate::class_view::designer_widths_action(
+        &facts.designer_widths,
+    ));
     actions.extend(designer_via_spans_action(&facts.designer_via_spans));
     actions.extend(skeleton_budget_action(facts));
     actions.extend(facts.decoupling.as_ref().and_then(|decoupling| {
@@ -5010,13 +5012,14 @@ mod tests {
     /// the OpenAIO-Whoop said nothing of `blind_vias`).
     #[test]
     fn a_designers_vias_of_some_layers_name_blind_vias() {
-        let span = |kind: &str, layers: [&str; 2], vias: usize| crate::board_router::KiCadViaSpanEntry {
-            layers: [layers[0].into(), layers[1].into()],
-            kind: kind.into(),
-            vias,
-            source: "the board".into(),
-            ..Default::default()
-        };
+        let span =
+            |kind: &str, layers: [&str; 2], vias: usize| crate::board_router::KiCadViaSpanEntry {
+                layers: [layers[0].into(), layers[1].into()],
+                kind: kind.into(),
+                vias,
+                source: "the board".into(),
+                ..Default::default()
+            };
         let mut facts = routed(DrcTally::default());
         facts.designer_via_spans = vec![
             span("micro", ["F.Cu", "In1.Cu"], 1239),
@@ -5031,7 +5034,12 @@ mod tests {
             verdict.next_actions
         );
         facts.designer_via_spans.clear();
-        assert!(!judge(&facts).next_actions.iter().any(|line| line.contains("blind_vias")));
+        assert!(
+            !judge(&facts)
+                .next_actions
+                .iter()
+                .any(|line| line.contains("blind_vias"))
+        );
     }
 
     #[test]

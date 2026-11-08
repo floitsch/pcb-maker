@@ -1598,7 +1598,12 @@ fn route_mode_the_probe_with_lines_leads_where_its_rows_are_open() {
         "{:?}",
         ladder.pin_lines_why
     );
-    assert!(ladder.attempt_ledger().iter().all(|record| record.pin_lines));
+    assert!(
+        ladder
+            .attempt_ledger()
+            .iter()
+            .all(|record| record.pin_lines)
+    );
     assert_eq!(ladder.probe_counts[1], Some(6));
     let routes = fake.routes();
     assert!(routes.iter().all(|routed| routed.lines), "{routes:?}");
@@ -1733,10 +1738,9 @@ fn route_mode_unprobed_board_takes_the_lines_after_its_leader() {
     );
     assert!(ladder.pin_lines_on);
     assert!(
-        ladder
-            .pin_lines_why
-            .as_deref()
-            .is_some_and(|why| why.starts_with("decided after the leader's run: open pads at pin rows")),
+        ladder.pin_lines_why.as_deref().is_some_and(
+            |why| why.starts_with("decided after the leader's run: open pads at pin rows")
+        ),
         "{:?}",
         ladder.pin_lines_why
     );

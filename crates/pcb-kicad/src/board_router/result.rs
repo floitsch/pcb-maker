@@ -920,11 +920,17 @@ mod layer_name_tests {
     fn a_dead_pads_wall_names_kicads_layers() {
         let names: Vec<String> = ["F.Cu", "In1.Cu", "B.Cu"].map(String::from).to_vec();
         assert_eq!(
-            name_layers("layer 2: a 0.100 mm track may end at (1, 2); layer 0: the contact holds no track end", &names),
+            name_layers(
+                "layer 2: a 0.100 mm track may end at (1, 2); layer 0: the contact holds no track end",
+                &names
+            ),
             "B.Cu: a 0.100 mm track may end at (1, 2); F.Cu: the contact holds no track end"
         );
         // Not a layer of the list, or no colon: as it was.
         assert_eq!(name_layers("layer 9: x", &names), "layer 9: x");
-        assert_eq!(name_layers("the layer 1 of it", &names), "the layer 1 of it");
+        assert_eq!(
+            name_layers("the layer 1 of it", &names),
+            "the layer 1 of it"
+        );
     }
 }

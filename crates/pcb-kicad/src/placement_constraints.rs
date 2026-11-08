@@ -2368,7 +2368,9 @@ fn apply_rows(
                     }
                 }
                 let on_each_other = conflicts.iter().any(|(_, _, gap)| *gap == 0.0)
-                    || conflicts.iter().any(|(i, j, _)| meet(&pads[*i], &others[*j], 0.0));
+                    || conflicts
+                        .iter()
+                        .any(|(i, j, _)| meet(&pads[*i], &others[*j], 0.0));
                 let board_axis = if direction[0].abs() > 0.5 { "x" } else { "y" };
                 let unset = if !one_line && row.row_pitch_mm.is_none() {
                     " (row_pitch_mm is not given: it takes pitch_mm)"
@@ -2383,7 +2385,9 @@ fn apply_rows(
                     if on_each_other {
                         "lie on each other".to_string()
                     } else {
-                        format!("of two nets come closer than the copper clearance ({clearance} mm)")
+                        format!(
+                            "of two nets come closer than the copper clearance ({clearance} mm)"
+                        )
                     },
                     if one_line {
                         "neighbours in a line".to_string()
@@ -4101,7 +4105,11 @@ mod tests {
             )
             .map(|_| ())
         };
-        let rows = |pitch: f64| grid(&format!(r#"{{"parts": ["C1", "C2"], "pitch_mm": {pitch}}}"#));
+        let rows = |pitch: f64| {
+            grid(&format!(
+                r#"{{"parts": ["C1", "C2"], "pitch_mm": {pitch}}}"#
+            ))
+        };
         let error = rows(1.0).unwrap_err();
         assert!(
             error.contains("the pads of C1 and C2 lie on each other (neighbours in a line)")
@@ -4112,16 +4120,23 @@ mod tests {
         // Two lines of a grid too close: the setting is row_pitch_mm, the
         // span the pads' across the axis (trial 8's bank of capacitors
         // was told about pitch_mm).
-        let error = grid(r#"{"parts": ["C1", "C2"], "pitch_mm": 3, "columns": 1, "row_pitch_mm": 0.5}"#)
-            .unwrap_err();
+        let error =
+            grid(r#"{"parts": ["C1", "C2"], "pitch_mm": 3, "columns": 1, "row_pitch_mm": 0.5}"#)
+                .unwrap_err();
         assert!(
             error.contains("(lines 1 and 2 of the grid)")
                 && error.contains("they need 1.00 mm along the board's y (the pads' span), so row_pitch_mm must be at least that (now 0.5)"),
             "{error}"
         );
         let error = grid(r#"{"parts": ["C1", "C2"], "pitch_mm": 0.5, "columns": 1}"#).unwrap_err();
-        assert!(error.contains("(row_pitch_mm is not given: it takes pitch_mm)"), "{error}");
-        assert!(grid(r#"{"parts": ["C1", "C2"], "pitch_mm": 3, "columns": 1, "row_pitch_mm": 1.5}"#).is_ok());
+        assert!(
+            error.contains("(row_pitch_mm is not given: it takes pitch_mm)"),
+            "{error}"
+        );
+        assert!(
+            grid(r#"{"parts": ["C1", "C2"], "pitch_mm": 3, "columns": 1, "row_pitch_mm": 1.5}"#)
+                .is_ok()
+        );
         // Pads of two nets keep the copper clearance: every part turned
         // alike, a neighbour's pad 2 faces pad 1 (trial 8's bank: GND and
         // +BATT 0.1 mm apart, 16 clearance findings).
@@ -4130,8 +4145,14 @@ mod tests {
             problem.min_spacing = 0.2;
             for member in [1, 2] {
                 problem.components[member].pins = vec![
-                    core::Pin { offset: [-0.7, 0.0], net: 0 },
-                    core::Pin { offset: [0.7, 0.0], net: 1 },
+                    core::Pin {
+                        offset: [-0.7, 0.0],
+                        net: 0,
+                    },
+                    core::Pin {
+                        offset: [0.7, 0.0],
+                        net: 1,
+                    },
                 ];
             }
             let row: KiCadRowConstraint = serde_json::from_str(&format!(
@@ -4139,8 +4160,14 @@ mod tests {
             ))
             .unwrap();
             let pad = vec![[-1.0, -0.5, -0.4, 0.5], [0.4, -0.5, 1.0, 0.5]];
-            apply_rows(&mut problem, &references, pads.len(), &[Vec::new(), pad.clone(), pad], &[row])
-                .map(|_| ())
+            apply_rows(
+                &mut problem,
+                &references,
+                pads.len(),
+                &[Vec::new(), pad.clone(), pad],
+                &[row],
+            )
+            .map(|_| ())
         };
         let error = netted(2.1).unwrap_err();
         assert!(
