@@ -10067,7 +10067,9 @@ the passives' around the held skeleton):
   the density does not push it out before the stall stop (100
   iterations without progress). The anneal and the legaliser seat them;
   the objective is still 0.44 to 0.56 of ours. Two variants were
-  measured and not taken: the netlist's positions pushed out of every
+  measured and not taken (from the designer's poses, by a stages.py
+  defect found on 2026-11-08: these two variants started there): the
+  netlist's positions pushed out of every
   fixed body by the shortest way (`netpush`: Glasgow back to 0.66 / 0.29
   and objective 1.04 and 0.96, video 1.07 and 1.25, the 4in1's stall
   unchanged on seed 1), and four times the noise (video 1.15 and 1.04,
@@ -10244,6 +10246,284 @@ seeds agreeing 0.48 to 0.85). Open: the 4in1-mini (+17 % in full
 layouts: the race's tight skeletons), video (+8 %), the passives' stall
 around a held skeleton (the 4in1), video's skeleton that no longer fits
 at full halos, WLED's pour necks.
+
+## The passives' stall costs nothing; the netlist's stacks and the bulk capacitors do (2026-11-08)
+
+Branch passives-descent (everything in `build/glob2/`). The two residuals
+of "The global placement's start (2026-11-07)": the passives' global
+placement around a held skeleton stalls (the 4in1), and the 4in1-mini
+(+17 % in full layouts) and video (+8 %) lose. Stage 0 asked where the
+passives inside held bodies go and what seating them costs, why the race
+keeps the mini's tight placements, and why video's skeleton no longer
+fits.
+
+**The instruments** (no placement changes with them: the place checks of
+the 4in1, the 4in1-mini and video at seed 1 by main's x1935 and by the
+branch wrote byte-identical boards).
+
+- The trace (`PCB_PLACER_TRACE`) says per seed `walk`: each relaxation
+  level that ran, the parts it left without room and the placement's work
+  when it ended (`Placement::walk`); and for a seed of the race over
+  skeletons `skeleton`: both phases' levels and work, whether it fell
+  back, the parts the skeleton or the passives left without a legal place
+  (`skeleton_left_out`, `passives_left_out`) and the skeleton's own walk
+  (`skeleton::Report`).
+- `stages.py passives` measures the passives around the held skeleton per
+  seed placed by skeleton: the held parts (those that do not move from the
+  passives' `start` to `final`), how many passives have their centre in a
+  held body on their side at each stage, their displacement from the
+  descent's spots to the final ones, the objective by term at each stage,
+  the descent's iterations and overflow at its stop, the level; and every
+  seed of the race with its kind (skeleton or plain), level and wire.
+  `stages.py route` pins any traced seed's placement (`<unit>@final.<n>`),
+  `run` reserves each place check in the memory ledger (`--expected-gb`),
+  and the variant `debug` adds the placer's debug lines.
+- **A defect fixed in stages.py**: every variant but `ours` and `off`
+  started from the designer's poses (`PCB_PLACER_START`), the rule for the
+  designer variants (`global-all`, `global-active`, `anneal`,
+  `legalize`). The variants `netnoise` and `netpush` of "The global
+  placement's start (2026-11-07)" ran so: their rows there (the netlist's
+  positions pushed out of the fixed bodies, four times the noise) are
+  measured from the designer's poses, not the netlist's start. Their
+  switches are gone; the variants are removed.
+- glob1's count of passives inside a held body (117 and 163 at the start,
+  110 and 87 at the stop) took a body on either side; on its side (the
+  4in1 is two-sided, and the descent has a field per side) it is 93 and
+  105 at the start, 68 and 57 at the stop.
+
+**Stage 0** (the nine dense boards the race over skeletons places, layout
+seeds 1 and 101, the layout's place check with its budget and the
+reference rates, `build/glob2/s0`; the 4in1-mini at seeds 1 to 401;
+binary main's x1935). The kept seed; inside: passives whose centre lies in
+a held body on their side, at the passives' start, after the descent, the
+anneal, the legaliser and the refinement; moved: the passives' mean
+displacement from the descent's spots to the final ones, of those inside
+after the descent and of the others; the objective (the anneal's, at the
+level) after the anneal, the legaliser and at the end, the relations at
+the end:
+
+| board | seed | seeds by skeleton | inside: start / descent / anneal / legaliser / end | descent: iterations, overflow | moved mm: inside / outside | objective after anneal / legaliser / end (relations at end) | level |
+| --- | ---: | --- | --- | --- | --- | --- | --- |
+| 4in1 | 1 | 3 of 3 | 93 / 68 / 6 / 0 / 0 | 136, 0.65 | 3.1 / 7.2 | 29337 / 13660 / 12750 (11680) | tight |
+| 4in1 | 101 | 3 of 3 | 105 / 57 / 0 / 0 / 0 | 180, 0.62 | 4.5 / 5.7 | 15196 / 13195 / 11621 (10646) | tight |
+| 4in1-mini | 1 | 3 of 3 | 130 / 2 / 0 / 0 / 0 | 245, 0.08 | 16.0 / 5.5 | 3708 / 4983 / 5864 (0) | tight, courtyards |
+| 4in1-mini | 101 | 2 of 3 (kept plain) | - | - | - | - | tight, courtyards |
+| DSP-ADAU1452 | 1 | 6 of 6 | 62 / 10 / 1 / 1 / 2 | 40, 0.04 | 28.0 / 18.7 | 6681 / 6856 / 6112 (2599) | 2 |
+| DSP-ADAU1452 | 101 | 7 of 7 | 42 / 8 / 0 / 0 / 0 | 41, 0.04 | 11.6 / 19.7 | 6088 / 6176 / 5674 (2292) | 2 |
+| MegaDrive | 1 | 2 of 3 | 21 / 1 / 0 / 0 / 0 | 60, 0.04 | 58.9 / 31.1 | 50868 / 51671 / 52322 (13722) | 2 |
+| MegaDrive | 101 | 3 of 3 | 28 / 0 / 0 / 0 / 0 | 40, 0.04 | - / 31.8 | 55424 / 55200 / 56276 (10166) | 2 |
+| poly_kybd_split72_left | 1 | 4 of 4 | 151 / 2 / 0 / 0 / 1 | 109, 0.04 | 44.0 / 28.3 | 9365 / 11703 / 13990 (228) | 2 |
+| poly_kybd_split72_left | 101 | 4 of 4 | 142 / 2 / 0 / 0 / 1 | 89, 0.04 | 23.6 / 28.9 | 10492 / 13173 / 15752 (964) | 2 |
+| protoesp | 1 | 11 of 11 | 17 / 1 / 1 / 1 / 1 | 283, 0.14 | 1.6 / 19.6 | 92998 / 87780 / 89903 (1717) | 5 (fine grid) |
+| protoesp | 101 | 10 of 10 | 15 / 1 / 1 / 0 / 0 | 286, 0.13 | 26.9 / 20.1 | 45900 / 43223 / 52805 (1717) | 5 (fine grid) |
+| revC3 | 1 | 3 of 3 | 29 / 0 / 0 / 0 / 0 | 384, 0.06 | - / 22.2 | 6531 / 5170 / 4716 (200) | tight |
+| revC3 | 101 | 3 of 3 | 30 / 0 / 0 / 0 / 0 | 407, 0.06 | - / 20.2 | 7463 / 5389 / 4925 (346) | tight |
+| SNSP-CPU-01 | 1 | 9 of 9 | 27 / 1 / 0 / 0 / 0 | 212, 0.05 | 26.8 / 32.4 | 23436 / 22439 / 22400 (35) | 2 |
+| SNSP-CPU-01 | 101 | 10 of 10 | 25 / 1 / 0 / 0 / 0 | 89, 0.04 | 36.1 / 33.2 | 26421 / 26200 / 25397 (958) | 2 |
+| video | 1 | 1 of 3 (kept plain) | - | - | - | - | plain, 3 |
+| video | 101 | 1 of 3 (kept plain) | - | - | - | - | plain, 3 |
+
+- **The stall is the 4in1's alone** (and protoesp's, at overflow 0.13
+  with one passive inside). The 4in1's descents stop at 136 and 180
+  iterations at overflow 0.65 and 0.62 with 68 and 57 passives inside
+  held bodies (most in the drivers U7, U2, U5, U9, U13, U10 they serve);
+  on the other boards one or two are inside when the descent stops and
+  the overflow reaches 0.04 to 0.08.
+- **The anneal seats them**: on the 4in1 6 and 0 are still inside after
+  the anneal, none after the legaliser, on every seed of the race (the
+  three seeds of each row). Seating costs them less than the others: the
+  trapped passives move 3.1 and 4.5 mm from their descent's spots, the
+  free ones 7.2 and 5.7 mm. The descent left them at the pins they serve,
+  inside the bodies; the anneal moves them out to the nearest room.
+
+**The cheaper candidate: no stall stop for the passives' descent**
+(`second.global.stall_iterations = 0` in `place_skeleton`, measured by a
+switch, `PCB_PLACER_PASSIVES=nostall`, `build/glob2/s0b2`). Inside after
+the descent, the descent, the objective at the end and the kept placement
+(kind, level, final wire):
+
+| board | seed | inside after the descent: main / nostall | descent: main / nostall | objective at end: main / nostall | kept: main / nostall |
+| --- | ---: | --- | --- | --- | --- |
+| 4in1 | 1 | 68 / 0 | 136 it 0.65 / 1500 it 0.04 | 12750 / 12639 (-1 %) | skeleton, 0/0 / 0.16, tight, 710 mm / skeleton, 0/0 / 0.16, tight, 731 mm |
+| 4in1 | 101 | 57 / 1 | 180 it 0.62 / 360 it 0.04 | 11621 / 10504 (-10 %) | skeleton, 0/0 / 0.16, tight, 652 mm / skeleton, 0/0 / 0.16, tight, 663 mm |
+| 4in1-mini | 1 | 2 / - | 245 it 0.08 / - | - | skeleton, 0/0 / 0.16, tight, courtyards, 615 mm / plain, 0/0 / 0.16, tight, 563 mm |
+| 4in1-mini | 101 | - / 3 | - / 1500 it 0.08 | - | plain, 0/0 / 0.16, tight, courtyards, 540 mm / skeleton, 0/0 / 0.16, tight, courtyards, 600 mm |
+| DSP-ADAU1452 | 1 | 10 / 10 | 40 it 0.04 / 40 it 0.04 | 6112 / 6112 (+0 %) | skeleton, 0.5/0 / 0.5, 3075 mm / skeleton, 0.5/0 / 0.5, 3075 mm |
+| DSP-ADAU1452 | 101 | 8 / 8 | 41 it 0.04 / 41 it 0.04 | 5674 / 5674 (+0 %) | skeleton, 0.5/0 / 0.5, 2953 mm / skeleton, 0.5/0 / 0.5, 2953 mm |
+| MegaDrive | 1 | 1 / 1 | 60 it 0.04 / 60 it 0.04 | 52322 / 52322 (+0 %) | skeleton, 0.5/0 / 0.5, 19952 mm / skeleton, 0.5/0 / 0.5, 19952 mm |
+| MegaDrive | 101 | 0 / 0 | 40 it 0.04 / 40 it 0.04 | 56276 / 56276 (+0 %) | skeleton, 0.5/0 / 0.5, 22088 mm / skeleton, 0.5/0 / 0.5, 22088 mm |
+| poly_kybd_split72_left | 1 | 2 / 2 | 109 it 0.04 / 109 it 0.04 | 13990 / 13990 (+0 %) | skeleton, 0.5/0 / 0.5, 6412 mm / skeleton, 0.5/0 / 0.5, 6412 mm |
+| poly_kybd_split72_left | 101 | 2 / 2 | 89 it 0.04 / 89 it 0.04 | 15752 / 15752 (+0 %) | skeleton, 0.5/0 / 0.5, 6424 mm / skeleton, 0.5/0 / 0.5, 6424 mm |
+| protoesp | 1 | 1 / 1 | 283 it 0.14 / 1500 it 0.14 | 89903 / 89799 (-0 %) | skeleton, 0/0 / 0.2, 3240 mm / skeleton, 0/0 / 0.2, 3266 mm |
+| protoesp | 101 | 1 / 1 | 286 it 0.13 / 1500 it 0.13 | 52805 / 62723 (+19 %) | skeleton, 0/0 / 0.2, 3036 mm / skeleton, 0/0 / 0.2, 3193 mm |
+| revC3 | 1 | 0 / 0 | 384 it 0.06 / 1500 it 0.06 | 4716 / 4474 (-5 %) | skeleton, 0/0 / 0.1499, tight, 2790 mm / skeleton, 0/0 / 0.1499, tight, 2854 mm |
+| revC3 | 101 | 0 / 0 | 407 it 0.06 / 1500 it 0.06 | 4925 / 5109 (+4 %) | skeleton, 0/0 / 0.1499, tight, 2853 mm / skeleton, 0/0 / 0.1499, tight, 2791 mm |
+| SNSP-CPU-01 | 1 | 1 / 1 | 212 it 0.05 / 1500 it 0.05 | 22400 / 22607 (+1 %) | skeleton, 0.5/0 / 0.5, 13974 mm / skeleton, 0.5/0 / 0.5, 14026 mm |
+| SNSP-CPU-01 | 101 | 1 / 1 | 89 it 0.04 / 89 it 0.04 | 25397 / 25397 (+0 %) | skeleton, 0.5/0 / 0.5, 14036 mm / skeleton, 0.5/0 / 0.5, 14036 mm |
+| video | 1 | - / - | - / - | - | plain, 0/0 / 0.5, 22758 mm / plain, 0/0 / 0.5, 22758 mm |
+| video | 101 | - / - | - / - | - | plain, 0/0 / 0.5, 25725 mm / plain, 0/0 / 0.5, 25725 mm |
+
+- On the 4in1 the passives leave the held bodies (68 and 57 inside to 0
+  and 1, overflow 0.04 at 1500 and 360 iterations), move 10.9 and 9.3 mm
+  to their final spots instead of 5.6 and 5.3, and the objective at the
+  end changes by -1 % and -10 % (the relations 11 680 to 11 495, 10 646
+  to 9 569). The anneal had seated them anyway.
+- Elsewhere the stall stop rarely fires: DSP-ADAU1452, MegaDrive,
+  split72_left and SNSP-CPU-01's seed 101 place byte for byte as main;
+  Glasgow -5 % and +4 %, SNSP's seed 1 +1 %, protoesp 0 % and +19 %.
+- The 4in1-mini: seed 1 keeps a plain placement at level 7 (no touching
+  courtyards, the first in fifteen seeds of main; below), seed 101 a
+  skeleton at the courtyard level as main.
+
+**Why the race keeps the 4in1-mini's tight placements: every placement is
+tight.** The race's ranking is the placer's key (illegal parts, closed
+pads, touching courtyards, parts on marks, missed constraints, the final
+wire: a placement that needs touching courtyards ranks below every one
+that does not), then the layout's three probes by the open terminals after
+the rip-up (a 2 % margin over the first-ranked). With the netlist's start
+none of the 4in1-mini's fifteen seeds (seeds 1 to 401, three each)
+seats without touching courtyards, plain or by skeleton: the kept
+placement is a skeleton on three rows and a plain fallback on two, all at
+the courtyard level. Main's x1933 (before the netlist's start, the same
+inputs) seated 5 of 16 seeds at level 7 (tight bodies, the courtyards
+apart) and kept a level-7 placement on seeds 1, 201 and 301. The level
+walk (the trace's `walk`) says what needs the courtyards: on every seed
+2 to 5 of the board's 22 1206 bulk capacitors (CL32 to CL55, one footprint
+on the battery rail and ground) find no room at level 7 or 8; the
+courtyard level seats them (Rsense2 and Q23/Q24 twice beside them). The
+designer packs that bank in rows at a 1.9 mm pitch, closer than level 7's
+0.16 mm spacing allows (1.8 + 0.16 mm): the designer's arrangement needs
+the courtyard level too. The netlist's start puts all 22 at one spot
+(within 0.2 mm), and the descent and the anneal no longer leave them the
+room the old start's spread did.
+
+The first route of each of the race's three placements (every movable part
+pinned at a place check's placement, layout seed 1,
+`stop_after_first_route`, `stages.py route`; the place checks write the
+layouts' placements, the placer's order first):
+
+| seed | placements (placer's order) | the race's probes: open after the rip-up | first route, pinned | kept by the race | the layout's first route (stage 1) |
+| ---: | --- | --- | --- | --- | ---: |
+| 1 | 3 skeleton, 1 skeleton, 2 skeleton | 464, 488, 528 | 127, 166, 165 | 3 | 135 |
+| 301 | 302 skeleton, 301 plain, 303 plain | 531, 520, 479 | 158, 134, 121 | 303 | 134 |
+| 401 | 401 skeleton, 402 skeleton, 403 plain | 510, 497, 500 | 150, 146, 158 | 402 | 154 |
+
+The race keeps the best of its three on all three seeds (127 of 127, 166,
+165; 121 of 158, 134, 121; 146 of 150, 146, 158), on seed 301 a plain
+placement against the skeleton the placer ranked first. The race's choice
+is not the loss: the netlist's start leaves it only placements at the
+courtyard level to choose from.
+
+**Why video's skeleton no longer fits.** The netlist's start puts video's
+eight 116 x 8 mm memory modules (U12 to U19, on one bus) within 1 mm of
+each other (the skeleton's start, seed 2: x 210.5 to 211.6, y 137.8 to
+138.1). Main's place checks at seeds 1 to 401 (sixteen seeds of the race;
+the skeleton's work is half the seed's 600 s):
+
+| seed | kept | the race's seeds: skeleton seated (work s) or left out (the skeleton's walk: level, work s) |
+| ---: | --- | --- |
+| 1 | plain fallback | 1: U13, U17 (0 at 188, 1 at 303); 2: seated (29); 3: X1 (0 at 137, 1 at 221, 2 at 300) |
+| 101 | plain fallback | 103: U17, U19 (0 at 173, 1 at 284, 2 at 304); 102: seated (153); 101: U15, U19 (0 at 213, 1 at 300) |
+| 201 | plain fallback | 201: U15, U17, U19 (0 at 235, 1 at 310); 202: U12, U13 (0 at 233, 1 at 301); 203: seated (124) |
+| 301 | plain fallback | 301: U12, U15, U18 (0 at 235, 1 at 303); 302: seated (25); 303: seated (113) |
+| 401 | skeleton | 403, 401, 402: seated (20, 28, 222); 404: U14, U15, U17 (0 at 166, 1 at 263, 2 at 301) |
+
+- Nine skeletons seat, all at level 0, in 23 to 225 s. Seven leave one to
+  three memory modules (U12 to U19) or the crystal X1 without room: level
+  0 takes 137 to 235 s and leaves one part, and levels 1 and 2 only seat
+  that part into the kept placement (the shortcut for at most three parts
+  without room: no fresh anneal), until the skeleton's 300 s run out. The
+  seed then places plain (the fallback, 93 to 616 s more), and the race
+  keeps the plain fallback on four of five rows (stage 1's rows: the same
+  placements).
+- **The skeleton's own level walk does not fix it**: with 0.9 of the work
+  (540 s; `skeleton_race.work_share`, `build/glob2/s0b/videows-s1`) seed 3
+  seats at level 4 after 394 s and seed 1 still leaves U13 and U17 at level
+  0 after 543 s.
+
+**Probes, not taken** (place checks; the diffs in `build/glob2/`):
+
+- *Stacks spread* (`build/glob2/ties-probe.diff`): a part whose solved
+  centre lies within half its half extents of another's starts spread
+  over the square of their summed area. Everywhere: video's skeletons seat
+  on 4 of 5 and 2 of 3 seeds and the race keeps them, but the 4in1's
+  objective rises 45 to 53 % (its passives' stacks at the drivers' pins
+  spread out and leave them; the relations 11 680 to 18 162). In the
+  skeleton phase alone: video the same, the 4in1 +65 % and +47 % (its
+  MOSFETs' stacks), the 4in1-mini's seeds keep level-7 plain fallbacks.
+  Only for parts of one kind (the same body and nets): no part of the
+  4in1, the mini or video is such a stack (each module has its own select
+  net), and every board places byte for byte as main.
+- *The skeleton's descent without the stall stop*
+  (`PCB_PLACER_PASSIVES=skeleton-nostall`): the stall
+  stop fires in the skeleton's descent on video and protoesp only (the
+  other seven boards place byte for byte as main at seeds 1 and 101).
+  Video seats 9 of 15 skeletons (main 8 of 16) and keeps a skeleton on
+  seeds 1, 101 and 301 and the plain fallback on 201 and 401 (main: on 401
+  only); protoesp's objective +19 % and -10 %. Another draw, not a fix
+  (`build/glob2/sknostall-probe.diff`).
+
+**Stage 1** (the eleven dense boards at the task budgets with
+`stop_after_first_route`, placer seeds 1 to 401, both sides on one binary,
+`build/glob2/pcb-maker-h` = main x1935 with the measurement's switch; on
+`PCB_PLACER_PASSIVES=nostall`; `screen.py --on '{}' --on-env
+PCB_PLACER_PASSIVES=nostall`, five then four in flight beside the nightly,
+`build/glob2/stage1`, 2026-11-07 23:56 to 2026-11-08 02:40; 54 686 CPU
+seconds: off 27 173, on 27 513). The off rows equal glob1's stage-1 on
+rows (main's placements) on every board checked. `placer_ab.py compare
+--metric first_open`, first-route open terminals:
+
+| Board | s1 off / on | s101 off / on | s201 off / on | s301 off / on | s401 off / on | median off / on | mean change | relative (weight) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4in1 | 141 / 87 | 87 / 109 | 129 / 159 | 133 / 112 | 97 / 96 | 129 / 109 | -4.8 | -2.7 % (48) |
+| 4in1-mini | 135 / 113 | 143 / 128 | 147 / 144 | 134 / 150 | 154 / 138 | 143 / 138 | -8.0 | -5.6 % (99) |
+| DSP-ADAU1452 | 20 / 20 | 25 / 25 | 23 / 23 | 24 / 24 | 28 / 28 | 24 / 24 | +0.0 | +0.0 % (29) |
+| MegaDrive | 95 / 95 | 46 / 46 | 42 / 42 | 90 / 90 | 92 / 92 | 90 / 90 | +0.0 | +0.0 % (21) |
+| panel | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | +0.0 | +0.0 % (0) |
+| poly_kybd_split72_left | 22 / 22 | 26 / 26 | 23 / 23 | 21 / 21 | 23 / 23 | 23 / 23 | +0.0 | +0.0 % (18) |
+| protoesp | 90 / 77 | 67 / 26 | 48 / 72 | 30 / 36 | 56 / 46 | 56 / 46 | -6.8 | -6.2 % (30) |
+| revC3 | 95 / 79 | 98 / 77 | 107 / 114 | 92 / 124 | 66 / 82 | 95 / 82 | +3.6 | +2.1 % (70) |
+| SmartSpin2k_Panelized | 51 / 51 | 43 / 43 | 33 / 33 | 46 / 46 | 90 / 90 | 46 / 46 | +0.0 | +0.0 % (3) |
+| SNSP-CPU-01 | 24 / 50 | 31 / 31 | 20 / 24 | 36 / 50 | 30 / 30 | 30 / 31 | +8.8 | +8.4 % (4) |
+| video | 92 / 92 | 159 / 185 | 116 / 116 | 111 / 85 | 165 / 99 | 116 / 99 | -13.2 | -4.2 % (12) |
+
+- **Stage 1 passes by its rule** (negative at sign-flip p <= 0.25):
+  weighted **-2.2 %** (the noise file's 90 % interval -7.1 to +3.1 %),
+  **sign-flip p 0.174**, the noise file's p 0.251; sum of medians 752 to
+  688 (-8.5 %, p 0.026); pair sums 765 to 686, 725 to 696, 688 to 750,
+  717 to 738, 801 to 724 (three of five fall). Four boards better, two
+  worse, five equal (DSP-ADAU1452, MegaDrive, split72_left and the two
+  panels place as main). By the full protocol's p <= 0.03 it is NOT
+  BETTER; `placer_ab` puts the seeds to resolve 2.8 % at more than forty.
+- **The 4in1-mini and video do not get worse**: the 4in1-mini -5.6 %
+  (better on four seeds of five; seed 1 113 against 135), video -4.2 %
+  (better on two, worse on one, equal on two). The 4in1 -2.7 % (two
+  better, two worse), protoesp -6.2 %; Glasgow +2.1 % (two better, three
+  worse), SNSP-CPU-01 +8.4 % (weight 4).
+- The effect is small against the noise: the stall stop is not where the
+  netlist's start loses on the 4in1-mini (its placements still need the
+  courtyard level) or on video (its skeletons still fall back).
+
+**Decision (stage 2 is the coordinator's call).** The stall around a held
+skeleton is not the defect it looked like: the anneal seats every passive
+the descent leaves in a held body, at less displacement than the others.
+Without the stall stop for the passives' descent stage 1 passes its rule
+(-2.2 %, p 0.174) with the 4in1-mini and video better, but by a margin
+the noise covers. The switch stays a measurement switch
+(`PCB_PLACER_PASSIVES=nostall`, read in `place_skeleton`) for stage 2;
+on landing the passives' descent runs without the stall stop and the
+switch goes. The losses the residuals named have other causes: the
+4in1-mini's courtyard level is its bulk-capacitor bank (one spot at the
+netlist's start, the designer's rows closer than level 7 allows), and
+video's skeletons fall back at its stacked memory modules; neither the
+race's choice nor the stall stop is the lever there. Next candidates: for
+the mini, the bank's start (the netlist's stack of the 22 capacitors
+spread as a row, or the courtyard level for those parts alone rather than
+the whole placement); for video, a stack's spread that does not reach the
+4in1's MOSFET pairs and passives (the probes above). CPU: stage 0's 150
+place checks 36 344 CPU s (some from the designer's start before the
+stages.py fix), the nine first routes 477 s, stage 1 54 686 s; about 25
+CPU hours.
 
 ## What went wrong on the way (kept as lessons)
 

@@ -699,8 +699,12 @@ pub fn place_skeleton(
     // (2026-11-06)"). A skeleton that skipped past it (protoesp's gain)
     // keeps its level.
     second.first_level = skeleton.level.max(PASSIVES_FIRST_LEVEL);
-    // MEASUREMENT (glob2, not for merge): the passives' descent without
-    // the stall stop.
+    // The measurement's switch for stage 2 (not for landing: on landing
+    // the passives' descent runs without the stall stop and the switch
+    // goes): `PCB_PLACER_PASSIVES=nostall`. Stage 1: first-route open
+    // terminals -2.2 % weighted, sign-flip p 0.174 (docs/placer.md, "The
+    // passives' stall costs nothing; the netlist's stacks and the bulk
+    // capacitors do (2026-11-08)").
     if std::env::var("PCB_PLACER_PASSIVES").is_ok_and(|value| value == "nostall") {
         second.global.stall_iterations = 0;
     }

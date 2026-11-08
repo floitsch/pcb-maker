@@ -10,6 +10,16 @@ used to be here; code comments and docs that cite `docs/handover.md,
 
 ## State on 2026-11-05
 
+- **The passives' stall and the netlist's stacks (branch passives-descent,
+  2026-11-08).** The passives' stall around a held skeleton costs nothing
+  (the anneal seats every passive left in a held body); without its stall
+  stop stage 1 gives -2.2 % first-route open (p 0.174), the 4in1-mini and
+  video better; stage 2 pending, behind the measurement switch
+  `PCB_PLACER_PASSIVES=nostall`. The 4in1-mini's courtyard level is its
+  bulk-capacitor bank; video's skeletons fall back at its stacked memory
+  modules. The trace gains each placement's level walk and the skeleton's
+  left-out parts. Open problem 4.
+
 - **Lattice lines where the rows are open (branch pin-lines-default,
   2026-11-08).** The lines' losses of 2026-11-07 were routes moved on
   boards near their limit, not the lines' geometry; the route-mode ladder
@@ -651,6 +661,30 @@ ranks what keeps the designer tier's 41 failing boards open.
    skeleton stalls at overflow 0.62 to 0.65 on the 4in1 (their netlist
    spots lie inside the ICs they serve), video's skeleton no longer fits
    at full halos (the plain fallback is kept), the 4in1-mini +5 %.
+   **The passives' stall and the netlist's stacks (2026-11-08, placer.md
+   "The passives' stall costs nothing; the netlist's stacks and the bulk
+   capacitors do")**: the passives' stall around a held skeleton is the
+   4in1's alone (68 and 57 passives in held bodies at overflow 0.65 and
+   0.62; elsewhere one or two), and the anneal seats every one (none inside
+   after the legaliser), moving them 3.1 and 4.5 mm against the free
+   passives' 7.2 and 5.7. Without the stall stop (the cheaper candidate)
+   they leave the bodies in the descent and the objective at the end moves
+   -1 % and -10 % on the 4in1, at most ±5 % elsewhere (protoesp +19 % on
+   one seed). The 4in1-mini: with the netlist's start none of its fifteen
+   race seeds seats without touching courtyards (x1933: 5 of 16), plain or
+   by skeleton; 2 to 5 of its 22 1206 bulk capacitors (one spot at the
+   start, the designer's rows at 1.9 mm pitch) need the courtyard level;
+   the race keeps the best first route of its three on seeds 1, 301 and
+   401. Video: the netlist's start stacks its eight memory modules within
+   1 mm; 7 of 16 skeletons leave one to three modules (or X1) without room
+   after level 0's 137 to 235 s, and the race keeps the plain fallback on
+   four of five rows; 0.9 of the work seats one of two. Stage 1
+   without the passives' stall stop (measurement switch
+   `PCB_PLACER_PASSIVES=nostall`): first-route open -2.2 % weighted,
+   sign-flip p 0.174 (passes the stage-1 rule, not the full protocol's),
+   the 4in1-mini -5.6 % and video -4.2 %; stage 2 pending.
+   Also: stages.py ran every variant but `ours` and `off` from the
+   designer's poses (`netnoise`, `netpush` of 2026-11-07 among them).
 5. **Starved thermals as the only failure** on complete boards (rosco,
    Castor, mackerel-30, k30, mackerel-08, Hub, PixelWave, BAGEL; counts
    fell to 0-5 since the spoke model). Since 2026-10-21

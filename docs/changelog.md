@@ -11,6 +11,42 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-08 (the passives' stall around a held skeleton, the 4in1-mini's courtyards, video's stacked modules: diagnosed; stage 1 of the passives' descent without the stall stop)
+
+Branch passives-descent (docs/placer.md "The passives' stall costs
+nothing; the netlist's stacks and the bulk capacitors do (2026-11-08)";
+everything in `build/glob2/`).
+
+- **Instruments**: the trace's `walk` (each relaxation level that ran,
+  the parts it left without room, the work: `Placement::walk`) and
+  `skeleton` (both phases' levels and work, the fallback, the parts the
+  skeleton or the passives left without a place, the skeleton's walk:
+  `skeleton::Report`); `stages.py passives` (the passives inside a held
+  body by stage, their displacement, the objective by term, every race
+  seed's kind and level), `route <unit>@final.<n>` (any traced seed's
+  placement pinned), the ledger for place checks, the `debug` variant. No
+  placement changes with them (byte-identical place checks).
+- **A stages.py defect**: every variant but `ours` and `off` started from
+  the designer's poses; 2026-11-07's `netnoise` and `netpush` rows ran
+  so. Only the designer variants do now; the two stale variants are gone.
+- **Stage 0** (nine dense boards, seeds 1 and 101, place checks): the
+  stall is the 4in1's (68 and 57 passives in held bodies at overflow 0.65
+  and 0.62), the anneal seats every one; without the stall stop the
+  objective moves -1 % and -10 % on the 4in1, at most ±5 % elsewhere. The
+  4in1-mini: no race seed seats without touching courtyards (x1933: 5 of
+  16); 2 to 5 of its 22 1206 bulk capacitors need the courtyard level; the
+  race keeps the best first route of its three on seeds 1, 301, 401.
+  Video: the eight memory modules start within 1 mm; 7 of 16 skeletons
+  leave one to three without room and fall back. Probes not taken: stacks
+  spread (video's skeletons seat, the 4in1's objective +45 to +65 %), the
+  skeleton's descent without the stall stop (another draw).
+- **Stage 1** (the passives' descent without the stall stop, the eleven
+  dense boards, five seed pairs, first route, one binary): -2.2 %
+  weighted, sign-flip p 0.174, the noise file's 0.251; the 4in1-mini
+  -5.6 %, video -4.2 %, protoesp -6.2 %, the 4in1 -2.7 %, Glasgow +2.1 %,
+  SNSP-CPU-01 +8.4 %; 54 686 CPU s. Behind the measurement switch
+  `PCB_PLACER_PASSIVES=nostall` until stage 2.
+
 ## Committed on 2026-11-08 (lattice lines where the rows are open, on by default; knockout plates and faces as KiCad draws them)
 
 Branch pin-lines-default (docs/router.md "Lattice lines where the rows
