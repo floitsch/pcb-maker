@@ -223,6 +223,41 @@ pub struct KiCadFabStackupLayer {
     pub loss_tangent: Option<f64>,
 }
 
+/// Copper heavier than 1 oz (35 um) in the stackup, which fabs make only
+/// when the order says so: the action naming the layers and their weight
+/// (trial 8: the 4in1-mini's outer layers are 2 oz, 0.07 mm, its custom
+/// rules widen the outer tracks for it, and the release said nothing).
+fn copper_weight_action(stackup: &KiCadFabStackup) -> Option<String> {
+    let heavy: Vec<(String, f64)> = stackup
+        .layers
+        .iter()
+        .filter(|layer| layer.kind == "copper")
+        .filter_map(|layer| {
+            let thickness = layer.thickness_mm?;
+            (thickness > 0.04).then(|| (layer.name.clone(), thickness))
+        })
+        .collect();
+    if heavy.is_empty() {
+        return None;
+    }
+    let ounces = |thickness: f64| ((thickness / 0.035) * 2.0).round() / 2.0;
+    let mut by_weight: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (name, thickness) in &heavy {
+        by_weight
+            .entry(format!("{} mm, {} oz", thickness, ounces(*thickness)))
+            .or_default()
+            .push(name.clone());
+    }
+    let listed: Vec<String> = by_weight
+        .iter()
+        .map(|(weight, layers)| format!("{} ({weight})", layers.join(", ")))
+        .collect();
+    Some(format!(
+        "the stackup has copper heavier than 1 oz: {}; a fab makes 1 oz unless the order says otherwise, so order that copper weight (fab-manifest.json's stackup)",
+        listed.join("; ")
+    ))
+}
+
 /// The stackup of `pcb` (`setup`'s `stackup`), `None` without one.
 pub(crate) fn board_stackup(pcb: &Expr) -> Option<KiCadFabStackup> {
     let stackup = pcb.child("setup")?.child("stackup")?;
@@ -1187,6 +1222,7 @@ pub fn fab_verdict_lines(
                 impedance.action.clone()
             }
         }));
+        actions.extend(manifest.stackup.as_ref().and_then(copper_weight_action));
         actions.push(rotation_action(&manifest.polarised_parts));
         format!(
             "released{}: {} files, {}; {counts}",
@@ -1799,5 +1835,36 @@ mod tests {
         assert_eq!(file_kind("b-gerbers.zip"), "zip");
         assert_eq!(file_kind("b.step"), "step");
         assert_eq!(file_kind("drc.json"), "report");
+    }
+
+    /// 2 oz outer copper is named for the order (trial 8: the
+    /// 4in1-mini's release said nothing of it).
+    #[test]
+    fn heavy_copper_is_named_for_the_order() {
+        let layer = |name: &str, kind: &str, thickness: f64| KiCadFabStackupLayer {
+            name: name.into(),
+            kind: kind.into(),
+            thickness_mm: Some(thickness),
+            ..Default::default()
+        };
+        let mut stackup = KiCadFabStackup {
+            thickness_mm: Some(1.6),
+            copper_finish: None,
+            layers: vec![
+                layer("F.Cu", "copper", 0.07),
+                layer("dielectric 1", "prepreg", 0.2),
+                layer("In1.Cu", "copper", 0.035),
+                layer("B.Cu", "copper", 0.07),
+            ],
+        };
+        assert_eq!(
+            copper_weight_action(&stackup).unwrap(),
+            "the stackup has copper heavier than 1 oz: F.Cu, B.Cu (0.07 mm, 2 oz); a fab makes 1 oz unless the order says otherwise, so order that copper weight (fab-manifest.json's stackup)"
+        );
+        stackup.layers = vec![
+            layer("F.Cu", "copper", 0.035),
+            layer("B.Cu", "copper", 0.035),
+        ];
+        assert_eq!(copper_weight_action(&stackup), None);
     }
 }
