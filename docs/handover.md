@@ -10,6 +10,16 @@ used to be here; code comments and docs that cite `docs/handover.md,
 
 ## State on 2026-11-05
 
+- **The rows decided at the probes (branch pin-lines-probes,
+  2026-11-08).** The ladder no longer waits for its leader's run to see
+  the rows: where the leader's probe leaves pads unfinished at rows the
+  regular lattice misses, its rung is probed once more with the lines
+  (the same work, at most a third of what is left under the bound) and
+  leads at a tenth fewer unfinished nets; the trigger after the leader's
+  run stays for the rest. Designer tier 77 strict, none gained or lost,
+  2683 -> 2668 unconnected (RP2040_base 20 -> 5); expansion tier 25 -> 26
+  (backplane); fingerprints and short tier unchanged. Open problem 2.
+
 - **The passives' stall and the netlist's stacks (branch passives-descent,
   2026-11-08).** The passives' stall around a held skeleton costs nothing
   (the anneal seats every passive left in a held body); without its stall
@@ -420,8 +430,12 @@ ranks what keeps the designer tier's 41 failing boards open.
    the ladder turns it on by itself after its leader's run where KiCad's
    open pads are at rows the regular lattice misses (router.md, "Lattice
    lines where the rows are open (2026-11-08)": +2 strict, none lost;
-   RP2040_base 36 -> 20 that way, 5 with the lines from the start: the
-   leader's run without them is the price of not moving other boards). Left of the
+   RP2040_base 36 -> 20 that way), and since the same day it decides at
+   the probes where the leader's probe leaves pads at such rows: the
+   leader's rung probed once more with the lines, taken at a tenth fewer
+   unfinished nets ("The rows decided at the probes (2026-11-08)":
+   RP2040_base 20 -> 5, the expansion tier's backplane passes; jetson's
+   241 -> 240 at the fingerprints' budget is why the margin). Left of the
    rows: the crossing pairs and the closed ways (unchanged by it), the
    no-way pads that ask for no line (OpenRX's U201/U301, DSP-ADAU1452),
    and a tight two-track channel (the keyboard's F23, which the channels'
@@ -1277,6 +1291,7 @@ Switches and experiment hooks (change the result):
 - `PCB_LADDER_UNCHARGED_POUR`: route mode's ladder counts the attempts' search expansions and manual spokes only, not their other pour analyses, lattice builds and lowerings, and its shares stay search work (the count before 2026-10-21, all pour work charged; for attributing rows).
 - `PCB_LADDER_SEARCH_SHARES`: route mode's ladder charges all the work but gives each router its share as search work, not scaled by the routers' share of search so far (for attributing rows).
 - `PCB_LADDER_NO_FIRST_ITERATION_GATE`: route mode's steps start without room for their first negotiation iteration (the rule before 2026-10-21; for attributing rows).
+- `PCB_LADDER_LINES_PROBE`: `0`: route mode's ladder does not probe its leader's rung once more with lattice lines at the pin rows where the leader's probe leaves pads unfinished at rows the regular lattice misses; the trigger after the leader's run alone decides (as before 2026-11-08's "The rows decided at the probes"; for A/B on one binary).
 - `PCB_LADDER_LEADER_FIRST`: `0` or `1`: route mode's ladder runs the leading rung's seed round and finer pitches before the rungs of other pour modes, and those only where their probe left at most twice the leader's unfinished nets (wins over the router setting `leader_first`; default on; `0` the order before 2026-11-07).
 - `PCB_LADDER_NO_STEP_COST_GATE`: route mode's steps start with less left under the bound than a fifth of the ladder's first attempt's work (the rule before 2026-10-21, probe overhead; for attributing rows).
 - `PCB_LADDER_SEARCH_LIMITS`: route mode's first attempt stops on its search alone, its pour analyses and lattice on top (the rule before 2026-10-21, probe overhead; for attributing rows).

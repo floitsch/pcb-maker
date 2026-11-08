@@ -693,6 +693,17 @@ higher than the stroke font's (Quanta75's via at the plate's top); fixed
 for knockout plates and faces, it costs Quanta75_BareRP2040's pass (1
 open at the RP2040's row, its routes moved).
 
+**Status (2026-11-08, branch pin-lines-probes): the rows decided at the
+probes** (router.md, "The rows decided at the probes (2026-11-08)").
+Where the leader's probe leaves pads unfinished at rows the regular
+lattice misses, its rung is probed once more with the lines (the same
+work, at most a third of what is left under the bound) and leads at a
+tenth fewer unfinished nets; the trigger after the leader's run stays
+for the rest. Designer tier: 77 strict, none gained or lost, 2683 ->
+2668 unconnected (RP2040_base 20 -> 5, ATAT1800 and OpenAirScope pass
+with less work and fewer vias); the expansion tier at 30 s 25 -> 26
+(backplane); fingerprints and short tier unchanged.
+
 ## The estimate
 
 Per design, by the boards of its class (a board counts where the

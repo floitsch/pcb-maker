@@ -11,6 +11,31 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-08 (the rows decided at the probes)
+
+Branch pin-lines-probes (docs/router.md "The rows decided at the probes
+(2026-11-08)"; router-ceiling.md design 3; everything in `build/lat3/`).
+
+- **The trigger at the probes** (`Ladder::lines_probe`,
+  `lines_probe_runs`, `lines_lead`, `LadderRunner::missed_row_pads` and
+  `probe_open_pads`, `Router::unfinished_pads`): where the leader's
+  probe leaves pads unfinished at rows the regular lattice misses, its
+  rung is probed once more on the lattice with lines at the pin rows,
+  with the same work and only within a third of what is left under the
+  bound; it leads at a tenth fewer unfinished nets, and the continuation
+  and the rest of the ladder run with the lines. Otherwise the trigger
+  after the leader's run (x1936) decides, as it does on boards without
+  probes. Designer tier (the 21 probed boards it can touch, the rest
+  x1936's by construction): 77 strict, none gained or lost, 2683 -> 2668
+  unconnected (RP2040_base 20 -> 5; ATAT1800 and OpenAirScope pass with
+  fewer vias and less work); the probe with lines ran on 8 boards and led
+  on 3. Expansion tier at 30 s: 25 -> 26 strict (backplane), 557 -> 556
+  (ZSWatch 2 -> 3, the probe's cost). Fingerprints and short tier
+  identical. jetson's 241 -> 240 (no margin: 13 -> 28 unconnected) set
+  the tenth. CPU (pinned pairs, `PCB_LADDER_LINES_PROBE=0` against the
+  default): RP2040_base -4 % and -5 %, ATAT1800 -26 % and -27 %.
+- `PCB_LADDER_LINES_PROBE=0`: the trigger after the leader's run alone
+  (A/B on one binary).
 ## Committed on 2026-11-08 (the passives' stall around a held skeleton, the 4in1-mini's courtyards, video's stacked modules: diagnosed; stage 1 of the passives' descent without the stall stop, not taken)
 
 Branch passives-descent (docs/placer.md "The passives' stall costs

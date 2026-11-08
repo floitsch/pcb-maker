@@ -8398,7 +8398,161 @@ where the lines from the start give 5; a leader whose probe already
 leaves pads open at missed rows could take the lines for its own
 continuation (the trigger at the probes, not after the continuation).
 The expansion tier's 30 s boards never reach the lines for the same
-reason.
+reason. (Done the same day: "The rows decided at the probes", below.)
+
+## The rows decided at the probes (2026-11-08)
+
+Lines where the rows are open (above) waits for the leader's run: on
+RP2040_base that run spends 250 s of work on the regular lattice and the
+board ends at 20 open where the lines from the start give 5, and on the
+expansion tier at 30 s the leader's run takes the whole budget, so the
+lines never run there. What was found: **the probes see the rows**. The
+leader's probe already leaves its unfinished nets at the pads the regular
+lattice misses (RP2040_base: 67 of the pads of its 61 unfinished nets are
+in U15 and U19), and a probe of the same rung on the lattice with the
+lines, with the same work, tells whether the lines help (61 -> 18
+unfinished nets).
+
+**The trigger** (`Ladder::lines_probe`, board_router/ladder.rs; route
+mode, the leader first, `pin_lines` unset and no `PCB_ROUTER_PIN_LINES`).
+After the rung probes, when the leader's probe left nets unfinished:
+1. the pads of rows whose exit the regular lattice misses
+   (`LadderRunner::missed_row_pads`: the board lowered once more, not
+   charged, `pin_lines::missing` on `Grid::choose`'s lattice; asked once a
+   ladder, `Ladder::missed_pads`), against the pads the leader's probe left
+   unfinished (`Router::unfinished_pads`: a terminal its net's tree does not
+   reach, or one with a node of its net in another net's clearance within
+   0.8 mm, `OPEN_PAD_NEAR`, the row gap; it reads the router's state and
+   counts no work);
+2. where some of them are such pads, and the probe's work is at most a
+   third of what is left under the ladder's bound (`lines_probe_runs`,
+   `LINES_PROBE_SHARE`), the leader's rung is lowered and probed once more
+   on the lattice with the lines, with the rung probes' work (its lowering,
+   its lattice and its search charged as a probe's);
+3. it leads where it leaves a tenth fewer nets unfinished
+   (`lines_lead`, `LINES_PROBE_MARGIN`): then it is the router the
+   continuation resumes, the leader's count is its own (the gate of the
+   leader first compares the other rungs' probes with it), and every
+   attempt after it has the lines. Otherwise it is dropped, the leader
+   without lines is continued, and the trigger after the leader's run
+   still applies.
+
+A board whose leader's probe leaves no pad at such a row, a board whose
+regular lattice misses no row, and a board without probes (fewer than four
+layers or 120 connections, no room for two routers) route as on x1936:
+the same calls, the same work (test
+`route_mode_no_open_pad_at_a_missed_row_pays_nothing`); the trigger after
+the leader's run stays theirs. A layout's ladder is unchanged.
+`PCB_LADDER_LINES_PROBE=0` leaves the trigger after the leader's run alone
+(for A/B on one binary).
+
+**What the extra probe costs.** One rung probe's work (75 s on the
+designer tier, `bounded_probe_seconds`: at most half the budget over the
+rungs, 3.75 s at 30 s), its lattice (0.2 to 0.6 s) and a lowering; it
+runs only where it is at most a third of what is left under the bound, so
+the continuation keeps two thirds of what it had at least (at 970.5 s:
+75 of about 716 s, a tenth; at 30 s: 3.8 of 15 to 19 s, a quarter). The
+memory is the probes' (the leader stays while it runs, as while the
+other rungs probe). Where it does not lead, that work is lost to the
+continuation: ZSWatch at 30 s (80 -> 83 unfinished with the lines, 1
+pad at a row) ends 2 -> 3 unconnected that way.
+
+**Why the margin.** Any change of the lattice moves a probe's count: on
+the designer tier's row boards (x1934's lines on every probe against
+none) single rungs went 191 -> 404 and 161 -> 32. jetson at the
+fingerprints' quarter budget: 241 without, 240 with the lines (7 pads at
+rows); taking the lines there (binary p1, no margin) left 60 open after
+the continuation instead of 27 (KiCad 13 -> 28). With a tenth: backplane
+27 -> 24 leads, jetson's 240 does not (13 unconnected as on x1936; its
+trigger after the leader's run fires as before and has no work left).
+
+**Measured** (the designer tier at scale 0.647, route mode, 970.5 s of
+work, rates pinned, binary p2, `build/lat3/`). The boards the change can
+touch are the 21 probed boards among the 32 whose lattice the lines
+change (`tier-p2`, RP2040_base in `first-rp`); the other 88 route as
+x1936 by construction (no probes, or a regular lattice that misses no
+row) and are its rows (`build/lat2/b1-auto`, the Quanta75 boards from
+`k3-auto`). On the 21, the leader's probe left pads at missed rows on 8
+boards; the probe with lines led on 3:
+
+| Board | leader's probe: unfinished, pads at missed rows | with the lines | x1936 | the probes decide |
+| --- | --- | --- | --- | --- |
+| RP2040_base | 61, 67 (U15, U19) | 18: leads | 20 / no (250 s of work without lines) | **5** / no (730 s of work, was 766) |
+| ATAT1800 | 31, 31 (J1, U4 to U10) | 1: leads | pass, 269 vias, 990 s of work | pass, 249 vias, 695 s of work |
+| OpenAirScope | 4, 4 (U14) | 0: leads | pass (its seed round on the lines), 169 vias | pass, 151 vias |
+| koeg-board-pcb | 3, 1 (U7) | 4 | pass | pass (the trigger after the leader's run, as x1936) |
+| TelemetryOnboard | 2, 1 (U2) | 3 | pass | pass (the same) |
+| reCamera | 1, 2 (MIC1) | 1 | 4 / no | 4 / no (the same) |
+| module | 33, 1 (U800) | 41 | 3 / no | 3 / no (the same) |
+| 4in1-panel | 105, 2 (U2, U5, U9) | 97 (-8 %) | 34 / no | 34 / no (the same) |
+
+The 13 others route as x1936, row for row: on Glasgow, Hub,
+krishveercard and split72_right the regular lattice misses no row (their
+lines are the finer pitches'); vaio_re, katia, link, Sisu, eurorack,
+SUMEC, split42_left, split42_right and split72_left left no pad at a
+missed row in their leader's probe (vaio_re: 74 unfinished, U6's pad not
+among them; its trigger after the leader's run takes it to 3 as before). Where the probe with lines did not
+lead, the 75 s it cost moved no result (KiCad unconnected, pass and vias
+as x1936 on all five).
+
+| | strict | KiCad unconnected |
+| --- | ---: | ---: |
+| x1936 (the trigger after the leader's run) | 77 | 2683 |
+| the rows decided at the probes | **77** | **2668** |
+
+None gained, none lost; RP2040_base 20 -> 5.
+
+**At 30 s** (the expansion tier, 46 boards, route mode, binary p2,
+`exp-p2`, against x1936's `build/lat2/exp-auto`; ZSWatch's x1936 row from
+p1 with the lines off, `exp-off-zs`, since b1's text model differed
+there): 25 -> **26 strict** (power-manifold backplane 2 -> 0: 27 -> 24
+unfinished with the lines at its probe), 557 -> 556 unconnected (ZSWatch
+2 -> 3: its probe with lines, 83 against 80, cost 3.8 s of a 16 s
+continuation; ausign 84 -> 78 vias). What decides there: probes run at
+30 s (3.75 s each on a four-layer board of 120 connections or more), so
+the trigger at the probes does; x1936's trigger after the leader's run
+never has work left. Of the three passes the lines on every attempt took
+at 30 s: backplane is taken; EwoudVV bms is not (its leader's probe,
+plane stubs, leaves no pad at a missed row; with the lines on every
+probe another rung led and passed: a lattice's coin flip, not the rows);
+ED052TC4-Adapter is not: two layers, no probes, and its pass with the
+lines came from the first attempt itself (0 open at 21.6 s of work
+against 8 at 10 s without), so only a decision before the first attempt
+(the lines from the start, which loses passes on the designer tier)
+could take it. Deciding after the first attempt's own open pads leaves
+its rungs 3.7 s each on the lines; not built.
+
+**The other guards.** The short tier (12 layouts, 2 x 2) is a layout's
+ladder, which the trigger does not touch: identical to x1935's rows
+(`build/lat2/short-main`; 9 strict, 16 unconnected, every row's vias
+the same; `short-p3`). The fingerprints
+(Castor, k30-SBC, jetson, Sisu; route mode from v16, a quarter budget, 1
+x 4): identical to x1936's rows (`build/lat2/fp-k4-auto`: 20
+unconnected, Castor and k30-SBC pass; jetson 13 with 622 vias against
+606, its probe with lines not leading; Sisu's probe leaves no pad at a
+missed row). CPU (pinned pairs, binary p3, `PCB_LADDER_LINES_PROBE=0`
+against the default side by side on disjoint cores, one core each, then
+swapped; CPU seconds of the route): RP2040_base 635.1 and 587.1 ->
+609.3 and 558.0 (-4 %, -5 %; 766 -> 730 s of work), ATAT1800 987.2 and
+917.1 -> 729.8 and 673.2 (-26 %, -27 %; 990 -> 695 s of work, its
+continuation on the lines completes the board). The off arms reproduce
+x1936's rows (20 open; pass with 269 vias). The extra probe is charged
+work; the pads' lists (a lowering, the lines' arithmetic and a read of
+the probe's state) are not, once a ladder.
+
+**Decision: on by default** (the setting unset; true and false as
+before). By the rule (strict passes gain or hold with none lost,
+unconnected falls): the designer tier holds 77 with none lost and falls
+2683 -> 2668; the expansion tier gains backplane (25 -> 26, none lost),
+the fingerprints and the short tier do not move.
+
+**Next.** ED052TC4-Adapter's kind (two layers, a short budget, the
+lines needed from the first attempt) has no probe to decide by. The
+probe's count is a coarse judge of a lattice (single rungs move by half
+with any change); the margin keeps jetson's 241 -> 240 out, but a board
+whose rows the lines open by a few nets among many (4in1-panel: -8 %)
+does not get them from the probes.
+
 
 ## Blind, buried and micro vias (2026-11-05)
 
