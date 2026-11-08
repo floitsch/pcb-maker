@@ -1574,7 +1574,10 @@ fn lower_constraint(
                 rule,
                 constraint,
                 "no_effect",
-                format!("{}: the router lays through vias only", words.join(", ")),
+                format!(
+                    "{}: the router lays through vias only unless the router setting \"blind_vias\" is on (its spans then come from via_spans or the designer's own vias, and this rule is not kept)",
+                    words.join(", ")
+                ),
             );
         } else if words
             .iter()

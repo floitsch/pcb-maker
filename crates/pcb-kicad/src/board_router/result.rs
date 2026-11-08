@@ -427,6 +427,11 @@ pub struct KiCadRulesSummary {
     /// 0.1 mm).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub narrowed: Vec<KiCadNarrowedClass>,
+    /// Whether vias could pierce only some layers (`blind_vias`, or
+    /// `PCB_ROUTER_BLIND_VIAS`): without it every via is a through via,
+    /// whatever the designer's board used (`via_spans_designer`).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub blind_vias: bool,
     /// KiCad's defaults taken and the custom rules read, kept or skipped.
     #[serde(flatten)]
     pub project: crate::project_rules::KiCadProjectRulesReport,
@@ -508,6 +513,7 @@ impl KiCadRulesSummary {
                 0.0
             },
             neck_width_mm: board.neck_width,
+            blind_vias: super::via_spans::blind_vias_on(config),
             narrowed: if config.use_narrow_signals == Some(true) {
                 let project = config.project_rules.clone().unwrap_or_default();
                 let nets: Vec<(String, f64)> = board
