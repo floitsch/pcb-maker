@@ -8554,6 +8554,156 @@ whose rows the lines open by a few nets among many (4in1-panel: -8 %)
 does not get them from the probes.
 
 
+## A layout's rows decided by its probe's open pads (2026-11-08)
+
+Route mode decides the lines at the pin rows at its probes (above); a
+layout (the sweep's flow: placement, the race, the first route, the moves,
+the final ladder) had no such decision, so its routes had the regular
+lattice unless the router config said `"pin_lines": true` (trial 8:
+RP2040_base's layout at the reference's rates, one placement, 38 KiCad
+unconnected without, 4 with the setting). Where the decision belongs: on
+RP2040_base the sweep's layout spends 510 s of its 1500 s on the
+placement, 225 s on the race's three probes and 383 s on the first route,
+and no final ladder runs (`final_ladder_budget_seconds` absent; in the
+nightly it ran on vaio_re, OpenAirScope, ATAT1800, katia and the
+4in1-mini of the boards named below); the moves reroute in place on the
+first route's lattice. So a decision at the final ladder, like route
+mode's after its leader's run, comes too late for most boards, and the
+first route is the place: the race's probe of the placement it keeps is
+the start of that route, as route mode's leader's probe is the start of
+its continuation.
+
+What was found: **in a layout the probe's count does not judge the
+lines; its open pads do.** Built first as route mode's trigger (the kept
+placement probed once more on the lattice with the lines, with the race's
+75 s, the lines taken where that leaves a tenth fewer nets unfinished),
+it took nothing on RP2040_base: the probe with lines left 82 nets
+unfinished against 75 without (65 of the 75's pads in U15 and U19, the
+rows the regular lattice misses), so the first route went on without and
+ended at 38. The same placement's first route with the lines from that
+probe on ended at **11** (KiCad 11 unconnected, `PCB_LAYOUT_LINES_PROBE=take`
+on the branch's binary a2). Over the sweep boards below, the rule by count
+would have taken the lines on 4 of the 11 boards where the kept probe
+left pads at missed rows (ATAT1800 41 -> 4, Glasgow 210 -> 128, the
+corne right 51 -> 23, split72 left 49 -> 18) and left them off on
+RP2040_base (75 -> 82: 38 against 11), jetson (30 -> 50: 4 against 1) and
+OpenAirScope (2 -> 6: both pass). Probably the race's probe, on the
+layout's impatient first-route settings (stall patience 8, a higher
+present growth), stops earlier in the negotiation than route mode's
+probe of a rung, before the rows' lines pay; the open pads at the missed
+rows are the evidence that holds.
+
+**The decision** (`race_lines_probe`, board_layout.rs; `pin_lines`
+unset, no `PCB_ROUTER_PIN_LINES`). After the race picks its placement:
+1. the pads of rows whose straight exit the regular lattice misses
+   (`pin_lines::missed_exit_pads`: `Grid::choose`'s lattice of the
+   router's pitches on the layout's lowered board, the exits' lines of
+   `pin_lines::pin_lines`, `missing`; route mode's runner calls the same
+   function now) against the pads the kept placement's probe left
+   unfinished (`Router::unfinished_pads` within `OPEN_PAD_NEAR`);
+2. where some are such pads and a probe's work is at most a third of the
+   layout's work left (`lines_probe_runs`, `LINES_PROBE_SHARE`), a router
+   on the lattice with the lines probes as the race did (its count and
+   standing in the log beside the probe's without) and the first route
+   resumes it; the router config of every route after it says
+   `pin_lines` true (the moves reroute on its lattice, the final ladder's
+   attempts and the narrow-signal attempt have the lines);
+3. board-layout.json's `pin_lines` and the verdict's `pin_lines` (stdout's
+   `pin lines: decided at the kept placement's probe: ...`) say why.
+
+Its cost is that probe's search (charged as the race charges its probes:
+the probe without lines is lost to the first route). A placement whose
+probe leaves no pad at such a row, a board whose regular lattice misses
+no row, a layout without the race (seeds, pin swaps or one placement:
+8 of the 109 sweep boards, 4in1-panel among them) and the repair probe
+(`race_probe.repair`, off by default) route as before: nothing is built
+or charged (the pads' lists read the board and the router's state).
+Where the race left the lines off, **the final ladder decides at its
+probes** as route mode does (`Ladder::lines_probe` in a ladder with a
+work deadline: its leader is the best probe, its share the layout's work
+left; no trigger after the leader's run): on the measured boards it ran
+once (split42_left: 24 unfinished, none at a missed row) and never
+fired. `PCB_LAYOUT_LINES_PROBE` is the measurement switch: `0` neither
+(the layout before this), `race` or `ladder` one of them, `lead` the race
+by route mode's margin.
+
+**Measured** (the sweep's conditions: tasks v7, `--quality`, the
+reference rates, the sweep's seed, 2 threads a board; both arms on binary
+a2, `build/lat4/`). The boards the race can change are those whose
+placement has pads at rows the regular lattice misses: the probe
+(`PCB_ROUTER_PIN_LINES_PROBE` on the nightly's placed boards of
+2026-11-08, `build/lat4/sel.txt`) finds 28 of the 109 (missed exit lines
+at the regular pitch; RP2040_base 56 on x and 28 on y). The other 81 route
+as before by construction; verified on vaio_re and the 4in1-mini (both
+arms: the same placement digest, first route, KiCad unconnected, strict
+and vias, 1 / no and 88 / no, as in the nightly). On the 28 the race's probe left pads at a missed row on 11;
+on the other 17 every row is the same as without the change (placement
+digest, KiCad unconnected, strict, vias; and the same as the nightly of
+2026-11-08 row for row; the arm without lines reproduces the nightly's
+rows on all 11 boards where the race decided and on the 6 others it ran
+before it was stopped, the layout being deterministic at pinned rates). KiCad unconnected /
+strict, first-route open terminals in brackets:
+
+| Board | kept probe: unfinished, pads at missed rows (parts) | its probe with lines | without (x1939's rows) | the race decides |
+| --- | --- | --- | --- | --- |
+| RP2040_base | 75, 65 (U15, U19) | 82 | 38 / no (40) | **11** / no (11) |
+| ATAT1800 | 41, 38 (U4 to U10) | 4 | 2 / no (56) | **0 / pass** (0; 876 s of work, was 1417) |
+| poly_corne_split42_right | 51, 31 | 23 | 26 / no (32) | **5** / no (14) |
+| poly_kybd_split72_left | 49, 23 | 18 | 17 / no (22) | **1** / no (6) |
+| jetson-nano-baseboard | 30, 4 (IC7, J1) | 50 | 4 / no (8) | **1** / no (6) |
+| OpenAirScope | 2, 2 (U14) | 6 | 0 / pass (2) | 0 / pass (0) |
+| little_red_rover | 4, 1 (J1) | 2 | 0 / pass (1), 180 vias | 0 / pass (1), 107 vias |
+| glasgow revC3 | 210, 2 (U30) | 128 | 85 / no (95) | 85 / no (94) |
+| SUMEC_MK_IV | 10, 2 (IC1) | 11 | 7 / no (7) | 7 / no (9) |
+| module | 208, 3 (U800) | 227 | 5 / no (61) | 5 / no (65) |
+| Sisu_SSE-9 | 9, 3 | 13 | 1 / no (9) | 4 / no (10) |
+
+| The 28 boards | strict | KiCad unconnected |
+| --- | ---: | ---: |
+| without (`PCB_LAYOUT_LINES_PROBE=0`) | 13 | 362 |
+| the race decides | **14** | **296** |
+
+ATAT1800 gains its pass, none is lost; RP2040_base 38 -> 11, the corne
+right 26 -> 5, split72 left 17 -> 1, jetson 4 -> 1; Sisu 1 -> 4 is the one
+board worse (its probe's 3 pads at missed rows among 9 nets). The boards
+of the designer tier's changed rows: vaio_re, 4in1-panel and the 4in1-mini
+have no missed exit row on their layout's placement (the regular
+lattice holds vaio_re's rows there; 4in1-panel's rows ask only for
+channels' lines; the mini's ask for nothing at the regular pitch); koeg, katia, split72
+right and split42 left have rows the lattice misses but their kept probe
+left no pad there (4, 88, 10 and 40 unfinished): the same as without.
+
+**The short tier** (12 layouts, its budget, 3 x 2, binary a2): 9 strict,
+16 unconnected both ways, every row the same as the nightly's but
+reCamera (its probe's 2 pads at MIC1's row: 4 unconnected either way, 65
+-> 76 vias).
+
+**CPU** (pinned pairs, binary a2, `PCB_LAYOUT_LINES_PROBE=0` against the
+default side by side on disjoint cores, 2 threads each, then swapped; CPU
+seconds of the layout): RP2040_base 1022.7 and 978.8 -> 1086.4 and 963.3
+(+6 %, -2 %; the same work less 38 s: 1330 -> 1292 s), ATAT1800 2380.6 and
+2150.1 -> 1877.7 and 1470.3 (-21 %, -32 %; 1417 -> 876 s of work, the
+board completes and no final ladder runs). The pairs reproduce the arms'
+rows (38 and 11; 2 and 0 / pass).
+
+**Decision: on by default in layouts** (`pin_lines` unset; true and false
+as before; `PCB_LAYOUT_LINES_PROBE=0` for A/B). By the rule (strict passes
+gain or hold with none lost on the layout set, the short tier holds): 13
+-> 14 strict on the 28 boards the race can change, none lost, 362 -> 296
+unconnected; the short tier the same. The trial's action for a layout
+whose hot spot lies at a fine row now fires only where the layout routed
+without the lines (its probes left no pad open at a missed row) and says
+so.
+
+**Next.** Sisu's 1 -> 4 is the price of taking the lines on three pads;
+a share of the probe's unfinished nets at missed rows could keep such
+boards out, but the measured boards do not separate it (jetson gains on 4
+of 30, Sisu loses on 3 of 9). The final ladder's probes decide by count
+as route mode's do; whether its rule should be the race's (the pads) is
+open, for want of a board where it fired. Route mode's count rule held on
+the designer tier (RP2040_base 61 -> 18 at its probe); its probes run
+with the full patience.
+
 ## Blind, buried and micro vias (2026-11-05)
 
 The question (from the BGA work: "with through vias only, at 0.8 mm only

@@ -704,6 +704,19 @@ for the rest. Designer tier: 77 strict, none gained or lost, 2683 ->
 with less work and fewer vias); the expansion tier at 30 s 25 -> 26
 (backplane); fingerprints and short tier unchanged.
 
+**Status (2026-11-08, branch pin-lines-layout): a layout's rows decided
+by its probe's open pads** (router.md, "A layout's rows decided by its
+probe's open pads (2026-11-08)"). A layout had the lines only by the
+setting; now, where the race's probe of the placement it keeps leaves
+pads unfinished at rows the regular lattice misses, the first route
+starts over with the lines and every route after it has them (the
+probe's count does not decide there: RP2040_base's probe with lines left
+82 nets against 75, its first route 11 open terminals against 40); else
+the final ladder decides at its probes. On the 28 sweep boards whose
+placement misses an exit row: 13 -> 14 strict (ATAT1800), none lost, 362
+-> 296 unconnected (RP2040_base 38 -> 11, the corne right 26 -> 5,
+split72 left 17 -> 1; Sisu 1 -> 4); the short tier unchanged.
+
 ## The estimate
 
 Per design, by the boards of its class (a board counts where the

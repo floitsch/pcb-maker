@@ -10,6 +10,19 @@ used to be here; code comments and docs that cite `docs/handover.md,
 
 ## State on 2026-11-05
 
+- **A layout's rows decided by its probe's open pads (branch
+  pin-lines-layout, 2026-11-08).** A layout (the sweep's flow) had lines
+  at the pin rows only with `"pin_lines": true` (trial 8). Now, where the
+  race's probe of the placement it keeps leaves pads unfinished at rows
+  the regular lattice misses, the first route starts over with the lines
+  and every route after it has them; else the final ladder decides at its
+  probes as route mode does. The probe's count does not judge the lines in
+  a layout (RP2040_base: 82 nets unfinished with them against 75, yet its
+  first route 11 open against 40). On the 28 sweep boards whose placement
+  misses an exit row: 13 -> 14 strict (ATAT1800), none lost, 362 -> 296
+  unconnected; the short tier unchanged. `PCB_LAYOUT_LINES_PROBE=0` for
+  A/B. Open problems 2 and 8.
+
 - **The rows decided at the probes (branch pin-lines-probes,
   2026-11-08).** The ladder no longer waits for its leader's run to see
   the rows: where the leader's probe leaves pads unfinished at rows the
@@ -448,7 +461,12 @@ ranks what keeps the designer tier's 41 failing boards open.
    leader's rung probed once more with the lines, taken at a tenth fewer
    unfinished nets ("The rows decided at the probes (2026-11-08)":
    RP2040_base 20 -> 5, the expansion tier's backplane passes; jetson's
-   241 -> 240 at the fingerprints' budget is why the margin). Left of the
+   241 -> 240 at the fingerprints' budget is why the margin). A layout
+   decides them too since the same day, at the race's probe of the
+   placement it keeps, by the pads it left at missed rows rather than by
+   a probe's count ("A layout's rows decided by its probe's open pads
+   (2026-11-08)": 13 -> 14 strict on the 28 sweep boards it can change,
+   RP2040_base 38 -> 11; Sisu 1 -> 4 the one worse). Left of the
    rows: the crossing pairs and the closed ways (unchanged by it), the
    no-way pads that ask for no line (OpenRX's U201/U301, DSP-ADAU1452),
    and a tight two-track channel (the keyboard's F23, which the channels'
@@ -773,11 +791,11 @@ ranks what keeps the designer tier's 41 failing boards open.
    - trial 8 (docs/reviews/2026-11-08-fresh-agent-trial-8.md, "Left
      open"; done: designer widths, per-layer minimums, the row refusal,
      the bank comment, pin lines in the report and the layout's action,
-     the blind-vias action, heavy copper, dead pads' layer names):
-     *pin lines in a layout by default* (RP2040_base at the reference's
-     rates, one placement: 38 unconnected without, 4 with
-     `"pin_lines": true`; the 4in1-mini 88 either way; a router default:
-     the short and designer tiers decide); *a row whose lines turn by
+     the blind-vias action, heavy copper, dead pads' layer names; pin
+     lines in a layout by default, 2026-11-08: the race decides them by
+     its kept probe's open pads, RP2040_base's sweep layout 38 -> 11, the
+     action for a fine-row hot spot only where the layout routed without
+     them); *a row whose lines turn by
      half turns* (`"alternate": true`, so a bank's facing pads share a net
      at the designer's pitch, 4.03 mm on the mini where a row now needs
      4.26); *the bank's place* (the template's row without one leaves 3
@@ -1341,6 +1359,7 @@ Switches and experiment hooks (change the result):
 - `PCB_LADDER_SEARCH_SHARES`: route mode's ladder charges all the work but gives each router its share as search work, not scaled by the routers' share of search so far (for attributing rows).
 - `PCB_LADDER_NO_FIRST_ITERATION_GATE`: route mode's steps start without room for their first negotiation iteration (the rule before 2026-10-21; for attributing rows).
 - `PCB_LADDER_LINES_PROBE`: `0`: route mode's ladder does not probe its leader's rung once more with lattice lines at the pin rows where the leader's probe leaves pads unfinished at rows the regular lattice misses; the trigger after the leader's run alone decides (as before 2026-11-08's "The rows decided at the probes"; for A/B on one binary).
+- `PCB_LAYOUT_LINES_PROBE`: `0`: a layout decides no lattice lines at the pin rows itself (the layout before 2026-11-08's "A layout's rows decided by its probe's open pads"; for A/B on one binary); `race`: only at the kept placement's probe; `ladder`: only at the final ladder's probes; unset: both (the router setting `pin_lines` and `PCB_ROUTER_PIN_LINES` win over it).
 - `PCB_LADDER_LEADER_FIRST`: `0` or `1`: route mode's ladder runs the leading rung's seed round and finer pitches before the rungs of other pour modes, and those only where their probe left at most twice the leader's unfinished nets (wins over the router setting `leader_first`; default on; `0` the order before 2026-11-07).
 - `PCB_LADDER_NO_STEP_COST_GATE`: route mode's steps start with less left under the bound than a fifth of the ladder's first attempt's work (the rule before 2026-10-21, probe overhead; for attributing rows).
 - `PCB_LADDER_SEARCH_LIMITS`: route mode's first attempt stops on its search alone, its pour analyses and lattice on top (the rule before 2026-10-21, probe overhead; for attributing rows).

@@ -38,6 +38,43 @@ the descent, not at the start (2026-11-08)"; everything in `build/glob3/`).
   SNSP-CPU-01, katia and RP2040_base worse beyond their spread, vaio_re's
   strict pass lost (38 -> 40 strict over the set): not taken by the rule.
 
+## Committed on 2026-11-08 (a layout's rows decided by its probe's open pads)
+
+Branch pin-lines-layout (`build/lat4/a2`, measured; `a3` its default).
+docs/router.md, "A layout's rows decided by its probe's open pads
+(2026-11-08)".
+
+- **The decision.** Where the race's probe of the placement it keeps
+  leaves pads unfinished at rows the regular lattice misses
+  (`pin_lines::missed_exit_pads`, shared with route mode's runner), and a
+  probe's work fits a third of the layout's work left, the first route
+  starts over on the lattice with lines at the pin rows (a router with
+  them probes as the race did, the first route resumes it) and every route
+  after it has them (`pin_lines` true in the router config of the moves,
+  the final ladder and the narrow-signal attempt). Else the final ladder
+  decides at its probes as route mode does (`Ladder::lines_probe` with a
+  work deadline). `pin_lines` true and false as before;
+  `PCB_LAYOUT_LINES_PROBE` (`0`, `race`, `ladder`, `lead`) for A/B.
+- **Why not the count.** Route mode's rule (the probe with lines leads at
+  a tenth fewer unfinished nets) took nothing on RP2040_base's layout
+  (82 against 75), whose first route with the lines ends at 11 open
+  against 40; by count the lines would also have stayed off on jetson
+  (4 -> 1 with them) and OpenAirScope.
+- **Measured** (the sweep's conditions, both arms on a2): the 28 boards
+  whose placement misses an exit row (the probe on the nightly's placed
+  boards) 13 -> 14 strict (ATAT1800), none lost, 362 -> 296 KiCad
+  unconnected (RP2040_base 38 -> 11, poly_corne_split42_right 26 -> 5,
+  poly_kybd_split72_left 17 -> 1, jetson 4 -> 1; Sisu_SSE-9 1 -> 4); the
+  race decided on 11 of them, the other 17 the same as without row for
+  row. The short tier: 9 strict, 16 unconnected both ways. CPU (pinned
+  pairs): RP2040_base +6 % and -2 %, ATAT1800 -21 % and -32 % (it
+  completes at 876 s of work instead of 1417).
+- **Reports.** board-layout.json's `pin_lines` and the verdict's
+  `pin_lines` say `decided at the kept placement's probe: ...`; trial 8's
+  action for a layout whose hot spot lies at a fine row fires only where
+  the layout routed without the lines and says that the layout decides
+  them itself.
+
 ## Committed on 2026-11-08 (fresh-agent trial 8: a bank of capacitors, pin rows, an HDI board, a supply drawn wide)
 
 Branch fresh-agent-trial-8 (`build/ux8/pcb-maker-b` to `-e`).
