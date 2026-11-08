@@ -381,6 +381,239 @@ pub fn note_designer_class_layers(
     }
 }
 
+/// A net the board written runs much narrower than the designer's board
+/// does (the verdict's `designer_widths`): KiCad's DRC checks no width
+/// above the minimum, so a supply drawn wide by hand comes back at its
+/// class's width with nothing said (trial 8: the rp2040 motor
+/// controller's VMOT, 2 mm on the designer's board, 0.2 mm in route mode;
+/// its project's class VMOT, 2 mm, names no net).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct KiCadDesignerWidth {
+    pub net: String,
+    /// The net's class on the board written ("Default" for a net in none).
+    pub class: String,
+    /// The width of the designer's tracks on the net at half their
+    /// length (the length-weighted median), and that length.
+    pub designer_width_mm: f64,
+    pub designer_length_mm: f64,
+    /// The same of the board written.
+    pub routed_width_mm: f64,
+    pub routed_length_mm: f64,
+    /// A class of the project that holds no net and is named as the net
+    /// (VMOT for VMOT): the project defines the width but assigns it to
+    /// nothing (KiCad assigns classes by the .kicad_pro's
+    /// `netclass_patterns` or the schematic's directives), with its width.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unassigned_class: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unassigned_class_width_mm: Option<f64>,
+}
+
+/// Per net of `pcb`, its tracks' length per width (micrometres).
+pub(crate) fn track_widths(pcb: &Expr) -> BTreeMap<String, BTreeMap<i64, f64>> {
+    let names = NetNames::of(pcb);
+    let point = |item: &Expr, key: &str| -> Option<[f64; 2]> {
+        let form = item.child(key)?;
+        Some([
+            form.children().get(1)?.atom()?.parse().ok()?,
+            form.children().get(2)?.atom()?.parse().ok()?,
+        ])
+    };
+    let mut widths: BTreeMap<String, BTreeMap<i64, f64>> = BTreeMap::new();
+    for item in pcb.children() {
+        let kind = item.head();
+        if !matches!(kind, Some("segment" | "arc")) {
+            continue;
+        }
+        let (Some(net), Some(layer)) = (node_net(item), form_atom(item, "layer", 1)) else {
+            continue;
+        };
+        if !layer.ends_with(".Cu") || !names.routable(net) {
+            continue;
+        }
+        let Some(width) = form_atom(item, "width", 1).and_then(|width| width.parse::<f64>().ok())
+        else {
+            continue;
+        };
+        let (Some(start), Some(end)) = (point(item, "start"), point(item, "end")) else {
+            continue;
+        };
+        let length = match point(item, "mid").filter(|_| kind == Some("arc")) {
+            Some(mid) => {
+                pcb_router::geometry::distance(start, mid)
+                    + pcb_router::geometry::distance(mid, end)
+            }
+            None => pcb_router::geometry::distance(start, end),
+        };
+        *widths
+            .entry(names.normalize(net).to_string())
+            .or_default()
+            .entry((width * 1000.0).round() as i64)
+            .or_default() += length;
+    }
+    widths
+}
+
+/// The width at half the length of `widths` (micrometres to length), in
+/// millimetres, and the length.
+fn median_width(widths: &BTreeMap<i64, f64>) -> (f64, f64) {
+    let total: f64 = widths.values().sum();
+    let mut seen = 0.0;
+    for (width, length) in widths {
+        seen += length;
+        if seen >= total / 2.0 {
+            return (*width as f64 / 1000.0, total);
+        }
+    }
+    (0.0, total)
+}
+
+/// The nets `routed` runs at under half the width the designer's board
+/// (`designer`) gives them, over 3 mm of the designer's tracks at least,
+/// the widest first (`KiCadDesignerWidth`).
+pub(crate) fn designer_widths(
+    report: &KiCadProjectRulesReport,
+    designer: &BTreeMap<String, BTreeMap<i64, f64>>,
+    routed: &BTreeMap<String, BTreeMap<i64, f64>>,
+) -> Vec<KiCadDesignerWidth> {
+    let mut members: BTreeMap<&str, usize> = BTreeMap::new();
+    for net in report.net_classes.keys() {
+        *members.entry(net_class(report, net)).or_default() += 1;
+    }
+    let mut narrower: Vec<KiCadDesignerWidth> = Vec::new();
+    for (net, theirs) in designer {
+        let Some(ours) = routed.get(net) else {
+            continue;
+        };
+        let (designer_width, designer_length) = median_width(theirs);
+        let (routed_width, routed_length) = median_width(ours);
+        if designer_length < 3.0
+            || routed_length <= 0.0
+            || designer_width < 2.0 * routed_width - 1.0e-6
+            || designer_width < routed_width + 0.1
+        {
+            continue;
+        }
+        let bare = net.trim_start_matches('/');
+        let unassigned = report
+            .class_values
+            .iter()
+            .find(|(class, _)| {
+                class.as_str() != "Default"
+                    && class.eq_ignore_ascii_case(bare)
+                    && !members.contains_key(class.as_str())
+            })
+            .map(|(class, values)| (class.clone(), values[0]));
+        narrower.push(KiCadDesignerWidth {
+            net: net.clone(),
+            class: net_class(report, net).to_string(),
+            designer_width_mm: designer_width,
+            designer_length_mm: (designer_length * 10.0).round() / 10.0,
+            routed_width_mm: routed_width,
+            routed_length_mm: (routed_length * 10.0).round() / 10.0,
+            unassigned_class_width_mm: unassigned.as_ref().and_then(|(_, width)| *width),
+            unassigned_class: unassigned.map(|(class, _)| class),
+        });
+    }
+    narrower.sort_by(|a, b| {
+        b.designer_width_mm
+            .total_cmp(&a.designer_width_mm)
+            .then(b.designer_length_mm.total_cmp(&a.designer_length_mm))
+    });
+    narrower
+}
+
+/// Adds to `facts.designer_widths` the nets the board written
+/// (`written`) runs at under half the designer's width: the first of
+/// `boards` (the reference's, then the input's) with tracks.
+pub fn note_designer_widths(
+    facts: &mut crate::KiCadRunFacts,
+    result: &crate::KiCadBoardRouterResult,
+    boards: &[PathBuf],
+    written: &Path,
+) {
+    let Some(routed) = fs::read_to_string(written)
+        .ok()
+        .and_then(|text| parse(&text).ok())
+        .map(|pcb| track_widths(&pcb))
+    else {
+        return;
+    };
+    if let Some(designer) = boards.iter().find_map(|path| {
+        let text = fs::read_to_string(path).ok()?;
+        let widths = track_widths(&parse(&text).ok()?);
+        (!widths.is_empty()).then_some(widths)
+    }) {
+        facts.designer_widths = designer_widths(&result.rules.project, &designer, &routed);
+    }
+}
+
+/// The verdict's next action for the nets run narrower than on the
+/// designer's board (`KiCadDesignerWidth`).
+pub(crate) fn designer_widths_action(widths: &[KiCadDesignerWidth]) -> Option<String> {
+    if widths.is_empty() {
+        return None;
+    }
+    let shown = 6;
+    let mm = |value: f64| format!("{}", (value * 1000.0).round() / 1000.0);
+    let mut listed: Vec<String> = widths
+        .iter()
+        .take(shown)
+        .map(|width| {
+            format!(
+                "{} {} mm on the designer's board -> {} mm here (class {})",
+                width.net,
+                mm(width.designer_width_mm),
+                mm(width.routed_width_mm),
+                width.class
+            )
+        })
+        .collect();
+    if widths.len() > shown {
+        listed.push(format!("{} more", widths.len() - shown));
+    }
+    let example: Vec<String> = widths
+        .iter()
+        .take(2)
+        .map(|width| {
+            format!(
+                "{{\"name\": \"{}\", \"nets\": [\"{}\"], \"track_width_mm\": {}}}",
+                width
+                    .unassigned_class
+                    .clone()
+                    .unwrap_or_else(|| format!("{} width", width.net.trim_start_matches('/'))),
+                width.net,
+                mm(width
+                    .unassigned_class_width_mm
+                    .unwrap_or(width.designer_width_mm))
+            )
+        })
+        .collect();
+    let unassigned: Vec<String> = widths
+        .iter()
+        .filter_map(|width| {
+            Some(format!(
+                "{} ({} mm)",
+                width.unassigned_class.as_ref()?,
+                mm(width.unassigned_class_width_mm?)
+            ))
+        })
+        .collect();
+    let classes = if unassigned.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "; the project defines the classes {} but assigns them no net (KiCad assigns classes by the .kicad_pro's netclass_patterns or the schematic's net class directives): assigning them there does the same for KiCad too",
+            unassigned.join(", ")
+        )
+    };
+    Some(format!(
+        "nets run at under half the width the designer's board gives them, which KiCad's DRC does not check (a width above the minimum is no finding: likely a current to carry; verdict.designer_widths): {}. Give them their width with a class in the router config (\"net_classes\": [{}]; wider tracks take room, so compare the open connections){classes}",
+        listed.join(", "),
+        example.join(", ")
+    ))
+}
+
 /// `note_designer_class_layers` with the designer's tracks
 /// (`track_lengths` of its board).
 fn add_designer_layers(
@@ -575,6 +808,53 @@ pub(crate) mod tests {
                 ("diff_pair_gap", &["In1.Cu".to_string()][..])
             ]
         );
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    /// A supply the designer drew 2 mm wide comes back at its class's
+    /// 0.2 mm: named, with the project's class of its name that holds no
+    /// net (trial 8: the rp2040 motor controller's VMOT).
+    #[test]
+    fn nets_run_narrower_than_the_designers_are_named() {
+        let (directory, project) = impedance_project("widths");
+        fs::write(
+            &project,
+            r#"{"board": {"design_settings": {"rules": {"min_clearance": 0.1, "min_track_width": 0.1}}},
+                "net_settings": {"classes": [
+                    {"name": "Default", "clearance": 0.2, "track_width": 0.2},
+                    {"name": "VBAT", "clearance": 0.2, "track_width": 2.0},
+                    {"name": "USB", "clearance": 0.15, "track_width": 0.1}],
+                  "netclass_patterns": [{"netclass": "USB", "pattern": "USB_*"}]}}"#,
+        )
+        .unwrap();
+        let report = report_of(&directory, &project);
+        let board = |vbat: f64, sda: f64| {
+            parse(&format!(
+                r#"(kicad_pcb
+  (segment (start 0 0) (end 10 0) (width {vbat}) (layer "F.Cu") (net "VBAT"))
+  (segment (start 10 0) (end 11 0) (width 0.2) (layer "F.Cu") (net "VBAT"))
+  (segment (start 0 5) (end 10 5) (width {sda}) (layer "F.Cu") (net "SDA")))"#
+            ))
+            .unwrap()
+        };
+        let designer = track_widths(&board(2.0, 0.25));
+        assert_eq!(designer["VBAT"][&2000], 10.0);
+        let widths = designer_widths(&report, &designer, &track_widths(&board(0.2, 0.2)));
+        assert_eq!(widths.len(), 1, "{widths:?}");
+        assert_eq!(widths[0].net, "VBAT");
+        assert_eq!(widths[0].class, "Default");
+        assert_eq!((widths[0].designer_width_mm, widths[0].routed_width_mm), (2.0, 0.2));
+        assert_eq!(widths[0].unassigned_class.as_deref(), Some("VBAT"));
+        let action = designer_widths_action(&widths).unwrap();
+        assert!(
+            action.contains("VBAT 2 mm on the designer's board -> 0.2 mm here (class Default)")
+                && action.contains(r#""net_classes": [{"name": "VBAT", "nets": ["VBAT"], "track_width_mm": 2}]"#)
+                && action.contains("the project defines the classes VBAT (2 mm) but assigns them no net"),
+            "{action}"
+        );
+        // Kept at the designer's width: nothing to say.
+        assert!(designer_widths(&report, &designer, &designer).is_empty());
+        assert!(designer_widths_action(&[]).is_none());
         fs::remove_dir_all(&directory).unwrap();
     }
 

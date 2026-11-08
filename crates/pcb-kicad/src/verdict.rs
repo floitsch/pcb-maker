@@ -1383,6 +1383,13 @@ pub struct KiCadRunFacts {
     /// Per class, the layers its tracks went on in the written board
     /// (`class_view::class_layers`).
     pub class_layers: Vec<crate::class_view::KiCadClassLayers>,
+    /// The nets the written board runs at under half the designer's
+    /// width (`class_view::note_designer_widths`).
+    pub designer_widths: Vec<crate::class_view::KiCadDesignerWidth>,
+    /// The spans the designer's board pierces with blind, buried or micro
+    /// vias where the run laid through vias only (`blind_vias` off):
+    /// `KiCadProjectRulesReport::via_spans_designer`.
+    pub designer_via_spans: Vec<crate::board_router::KiCadViaSpanEntry>,
     /// The project's routing rules the router does not keep
     /// (`KiCadProjectRulesReport::unmodelled`).
     pub unmodelled_rules: Vec<String>,
@@ -1843,6 +1850,34 @@ fn via_in_pad_actions(facts: &KiCadRunFacts) -> Vec<String> {
     actions
 }
 
+/// The next action for a designer's board built with vias that pierce only
+/// some layers, routed with through vias (`blind_vias` off, the default):
+/// nothing else says that the setting exists for it (trial 8: the
+/// OpenAIO-Whoop, an HDI 1+6+1 board with 2479 micro and 465 buried vias,
+/// came back with 69 through vias and 144 unconnected items).
+fn designer_via_spans_action(spans: &[crate::board_router::KiCadViaSpanEntry]) -> Option<String> {
+    if spans.is_empty() {
+        return None;
+    }
+    let total: usize = spans.iter().map(|span| span.vias).sum();
+    let listed: Vec<String> = spans
+        .iter()
+        .map(|span| {
+            format!(
+                "{} {}-{} {}",
+                span.kind, span.layers[0], span.layers[1], span.vias
+            )
+        })
+        .collect();
+    let source = spans
+        .first()
+        .map_or("the designer's board", |span| span.source.as_str());
+    Some(format!(
+        "{source} has {total} vias that pierce only some layers ({}: rules.via_spans_designer in the report), and this run laid through vias only (blind_vias is off by default): add \"blind_vias\": true to the router config to route with those spans, the layers a via skips staying free for other nets (docs/agents.md, blind_vias)",
+        listed.join(", ")
+    ))
+}
+
 /// The share of decoupling capacitors within 3 mm of a supply pin below
 /// which a layout's verdict says so: designers put 60 % or more there
 /// (the quick tier's designer boards; rp2350-dual-usb's designer 86 %).
@@ -2100,6 +2135,8 @@ impl KiCadRunFacts {
             lengths: Vec::new(),
             narrowed: Vec::new(),
             class_layers: Vec::new(),
+            designer_widths: Vec::new(),
+            designer_via_spans: Vec::new(),
             unmodelled_rules: Vec::new(),
             custom_rules: Vec::new(),
             input_warnings: Vec::new(),
@@ -2324,6 +2361,15 @@ pub struct KiCadVerdict {
     /// microstrip and a stripline). KiCad's DRC checks neither.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub class_layers: Vec<crate::class_view::KiCadClassLayers>,
+    /// Route and layout with a designer's board (the `--reference`, else
+    /// the input with its tracks): per net the board written runs at under
+    /// half the designer's width (`net`, `class`, `designer_width_mm` and
+    /// `routed_width_mm`, each the width at half the tracks' length, the
+    /// lengths, and `unassigned_class` where the project defines a class of
+    /// the net's name that holds no net). KiCad's DRC checks no width above
+    /// the minimum.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub designer_widths: Vec<crate::class_view::KiCadDesignerWidth>,
     /// The result-changing environment variables that were set
     /// (`RESULT_ENVIRONMENT`), with their values, and the binary's build
     /// (`pcb_maker_version`: commit and build date).
@@ -2898,6 +2944,8 @@ fn next_actions(
     }
     actions.extend(narrowed_action(&facts.narrowed));
     actions.extend(crate::class_view::class_layers_action(&facts.class_layers));
+    actions.extend(crate::class_view::designer_widths_action(&facts.designer_widths));
+    actions.extend(designer_via_spans_action(&facts.designer_via_spans));
     actions.extend(skeleton_budget_action(facts));
     actions.extend(facts.decoupling.as_ref().and_then(|decoupling| {
         decoupling_action(
@@ -4553,6 +4601,7 @@ pub(crate) fn judge_at(
         lengths: facts.lengths.clone(),
         narrowed_classes: facts.narrowed.clone(),
         class_layers: facts.class_layers.clone(),
+        designer_widths: facts.designer_widths.clone(),
         environment: result_environment(),
         pours: facts.pours.clone(),
         moves: facts.moves.clone(),
@@ -4647,6 +4696,9 @@ pub fn route_facts(
     });
     facts.lengths = result.lengths.clone();
     facts.narrowed = result.rules.narrowed.clone();
+    if !result.rules.blind_vias {
+        facts.designer_via_spans = result.rules.project.via_spans_designer.clone();
+    }
     // The layers each class went on, from the board written.
     if let Some(board) =
         fs::read_to_string(directory.join(format!("{}.kicad_pcb", result.board_id)))
@@ -4938,6 +4990,35 @@ mod tests {
                 .iter()
                 .any(|line| line.starts_with("the narrow-signal step routed 6"))
         );
+    }
+
+    /// A designer's board built with blind and micro vias, routed with
+    /// through vias: the action names the spans and the setting (trial 8:
+    /// the OpenAIO-Whoop said nothing of `blind_vias`).
+    #[test]
+    fn a_designers_vias_of_some_layers_name_blind_vias() {
+        let span = |kind: &str, layers: [&str; 2], vias: usize| crate::board_router::KiCadViaSpanEntry {
+            layers: [layers[0].into(), layers[1].into()],
+            kind: kind.into(),
+            vias,
+            source: "the board".into(),
+            ..Default::default()
+        };
+        let mut facts = routed(DrcTally::default());
+        facts.designer_via_spans = vec![
+            span("micro", ["F.Cu", "In1.Cu"], 1239),
+            span("buried", ["In1.Cu", "In6.Cu"], 465),
+        ];
+        let verdict = judge(&facts);
+        assert!(
+            verdict.next_actions.iter().any(|line| line.starts_with(
+                "the board has 1704 vias that pierce only some layers (micro F.Cu-In1.Cu 1239, buried In1.Cu-In6.Cu 465"
+            ) && line.contains("add \"blind_vias\": true to the router config")),
+            "{:?}",
+            verdict.next_actions
+        );
+        facts.designer_via_spans.clear();
+        assert!(!judge(&facts).next_actions.iter().any(|line| line.contains("blind_vias")));
     }
 
     #[test]

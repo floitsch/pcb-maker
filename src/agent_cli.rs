@@ -606,6 +606,12 @@ fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         &result,
         &designer_boards(reference.as_deref(), Path::new(source), board_id),
     );
+    pcb_kicad::note_designer_widths(
+        &mut facts,
+        &result,
+        &designer_boards(reference.as_deref(), Path::new(source), board_id),
+        &output.join(format!("{board_id}.kicad_pcb")),
+    );
     check_reference(
         &mut facts,
         reference.as_deref(),
@@ -1093,6 +1099,12 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         &mut facts,
         &result.routed,
         &designer_boards(reference.as_deref(), Path::new(source), board_id),
+    );
+    pcb_kicad::note_designer_widths(
+        &mut facts,
+        &result.routed,
+        &designer_boards(reference.as_deref(), Path::new(source), board_id),
+        &result_directory.join(format!("{board_id}.kicad_pcb")),
     );
     check_reference(
         &mut facts,
