@@ -267,9 +267,13 @@ The file lists what constraints refer to:
   a class): one row per class of the project, Default first, with its
   `track_width_mm` and `clearance_mm` as the project states them, its
   `nets` (how many of the board's nets are in it), and where custom rules
-  speak of its nets `layer_widths_mm` (the width a `track_width` rule sets
-  per layer, on some layers only: a controlled impedance per layer, such
-  as Sisu_SSE-9's USB at 0.1 mm on In1.Cu and In4.Cu) and
+  speak of its nets `layer_widths_mm` (the width a `track_width` rule with
+  an `opt` or a `max` sets per layer, on some layers only: a controlled
+  impedance per layer, such as Sisu_SSE-9's USB at 0.1 mm on In1.Cu and
+  In4.Cu; a `min` alone is the process's floor on those layers, such as
+  the 4in1-mini's "2 oz outer copper" 0.16 mm on F.Cu and B.Cu, and gives
+  none: until trial 8 it did, and the verdict's `class_layers` told the
+  agent to keep every net off the inner layers) and
   `disallowed_layers` (the layers a `disallow track` rule keeps them
   off). A class narrower than Default is likely a controlled impedance, a
   wider one a current to carry; nothing in KiCad ties a class without
@@ -337,6 +341,25 @@ starter for a schematic:
   faces the bottom edge at 180 degrees here. To put it at an edge, add an
   edge entry ("flush": true) and the rotation that turns that end to it:
   top 0, right 270, bottom 180, left 90.`
+- a `bank:` comment (since 2026-11-08, trial 8) for six or more two-pad
+  parts of one footprint on the same two nets that no `near` entry holds
+  (bulk capacitors on a supply and ground), holding the `row` to paste
+  that keeps them one block: `columns`, across their short side at their
+  pads' pitch as they are turned (neighbours in a line 0.1 mm apart, their
+  facing pads sharing a net; the lines the pads' span and the project's
+  copper clearance apart, as every part of a row is turned alike and two
+  lines face with opposite nets), about as wide as it is tall with the
+  fewest empty places in the last line (the 4in1-mini: 6 columns at 1.9
+  and 4.26 mm, which places with a `place` for its first part at the
+  designer's spot and leaves 3 parts without a place without one). The
+  placement starts each part where its nets pull it, which for parts on
+  the same two nets is one spot, and spreads them wherever they fit: the
+  mini's 22 1206 capacitors came back around the board's edge, where the
+  designer packs them in one block. A comment, not an entry: as a row the
+  mini's bank left 69 and 103 unconnected against 89 without (one layout
+  each), no better, so it is the agent's call (an enclosure, a designer's
+  look). stderr counts it (`1 bank of parts on two nets with its row in
+  a comment`).
 - `move_all`, and a `comment` list saying what was inferred and what to
   decide: connectors whose mouth the footprint does not show (give them a
   `rotation`; the comment names their angle on the board), the other
@@ -404,6 +427,7 @@ Unknown keys, parts or pads are errors, not silently ignored.
 | "Keep the old board's extra parts" | `"add": [{"part": "MX37_1", "from_board": true}, ...]` with `--footprints-from` |
 | "The connector must match the enclosure cut-out" | `"place": [{"part": "J3", "x": 12, "y": 0, "angle": 90}]` |
 | "Status LED in the top-right corner" | `"place": [{"part": "D1", "at": "top-right"}]` |
+| "The bulk capacitors in one block, as on the old board" (a bank: many parts of one footprint on the same two nets) | `"row": [{"parts": ["CL*"], "pitch_mm": 2.0, "row_pitch_mm": 4.3, "columns": 6}]`, `"place": [{"part": "CL32", "x": 71.3, "y": 40.3, "origin": "absolute"}]` (`--constraints-template` writes this row with the pitches from the pads in a `bank:` comment; every part of a row takes the first part's angle, so two lines face with opposite nets and keep the copper clearance: a pitch too small is refused with the one needed and which setting it is, `pitch_mm` in a line or `row_pitch_mm` between lines) |
 | "Eight LEDs in a row, 5 mm apart, along the top" | `"row": [{"parts": ["D1", "D2", ..., "D8"], "pitch_mm": 5}]`, `"place": [{"part": "D1", "at": "top"}]` |
 | "The eight jacks down the left side, 13.79 mm apart" (vertical jacks on a narrow board) | `"row": [{"parts": ["J11", "J10", ..., "J4"], "pitch_mm": 13.79, "axis": "x"}]`, `"rotation": [{"part": "J11", "angle": 90}]`, `"place": [{"part": "J11", "x": 6.8, "y": 102.5}]`: a row's parts keep their angle within it, so a row of parts turned a quarter from its line is the other axis turned; it runs from its first part along the axis in that part's frame (turned 90 degrees: up the board, so the first part goes at the bottom; 270: down) ([constraints.md](constraints.md)) |
 | "It's a keyboard" (a key matrix in the schematic) | copy `constraints.starter.json` to `constraints.json`, give it an `outline`, then decide what its `comment` asks (pitch, stagger, thumbs, the controller's edge) |
@@ -630,7 +654,18 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     `no straight way out` under `PCB_ROUTER_TROUBLE_WHY`, or `dead_pads`
     on the row with no wall named); on every attempt it moves other
     boards' routes (+3 -2 strict passes over the designer tier). False
-    keeps the regular lattice.
+    keeps the regular lattice. Whether the lines were on and why is in the
+    report (since 2026-11-08, trial 8: only the run log said so):
+    `verdict.pin_lines` and board-router.json's `pin_lines` (`decided at
+    the probes: the probe pours=tracks left 74 nets unfinished with pads at
+    pin rows the regular lattice misses, 59 with lines at those rows, so
+    the lines stayed on ...`, `decided after the leader's run: open pads at
+    pin rows ... (U19, U15) ...`, or `on: pin_lines true in the router
+    config`), stdout's `pin lines: ...` line and each attempt's
+    `attempts[].pin_lines`; absent where the run had none. A layout's
+    first route and moves have no probes to decide at, so there the lines
+    are on only with `"pin_lines": true` in its router config
+    (since 2026-11-08, trial 8: RP2040_base's layout at the reference's rates, one placement: 38 unconnected without, 4 with; the 4in1-mini's, 88 either way; a layout whose hot spot lies at a 0.5 mm row or finer without them gets a next action naming the setting).
   - `blind_vias` (default false; off by the evidence of 2026-11-05; docs/router.md "Blind, buried and
     micro vias"): on a board of three or more layers that allows them,
     a via that joins two layers pierces only the shortest allowed span
@@ -645,7 +680,12 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     project's "allow blind/buried vias" and "allow micro vias". KiCad 8
     and later have no such switch: on a fresh board say `via_spans`
     yourself, and only when the fab builds them (they cost extra
-    laminations). Pour nets keep through vias; a BGA's dog-bone takes
+    laminations). A route of a designer's board built with such vias
+    (the input before `--strip`, or `--reference`) with the setting off
+    gets a next action naming the board's spans and `"blind_vias": true`
+    (since 2026-11-08, trial 8: the OpenAIO-Whoop, an HDI 1+6+1 board with
+    2479 micro and 465 buried vias, came back with through vias only and
+    144 unconnected, 114 with the setting). Pour nets keep through vias; a BGA's dog-bone takes
     the shortest span to a layer it can route on (a micro via at the
     project's micro via size). `PCB_ROUTER_BLIND_VIAS=1` forces it on.
   - `automatic_planes` (default true): a board with four or more copper
@@ -1007,6 +1047,10 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     settings `work_rate` and `placer_work_rate`. `place-kicad-board`
     pins the reference's by default (a check should not depend on the
     load; `--measure-work-rate` measures as a layout does).
+  - **The threads.** `RAYON_NUM_THREADS=<n>` caps the router's search
+    threads and the placer's seed pool (default: every core), for a
+    machine shared with other work; the result does not depend on it (the
+    budgets count work), only the wall clock does.
 
 ### Pre-routed nets: keep what is routed
 
@@ -1371,6 +1415,8 @@ A finished run also carries it as `verdict` in its report:
 | `lengths` | Where the project's custom rules have `length` or `skew` constraints (docs/router.md "Length and skew rules"; absent elsewhere, and with `length_matching` off): per rule and net `net`, `rule`, `constraint` (`length` or `skew`), `length_mm` (as KiCad 10 counts it for the rule: the tracks on the layers the rule holds on, a track's way inside a pad as the straight line from the pad's position, vias at the stackup's height), `target_mm` (what the meander aimed at: a length rule's opt, else the middle of its bounds; a skew rule's longest net less half the skew), `min_mm` and `max_mm` (the bounds KiCad holds the net to; a skew rule's: its longest net less the skew, and the longest), `meander_mm` (what the meanders added), `within` (KiCad then has no finding), `note` (why not: not routed, no straight track with room for all of it, longer than the maximum, a coupled pair's net). A net whose copper lies only off a rule's layers (a rule with a layer condition: Sisu_SSE-9's USB rule on In1.Cu and In4.Cu) has no length the rule counts and is not checked by it, nor of a skew rule's group: `within` true, `note` `routed off the rule's layers (...)` (since 2026-11-06, trial 7; before, "not routed", and the action called such nets open); a net of one pad has nothing to route. A net the route takes onto the rule's layers joins its skew group (Sisu's route mode: six USB nets on In4.Cu matched against a 43 mm pair). Since 2026-11-06 also `layers` (the copper layers its tracks went on), `in_group` (KiCad counts copper of it for the rule: of the skew group, checked by a length rule) and `preferred` (the layers the router asked it to keep to and why: `In1.Cu, In4.Cu (on the rule's layers, by the designer's board)` or `F.Cu, B.Cu (off the rule's layers, by the designer's board)`): with `length_rule_layers` (default `"designer"`) each net of a rule on some layers only prefers the side of those layers the designer's board (the `--reference`, else the input's own tracks, `--strip` or not) runs it on, a step elsewhere costing ten times as much (`layer_preference_cost`), and a coupled pair whose two nets prefer the same layers couples on them; nothing without the designer's tracks (a layout from a netlist import). `"rule"` puts every net of such a rule on its layers, `"off"` none (docs/router.md, "Skew groups' layers"). |
 | `narrowed_classes` | Route and layout, where the narrow-signal step (the ladder's last resort: the signal nets of the Default class at the project's narrowest predefined width when connections stay open at the class widths) routed nets of the board written below their class's track width (since 2026-11-06, trial 7; absent otherwise): per class `class`, `class_width_mm`, `routed_width_mm` and its `nets`. Since 2026-11-06 the step narrows only the Default class (a net no other class gives a width, at Default's width): every class the designer named keeps its width, so the list holds `Default` alone. Until then it narrowed every class wider than the menu's width, and trial 7's Sisu_SSE-9 layout wrote its RF_ANT nets (0.1422 mm, the designer's 50 ohm microstrip), MODEM_ANT1 (RF_ANT_INT, 0.1102 mm stripline) and Power_VBATT_3V8's 0.5 mm charger nets at 0.1 mm with no finding (KiCad's DRC checks no class width); no board of the 109 tasks completed only by narrowing a named class (docs/router.md, "The narrow-signal step's classes (2026-11-06)"). Should a class other than Default appear all the same (a guard: the step's rule and the report attribute a net to its class alike), a next action lists it and gives the levers: a custom rule giving the class's width as `opt` (`(rule "RF_ANT width" (condition "A.hasNetclass('RF_ANT')") (constraint track_width (opt 0.1422mm)))`; the step keeps a net whose width a rule gives on every layer), or `"use_narrow_signals": false` in the router config. Also in board-router.json's `rules.narrowed`. |
 | `class_layers` | Route and layout (since 2026-11-06, trial 7): per net class with tracks on the board written, `class`, `track_width_mm` (the class's own), `nets` and per copper layer its `layer`, `length_mm`, `nets` and `rule_width_mm` (where a custom `track_width` rule gives the class a width on that layer, as for one impedance on In1.Cu and In4.Cu), and `designer_layers` (the layers the designer's board runs the class on: the `--reference`'s, else the input's where it has tracks). KiCad ties no class to a layer unless a custom rule does, and its DRC checks no class width, so a class whose width is an impedance on one layer passes every check on another: trial 7's Sisu_SSE-9 route wrote MODEM_ANT1 (RF_ANT_INT, 0.1102 mm, the designer's stripline on In1.Cu) 55 mm on B.Cu. A `warning` (and one next action for all of them) says where a class went on a layer its width is not for: a class with widths per layer from the rules on a layer they give no width on (and the designer's board does not run it on); a class narrower than Default without layer rules (likely an impedance; a wider one is likely a current to carry) on a layer the designer's board does not run it on, or, with no designer's copper to compare, on both outer and inner layers (a microstrip's width outside is not a stripline's inside). What to do: keep the class off the layers it must not use with a custom rule in the board's `.kicad_dru`, `(rule "RF_ANT_INT layers" (condition "A.hasNetclass('RF_ANT_INT') && A.Layer == 'B.Cu'") (constraint disallow track))` per such layer (applied on every rung of the router's ladder; a new file starts with `(version 1)`), or give it a `track_width` rule per layer (a condition on `A.Layer`) for the layers it may use, each layer at its own width; then run again. |
+| `designer_widths` | Route and layout with a designer's board, the `--reference` or else the input with its tracks (since 2026-11-08, trial 8): per net the board written runs at under half the designer's width, `net`, `class`, `designer_width_mm` and `routed_width_mm` (each the width at half the net's track length), the lengths, and `unassigned_class` with its width where the project defines a class of the net's name that holds no net. KiCad's DRC checks no width above the minimum, so nothing else says it; the next action gives the `net_classes` entry to paste and, for an unassigned class, that the .kicad_pro's `netclass_patterns` assign it for KiCad too (the rp2040 motor controller in route mode: VMOT 2 mm on the designer's board, 0.2 mm here; its project's VMOT class of 2 mm names no net). |
+| `pin_lines` | Route mode (since 2026-11-08, trial 8): whether the router's lattice had lines at the pin rows and why, in one line (the setting, the ladder's decision at the probes or after its leader's run); absent where it had none. Also stdout's `pin lines: ...` and board-router.json's `pin_lines` and `attempts[].pin_lines`. |
 | `repairs` | What the run added for KiCad's DRC that changes no connection: `neck_tracks` and `neck_track_mm` (the connection-width repair's tracks kept, docs/router.md "KiCad's connection width"), `pour_mode` (the kept board's `pours`: `connect`, `tracks`, `none`, ...) and `pours_as_tracks`. Routes and layouts; also at the top of `board-router.json` and `board-layout.json`. |
 | `pours` | How whole the pours stayed, per zone and layer, by the router's pour model on the board written (after the final route; not a decision): `pieces` (the fill's pieces holding copper of the net, slivers under 0.25 mm² left out; KiCad removes the others, `islands_removed`), `largest_share` (the largest piece over the pour's area inside the outline), `coverage` (the copper over that area), `largest_mm2`, `copper_mm2`, `area_mm2`, `cut_mm` (other nets' tracks on the layer). A pour in more than 5 pieces, or whose largest piece holds less than half its copper, adds a next action: with `keep_whole_parts` (the parts of six pads or more under which a region on that layer would hold no other net's pad, at most four), the `add_pours` entry naming them, `{"net": "GND", "layers": ["B.Cu"], "keep_whole": [{"parts": ["U1"]}]}`; without, that a region under any such part would cut other nets' pads off on the layer, so `keep_whole` under parts does not fit it (a box clear of other nets' pads may; more room or layers). Until 2026-10-26 the action named `keep_whole` under parts in general, and an agent following it put one under the ICs on their own layer. Against KiCad's own fill (`benchmarks/fence/pour-pieces.py`) on the fence: copper within 2 %, pieces within about 10 %. Also `pour_quality` in `board-router.json`; score-kicad-board's `pours`. |
 | `custom_rules` | Route and layout, where the project has a `.kicad_dru` (since 2026-10-27; before, in board-router.json's `rules.custom_rules` only): every constraint of its rules, `rule`, `constraint`, `status` and `detail`. `applied`: the router keeps it as KiCad does. `approximated`: kept more widely than KiCad asks (on every layer of the rule, for every item kind, for both nets of a pair, wherever a rule area may hold: MokyaLora's `TFT_ZONE_2W_Clearance`, 0.25 mm between tracks in its TFT_ZONE, kept as a pair rule on In3.Cu wherever the area lies), so it costs room but no finding. `no_effect`: the classes already keep as much, or nothing routed matches (MokyaLora's `Shrink_Clearance_In_MCU`, 0.085 mm below its classes' clearance: the router keeps the larger). `not_routing`: not about copper the router lays (silk, courtyards). `skipped`: its severity makes no error, or no layer has it. `unmodelled`: a routing rule the router cannot keep; KiCad checks it, and its findings name the rule (`rule 'NAME' ...` in drc.json's description): fix them by hand or move the parts; a rule that only allows less than the router keeps anyway (a `min` below the classes') costs nothing. A line on stdout before the verdict counts them by status: `custom rules (.kicad_dru): 2 constraints: approximated 1 (TFT_ZONE_2W_Clearance clearance), no_effect 1; ...`; a `length` or `skew` constraint the length matching keeps is said as what it became, with its bounds (since 2026-11-04; it was "approximated 1", explained as kept more widely than KiCad asks): `ULPI_exact_length length: applied as a length minimum of 31.40 mm and maximum of 31.60 mm (a meander after the route below the minimum, over the maximum the net routed again the short way and checked, no hard bound; verdict.lengths per net)`. |
@@ -1476,7 +1522,7 @@ input errors and 4 on internal errors.
 | `routed.native` | KiCad's raw counts: `complete`, `drc_design_violations`, `selected_net_unconnected_items`, `schematic_parity_issues`. They count every finding of any severity, silkscreen warnings included (a layout places the fields itself, `verdict.silkscreen`; `repair-kicad-silkscreen` places them on any board with the layout's scorer and also clips front silkscreen strokes off pads, other silkscreen and the edge; it takes any outline, a `gr_rect` too, and keeps strokes within the bounding box of one that is not a rectangle, noted in `proposal.notes`), so `complete` is often false on a board that passes: `verdict` decides. |
 | `routed.vias`, `routed.length_mm` | Cost of the routing. |
 | `constraints[]` | Every constraint: `kind`, `part`, `other`, `satisfied`, `violation_mm`. The ones the placer keeps by construction are listed too: `back` and `front` (a part on its side), `rotation` and `opening_outwards` (a part at an allowed angle). |
-| `routed.diagnostics.dead_pads[]` | Pads no track of their net's class can enter (`pad`, `net`, `at`, the objects `near` it): a class too wide for the pad pitch, or something covering the pad. `wall` (since 2026-11-07) says what walls it, per layer: where no point of the pad keeps the clearances for the net's narrowest track, the item nearest to being cleared at the best point (its label, net and place; two footprints may share a reference) with how far it is and what is asked; where a track end fits, what blocks the stubs from there to the nearest nodes the class's track may use. |
+| `routed.diagnostics.dead_pads[]` | Pads no track of their net's class can enter (`pad`, `net`, `at`, the objects `near` it): a class too wide for the pad pitch, or something covering the pad. `wall` (since 2026-11-07) says what walls it, per layer (by KiCad's name, `B.Cu: ...`, since 2026-11-08; before, the router's index, `layer 7: ...`): where no point of the pad keeps the clearances for the net's narrowest track, the item nearest to being cleared at the best point (its label, net and place; two footprints may share a reference) with how far it is and what is asked; where a track end fits, what blocks the stubs from there to the nearest nodes the class's track may use. |
 | `routed.diagnostics.conflicted_nets` | Nets still fighting for room when the router gave up. |
 | `routed.diagnostics.hot_spots[]` | Where they fought longest (`layer`, `at`, `history`, the tile's `box`), worst first, with what was there when the router stopped: `pads` (`ref`, `number`, `net`, `at`; `pads_in_tile`), `nets` (copper crossing the tile on that layer) and `conflicted_nets`. Observations, not a cause. |
 | `constraint_warnings` (in `placed/board-placer.json`) | Inputs accepted but not acted on; the verdict's `next_actions` repeat them. |
@@ -1611,7 +1657,10 @@ is a fab release gated by KiCad's DRC:
   for it: the classes that look like a controlled impedance, a class with
   widths per layer from the custom rules or one narrower than Default, as
   rows of `describe-kicad-board`'s `classes`, the custom rules' track
-  geometry on some layers only, `rules` (`track_width`, `diff_pair_gap`,
+  geometry on some layers only with an `opt` or a `max` (a `min` alone is
+  the process's floor, such as 2 oz outer copper's: until 2026-11-08 the
+  4in1-mini's release asked for impedance control on Default for it),
+  `rules` (`track_width`, `diff_pair_gap`,
   `diff_pair_width` with their bounds, `layers` and `condition`), and the
   `action`, which the verdict's next actions repeat: order impedance
   control on this stackup for those classes; Sisu_SSE-9's release names
@@ -1621,7 +1670,10 @@ is a fab release gated by KiCad's DRC:
   `U`, `IC` or by footprint name: a diode's `D_`, an LED's `LED_`, a
   polarised capacitor's `CP_`, electrolytic or tantalum; the verdict's
   rotation line names them, the first 20 with the rest counted: MIDAS-MK2's
-  40). `verdict.json` adds
+  40). A stackup with copper heavier than 1 oz gets a next action naming
+  the layers and their weight (`F.Cu, B.Cu (0.07 mm, 2 oz)`: a fab makes
+  1 oz unless the order says otherwise; since 2026-11-08, trial 8's
+  4in1-mini). `verdict.json` adds
   `fab_release` (released, findings allowed, files, zip, manifest).
 - **`--profile jlcpcb`**: the layers of JLCPCB's KiCad guide (both pastes
   and silkscreens always), and beside kicad-cli's files

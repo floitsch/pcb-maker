@@ -738,6 +738,22 @@ ranks what keeps the designer tier's 41 failing boards open.
      rails (by name and by `power_in` pin type) and, on two layers,
      `add_pours` GND on B.Cu, listed in the report for the agent to keep or
      drop. Small to medium: a day with the from-schematic benchmark.
+   - trial 8 (docs/reviews/2026-11-08-fresh-agent-trial-8.md, "Left
+     open"; done: designer widths, per-layer minimums, the row refusal,
+     the bank comment, pin lines in the report and the layout's action,
+     the blind-vias action, heavy copper, dead pads' layer names):
+     *pin lines in a layout by default* (RP2040_base at the reference's
+     rates, one placement: 38 unconnected without, 4 with
+     `"pin_lines": true`; the 4in1-mini 88 either way; a router default:
+     the short and designer tiers decide); *a row whose lines turn by
+     half turns* (`"alternate": true`, so a bank's facing pads share a net
+     at the designer's pitch, 4.03 mm on the mini where a row now needs
+     4.26); *the bank's place* (the template's row without one leaves 3
+     of the mini's parts without a place); *a dead pad at the board's edge*
+     (the Whoop's AE2.3: the wall names the edge, no lever; the designer
+     has vias in AE2's pads); *a class that names no net* in the
+     description (the rp2040's VMOT and GND classes, 0 nets, nets of their
+     names in Default).
 9. **The schematic tier's friction** (done: footprints from the board,
    library drift, board-only parts, orientation and order independence).
    Left:

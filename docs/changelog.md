@@ -11,6 +11,61 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-08 (fresh-agent trial 8: a bank of capacitors, pin rows, an HDI board, a supply drawn wide)
+
+Branch fresh-agent-trial-8 (`build/ux8/pcb-maker-b` to `-d`).
+[Trial 8](reviews/2026-11-08-fresh-agent-trial-8.md): a new agent took
+OpenDrone's OpenESC-20x20 4in1-mini (the netlist's start and its bank of
+22 bulk capacitors, steered with a `row`; a fab release), Twisted-Fields'
+rp2040-motor-controller RP2040_base (exact-fit 0.4 mm QFN rows: route
+mode on the designer's placement and layouts) and OpenDrone's
+OpenAIO-Whoop (HDI 1+6+1, `blind_vias`) through the agent's commands.
+Reports, refusals, the template and actions only; placement and routing
+unchanged.
+
+- **Designer widths**: `verdict.designer_widths` names the nets a route
+  or layout writes at under half the width the designer's board gives
+  them (the reference's, else the input's tracks), with the project's
+  class of the net's name that holds no net, and an action with the
+  `net_classes` to paste: the rp2040's VMOT, 2 mm on the designer's
+  board (its class VMOT, 2 mm, names no net), came back at 0.2 mm, which
+  KiCad's DRC does not check. The class view reads a KiCad 9 board's
+  net codes (trial 7's `designer_layers` missed such boards too).
+- **Per-layer widths**: only a `track_width` rule with an `opt` or a
+  `max` gives a class a width per layer, and only such geometry asks for
+  impedance control on the release; a `min` alone is the process's floor
+  (the mini's "2 oz outer copper" 0.16 mm made the verdict tell the agent
+  to keep every net off the inner layers, and the release ask for
+  impedance control on Default).
+- **Rows**: the refusal names the setting (`pitch_mm` for neighbours in a
+  line, `row_pitch_mm` for two lines), the pitch needed along the board's
+  axis as the first part is turned, and keeps the copper clearance between
+  pads of two nets (a row turns its parts alike; the mini's lines 4.2 mm
+  apart left 16 clearance findings). Every pitch the agent tried had been
+  refused with the parts' size in their own frame.
+- **Banks**: `--constraints-template` writes a `bank:` comment with the
+  row that keeps six or more two-pad parts of one footprint on the same
+  two nets one block, at their pads' pitch; a comment, not an entry (as a
+  row the mini's bank left 69 and 103 unconnected against 89 without,
+  one layout each).
+- **Pin lines**: `verdict.pin_lines`, board-router.json's `pin_lines`,
+  `attempts[].pin_lines` and stdout's `pin lines: ...` say whether the
+  lattice had lines at the pin rows and why (until now only stderr). A
+  layout left open whose hot spot lies at a 0.5 mm row or finer, routed
+  without them, gets an action naming `"pin_lines": true`: RP2040_base's
+  layout at the reference's rates, one placement digest, 38 unconnected
+  without, 4 with; the 4in1-mini, 88 either way.
+- **Blind vias**: a route of a designer's board built with vias of some
+  layers, with `blind_vias` off, gets an action naming the spans and the
+  setting (the Whoop: 144 unconnected with through vias, 114 with the
+  setting); the custom rules' via-kind note names it; `rules.blind_vias`.
+- **Release**: copper heavier than 1 oz in the stackup gets an action to
+  order that weight (the mini's 2 oz outer layers).
+- **Dead pads**: the wall names KiCad's layers (`B.Cu: ...`), not the
+  router's index.
+- agents.md: the threads (`RAYON_NUM_THREADS`), the cookbook's bank,
+  the verdict's new fields; SKILL.md; constraints.md's `row`.
+
 ## Measured on 2026-11-08 (nightly: layout sweep v35, matched designer tier)
 
 Written by the nightly from `build/nightly/2026-11-08/` (main b090e40;

@@ -21,7 +21,8 @@ docs/agents.md in the pcb-maker repository.
    with the custom rules' widths per layer, `custom_rules` with what the router keeps of each);
    `--constraints-template <file>`
    writes a starter (the plug-in connectors' `edge`, the decoupling capacitors' `near`,
-   an RF module's antenna at an edge where its footprint draws the keepout; read its comments).
+   an RF module's antenna at an edge where its footprint draws the keepout, and for a bank of parts
+   on two nets (bulk capacitors) the `row` to paste in a comment; read its comments).
 3. Say what the user wants in `<project-dir>/constraints.json` (below).
 4. Check the constraints: the layout's placement alone (its budget, seeds and
    router rules, at the reference's work rates: the layout's placement at the same
@@ -75,7 +76,9 @@ their width, which KiCad's DRC does not check; since 2026-11-06 only `Default`: 
 designer named, an impedance or a power class, keeps its width), `class_layers` (per class the
 layers its tracks went on, with a `warning` where an impedance class went on a layer its width is
 not for: a `disallow track` rule per layer keeps it off), `sub_boards`, `ledger_wait_seconds` (the part of
-`wall_seconds` spent waiting in the machine's memory ledger, not working). Without a reference (a layout's
+`wall_seconds` spent waiting in the machine's memory ledger, not working); `designer_widths` (nets routed at under half the width the designer's board
+gives them, a supply drawn wide by hand: the action has the `net_classes` entry), `pin_lines`
+(route mode: whether the lattice had lines at fine-pitch pin rows, and why). Without a reference (a layout's
 default) a footprint's own findings (`footprint_findings`) and the
 input's own edge clearances, mask bridges and courtyards of parts kept
 where the input has them (`input_findings`) do not count; `next_actions`
@@ -148,7 +151,9 @@ buried and micro vias (`"blind_vias": true`, off by default): a via then pierces
 board allows, written as KiCad's blind/buried/micro via; the spans come from `via_spans`
 (`["F.Cu-In1.Cu:micro", "In1.Cu-In2.Cu"]`, or `"blind"`, `"buried"`, `"micro"`), else the designer's own
 such vias (board or `--reference`), else a KiCad 6/7 project's switches; KiCad 8+ has no switch, so on a
-fresh board name `via_spans` only when the fab builds them.
+fresh board name `via_spans` only when the fab builds them. A route of a designer's board built with
+such vias says so in a next action while the setting is off. `RAYON_NUM_THREADS=<n>` caps the threads
+on a shared machine (results do not change).
 
 ## Pre-routed nets
 
