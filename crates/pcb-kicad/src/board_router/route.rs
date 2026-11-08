@@ -366,6 +366,11 @@ pub fn route_kicad_board(
     result.kicad_check_work_seconds = ladder.checks_charged.work();
     result.attempts_failed = std::mem::take(&mut ladder.failed);
     result.attempts = ladder.attempt_ledger();
+    result.pin_lines = if config.pin_lines == Some(true) {
+        Some("on: pin_lines true in the router config".to_string())
+    } else {
+        ladder.pin_lines_why.clone()
+    };
     // What did not run matters only to a board left incomplete.
     if final_open.0 > 0 || final_open.1 > 0 {
         result.skipped = std::mem::take(&mut ladder.skipped);
@@ -1097,6 +1102,7 @@ pub(crate) fn finish_routed_board(
         solid_starved: None,
         negotiation_stop: result.negotiation_stop.to_string(),
         attempts: Vec::new(),
+        pin_lines: None,
     };
     let report_path = output_directory.join("board-router.json");
     fs::write(

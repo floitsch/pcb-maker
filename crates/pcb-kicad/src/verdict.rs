@@ -1390,6 +1390,9 @@ pub struct KiCadRunFacts {
     /// vias where the run laid through vias only (`blind_vias` off):
     /// `KiCadProjectRulesReport::via_spans_designer`.
     pub designer_via_spans: Vec<crate::board_router::KiCadViaSpanEntry>,
+    /// Whether the router's lattice had lines at the pin rows and why
+    /// (`KiCadBoardRouterResult::pin_lines`).
+    pub pin_lines: Option<String>,
     /// The project's routing rules the router does not keep
     /// (`KiCadProjectRulesReport::unmodelled`).
     pub unmodelled_rules: Vec<String>,
@@ -2137,6 +2140,7 @@ impl KiCadRunFacts {
             class_layers: Vec::new(),
             designer_widths: Vec::new(),
             designer_via_spans: Vec::new(),
+            pin_lines: None,
             unmodelled_rules: Vec::new(),
             custom_rules: Vec::new(),
             input_warnings: Vec::new(),
@@ -2370,6 +2374,13 @@ pub struct KiCadVerdict {
     /// the minimum.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub designer_widths: Vec<crate::class_view::KiCadDesignerWidth>,
+    /// Route mode: whether the router's lattice had lines through the pads
+    /// of fine-pitch rows the regular lattice misses (`pin_lines`), and
+    /// why, in one line: the router setting, or the ladder's decision at
+    /// the probes or after its leader's run; absent where it routed
+    /// without them. Also on stdout as `pin lines: ...`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pin_lines: Option<String>,
     /// The result-changing environment variables that were set
     /// (`RESULT_ENVIRONMENT`), with their values, and the binary's build
     /// (`pcb_maker_version`: commit and build date).
@@ -4602,6 +4613,7 @@ pub(crate) fn judge_at(
         narrowed_classes: facts.narrowed.clone(),
         class_layers: facts.class_layers.clone(),
         designer_widths: facts.designer_widths.clone(),
+        pin_lines: facts.pin_lines.clone(),
         environment: result_environment(),
         pours: facts.pours.clone(),
         moves: facts.moves.clone(),
@@ -4696,6 +4708,7 @@ pub fn route_facts(
     });
     facts.lengths = result.lengths.clone();
     facts.narrowed = result.rules.narrowed.clone();
+    facts.pin_lines = result.pin_lines.clone();
     if !result.rules.blind_vias {
         facts.designer_via_spans = result.rules.project.via_spans_designer.clone();
     }

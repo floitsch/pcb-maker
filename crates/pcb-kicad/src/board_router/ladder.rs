@@ -455,6 +455,7 @@ fn attempt_record(
         work_seconds: work,
         routing_seconds: result.routing_seconds,
         negotiation_stop: result.negotiation_stop.clone(),
+        pin_lines: false,
         selected: false,
     }
 }
@@ -631,6 +632,9 @@ pub(crate) struct Ladder<'a> {
     /// the pin rows (`pin_lines_from_here`): its open pads were at rows
     /// the regular lattice misses.
     pin_lines_on: bool,
+    /// Why the lines at the pin rows went on, in one line (the report's
+    /// `pin_lines`).
+    pub(crate) pin_lines_why: Option<String>,
     /// The pads of pin rows whose exit the regular lattice misses
     /// (`LadderRunner::missed_row_pads`), once asked for.
     missed_pads: Option<Vec<String>>,
@@ -808,6 +812,7 @@ impl<'a> Ladder<'a> {
             best: None,
             best_attempt: None,
             pin_lines_on: false,
+            pin_lines_why: None,
             missed_pads: None,
             skipped: Vec::new(),
             failed: Vec::new(),
@@ -1181,6 +1186,7 @@ impl<'a> Ladder<'a> {
     /// it when its board becomes the best).
     fn note_attempt(&mut self, mut record: KiCadAttemptRecord) -> usize {
         record.id = self.ledger.len();
+        record.pin_lines = self.pin_lines_on || self.config.pin_lines == Some(true);
         self.ledger.push(record);
         self.ledger.len() - 1
     }
@@ -1469,13 +1475,15 @@ impl<'a> Ladder<'a> {
         if at.is_empty() {
             return;
         }
-        eprintln!(
-            "ladder: open pads at pin rows the regular lattice misses ({}): the rest of the ladder on the lattice with lines at the pin rows",
+        let why = format!(
+            "open pads at pin rows the regular lattice misses ({}): the rest of the ladder on the lattice with lines at the pin rows",
             at.iter()
                 .map(|part| part.as_str())
                 .collect::<Vec<_>>()
                 .join(", ")
         );
+        eprintln!("ladder: {why}");
+        self.pin_lines_why = Some(format!("decided after the leader's run: {why}"));
         self.pin_lines_on = true;
         if let Some((attempt, _)) = self.best_attempt.as_mut() {
             attempt.pin_lines = Some(true);
@@ -1628,6 +1636,10 @@ impl<'a> Ladder<'a> {
         }
         drop(router);
         runner.speak(&mut lines_router, &lines_attempt);
+        self.pin_lines_why = Some(format!(
+            "decided at the probes: the probe {} left {unfinished} nets unfinished with pads at pin rows the regular lattice misses, {lines_unfinished} with lines at those rows, so the lines stayed on for the continuation and the rest of the ladder",
+            self.probe_name(mode)
+        ));
         self.pin_lines_on = true;
         self.probe_counts[mode] = Some(lines_unfinished);
         (

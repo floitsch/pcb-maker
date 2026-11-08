@@ -170,6 +170,9 @@ fn announce(verdict: &KiCadVerdict, report: &Path) {
     if let Some(line) = pcb_kicad::custom_rules_line(&verdict.custom_rules, &verdict.lengths) {
         println!("{line}");
     }
+    if let Some(why) = &verdict.pin_lines {
+        println!("pin lines: {why} (verdict.pin_lines)");
+    }
     println!(
         "verdict: {} (exit {}): {}",
         serde_json::to_value(verdict.status)

@@ -194,6 +194,12 @@ pub struct KiCadBoardRouterResult {
     /// whose board was written `selected` (`KiCadAttemptRecord`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attempts: Vec<KiCadAttemptRecord>,
+    /// Route mode's ladder: whether the lattice had lines at the pin rows
+    /// and why, in one line (`pin_lines` set, or the ladder's decision at
+    /// the probes or after its leader's run); absent where it ran without
+    /// them. Before trial 8 only stderr said so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin_lines: Option<String>,
 }
 
 /// The tries of `solid_starved_thermals` on a checked board, round by
@@ -247,6 +253,10 @@ pub struct KiCadAttemptRecord {
     /// Why its router ended its negotiation (`negotiation_stop`).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub negotiation_stop: String,
+    /// Whether its lattice had lines at the pin rows (`pin_lines`, set or
+    /// decided by the ladder).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pin_lines: bool,
     /// Whether its board is the one written.
     pub selected: bool,
 }

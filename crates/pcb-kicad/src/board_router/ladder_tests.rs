@@ -247,6 +247,7 @@ fn report(open: usize, work: f64, pitch: f64) -> KiCadBoardRouterResult {
         solid_starved: None,
         negotiation_stop: String::new(),
         attempts: Vec::new(),
+        pin_lines: None,
     }
 }
 
@@ -1587,6 +1588,17 @@ fn route_mode_the_probe_with_lines_leads_where_its_rows_are_open() {
         ]
     );
     assert!(ladder.pin_lines_on);
+    // The report says why (trial 8: only stderr did).
+    assert!(
+        ladder
+            .pin_lines_why
+            .as_deref()
+            .is_some_and(|why| why.starts_with("decided at the probes: the probe ")
+                && why.contains(", 6 with lines at those rows")),
+        "{:?}",
+        ladder.pin_lines_why
+    );
+    assert!(ladder.attempt_ledger().iter().all(|record| record.pin_lines));
     assert_eq!(ladder.probe_counts[1], Some(6));
     let routes = fake.routes();
     assert!(routes.iter().all(|routed| routed.lines), "{routes:?}");
@@ -1720,6 +1732,17 @@ fn route_mode_unprobed_board_takes_the_lines_after_its_leader() {
         "{lines:?}"
     );
     assert!(ladder.pin_lines_on);
+    assert!(
+        ladder
+            .pin_lines_why
+            .as_deref()
+            .is_some_and(|why| why.starts_with("decided after the leader's run: open pads at pin rows")),
+        "{:?}",
+        ladder.pin_lines_why
+    );
+    // The leader's run without the lines, the seed round with them.
+    let ledger = ladder.attempt_ledger();
+    assert!(!ledger[0].pin_lines && ledger.iter().any(|record| record.pin_lines));
     assert_eq!(kept(&ladder, &out).0, 0);
 }
 
