@@ -1102,7 +1102,8 @@ pub(crate) fn finish_routed_board(
         solid_starved: None,
         negotiation_stop: result.negotiation_stop.to_string(),
         attempts: Vec::new(),
-        pin_lines: None,
+        pin_lines: (config.pin_lines == Some(true))
+            .then(|| "on: pin_lines true in the router config".to_string()),
     };
     let report_path = output_directory.join("board-router.json");
     fs::write(

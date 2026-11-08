@@ -1393,6 +1393,10 @@ pub struct KiCadRunFacts {
     /// Whether the router's lattice had lines at the pin rows and why
     /// (`KiCadBoardRouterResult::pin_lines`).
     pub pin_lines: Option<String>,
+    /// The parts of the hot spot's pads with a fine-pitch row (pads at most
+    /// `FINE_ROW_PITCH` apart), with that pitch: a layout's routes take
+    /// lines at the pin rows only with `pin_lines` set.
+    pub hot_spot_fine_rows: Vec<(String, f64)>,
     /// The project's routing rules the router does not keep
     /// (`KiCadProjectRulesReport::unmodelled`).
     pub unmodelled_rules: Vec<String>,
@@ -1881,6 +1885,83 @@ fn designer_via_spans_action(spans: &[crate::board_router::KiCadViaSpanEntry]) -
     ))
 }
 
+/// The signal a crashed kicad-cli died of (`kicad-cli failed with signal:
+/// 11 (SIGSEGV) ...` from `native_report`), when that is the error.
+fn kicad_crash(error: &str) -> Option<String> {
+    let rest = error.split("kicad-cli failed with signal: ").nth(1)?;
+    let end = rest.find(')').map_or(rest.len().min(20), |at| at + 1);
+    Some(format!("signal {}", &rest[..end]))
+}
+
+/// The pad pitch at or below which a part's row counts as fine (mm): the
+/// 0.4 and 0.5 mm QFN rows whose exits the regular lattice misses.
+pub const FINE_ROW_PITCH: f64 = 0.51;
+
+/// The parts of the hot spot's pads (`note`) whose pads lie at most
+/// `FINE_ROW_PITCH` apart on `board`, with that pitch.
+fn fine_rows(note: &KiCadHotSpotNote, board: &crate::Expr) -> Vec<(String, f64)> {
+    let parts: BTreeSet<&str> = note.pads.iter().map(|pad| pad.reference.as_str()).collect();
+    let mut rows = Vec::new();
+    for footprint in board
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+    {
+        let Some(reference) = crate::footprint_reference(footprint) else {
+            continue;
+        };
+        if !parts.contains(reference.as_str()) {
+            continue;
+        }
+        let Ok(pads) = crate::placement_constraints::pad_boxes(footprint) else {
+            continue;
+        };
+        let centers: Vec<[f64; 2]> = pads
+            .iter()
+            .map(|(b, ..)| [(b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0])
+            .collect();
+        let mut pitch = f64::INFINITY;
+        for (i, a) in centers.iter().enumerate() {
+            for b in &centers[i + 1..] {
+                let distance = pcb_router::geometry::distance(*a, *b);
+                if distance > 1.0e-3 {
+                    pitch = pitch.min(distance);
+                }
+            }
+        }
+        if pitch <= FINE_ROW_PITCH {
+            rows.push((reference, (pitch * 1000.0).round() / 1000.0));
+        }
+    }
+    rows
+}
+
+/// A layout left open whose hot spot lies at a fine-pitch row, routed
+/// without lines at the pin rows: route mode's ladder decides them by
+/// itself, a layout's routes only by the setting (trial 8: the rp2040
+/// motor controller's hot spot at U15's 0.4 mm row).
+fn layout_pin_lines_action(facts: &KiCadRunFacts) -> Option<String> {
+    if facts.command != "layout-kicad-board" || facts.pin_lines.is_some() {
+        return None;
+    }
+    let open = facts
+        .native
+        .as_ref()
+        .map_or(facts.unconnected_terminals, |native| native.unconnected);
+    if open == 0 || facts.hot_spot_fine_rows.is_empty() {
+        return None;
+    }
+    let listed: Vec<String> = facts
+        .hot_spot_fine_rows
+        .iter()
+        .map(|(part, pitch)| format!("{part} ({pitch} mm pitch)"))
+        .collect();
+    Some(format!(
+        "the hot spot lies at the pin rows of {}: a layout routes them on the regular lattice unless the router config says \"pin_lines\": true (route mode decides it by itself), which puts lattice lines through the rows' pads; lay out again with it and compare (trial 8: RP2040_base's layout at the reference's rates, one placement: 38 unconnected without, 4 with; the 4in1-mini's, 88 either way)",
+        listed.join(", ")
+    ))
+}
+
 /// The share of decoupling capacitors within 3 mm of a supply pin below
 /// which a layout's verdict says so: designers put 60 % or more there
 /// (the quick tier's designer boards; rp2350-dual-usb's designer 86 %).
@@ -2141,6 +2222,7 @@ impl KiCadRunFacts {
             designer_widths: Vec::new(),
             designer_via_spans: Vec::new(),
             pin_lines: None,
+            hot_spot_fine_rows: Vec::new(),
             unmodelled_rules: Vec::new(),
             custom_rules: Vec::new(),
             input_warnings: Vec::new(),
@@ -2808,6 +2890,7 @@ fn next_actions(
                 .as_ref()
                 .map(|note| hot_spot_action(note, &facts.command, &facts.fixed_parts)),
         );
+        actions.extend(layout_pin_lines_action(facts));
     }
     actions.extend(closed_pad_actions(facts, open));
     if !rate_first && let Some(action) = rate_action {
@@ -4672,6 +4755,13 @@ pub fn error_verdict(
         )]
     } else if error.contains(crate::native_report::KICAD_TIMEOUT_MESSAGE) {
         vec!["kicad-cli did not finish within its limit: set PCB_KICAD_TIMEOUT to more seconds (default 900) and run again into a new output directory".into()]
+    } else if let Some(signal) = kicad_crash(error) {
+        // Trial 8: kicad-cli 10.0.7 crashed refilling the OpenAIO-Whoop's
+        // routed zones (SIGSEGV), as it had once in router.md's blind-vias
+        // measurement; neither crash repeated.
+        vec![format!(
+            "kicad-cli crashed ({signal}) while checking the board: KiCad's crash, not the routing's, and on the boards seen it did not repeat: run again into a new output directory (the routed board of this run is in the output directory with .partial appended); if it repeats, report it with the board to KiCad"
+        )]
     } else if status == KiCadRunStatus::UsageError {
         let mut actions = noted_input_actions();
         actions.push("fix the arguments or input files the error names; nothing was routed".into());
@@ -4756,6 +4846,9 @@ pub fn route_facts(
             .ok()
             .and_then(|text| crate::parse(&text).ok());
         facts.hot_spot = hot_spot_note(&result.diagnostics.hot_spots, &open, board.as_ref());
+        if let (Some(note), Some(board)) = (facts.hot_spot.as_ref(), board.as_ref()) {
+            facts.hot_spot_fine_rows = fine_rows(note, board);
+        }
         if let Some(note) = facts.hot_spot.as_mut()
             && let Some(report) = fs::read_to_string(directory.join("drc.json"))
                 .ok()
@@ -5039,6 +5132,45 @@ mod tests {
                 .next_actions
                 .iter()
                 .any(|line| line.contains("blind_vias"))
+        );
+    }
+
+    /// A layout left open at a fine-pitch row without lines at the pin
+    /// rows gets the setting; route mode, or a layout with the lines, not.
+    #[test]
+    fn a_layouts_hot_spot_at_a_fine_row_names_pin_lines() {
+        let mut facts = routed(DrcTally {
+            unconnected: 6,
+            ..Default::default()
+        });
+        facts.command = "layout-kicad-board".into();
+        facts.hot_spot_fine_rows = vec![("U15".into(), 0.4)];
+        let named = |facts: &KiCadRunFacts| {
+            judge(facts).next_actions.iter().any(|line| {
+                line.starts_with("the hot spot lies at the pin rows of U15 (0.4 mm pitch)")
+                    && line.contains("\"pin_lines\": true")
+            })
+        };
+        assert!(named(&facts), "{:?}", judge(&facts).next_actions);
+        facts.pin_lines = Some("on: pin_lines true in the router config".into());
+        assert!(!named(&facts));
+        facts.pin_lines = None;
+        facts.command = "route-kicad-board".into();
+        assert!(!named(&facts));
+    }
+
+    #[test]
+    fn a_kicad_crash_is_told_apart_from_ours() {
+        assert_eq!(
+            kicad_crash(
+                "kicad-cli failed with signal: 11 (SIGSEGV) (core dumped): 08:54:43: Debug: ..."
+            )
+            .as_deref(),
+            Some("signal 11 (SIGSEGV)")
+        );
+        assert_eq!(
+            kicad_crash("kicad-cli failed with exit status 1: ..."),
+            None
         );
     }
 
