@@ -11,6 +11,32 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-08 (the netlist's stacks: lost in the descent; glued banks, a measurement switch)
+
+Branch netlist-stacks (docs/placer.md "The netlist's stacks are lost in the descent, not at the start (2026-11-08)"; everything in `build/glob3/`).
+
+- **Stacks** (`crates/pcb-placer/src/stacks.rs`: `net_keys`, `shared`,
+  `find_stacks`, `bank_columns`, `bank_centers`; `global::spread_stacks`,
+  `GlobalConfig::stacks`, `Stacks`): parts on one side whose nets have a
+  share in common (0.9) and whose solved bodies overlap start as a bank at
+  their pitch; glued, a bank moves as one body in the descent (its
+  members' summed forces over their summed preconditioners, their angles
+  kept). Behind the measurement switch `PCB_PLACER_STACKS` (`bank`,
+  `glue`, `glue-same`, `bank-same`, `glue-multi`), off by default: no
+  placement changes without it.
+- **The trace** has each part's pin nets and the nets' table; `stages.py
+  stacks` measures the stacks per seed and phase, the variants `bank`,
+  `glue`, `glue-multi`.
+- **Stage 0**: the descent undoes a bank at the start wherever no wire
+  holds the parts; glued, video's skeletons seat (a skeleton kept on five
+  of five seeds) and its active parts lie near the designer's; the
+  4in1-mini's plain placements seat without touching courtyards on about
+  half their seeds, its skeletons never.
+- **Stage 1** (`glue`, five seed pairs, first route): -1.2 %, sign-flip p
+  0.347, NOT the bar (about -5 % at p <= 0.25); video 116 -> 2 open by the
+  median, MegaDrive +22 %, the 4in1-mini -1.0 %. `glue-multi` (video
+  alone on the dense set): -1.4 %, p 0.031, every pair sum falls. Stage 2
+  is the coordinator's call; the switch stays until then.
 ## Committed on 2026-11-08 (fresh-agent trial 8: a bank of capacitors, pin rows, an HDI board, a supply drawn wide)
 
 Branch fresh-agent-trial-8 (`build/ux8/pcb-maker-b` to `-e`).

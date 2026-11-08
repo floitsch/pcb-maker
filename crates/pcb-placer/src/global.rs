@@ -24,7 +24,8 @@ use std::collections::BTreeMap;
 const NETLIST_NOISE: f64 = 0.1;
 
 /// What the global placement does with the netlist's stacks
-/// (`spread_stacks`; docs/placer.md, "The netlist's stacks (2026-11-08)").
+/// (`spread_stacks`; docs/placer.md, "The netlist's stacks are lost in the
+/// descent, not at the start (2026-11-08)").
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Stacks {
     /// Left on their spot (the start's noise separates them).
@@ -34,17 +35,21 @@ pub enum Stacks {
     Bank(f64),
     /// Spread into banks that move as one body in the descent.
     Glue(f64),
+    /// `Glue` for parts with three nets or more only (not the capacitors
+    /// on a rail and ground: video's memory modules).
+    GlueMultiNet(f64),
 }
 
 impl Stacks {
     /// The measurement's switch `PCB_PLACER_STACKS` (`bank`, `bank-same`,
-    /// `glue`, `glue-same`; unset: off).
+    /// `glue`, `glue-same`, `glue-multi`; unset: off).
     pub fn from_env() -> Self {
         match std::env::var("PCB_PLACER_STACKS").as_deref() {
             Ok("bank") => Stacks::Bank(0.9),
             Ok("bank-same") => Stacks::Bank(1.0),
             Ok("glue") => Stacks::Glue(0.9),
             Ok("glue-same") => Stacks::Glue(1.0),
+            Ok("glue-multi") => Stacks::GlueMultiNet(0.9),
             _ => Stacks::Off,
         }
     }
@@ -52,15 +57,18 @@ impl Stacks {
 
 /// Spreads the netlist's stacks (`crate::stacks`) at the solved `centers`
 /// of the `movable` bodies into banks at their pitch around their
-/// centroids: the parts that share every net and whose bodies (halos
-/// included) overlap there. A bank's cell is the largest body's extent
+/// centroids: the parts whose nets have `least_share` in common (each with
+/// `least_nets` nets at least) and whose bodies (halos included) overlap
+/// there. A bank's cell is the largest body's extent
 /// with its halo on each axis; its shape is the one that adds the least
 /// wire to the stack's nets (`stacks::bank_columns`), the bank moved onto
 /// the board where it fits. `held` bodies stay. Returns the stacks
 /// (body indices).
+#[allow(clippy::too_many_arguments)]
 fn spread_stacks(
     problem: &Problem,
     least_share: f64,
+    least_nets: usize,
     movable: &[usize],
     bodies: &[Body],
     offsets: &[Vec<(Point, usize)>],
@@ -73,7 +81,7 @@ fn spread_stacks(
         .iter()
         .map(|pins| pins.iter().map(|(_, net)| *net).collect())
         .collect();
-    let mut keys = crate::stacks::net_keys(&nets);
+    let mut keys = crate::stacks::net_keys(&nets, least_nets);
     for (body, key) in keys.iter_mut().enumerate() {
         if held[body] {
             *key = None;
@@ -878,13 +886,15 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
         crate::add_work(solve_work);
         let banks = match config.stacks {
             Stacks::Off => None,
-            Stacks::Bank(share) => Some((share, false)),
-            Stacks::Glue(share) => Some((share, true)),
+            Stacks::Bank(share) => Some((share, 2, false)),
+            Stacks::Glue(share) => Some((share, 2, true)),
+            Stacks::GlueMultiNet(share) => Some((share, 3, true)),
         };
-        if let Some((least_share, glue)) = banks {
+        if let Some((least_share, least_nets, glue)) = banks {
             let stacks = spread_stacks(
                 problem,
                 least_share,
+                least_nets,
                 &movable,
                 &bodies[..count],
                 &offsets,

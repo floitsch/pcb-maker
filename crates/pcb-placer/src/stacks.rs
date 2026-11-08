@@ -3,35 +3,37 @@
 // found in the LICENSE file.
 
 //! Stacks in the netlist's start (docs/placer.md, "The netlist's stacks
-//! (2026-11-08)"). The quadratic solve (`initial::quadratic_start`) puts
-//! parts on the same nets on one spot: the bound-to-bound model cannot tell
-//! them apart (the OpenESC 4in1-mini's 22 bulk capacitors on the battery
-//! rail and ground within 0.2 mm). The descent then separates them only by
-//! the start's noise, and they end as a loose clump that the tight levels
-//! cannot seat. A stack here is a group of movable parts on one side that
-//! share every net (`net_keys`) and whose solved bodies, halos included,
-//! overlap (`find_stacks`); each is spread into a bank of cells at its
-//! pitch around its centroid (`bank_columns`, `bank_centers`), so the
-//! solve's answer is a bank rather than a point.
+//! are lost in the descent, not at the start (2026-11-08)"). The quadratic
+//! solve (`initial::quadratic_start`) puts parts on the same nets on one
+//! spot: the bound-to-bound model cannot tell them apart (the OpenESC
+//! 4in1-mini's 22 bulk capacitors on the battery rail and ground within
+//! 0.2 mm, video's eight memory modules on one bus within 1 mm). A stack
+//! here is a group of movable parts on one side whose nets have at least a
+//! share in common (`shared`; 0.9 under the measurement's switch: "share
+//! every net" for parts with fewer than ten nets, and video's modules, each
+//! with its own select net, at 0.96) and whose solved bodies, halos
+//! included, overlap (`find_stacks`); each is spread into a bank of cells at
+//! its pitch around its centroid (`bank_columns`, `bank_centers`). A MOSFET
+//! and its gate resistor (one net of four), a half bridge's two MOSFETs, a
+//! part's decoupling capacitors on different rails are not reached.
 //!
-//! "Share every net" is the criterion: a MOSFET and its gate resistor share
-//! one net, a half bridge's two MOSFETs one or two, a part's decoupling
-//! capacitors on different rails one; none of these is reached. Only the
-//! parts the netlist cannot tell apart are.
+//! A bank at the start alone is undone by the global placement's descent
+//! wherever no wire holds its parts (capacitors on a rail and ground); glued
+//! (`global::Stacks::Glue`), it moves as one body through the descent.
 
 use crate::problem::Point;
 
-/// Each part's key: its nets, sorted and without repeats, where it has two
-/// or more (a part on one net, or none, is no member of a stack: it has no
-/// wire that sets it on one spot with others). Parts with one key share
-/// every net.
-pub fn net_keys(nets: &[Vec<usize>]) -> Vec<Option<Vec<usize>>> {
+/// Each part's key: its nets, sorted and without repeats, where it has at
+/// least `least` of them, and two at least (a part on one net, or none, is
+/// no member of a stack: it has no wire that sets it on one spot with
+/// others). Parts with one key share every net.
+pub fn net_keys(nets: &[Vec<usize>], least: usize) -> Vec<Option<Vec<usize>>> {
     nets.iter()
         .map(|nets| {
             let mut key = nets.clone();
             key.sort_unstable();
             key.dedup();
-            (key.len() >= 2).then_some(key)
+            (key.len() >= least.max(2)).then_some(key)
         })
         .collect()
 }
@@ -190,15 +192,18 @@ mod tests {
 
     #[test]
     fn parts_that_share_every_net_have_one_key() {
-        let keys = net_keys(&[
-            vec![3, 1],    // a capacitor on the rail (3) and ground (1)
-            vec![1, 3],    // another, turned
-            vec![1, 3, 3], // a part with two pins on the rail
-            vec![5, 3],    // a gate resistor: one net shared
-            vec![3, 1, 5], // a MOSFET: the resistor's net and two more
-            vec![4],       // a part on one net
-            vec![],
-        ]);
+        let keys = net_keys(
+            &[
+                vec![3, 1],    // a capacitor on the rail (3) and ground (1)
+                vec![1, 3],    // another, turned
+                vec![1, 3, 3], // a part with two pins on the rail
+                vec![5, 3],    // a gate resistor: one net shared
+                vec![3, 1, 5], // a MOSFET: the resistor's net and two more
+                vec![4],       // a part on one net
+                vec![],
+            ],
+            2,
+        );
         assert_eq!(keys[0], Some(vec![1, 3]));
         assert_eq!(keys[0], keys[1]);
         assert_eq!(keys[0], keys[2]);
@@ -206,6 +211,9 @@ mod tests {
         assert_ne!(keys[0], keys[4]);
         assert_eq!(keys[5], None);
         assert_eq!(keys[6], None);
+        // Parts with three nets or more only: the MOSFET.
+        let keys = net_keys(&[vec![3, 1], vec![3, 1, 5]], 3);
+        assert_eq!(keys, vec![None, Some(vec![1, 3, 5])]);
     }
 
     #[test]

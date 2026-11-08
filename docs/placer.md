@@ -10531,6 +10531,243 @@ probes above). CPU: stage 0's 150 place checks 36 344 CPU s (some from
 the designer's start before the stages.py fix), the nine first routes 477
 s, stage 1 54 686 s; about 25 CPU hours.
 
+## The netlist's stacks are lost in the descent, not at the start (2026-11-08)
+
+Branch netlist-stacks (everything in `build/glob3/`). "The passives'
+stall costs nothing; the netlist's stacks and the bulk capacitors do
+(2026-11-08)" named the netlist start's stacks as the two residual
+losses: the 4in1-mini's 22 bulk capacitors CL32 to CL55 (+BATT and GND)
+solved to one spot and the board needing touching courtyards on every
+seed, and video's eight memory modules within 1 mm and its skeletons
+falling back. The bet: spread a stack as a bank at the start.
+
+**A stack** (`crates/pcb-placer/src/stacks.rs`): movable parts on one
+side whose nets have at least a share in common (the nets on both over
+the nets on either, `stacks::shared`; two or more nets each) and whose
+solved bodies, halos included, overlap (`find_stacks`, chained). **The
+criterion is nine tenths of the nets**: for parts with fewer than ten
+nets that is "share every net"; video's modules (51 nets each, 50 shared,
+each its own 3-pin `RAS<k>-`) share 0.96. A MOSFET and its gate resistor
+(one net of four, 0.25), a half bridge's two MOSFETs (0.2), decoupling
+capacitors on different rails (one of three) are not reached. On the
+nine dense boards the place checks run (the kept seed of layout seed 1,
+both phases' solves), the rule reaches beyond "share every net" only
+video's modules (28 pairs, 0.96 each).
+
+**The bank** (`spread_stacks` in `global.rs`, after the solve, before the
+tenth of the noise): the stack's members fill cells of the largest
+member's extent with its halo, row by row in the order of their solved
+centres, around the stack's centroid; the bank's columns are the shape
+that adds the least wire to the nets every member has (each net's extent
+without the stack; a bank longer than a net's extent lengthens it, a bank
+longer than the board costs more than any wire; of equal costs the most
+compact), moved onto the board where it fits (`stacks::bank_columns`,
+`bank_centers`). **Glued** (`Stacks::Glue`), a bank moves as one body in
+the descent: each member's step is the members' summed forces (wire and
+density) over their summed preconditioners, and the members keep their
+angles at the rotation updates. The anneal, the legaliser and the
+refinement place the parts one by one as before.
+
+**The instruments.** The trace (`PCB_PLACER_TRACE`) has each part's pin
+nets and the nets' table (name, pin count). `stages.py stacks` lists per
+seed and phase (the skeleton's solve, the whole or the passives') the
+coincident stacks at the solve's start (centres within half the smaller
+half extent; any nets) and the groups on the same nets, with their
+arrangement at the phase's stages (the rms distance from the centroid
+over the radius of their area's disc, a packed cluster about 0.7; the
+anisotropy; row, cluster or scattered), the centroid's move, the levels
+whose walk left members out. Variants `bank`, `glue` (and `-debug`) set
+the measurement's switch `PCB_PLACER_STACKS`.
+
+**Stage 0, the stacks** (the nine dense boards the race places, layout
+seeds 1 and 101, the 4in1-mini and video at seeds 1 to 401, the layout's
+place check, `build/glob3/s0`, binary `pcb-maker-a` = main x1938 with the
+trace's nets, the variants by `pcb-maker-d`, the same with the switch; per
+board the kept seed of seed 1):
+
+| board | coincident stacks at the solve (largest; on the same nets) | same-net groups of 3 or more, their end |
+| --- | --- | --- |
+| 4in1-mini | skeleton 7 (5; 0), passives 17 (22; 1) | the 22 CL (cluster), 8 and 7 decoupling capacitors (scattered) |
+| 4in1 | skeleton 5 (12; 0), passives 18 (52; 2) | 52 bulk capacitors (cluster), 8, 7 (scattered) |
+| video | 17 (26; 3) | 26 decoupling capacitors on +5V (scattered), 5 (cluster); the eight modules share 0.96 |
+| revC3 | skeleton 7 (6; 0), passives 15 (38; 9) | 30, 8, 8, 8, 7, 5, 5, 5 decoupling capacitors (scattered) |
+| SNSP-CPU-01 | skeleton 21 (19; 0), passives 21 (24; 1) | 20 (scattered) |
+| DSP-ADAU1452 | skeleton 10 (8; 1), passives 33 (31; 8) | 13 groups, 3 to 13 (6 clusters, 7 scattered) |
+| MegaDrive | skeleton 8 (14; 0), passives 25 (28; 3) | 5 groups, 3 to 7 (1 cluster) |
+| split72_left | skeleton 5 (54; 1), passives 20 (78; 1) | 39, 36 (scattered) |
+| protoesp | skeleton 6 (4; 0), passives 6 (3; 3) | none |
+
+- **Stacks are everywhere**, most of them parts on different nets that
+  serve one IC (a driver's passives at its pins, a bridge's MOSFETs):
+  those are the 4in1's stacks the probe's spread "everywhere" pulled
+  apart. The groups on the same nets are capacitors on a rail and ground:
+  bulk banks (the 4in1-mini's 22, the 4in1's 52) and decoupling
+  capacitors that the anneal's decoupling relations take to their ICs
+  (revC3, SNSP, DSP, video's 26), which end scattered on every seed.
+- **Why "interchangeable parts only" changed nothing**: the probe spread
+  ties only in the skeleton's phase (`spread_ties` was on there alone),
+  where the passives are absent: the capacitors are in the passives'
+  phase. Its kind (one body, the same sorted nets, one side) would have
+  caught them, but not video's modules (each its own `RAS<k>-`).
+- **The descent erases a bank at the start where no wire holds it.** The
+  22 CL of the 4in1-mini (bodies 4.1 x 1.8 mm on a 31 x 33 mm board) are
+  0.01 apart at the start (spread) on main; after the descent they are a
+  loose cluster across the board (spread 1.37 by the median over 15
+  race seeds, 10.2 mm from the solved spot), and so they end (1.40). With
+  the bank at the start (0.86) the descent leaves the same (1.39, final
+  1.45). Main's x1933, from the old start, had them as spread after its
+  descent (1.32 to 1.47) and seated level 7 on 5 of 16 seeds: their
+  spread is not what changed. +BATT and GND span the board: the wires
+  pull none of them anywhere, and the density spreads them over the
+  whole board in any start's order.
+- **Glued, the bank holds through the descent** (spread 0.86 after it).
+  On the 4in1-mini the anneal then spreads it again where the seed was
+  placed by skeleton (1.28 to 1.41 after the anneal; the passives' room
+  was grown into the owners' bodies around the skeleton), while the plain
+  placements keep it closer (0.99 to 1.13): three of six plain placements
+  seat without touching courtyards (level 7 or 8), none of nine
+  skeletons. Video's modules (0.96) glued stay one bank (spread 0.39
+  after the skeleton's descent, 0.67 at the end; main 1.51 and 1.17) and
+  move 42 mm from the solved spot (main 79).
+
+**Stage 0, the outcome** (the kept seed's kind and level: skel, a
+skeleton; fb, the plain fallback; T, tight bodies at level 7 or 8; C,
+touching courtyards; h, the halos; the race's seeds: skeletons seated /
+left out, seeds without touching courtyards; the objective at the end
+against main's (not comparable across levels: the 4in1-mini's tight
+level against its courtyard level), the active parts' arrangement
+against the designer's at the end (displacement share / pairwise; a
+shuffle about 1.4 / 0)):
+
+| board | seed | kept: main / bank / glue | skeletons seated:left out: main / bank / glue | race seeds without touching courtyards: main / bank / glue | objective, bank / glue against main | share / pairwise: main / bank / glue |
+| --- | ---: | --- | --- | --- | --- | --- |
+| 4in1-mini | 1 | skel C / skel C / fb T | 3:0 / 3:0 / 2:0 | 0 / 0 / 1 of 3 | 0.82 / - | - |
+| 4in1-mini | 101 | fb C / skel C / skel C | 2:0 / 3:0 / 2:0 | 0 / 0 / 0 of 3 | 0.87 / 0.89 | - |
+| 4in1-mini | 201 | fb C / skel C / fb T | 1:0 / 3:0 / 0:0 | 0 / 0 / 1 of 3 | 0.91 / - | - |
+| 4in1-mini | 301 | skel C / fb T / fb T | 1:0 / 0:0 / 2:0 | 0 / 1 / 1 of 3 | - / - | - |
+| 4in1-mini | 401 | skel C / fb C / skel C | 2:0 / 2:0 / 2:0 | 0 / 0 / 0 of 3 | 0.62 / 0.96 | - |
+| video | 1 | fb h0 / skel h0.5 / skel h0.5 | 1:2 / 2:1 / 5:0 | - | 0.91 / 0.98 | 0.52/0.54 / 0.62/0.38 / 0.23/0.92 |
+| video | 101 | fb h0 / fb h0 / skel h0.5 | 1:2 / 1:2 / 1:2 | - | 0.82 / 0.80 | 0.52/0.59 / 0.58/0.58 / 0.33/0.68 |
+| video | 201 | fb h0 / skel h0.5 / skel h0.5 | 1:2 / 2:1 / 1:2 | - | 1.05 / 1.05 | 0.41/0.72 / 0.48/0.58 / 0.25/0.88 |
+| video | 301 | fb h0 / skel h0.5 / skel h0.5 | 2:1 / 2:1 / 6:0 | - | 0.86 / 0.71 | 0.49/0.60 / 0.42/0.69 / 0.22/0.93 |
+| video | 401 | skel h0.5 / skel h0.5 / skel h0.5 | 3:1 / 2:1 / 2:1 | - | 1.26 / 1.02 | 0.73/0.24 / 0.50/0.42 / 0.26/0.83 |
+| 4in1 | 1 | skel T / skel T / skel T | 3:0 / 3:0 / 3:0 | - | 1.00 / 1.01 | 0.54/0.59 / 0.54/0.59 / 0.53/0.59 |
+| 4in1 | 101 | skel T / skel T / skel T | 3:0 / 3:0 / 3:0 | - | 0.88 / 1.05 | 0.46/0.67 / 0.49/0.64 / 0.46/0.67 |
+| revC3 | 1 | skel T / skel T / skel T | 3:0 / 3:0 / 3:0 | - | 1.07 / 0.99 | 0.58/0.45 / 0.58/0.45 / 0.58/0.45 |
+| revC3 | 101 | skel T / skel T / skel T | 3:0 / 3:0 / 3:0 | - | 1.05 / 1.04 | 0.65/0.38 / 0.65/0.38 / 0.65/0.38 |
+| SNSP-CPU-01 | 1 | skel h0.5 / skel h0.5 / skel h0.5 | 9:0 / 9:0 / 9:0 | - | 1.08 / 1.11 | 0.49/0.53 / 0.52/0.50 / 0.52/0.52 |
+| SNSP-CPU-01 | 101 | skel h0.5 / skel h0.5 / skel h0.5 | 10:0 / 9:0 / 10:0 | - | 0.95 / 0.95 | 0.52/0.50 / 0.50/0.56 / 0.52/0.52 |
+
+- **Video: the skeletons seat** (glued): the race keeps a skeleton on
+  five of five seeds (main one), 15 of 20 skeletons seat (main 8 of 16),
+  and the active parts lie far nearer the designer's (share 0.22 to 0.33,
+  pairwise 0.68 to 0.93; main 0.41 to 0.73 and 0.24 to 0.72). The bank at
+  the start alone: a skeleton kept on four of five, 9 of 15 seated,
+  0.42 to 0.62 / 0.38 to 0.69.
+- **The 4in1-mini: level 7 on three of five rows** (glued; the plain
+  fallbacks at the tight level, the race ranks them over every placement
+  with touching courtyards), 3 of 15 seeds without touching courtyards
+  (main 0 of 15, x1933 5 of 16; the bank alone 1 of 15). The skeletons
+  still need the courtyard level: two to five capacitors lack room at
+  level 7 around the held skeleton. Short of the stage-0 bar ("most
+  seeds").
+- **The 4in1's objective** 1.01 and 1.05 of main's (the bank alone 1.00
+  and 0.88), Glasgow 0.99 and 1.04, SNSP-CPU-01 1.11 and 0.95; the
+  arrangement of the active parts unchanged on the 4in1, Glasgow and SNSP
+  (within 0.03), video far nearer. The decoupling capacitors' banks are
+  undone by the anneal (revC3's 30: spread 2.06 after the glued descent,
+  4.81 at the end; main 5.17).
+- Glued is the mechanism: candidate (a) alone (the bank at the start)
+  is undone by the descent wherever the wires do not hold the parts
+  (every same-net group of capacitors), and on video it seats fewer
+  skeletons. Candidate (b) (a repulsion in the solve) would be undone the
+  same way; (c) (video's skeleton walk) was not needed.
+
+- *A probe, not kept* (`build/glob3/glue-skel-probe.txt`, place checks
+  only): the same-net groups of ten or more passives of one body kept in
+  the skeleton (glued there). Every seed of the 4in1-mini falls back to
+  the plain placement (the skeleton and the passives judged whole leave
+  capacitors, Rsense2 or U4 without a legal place), and the plain
+  placements seat without touching courtyards on 7 of 15 seeds (the kept
+  placement on four of five rows); on the 4in1 every seed falls back too.
+  With the glue the 4in1-mini's plain placement seats the tight level on
+  about half its seeds (glue: 3 of 6; main: 0 of 6): its skeletons are
+  what needs the courtyards now, not the bank.
+
+**Stage 1** (the eleven dense boards at the task budgets with
+`stop_after_first_route`, placer seeds 1 to 401, both sides on one
+binary, `build/glob3/pcb-maker-e` = main x1938 with the measurement's
+switch; on `PCB_PLACER_STACKS=glue`; `screen.py --on '{}' --on-env
+PCB_PLACER_STACKS=glue --reuse`, three then four in flight beside the
+nightly and eleven after it, `build/glob3/stage1`, 2026-11-08 04:21 to
+07:19; 60 671 CPU seconds: off 30 827, on 29 844). `placer_ab.py compare
+--metric first_open`, first-route open terminals:
+
+| Board | s1 off / on | s101 off / on | s201 off / on | s301 off / on | s401 off / on | median off / on | mean change | relative (weight) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4in1 | 141 / 87 | 87 / 100 | 129 / 134 | 133 / 176 | 97 / 102 | 129 / 102 | +2.4 | +1.3 % (48) |
+| 4in1-mini | 135 / 138 | 143 / 162 | 147 / 128 | 134 / 154 | 154 / 124 | 143 / 138 | -1.4 | -1.0 % (99) |
+| DSP-ADAU1452 | 20 / 28 | 25 / 30 | 23 / 26 | 24 / 28 | 28 / 23 | 24 / 28 | +3.0 | +4.6 % (29) |
+| MegaDrive | 95 / 106 | 46 / 195 | 42 / 30 | 90 / 116 | 92 / 93 | 90 / 106 | +35.0 | +22.4 % (21) |
+| panel | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | +0.0 | +0.0 % (0) |
+| poly_kybd_split72_left | 22 / 24 | 26 / 30 | 23 / 22 | 21 / 28 | 23 / 24 | 23 / 24 | +2.6 | +6.5 % (18) |
+| protoesp | 108 / 23 | 48 / 24 | 27 / 47 | 46 / 23 | 51 / 76 | 48 / 24 | -17.4 | -15.7 % (30) |
+| revC3 | 95 / 80 | 98 / 100 | 107 / 100 | 92 / 79 | 66 / 82 | 95 / 82 | -3.4 | -2.0 % (70) |
+| SmartSpin2k_Panelized | 51 / 51 | 43 / 43 | 33 / 33 | 46 / 46 | 90 / 90 | 46 / 46 | +0.0 | +0.0 % (3) |
+| SNSP-CPU-01 | 24 / 43 | 31 / 20 | 20 / 42 | 36 / 24 | 30 / 46 | 30 / 42 | +6.8 | +6.5 % (4) |
+| video | 92 / 1 | 159 / 3 | 116 / 1 | 111 / 2 | 165 / 3 | 116 / 2 | -126.6 | -40.7 % (12) |
+
+- **Stage 1 fails its bar** (a weighted effect of about -5 % at
+  sign-flip p <= 0.25, the 4in1-mini and video better, no board worse
+  beyond its noise): weighted **-1.2 %** (the noise file's 90 % interval
+  -6.7 to +4.6 %), **sign-flip p 0.347**, the noise file's p 0.368; sum of
+  medians 744 to 594 (-20.2 %, p 0.076); pair sums fall on four of five
+  (s101 706 to 707). Four boards better, five worse, two equal.
+- **Video: 116 to 2 by the median, all five seeds** (92 to 1, 159 to 3, 116
+  to 1, 111 to 2, 165 to 3): the glued modules' skeletons seat and the
+  first route nearly completes. Its weight is 12 (its noise is the
+  largest), so it moves the weighted effect by about 1.4 points.
+- **The 4in1-mini does not route better** (143 to 138 by the median, -1.0
+  %; better on two seeds, worse on three), though the race kept a
+  placement without touching courtyards on three of five rows at stage
+  0: the courtyard level is not its first route's loss.
+- **Worse**: MegaDrive +22.4 % (46 to 195 on seed 101; within 12 on three
+  seeds, 42 to 30 on 201), DSP-ADAU1452 +4.6 %, split72_left +6.5 %,
+  SNSP-CPU-01 +6.5 % (weight 4), the 4in1 +1.3 % (87 against 141 on seed 1,
+  176 against 133 on 301); protoesp -15.7 %, Glasgow -2.0 %. On these the
+  glued banks are capacitors on a rail and ground, which the anneal takes
+  apart again (stage 0): a different draw of each seed, not a lever.
+
+**Glued for parts with three nets or more only** (`glue-multi`: not the
+capacitors on a rail and ground; on the dense set that is video's modules
+alone, by the place checks' traces). The on side for video at all five
+seeds and for MegaDrive and the 4in1-mini (`build/glob3/stage1-multi`,
+binary `pcb-maker-g`; 16 runs): MegaDrive and the 4in1-mini equal off on
+every seed (byte for byte the placement of off), off's video seed 1 by
+`-g` equals `-e`'s (92). Video **116 to 3** by the median (3, 0, 34, 2, 3
+against 92, 159, 116, 111, 165); with every other board as off,
+`placer_ab` (`build/glob3/stage1-multi-compare.md`): weighted **-1.4 %**
+(the noise file's interval -2.5 to -0.3 %), **sign-flip p 0.031** (the
+least five pairs allow; the noise file's p 0.017), every pair sum falls
+(783 to 694, 706 to 547, 667 to 585, 733 to 624, 796 to 634), sum of
+medians 744 to 631 (-15.2 %). One board better, ten equal: the rule's
+weighted effect cannot reach -5 % from video alone.
+
+**Decision: the coordinator's (stage 2).** Stage 1 of `glue` as specified
+(nine tenths of the nets, capacitors included) fails the bar (-1.2 %, p
+0.347). What it found: the netlist's stacks are lost in the descent, not
+at the start; glued through the descent, video's memory modules seat in
+their skeletons and its first route goes from 116 to 2 or 3 open terminals
+on every seed, the board whose placement loses most in the designer tier
+(+201). `glue-multi` is that and nothing else on the dense set (-1.4 %, p
+0.031, ten boards unchanged); its stage 2 would be video's full layouts
+at five seeds and a look at the corpus boards with repeated multi-net
+parts. The 4in1-mini's courtyard level is not its routing loss; its
+skeletons are what needs the courtyards (the probe above). The switch
+`PCB_PLACER_STACKS` stays as the measurement's until the decision; off by
+default, nothing changes without it. CPU: stage 0's 75 place checks 15 330
+CPU s, stage 1 60 671 s, `glue-multi` 9 487 s; about 24 CPU hours.
+
 ## What went wrong on the way (kept as lessons)
 
 - A density target below 1 can never be met when every part is larger than a

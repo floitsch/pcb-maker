@@ -10,6 +10,7 @@ stage (docs/placer.md, "Where the arrangement is lost (2026-11-04)").
     stages.py route --inputs DIR --out DIR --binary PATH [--slots 2] UNIT...
     stages.py table --inputs DIR --out DIR
     stages.py passives --out DIR [UNIT...]
+    stages.py stacks --out DIR [UNIT...]
 
 A unit is `<board>-s<seed>-<variant>`; `--inputs` holds per board and seed
 `<board>-s<seed>/` (the layout's `source/`, `layout.json`, `router.json`,
@@ -31,6 +32,9 @@ and with a variant's start (`PCB_PLACER_START`):
   seats the designer's poses, then the refinement (its `legal` stage is
   the minimal legalisation, its `final` the refinement from there);
 - `off`: `ours` without the trace (the identity check of the dump);
+- `bank`, `glue`, `glue-multi` (and `bank-debug`, `glue-debug`): `ours`
+  with the netlist's stacks spread into banks, glued in the descent, glued
+  for parts with three nets or more only (`PCB_PLACER_STACKS`);
 - `<variant>-noanneal`: the variant without the anneal
   (`PCB_PLACER_SKIP_ANNEAL`: each level's legaliser seats the global
   placement's poses).
@@ -75,6 +79,19 @@ the stages (mean mm, and of those inside after the descent); the placer's
 objective by term at each stage; the passives' descent (iterations, the
 overflow at the stop); and the relaxation level's halos, tight bodies and
 courtyard spacing. Writes `<out>/passives.md` and `<out>/passives.json`.
+
+`stacks` measures the netlist's stacks (docs/placer.md, "The netlist's
+stacks are lost in the descent, not at the start (2026-11-08)"), per
+traced unit, seed and phase (the skeleton's solve, the whole or the
+passives'): the coincident stacks at the solve's start (centres within half
+the smaller half extent, any nets: how many, how large, how many on the
+same nets) and the groups of parts on the same nets (the trace's `nets`),
+with their arrangement at the phase's later stages (`shape`: the rms
+distance from the centroid over the radius of their area's disc, the
+anisotropy, row, cluster or scattered; the centroid's move and the
+members' distance from the start's centroid), their room at the level and
+the levels whose walk left a member without room. Writes `<out>/stacks.md`
+and `<out>/stacks.json`.
 """
 
 import argparse
@@ -102,12 +119,14 @@ VARIANTS = {
     # `ours` with the placer's debug lines in place.log (the skeleton's
     # parts without a place, the levels' walk).
     "debug": {"PCB_PLACER_DEBUG": "1"},
-    # The netlist's stacks spread into banks (the measurement's switch;
-    # docs/placer.md, "The netlist's stacks (2026-11-08)").
+    # The netlist's stacks spread into banks, glued or not (the
+    # measurement's switch; docs/placer.md, "The netlist's stacks are lost
+    # in the descent, not at the start (2026-11-08)").
     "bank": {"PCB_PLACER_STACKS": "bank"},
     "bank-debug": {"PCB_PLACER_STACKS": "bank", "PCB_PLACER_DEBUG": "1"},
     "glue": {"PCB_PLACER_STACKS": "glue"},
     "glue-debug": {"PCB_PLACER_STACKS": "glue", "PCB_PLACER_DEBUG": "1"},
+    "glue-multi": {"PCB_PLACER_STACKS": "glue-multi"},
     "global-all": {"PCB_PLACER_START_STAGE": "global"},
     "global-active": {"PCB_PLACER_START_STAGE": "global"},
     "anneal": {"PCB_PLACER_START_STAGE": "anneal"},

@@ -640,7 +640,7 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_PLACER_STACKS",
         Kind::Switch,
-        "a measurement switch (until stage 2 decides): `glue`, the netlist's stacks (parts that share nine tenths of their nets and whose solved bodies overlap) start as banks at their pitch and move as one body in the global placement's descent; `bank`, the banks at the start only; `glue-same`, `bank-same`: only parts that share every net (docs/placer.md, \"The netlist's stacks (2026-11-08)\").",
+        "a measurement switch (until the coordinator decides on stage 2): `glue`, the netlist's stacks (parts that share nine tenths of their nets and whose solved bodies overlap) start as banks at their pitch and move as one body in the global placement's descent; `bank`, the banks at the start only; `glue-multi`, `glue` for parts with three nets or more only (video's memory modules; no capacitor on a rail and ground); `glue-same`, `bank-same`: only parts that share every net (docs/placer.md, \"The netlist's stacks are lost in the descent, not at the start (2026-11-08)\").",
     ),
     (
         "PCB_PLACER_SKIP_ANNEAL",
