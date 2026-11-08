@@ -374,6 +374,8 @@ pub(super) fn trace_placements(
             let mut entry = serde_json::json!({
                 "reference": lowered.references[index],
                 "pins": component.pins.len(),
+                // Each pin's net (an index into the trace's `nets`).
+                "nets": component.pins.iter().map(|pin| pin.net).collect::<Vec<_>>(),
                 "body": [component.body_size[0], component.body_size[1]],
                 "halo": component.halo,
                 "side": format!("{:?}", component.side),
@@ -494,7 +496,18 @@ pub(super) fn trace_placements(
             "parts": parts,
         }));
     }
-    let text = serde_json::to_string(&serde_json::json!({"seeds": traced}))
+    // The nets by index: name and pin count (every part's, fixed ones too).
+    let net_table: Vec<serde_json::Value> = members
+        .iter()
+        .enumerate()
+        .map(|(net, pins)| {
+            serde_json::json!({
+                "name": lowered.net_names.get(net).cloned().unwrap_or_default(),
+                "pins": pins.len(),
+            })
+        })
+        .collect();
+    let text = serde_json::to_string(&serde_json::json!({"seeds": traced, "nets": net_table}))
         .map_err(|error| error.to_string())?;
     fs::write(path, text).map_err(|error| format!("{}: {error}", path.display()))
 }
