@@ -169,7 +169,7 @@ class Traces(unittest.TestCase):
             (inputs / "b.designer").write_text("/designer/b.kicad_pcb\n")
             arguments = type("Arguments", (), {"inputs": str(inputs), "out": str(inputs / "out"),
                                                "threads": 2, "binary": "/bin/true"})()
-            for variant, designer in (("ours", False), ("debug", False), ("nostall", False),
+            for variant, designer in (("ours", False), ("debug", False),
                                       ("global-all", True), ("anneal", True), ("legalize-noanneal", True)):
                 env = stages.unit_command(arguments, f"b-s1-{variant}")[2]
                 self.assertEqual("PCB_PLACER_START" in env, designer, variant)

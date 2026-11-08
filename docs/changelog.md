@@ -11,7 +11,7 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
-## Committed on 2026-11-08 (the passives' stall around a held skeleton, the 4in1-mini's courtyards, video's stacked modules: diagnosed; stage 1 of the passives' descent without the stall stop)
+## Committed on 2026-11-08 (the passives' stall around a held skeleton, the 4in1-mini's courtyards, video's stacked modules: diagnosed; stage 1 of the passives' descent without the stall stop, not taken)
 
 Branch passives-descent (docs/placer.md "The passives' stall costs
 nothing; the netlist's stacks and the bulk capacitors do (2026-11-08)";
@@ -44,8 +44,9 @@ everything in `build/glob2/`).
   dense boards, five seed pairs, first route, one binary): -2.2 %
   weighted, sign-flip p 0.174, the noise file's 0.251; the 4in1-mini
   -5.6 %, video -4.2 %, protoesp -6.2 %, the 4in1 -2.7 %, Glasgow +2.1 %,
-  SNSP-CPU-01 +8.4 %; 54 686 CPU s. Behind the measurement switch
-  `PCB_PLACER_PASSIVES=nostall` until stage 2.
+  SNSP-CPU-01 +8.4 %; 54 686 CPU s. No stage 2 (the coordinator: -2.2 %
+  cannot reach p <= 0.03, five boards unchanged, the stall costs nothing):
+  the measurement switch `PCB_PLACER_PASSIVES=nostall` is removed.
 
 ## Committed on 2026-11-08 (lattice lines where the rows are open, on by default; knockout plates and faces as KiCad draws them)
 

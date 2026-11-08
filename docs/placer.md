@@ -10338,7 +10338,7 @@ the end:
 
 **The cheaper candidate: no stall stop for the passives' descent**
 (`second.global.stall_iterations = 0` in `place_skeleton`, measured by a
-switch, `PCB_PLACER_PASSIVES=nostall`, `build/glob2/s0b2`). Inside after
+switch, `PCB_PLACER_PASSIVES=nostall`, removed again (below), `build/glob2/s0b2`). Inside after
 the descent, the descent, the objective at the end and the kept placement
 (kind, level, final wire):
 
@@ -10504,26 +10504,32 @@ rows (main's placements) on every board checked. `placer_ab.py compare
   netlist's start loses on the 4in1-mini (its placements still need the
   courtyard level) or on video (its skeletons still fall back).
 
-**Decision (stage 2 is the coordinator's call).** The stall around a held
-skeleton is not the defect it looked like: the anneal seats every passive
-the descent leaves in a held body, at less displacement than the others.
-Without the stall stop for the passives' descent stage 1 passes its rule
-(-2.2 %, p 0.174) with the 4in1-mini and video better, but by a margin
-the noise covers. The switch stays a measurement switch
-(`PCB_PLACER_PASSIVES=nostall`, read in `place_skeleton`) for stage 2;
-on landing the passives' descent runs without the stall stop and the
-switch goes. The losses the residuals named have other causes: the
-4in1-mini's courtyard level is its bulk-capacitor bank (one spot at the
-netlist's start, the designer's rows closer than level 7 allows), and
+**Decision (the coordinator, 2026-11-08): no stage 2; the switch is
+removed.** The stall around a held skeleton is not the defect it looked
+like: the anneal seats every passive the descent leaves in a held body, at
+less displacement than the others. Without the stall stop for the
+passives' descent stage 1 passes its own rule (-2.2 %, p 0.174) with the
+4in1-mini and video better, but a -2.2 % stage-1 effect cannot reach
+stage 2's bar (p <= 0.03 with five pairs; the netlist's start needed
+-8.9 % at stage 1 to land at p 0.020), five of the eleven boards place
+byte for byte as main, and stage 0 says the stall costs nothing: the full
+protocol would be about 40 CPU hours for a marginal term, which the
+direction of 2026-11-04 rules out. The measurement's switch
+(`PCB_PLACER_PASSIVES=nostall`, `second.global.stall_iterations = 0` in
+`place_skeleton`) and its stages.py variant are gone; they are in the
+branch's history (commit 540f19f1). What stays: the instruments and the
+stages.py start fix. The losses the residuals named have other causes:
+the 4in1-mini's courtyard level is its bulk-capacitor bank (one spot at
+the netlist's start, the designer's rows closer than level 7 allows), and
 video's skeletons fall back at its stacked memory modules; neither the
-race's choice nor the stall stop is the lever there. Next candidates: for
-the mini, the bank's start (the netlist's stack of the 22 capacitors
-spread as a row, or the courtyard level for those parts alone rather than
-the whole placement); for video, a stack's spread that does not reach the
-4in1's MOSFET pairs and passives (the probes above). CPU: stage 0's 150
-place checks 36 344 CPU s (some from the designer's start before the
-stages.py fix), the nine first routes 477 s, stage 1 54 686 s; about 25
-CPU hours.
+race's choice nor the stall stop is the lever there. Next candidates
+(handover, open problem 4): for the mini, the bank's start (the netlist's
+stack of the 22 capacitors spread as a row) or the courtyard level for
+those parts alone rather than the whole placement; for video, a stack's
+spread that does not reach the 4in1's MOSFET pairs and passives (the
+probes above). CPU: stage 0's 150 place checks 36 344 CPU s (some from
+the designer's start before the stages.py fix), the nine first routes 477
+s, stage 1 54 686 s; about 25 CPU hours.
 
 ## What went wrong on the way (kept as lessons)
 

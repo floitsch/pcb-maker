@@ -13,12 +13,12 @@ used to be here; code comments and docs that cite `docs/handover.md,
 - **The passives' stall and the netlist's stacks (branch passives-descent,
   2026-11-08).** The passives' stall around a held skeleton costs nothing
   (the anneal seats every passive left in a held body); without its stall
-  stop stage 1 gives -2.2 % first-route open (p 0.174), the 4in1-mini and
-  video better; stage 2 pending, behind the measurement switch
-  `PCB_PLACER_PASSIVES=nostall`. The 4in1-mini's courtyard level is its
+  stop stage 1 gave -2.2 % first-route open (p 0.174): too small for stage
+  2, the switch removed. The 4in1-mini's courtyard level is its
   bulk-capacitor bank; video's skeletons fall back at its stacked memory
   modules. The trace gains each placement's level walk and the skeleton's
-  left-out parts. Open problem 4.
+  left-out parts; stages.py's variants no longer start from the designer's
+  poses by mistake. Open problem 4.
 
 - **Lattice lines where the rows are open (branch pin-lines-default,
   2026-11-08).** The lines' losses of 2026-11-07 were routes moved on
@@ -679,10 +679,13 @@ ranks what keeps the designer tier's 41 failing boards open.
    1 mm; 7 of 16 skeletons leave one to three modules (or X1) without room
    after level 0's 137 to 235 s, and the race keeps the plain fallback on
    four of five rows; 0.9 of the work seats one of two. Stage 1
-   without the passives' stall stop (measurement switch
-   `PCB_PLACER_PASSIVES=nostall`): first-route open -2.2 % weighted,
-   sign-flip p 0.174 (passes the stage-1 rule, not the full protocol's),
-   the 4in1-mini -5.6 % and video -4.2 %; stage 2 pending.
+   without the passives' stall stop: first-route open -2.2 % weighted,
+   sign-flip p 0.174 (the stage-1 rule's pass; the 4in1-mini -5.6 %, video
+   -4.2 %), no stage 2 (it cannot reach p <= 0.03, five boards unchanged),
+   the switch removed. **Next candidates**: the 4in1-mini's bulk-capacitor
+   bank (its start spread as a row, or the courtyard level for those parts
+   alone rather than the whole placement), and for video a stack's spread
+   that does not reach the 4in1's MOSFET pairs and passives.
    Also: stages.py ran every variant but `ours` and `off` from the
    designer's poses (`netnoise`, `netpush` of 2026-11-07 among them).
 5. **Starved thermals as the only failure** on complete boards (rosco,
@@ -1284,7 +1287,6 @@ Switches and experiment hooks (change the result):
 - `PCB_PROBES_SIDE_BY_SIDE`: `N`: at most N probes of the probe ladder at once (1: one after the other).
 - `PCB_PLACER_START`: `<board>`: a diagnostic start: the placer's stages from `PCB_PLACER_START_STAGE` on start from this board's poses, by reference (docs/placer.md, "Where the arrangement is lost (2026-11-04)").
 - `PCB_PLACER_START_STAGE`: with `PCB_PLACER_START`: `global` (default: the global placement starts from the poses), `anneal` (no global placement), `legalize` (no global placement and no anneal: the legaliser seats the poses, the refinement follows).
-- `PCB_PLACER_PASSIVES`: a measurement switch (until stage 2 decides): `nostall`, the passives' global placement around a held skeleton (the race over skeletons) without the stall stop (docs/placer.md, "The passives' stall costs nothing; the netlist's stacks and the bulk capacitors do (2026-11-08)").
 - `PCB_PLACER_SKIP_ANNEAL`: a diagnostic: no anneal at any level; each level's legaliser seats the global placement's poses (or `PCB_PLACER_START`'s), the refinement follows (docs/placer.md, "Where the arrangement is lost (2026-11-04)").
 - `PCB_PLACER_START_PARTS`: `<file>`: with `PCB_PLACER_START_STAGE=global`, a JSON list of `REF#n` (the n-th footprint of that reference): only these start from the board's poses, the others from the placer's own start.
 

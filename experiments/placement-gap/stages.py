@@ -102,9 +102,6 @@ VARIANTS = {
     # `ours` with the placer's debug lines in place.log (the skeleton's
     # parts without a place, the levels' walk).
     "debug": {"PCB_PLACER_DEBUG": "1"},
-    # The passives' descent around a held skeleton without the stall stop
-    # (the measurement's switch, glob2).
-    "nostall": {"PCB_PLACER_PASSIVES": "nostall"},
     "global-all": {"PCB_PLACER_START_STAGE": "global"},
     "global-active": {"PCB_PLACER_START_STAGE": "global"},
     "anneal": {"PCB_PLACER_START_STAGE": "anneal"},
