@@ -23,6 +23,172 @@ use std::collections::BTreeMap;
 /// (`initial::quadratic_start`).
 const NETLIST_NOISE: f64 = 0.1;
 
+/// What the global placement does with the netlist's stacks
+/// (`spread_stacks`; docs/placer.md, "The netlist's stacks (2026-11-08)").
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Stacks {
+    /// Left on their spot (the start's noise separates them).
+    Off,
+    /// Spread into banks at the start: the parts whose nets have at least
+    /// this share in common (`stacks::shared`).
+    Bank(f64),
+    /// Spread into banks that move as one body in the descent.
+    Glue(f64),
+}
+
+impl Stacks {
+    /// The measurement's switch `PCB_PLACER_STACKS` (`bank`, `bank-same`,
+    /// `glue`, `glue-same`; unset: off).
+    pub fn from_env() -> Self {
+        match std::env::var("PCB_PLACER_STACKS").as_deref() {
+            Ok("bank") => Stacks::Bank(0.9),
+            Ok("bank-same") => Stacks::Bank(1.0),
+            Ok("glue") => Stacks::Glue(0.9),
+            Ok("glue-same") => Stacks::Glue(1.0),
+            _ => Stacks::Off,
+        }
+    }
+}
+
+/// Spreads the netlist's stacks (`crate::stacks`) at the solved `centers`
+/// of the `movable` bodies into banks at their pitch around their
+/// centroids: the parts that share every net and whose bodies (halos
+/// included) overlap there. A bank's cell is the largest body's extent
+/// with its halo on each axis; its shape is the one that adds the least
+/// wire to the stack's nets (`stacks::bank_columns`), the bank moved onto
+/// the board where it fits. `held` bodies stay. Returns the stacks
+/// (body indices).
+fn spread_stacks(
+    problem: &Problem,
+    least_share: f64,
+    movable: &[usize],
+    bodies: &[Body],
+    offsets: &[Vec<(Point, usize)>],
+    fixed_pins: &[(Point, usize)],
+    held: &[bool],
+    centers: &mut [Point],
+) -> Vec<Vec<usize>> {
+    let count = movable.len();
+    let nets: Vec<Vec<usize>> = offsets
+        .iter()
+        .map(|pins| pins.iter().map(|(_, net)| *net).collect())
+        .collect();
+    let mut keys = crate::stacks::net_keys(&nets);
+    for (body, key) in keys.iter_mut().enumerate() {
+        if held[body] {
+            *key = None;
+        }
+    }
+    let half: Vec<Point> = bodies.iter().map(|body| body.half).collect();
+    let field: Vec<usize> = bodies.iter().map(|body| body.field).collect();
+    let stacks = crate::stacks::find_stacks(centers, &half, &field, &keys, least_share);
+    if stacks.is_empty() {
+        return Vec::new();
+    }
+    let bounds = problem.bounds();
+    let margin = problem.edge_margin;
+    let low = [bounds[0] + margin, bounds[1] + margin];
+    let high = [bounds[2] - margin, bounds[3] - margin];
+    let room = [(high[0] - low[0]).max(0.0), (high[1] - low[1]).max(0.0)];
+    // Each net's pins: the movable body owning it (or none) and where it
+    // is at the solve.
+    let mut pins_of: Vec<Vec<(Option<usize>, Point)>> = vec![Vec::new(); problem.net_weights.len()];
+    for (at, net) in fixed_pins {
+        pins_of[*net].push((None, *at));
+    }
+    for (body, pins) in offsets.iter().enumerate() {
+        for (offset, net) in pins {
+            pins_of[*net].push((
+                Some(body),
+                [centers[body][0] + offset[0], centers[body][1] + offset[1]],
+            ));
+        }
+    }
+    for members in &stacks {
+        // The nets every member has, and the extent of each without the
+        // stack.
+        let common: Vec<usize> = keys[members[0]]
+            .iter()
+            .flatten()
+            .copied()
+            .filter(|net| {
+                members
+                    .iter()
+                    .all(|body| keys[*body].as_ref().is_some_and(|key| key.binary_search(net).is_ok()))
+            })
+            .collect();
+        let spans: Vec<(f64, Point)> = common
+            .iter()
+            .map(|net| {
+                let mut extent = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+                for (owner, at) in &pins_of[*net] {
+                    if owner.is_some_and(|owner| members.binary_search(&owner).is_ok()) {
+                        continue;
+                    }
+                    extent = [
+                        extent[0].min(at[0]),
+                        extent[1].min(at[1]),
+                        extent[2].max(at[0]),
+                        extent[3].max(at[1]),
+                    ];
+                }
+                let span = if extent[0] <= extent[2] {
+                    [extent[2] - extent[0], extent[3] - extent[1]]
+                } else {
+                    [0.0, 0.0]
+                };
+                (problem.net_weights[*net].max(0.0), span)
+            })
+            .collect();
+        let cell = members.iter().fold([0.0f64; 2], |cell, body| {
+            [cell[0].max(2.0 * half[*body][0]), cell[1].max(2.0 * half[*body][1])]
+        });
+        let columns = crate::stacks::bank_columns(members.len(), cell, &spans, room);
+        let rows = members.len().div_ceil(columns);
+        let mut centroid = [0.0; 2];
+        for body in members {
+            centroid[0] += centers[*body][0] / members.len() as f64;
+            centroid[1] += centers[*body][1] / members.len() as f64;
+        }
+        // On the board where the bank fits.
+        let extent = [columns as f64 * cell[0], rows as f64 * cell[1]];
+        for axis in 0..2 {
+            if extent[axis] <= room[axis] {
+                centroid[axis] = centroid[axis]
+                    .clamp(low[axis] + extent[axis] / 2.0, high[axis] - extent[axis] / 2.0);
+            }
+        }
+        // The members fill the cells row by row in the order of their
+        // solved centres (by y, then x), the index breaking ties.
+        let mut order = members.clone();
+        order.sort_by(|a, b| {
+            centers[*a][1]
+                .total_cmp(&centers[*b][1])
+                .then(centers[*a][0].total_cmp(&centers[*b][0]))
+                .then(a.cmp(b))
+        });
+        let cells = crate::stacks::bank_centers(members.len(), cell, columns, centroid);
+        for (body, at) in order.iter().zip(cells) {
+            centers[*body] = at;
+        }
+    }
+    if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
+        let said: Vec<String> = stacks
+            .iter()
+            .map(|members| {
+                let names: Vec<&str> = members
+                    .iter()
+                    .take(4)
+                    .map(|body| problem.components[movable[*body]].name.as_str())
+                    .collect();
+                format!("{} [{}{}]", members.len(), names.join(" "), if members.len() > 4 { " ..." } else { "" })
+            })
+            .collect();
+        eprintln!("placer: netlist stacks banked ({count} movable): {}", said.join("; "));
+    }
+    stacks
+}
+
 /// A pin on a net: its position and, for a movable body's pin, the body and
 /// the pin's index on it (`None` for a fixed pin).
 type NetPin = (Point, Option<(usize, usize)>);
@@ -71,6 +237,8 @@ pub struct GlobalConfig {
     /// it starts at its pose's centre without the start's noise. `None`:
     /// every part from the start point.
     pub warm: Option<std::sync::Arc<Vec<bool>>>,
+    /// The netlist's stacks (`Stacks`).
+    pub stacks: Stacks,
 }
 
 impl Default for GlobalConfig {
@@ -89,6 +257,7 @@ impl Default for GlobalConfig {
             frame_interval: 5,
             seed: 1,
             warm: None,
+            stacks: Stacks::from_env(),
         }
     }
 }
@@ -625,6 +794,8 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
         })
         .collect();
     let nets = problem.net_weights.len();
+    // The banks that move as one body in the descent (body indices).
+    let mut glued: Vec<Vec<usize>> = Vec::new();
     {
         // The parts start where the netlist's quadratic wirelength puts
         // them (`initial::quadratic_start`), with a tenth of the noise
@@ -683,6 +854,26 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
             },
         );
         crate::add_work(solve_work);
+        let banks = match config.stacks {
+            Stacks::Off => None,
+            Stacks::Bank(share) => Some((share, false)),
+            Stacks::Glue(share) => Some((share, true)),
+        };
+        if let Some((least_share, glue)) = banks {
+            let stacks = spread_stacks(
+                problem,
+                least_share,
+                &movable,
+                &bodies[..count],
+                &offsets,
+                &fixed_pins,
+                &held,
+                &mut centers,
+            );
+            if glue {
+                glued = stacks;
+            }
+        }
         for body in 0..count {
             major[body] = [
                 centers[body][0] + NETLIST_NOISE * noise[body][0],
@@ -874,18 +1065,36 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
             wirelength: 0.0,
         };
 
-        let gradient: Vec<Point> = bodies
+        let precondition = |body: &Body| {
+            let charge = 4.0 * body.charge_half()[0] * body.charge_half()[1];
+            (body.pins + lambda * charge).max(1.0)
+        };
+        let mut gradient: Vec<Point> = bodies
             .iter()
             .enumerate()
             .map(|(index, body)| {
-                let charge = 4.0 * body.charge_half()[0] * body.charge_half()[1];
-                let precondition = (body.pins + lambda * charge).max(1.0);
+                let precondition = precondition(body);
                 [
                     (wire_gradient[index][0] + lambda * density_gradient[index][0]) / precondition,
                     (wire_gradient[index][1] + lambda * density_gradient[index][1]) / precondition,
                 ]
             })
             .collect();
+        // A glued bank moves as one body: its members' summed forces over
+        // their summed preconditioners.
+        for members in &glued {
+            let mut force = [0.0; 2];
+            let mut weight = 0.0;
+            for body in members {
+                for axis in 0..2 {
+                    force[axis] += wire_gradient[*body][axis] + lambda * density_gradient[*body][axis];
+                }
+                weight += precondition(&bodies[*body]);
+            }
+            for body in members {
+                gradient[*body] = [force[0] / weight, force[1] / weight];
+            }
+        }
 
         // Barzilai-Borwein estimate of the inverse Lipschitz constant.
         let norm = |a: &[Point], b: &[Point]| -> f64 {
@@ -944,7 +1153,13 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
                 component.position_for_center(major[body], poses[*index].angle);
         }
 
-        // Discrete rotations once the parts have started to separate.
+        // Discrete rotations once the parts have started to separate (a
+        // glued bank's members keep their angles).
+        let glued_angles: Vec<(usize, f64)> = glued
+            .iter()
+            .flatten()
+            .map(|body| (movable[*body], poses[movable[*body]].angle))
+            .collect();
         if overflow < 0.75
             && config.rotation_interval > 0
             && iteration % config.rotation_interval == config.rotation_interval - 1
@@ -958,6 +1173,9 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
                 config.fit_turns,
             )
         {
+            for (index, angle) in &glued_angles {
+                poses[*index].angle = *angle;
+            }
             offsets = pin_offsets(&poses);
             for (body, index) in movable.iter().enumerate() {
                 let component = &problem.components[*index];

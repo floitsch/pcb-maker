@@ -102,6 +102,12 @@ VARIANTS = {
     # `ours` with the placer's debug lines in place.log (the skeleton's
     # parts without a place, the levels' walk).
     "debug": {"PCB_PLACER_DEBUG": "1"},
+    # The netlist's stacks spread into banks (the measurement's switch;
+    # docs/placer.md, "The netlist's stacks (2026-11-08)").
+    "bank": {"PCB_PLACER_STACKS": "bank"},
+    "bank-debug": {"PCB_PLACER_STACKS": "bank", "PCB_PLACER_DEBUG": "1"},
+    "glue": {"PCB_PLACER_STACKS": "glue"},
+    "glue-debug": {"PCB_PLACER_STACKS": "glue", "PCB_PLACER_DEBUG": "1"},
     "global-all": {"PCB_PLACER_START_STAGE": "global"},
     "global-active": {"PCB_PLACER_START_STAGE": "global"},
     "anneal": {"PCB_PLACER_START_STAGE": "anneal"},
@@ -491,6 +497,192 @@ def passives_table(arguments):
             top = list(kept_seed["inside_by_part"].items())[:6]
             lines.append(f"- {name}: " + ", ".join(f"{ref} {count}" for ref, count in top))
     (out / "passives.md").write_text("\n".join(lines) + "\n")
+    print("\n".join(lines))
+
+
+# --- the netlist's stacks -----------------------------------------------------------------------
+
+
+# The stages a netlist solve starts and the stages after it, per phase.
+STACK_PHASES = (("skeleton_start", ("skeleton_global", "skeleton_annealed", "skeleton_legal", "skeleton_final")),
+                ("start", ("global", "annealed", "legal", "final")))
+# Two parts' centres coincide where they lie within this share of the
+# smaller half extent of their bodies on both axes.
+COINCIDENT = 0.5
+
+
+def find_stacks(seed, stage, movable):
+    """The stacks at a stage: groups (lists of part indices, by chains) of
+    the `movable` parts on one side whose centres coincide (`COINCIDENT`)."""
+    k = seed["stages"].index(stage)
+    parts = seed["parts"]
+    parent = {n: n for n in movable}
+
+    def find(n):
+        while parent[n] != n:
+            parent[n] = parent[parent[n]]
+            n = parent[n]
+        return n
+    boxes = {n: body_box(parts[n], k) for n in movable}
+    order = sorted(movable, key=lambda n: boxes[n][0][0])
+    reach = max((boxes[n][1][0] for n in movable), default=0.0)
+    for position, a in enumerate(order):
+        (ax, ay), (ahx, ahy) = boxes[a]
+        for b in order[position + 1:]:
+            (bx, by), (bhx, bhy) = boxes[b]
+            if bx - ax > reach:
+                break
+            if not sides_meet(parts[a]["side"], parts[b]["side"]):
+                continue
+            if abs(ax - bx) < COINCIDENT * min(ahx, bhx) and abs(ay - by) < COINCIDENT * min(ahy, bhy):
+                parent[find(a)] = find(b)
+    groups = {}
+    for n in movable:
+        groups.setdefault(find(n), []).append(n)
+    return sorted((sorted(g) for g in groups.values() if len(g) > 1), key=lambda g: (-len(g), g))
+
+
+def stack_nets(parts, members, nets):
+    """How the members' nets relate: `same` (every member on the same set
+    of nets) or the nets not every member has, with their pin counts."""
+    sets = [set(parts[n].get("nets") or []) for n in members]
+    if not any(sets):
+        return {"same": None, "differing": []}
+    common = set.intersection(*sets)
+    differing = sorted(set.union(*sets) - common)
+    return {"same": not differing, "common": len(common),
+            "differing": [(nets[d]["name"] if nets else d, nets[d]["pins"] if nets else None) for d in differing]}
+
+
+def shape(parts, members, k, start_centroid):
+    """The members' arrangement at stage index k: the rms distance from
+    their centroid over the radius of a disc of their bodies' area (a
+    packed cluster about 0.7), the anisotropy (the principal axes' ratio
+    of the spread: a row is large), the centroid's distance from the
+    start's, and the mean member displacement from it."""
+    points = [parts[n]["centers"][k] for n in members]
+    cx = statistics.mean(p[0] for p in points)
+    cy = statistics.mean(p[1] for p in points)
+    rms = math.sqrt(statistics.mean((p[0] - cx) ** 2 + (p[1] - cy) ** 2 for p in points))
+    area = sum(parts[n]["body"][0] * parts[n]["body"][1] for n in members)
+    packed = math.sqrt(area / math.pi)
+    sxx = statistics.mean((p[0] - cx) ** 2 for p in points)
+    syy = statistics.mean((p[1] - cy) ** 2 for p in points)
+    sxy = statistics.mean((p[0] - cx) * (p[1] - cy) for p in points)
+    half = (sxx + syy) / 2
+    root = math.sqrt(max(half * half - (sxx * syy - sxy * sxy), 0.0))
+    l1, l2 = half + root, max(half - root, 1e-12)
+    from_start = statistics.mean(math.dist(p, start_centroid) for p in points)
+    return {"spread": rms / packed if packed > 0 else None, "anisotropy": math.sqrt(l1 / l2),
+            "centroid_moved": math.dist((cx, cy), start_centroid), "member_from_start": from_start}
+
+
+def arrangement_word(entry):
+    if entry["spread"] is None:
+        return "-"
+    if entry["spread"] > 2.0:
+        return "scattered"
+    if entry["anisotropy"] > 3.0:
+        return "row"
+    return "cluster"
+
+
+def measure_stacks(seed, nets):
+    """Per phase of the seed (the skeleton's, the whole or the passives'),
+    the stacks at the solve's start and what the stages after it make of
+    them, and the levels whose walk left a member without room."""
+    parts = seed["parts"]
+    held = held_parts(seed) or set()
+    walk = seed.get("walk") or []
+    skeleton = seed.get("skeleton") or {}
+    result = []
+    for start, later in STACK_PHASES:
+        if start not in seed["stages"]:
+            continue
+        k0 = seed["stages"].index(start)
+        if start == "start":
+            movable = [n for n in range(len(parts)) if n not in held]
+            phase_walk = walk
+        else:
+            # The skeleton's parts: those that move in its phase.
+            last = seed["stages"].index(later[-1])
+            movable = [n for n in range(len(parts))
+                       if math.dist(parts[n]["centers"][k0], parts[n]["centers"][last]) > 1e-9 or n in held]
+            phase_walk = skeleton.get("skeleton_walk") or []
+        # The parts on the same nets (two or more) and side: the netlist's
+        # stacks by their nets, whatever the start made of them.
+        groups = {}
+        for n in movable:
+            key = tuple(sorted(set(parts[n].get("nets") or [])))
+            if len(key) >= 2:
+                groups.setdefault((key, parts[n]["side"]), []).append(n)
+        coincident = find_stacks(seed, start, movable)
+        census = {"stacks": len(coincident), "sizes": [len(g) for g in coincident],
+                  "same_nets": sum(bool(stack_nets(parts, g, nets).get("same")) for g in coincident)}
+        result.append({"phase": start, "census": census})
+        for members in sorted((g for g in groups.values() if len(g) > 1), key=lambda g: (-len(g), g)):
+            refs = [parts[n]["reference"] for n in members]
+            points = [parts[n]["centers"][k0] for n in members]
+            centroid = (statistics.mean(p[0] for p in points), statistics.mean(p[1] for p in points))
+            stages = {stage: shape(parts, members, seed["stages"].index(stage), centroid)
+                      for stage in later if stage in seed["stages"]}
+            left = [(entry[0], sorted(set(refs) & set(entry[1]))) for entry in phase_walk
+                    if set(refs) & set(entry[1])]
+            halo = max(parts[n]["halo"] for n in members)
+            spacing = seed["relaxation"]["spacing"]
+            room = sum((parts[n]["body"][0] + 2 * parts[n]["halo"] + spacing)
+                       * (parts[n]["body"][1] + 2 * parts[n]["halo"] + spacing) for n in members)
+            at_start = shape(parts, members, k0, centroid)
+            result.append({"phase": start, "members": refs, "body": parts[members[0]]["body"],
+                           "nets": stack_nets(parts, members, nets), "stages": stages, "left_out": left,
+                           "room_mm2": room, "halo": halo, "spread_at_start": at_start})
+    return result
+
+
+def stacks_table(arguments):
+    out = Path(arguments.out)
+    names = arguments.units or sorted(p.parent.name for p in (out / "runs").glob("*/trace.json"))
+    results = {}
+    for name in names:
+        trace = json.loads((out / "runs" / name / "trace.json").read_text())
+        nets = trace.get("nets")
+        results[name] = [{"seed": seed.get("seed"), "kept": seed.get("kept"),
+                          "placed": ("skeleton" if held_parts(seed) is not None else "plain"),
+                          "level": level_name(seed["relaxation"]),
+                          "walk": [(entry[0], len(entry[1])) for entry in seed.get("walk") or []],
+                          "stacks": measure_stacks(seed, nets)} for seed in trace["seeds"]]
+    (out / "stacks.json").write_text(json.dumps(results, indent=1))
+    lines = ["# The netlist's stacks", "",
+             "Per unit and seed (* kept): how it was placed and its level; per phase (the skeleton's solve, the "
+             "whole or the passives'), the stacks at the solve's start (centres within half the smaller half "
+             "extent): members, whether they share every net (else the nets not all have, with pins), and at "
+             "the final stage of the phase the arrangement (spread: rms distance over the radius of their "
+             "area's disc, a packed cluster about 0.7; anisotropy; the word), the centroid's move and the mean "
+             "member's distance from the start's centroid, mm; the levels whose walk left members out.", ""]
+    for name, seeds in results.items():
+        lines.append(f"## {name}")
+        for seed in seeds:
+            lines.append(f"- s{seed['seed']}{'*' if seed['kept'] else ''} {seed['placed']} ({seed['level']}), "
+                         f"walk {seed['walk']}")
+            for stack in seed["stacks"]:
+                if "census" in stack:
+                    census = stack["census"]
+                    lines.append(f"  - {stack['phase']}: {census['stacks']} coincident stacks (sizes "
+                                 f"{census['sizes']}), {census['same_nets']} on the same nets")
+                    continue
+                final = stack["stages"].get("final") or stack["stages"].get("skeleton_final") or {}
+                nets = stack["nets"]
+                relation = ("same nets" if nets.get("same") else
+                            "differ: " + ", ".join(f"{n}({p})" for n, p in nets.get("differing", [])[:6]))
+                members = " ".join(stack["members"][:12]) + (" ..." if len(stack["members"]) > 12 else "")
+                word = arrangement_word(final) if final else "-"
+                begin = stack["spread_at_start"]
+                lines.append(f"  - {stack['phase']}: {len(stack['members'])} x {stack['body'][0]:g}x{stack['body'][1]:g} "
+                             f"[{members}] {relation}; start spread {fmt(begin.get('spread'))}; final {word} (spread {fmt(final.get('spread'))}, "
+                             f"aniso {fmt(final.get('anisotropy'), 1)}, centroid {fmt(final.get('centroid_moved'), 1)}, "
+                             f"members {fmt(final.get('member_from_start'), 1)} mm); room {stack['room_mm2']:.0f} mm2; "
+                             f"left out {stack['left_out'] or '-'}")
+    (out / "stacks.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))
 
 
@@ -941,8 +1133,11 @@ def main():
     passiver = commands.add_parser("passives")
     passiver.add_argument("--out", required=True)
     passiver.add_argument("units", nargs="*", help="the units to measure (default: every traced unit)")
+    stacker = commands.add_parser("stacks")
+    stacker.add_argument("--out", required=True)
+    stacker.add_argument("units", nargs="*", help="the units to measure (default: every traced unit)")
     arguments = parser.parse_args()
-    {"run": run, "route": route, "table": table, "passives": passives_table}[arguments.command](arguments)
+    {"run": run, "route": route, "table": table, "passives": passives_table, "stacks": stacks_table}[arguments.command](arguments)
 
 
 if __name__ == "__main__":

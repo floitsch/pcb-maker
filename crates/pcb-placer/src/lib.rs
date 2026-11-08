@@ -20,6 +20,7 @@ pub mod legal;
 pub mod orient;
 pub mod problem;
 pub mod skeleton;
+pub mod stacks;
 pub mod view;
 
 pub use global::{Frame, GlobalConfig};
