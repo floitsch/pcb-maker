@@ -15,6 +15,11 @@ enum Call {
         mode: usize,
         work: f64,
     },
+    /// A probe on the lattice with lines at the pin rows.
+    LinesProbe {
+        mode: usize,
+        work: f64,
+    },
     Resume {
         negotiation: f64,
         deadline_work: Option<f64>,
@@ -33,6 +38,8 @@ struct Routed {
     narrow: bool,
     deadline_work: Option<f64>,
     negotiation: Option<f64>,
+    /// On the lattice with lines at the pin rows.
+    lines: bool,
 }
 
 /// An attempt's open connections and work in seconds (at most its work
@@ -52,6 +59,8 @@ struct FakeProbe {
     pour: f64,
     /// Its limit counts its pour work (`limits_count_all`).
     counts_all: bool,
+    /// On the lattice with lines at the pin rows.
+    lines: bool,
 }
 
 /// A scripted attempt's outcome by what it routes (None: it panics).
@@ -87,6 +96,15 @@ struct Fake {
     /// The memory limits as the runner measures them (how many routers
     /// run side by side).
     limits: MemoryLimits,
+    /// The pads of rows the regular lattice misses an exit of, the pads
+    /// a probe leaves unfinished, and the probes' unfinished nets on the
+    /// lattice with lines by rung (empty: as without).
+    missed: Vec<String>,
+    probe_open: Vec<String>,
+    lines_probes: Vec<usize>,
+    /// KiCad's unconnected pads of every routed attempt ("Pad 1 [N] of
+    /// U1 on F.Cu"), written to its drc.json (empty: none written).
+    drc_open: Vec<String>,
 }
 
 /// The scripted runner's static maps' key of a rung on a lattice: the
@@ -127,6 +145,10 @@ impl Fake {
             lowering: 0.0,
             shared_statics: 0.0,
             limits: machine(),
+            missed: Vec::new(),
+            probe_open: Vec::new(),
+            lines_probes: Vec::new(),
+            drc_open: Vec::new(),
         }
     }
 
@@ -256,6 +278,7 @@ impl LadderRunner for Fake {
             expansions: 0,
             pour: 0.0,
             counts_all: attempt.limits_count_all,
+            lines: attempt.pin_lines == Some(true),
         }
     }
 
@@ -280,7 +303,11 @@ impl LadderRunner for Fake {
     }
 
     fn probe(&self, probe: &mut FakeProbe, work: f64, mode: usize) -> usize {
-        self.calls.lock().unwrap().push(Call::Probe { mode, work });
+        self.calls.lock().unwrap().push(if probe.lines {
+            Call::LinesProbe { mode, work }
+        } else {
+            Call::Probe { mode, work }
+        });
         if self.panicking_probe == Some(mode) {
             panic!("index out of bounds in the probe of rung {mode}");
         }
@@ -294,6 +321,9 @@ impl LadderRunner for Fake {
         let search = if probe.counts_all { work - pour } else { work };
         probe.expansions = (search * core::router::expansions_per_second()).round() as u64;
         probe.pour = pour;
+        if probe.lines && !self.lines_probes.is_empty() {
+            return self.lines_probes[mode];
+        }
         self.probes[mode]
     }
 
@@ -375,6 +405,7 @@ impl LadderRunner for Fake {
             narrow: attempt.use_narrow_signals == Some(true),
             deadline_work: attempt.router_deadline_work,
             negotiation: attempt.negotiation_seconds,
+            lines: attempt.pin_lines == Some(true),
         };
         self.calls.lock().unwrap().push(Call::Route(routed.clone()));
         let Some(outcome) = (self.route)(&routed) else {
@@ -384,6 +415,18 @@ impl LadderRunner for Fake {
             .work
             .min(routed.deadline_work.unwrap_or(f64::INFINITY));
         write_board(directory, routed.rung)?;
+        if !self.drc_open.is_empty() {
+            let items: Vec<serde_json::Value> = self
+                .drc_open
+                .iter()
+                .map(|pad| serde_json::json!({"items": [{"description": pad}]}))
+                .collect();
+            fs::write(
+                directory.join("drc.json"),
+                serde_json::json!({ "unconnected_items": items }).to_string(),
+            )
+            .map_err(|error| error.to_string())?;
+        }
         let mut result = report(outcome.open, work, routed.pitch.unwrap_or(0.1));
         result.manual_spokes_work_seconds = self.spokes;
         result.pour_work_seconds = self.pour + self.spokes;
@@ -405,6 +448,14 @@ impl LadderRunner for Fake {
 
     fn memory_limits(&self) -> MemoryLimits {
         self.limits.clone()
+    }
+
+    fn missed_row_pads(&self, _: &KiCadBoardRouterConfig) -> Vec<String> {
+        self.missed.clone()
+    }
+
+    fn probe_open_pads(&self, _: &FakeProbe) -> Vec<String> {
+        self.probe_open.clone()
     }
 }
 
@@ -1479,4 +1530,220 @@ fn open_pad_parts_reads_the_footprints_of_kicads_unconnected_pads() {
     assert_eq!(open_pad_parts(&root), ["J5", "U1"]);
     assert!(open_pad_parts(&root.join("none")).is_empty());
     fs::remove_dir_all(&root).unwrap();
+}
+
+/// The probed board of `route_mode_probed_board_runs_the_leader_first`
+/// whose rows the regular lattice misses at U1: `open` are the pads the
+/// leader's probe leaves unfinished, `lines` the probes' unfinished nets
+/// on the lattice with lines.
+fn rows_board(open: &[&str], lines: Vec<usize>) -> Fake {
+    let mut fake = Fake::new(|routed| {
+        Some(Outcome {
+            open: if routed.lines { 1 } else { 3 },
+            work: if routed.pitch.is_some() { 30.0 } else { 20.0 },
+        })
+    });
+    fake.layers = 4;
+    fake.connections = 200;
+    // exclusive 30, connect 10 (the leader), stubs 25, tracks 15.
+    fake.probes = vec![30, 10, 25, 15];
+    fake.continued = Outcome {
+        open: 3,
+        work: 40.0,
+    };
+    fake.missed = vec!["U1.1".into(), "U1.2".into(), "U1.3".into()];
+    fake.probe_open = open.iter().map(|pad| pad.to_string()).collect();
+    fake.lines_probes = lines;
+    fake
+}
+
+/// Where the leader's probe leaves pads unfinished at rows the regular
+/// lattice misses, its rung is probed once more with the lines, with the
+/// same work; leading, it is continued and the rest of the ladder runs
+/// with the lines (the gate by its count).
+#[test]
+fn route_mode_the_probe_with_lines_leads_where_its_rows_are_open() {
+    let config = route_mode(1000.0);
+    let out = output("lines-probe-leads");
+    let fake = rows_board(&["R3.1", "U1.2"], vec![30, 6, 25, 15]);
+    let mut ladder = ladder(&config, &out, 4);
+    ladder.run(&fake).unwrap();
+    let mut probes: Vec<Call> = fake
+        .calls()
+        .into_iter()
+        .filter(|call| matches!(call, Call::Probe { .. } | Call::LinesProbe { .. }))
+        .collect();
+    // The rungs' probes side by side (in any order), then the lines'.
+    probes[..4].sort_by_key(|call| format!("{call:?}"));
+    let work = bounded_probe_seconds(75.0, 1000.0, 4);
+    assert_eq!(
+        probes,
+        vec![
+            Call::Probe { mode: 0, work },
+            Call::Probe { mode: 1, work },
+            Call::Probe { mode: 2, work },
+            Call::Probe { mode: 3, work },
+            Call::LinesProbe { mode: 1, work },
+        ]
+    );
+    assert!(ladder.pin_lines_on);
+    assert_eq!(ladder.probe_counts[1], Some(6));
+    let routes = fake.routes();
+    assert!(routes.iter().all(|routed| routed.lines), "{routes:?}");
+    // tracks (15) is more than twice the leader's 6 now: kept out.
+    assert!(routes.iter().all(|routed| routed.rung == "connect"));
+    assert!(
+        ladder
+            .skipped
+            .iter()
+            .any(|note| note.contains("pours=tracks") && note.contains("leader's 6")),
+        "{:?}",
+        ladder.skipped
+    );
+    // The lines probe's work is charged; the ladder stays in its bound.
+    assert!(ladder.work <= ladder_work_bound(1000.0) + 1e-6);
+    assert_eq!(kept(&ladder, &out).0, 1);
+}
+
+/// A probe with lines that does not leave a tenth fewer nets unfinished
+/// (a tie here) is dropped: the leader without lines is continued and the ladder runs
+/// as without lines (the trigger after the leader's run still applies:
+/// none here, KiCad's report names no pad).
+#[test]
+fn route_mode_a_tied_probe_with_lines_keeps_the_leader_without() {
+    let config = route_mode(1000.0);
+    let out = output("lines-probe-tie");
+    let fake = rows_board(&["U1.3"], vec![30, 10, 25, 15]);
+    let mut ladder = ladder(&config, &out, 4);
+    ladder.run(&fake).unwrap();
+    assert!(
+        fake.calls()
+            .iter()
+            .any(|call| matches!(call, Call::LinesProbe { mode: 1, .. }))
+    );
+    assert!(!ladder.pin_lines_on);
+    assert_eq!(ladder.probe_counts[1], Some(10));
+    assert!(fake.routes().iter().all(|routed| !routed.lines));
+    assert_eq!(kept(&ladder, &out).0, 3);
+}
+
+/// A board whose leader's probe leaves no pad at a missed row, and one
+/// whose regular lattice misses no row, route as the ladder without the
+/// trigger: the same calls, the same work, the same board.
+#[test]
+fn route_mode_no_open_pad_at_a_missed_row_pays_nothing() {
+    let config = route_mode(1000.0);
+    let runs: Vec<(Vec<Call>, f64, usize)> = [
+        rows_board(&["R3.1", "U2.1"], vec![30, 6, 25, 15]),
+        {
+            let mut fake = rows_board(&["U1.1"], vec![30, 6, 25, 15]);
+            fake.missed.clear();
+            fake
+        },
+        {
+            // The setting decides: the ladder does not.
+            let mut fake = rows_board(&["U1.1"], vec![30, 6, 25, 15]);
+            fake.lines_probes.clear();
+            fake.missed.clear();
+            fake.probe_open.clear();
+            fake
+        },
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, fake)| {
+        let out = output(&format!("lines-probe-none-{index}"));
+        let mut ladder = ladder(&config, &out, 4);
+        ladder.run(&fake).unwrap();
+        assert!(!ladder.pin_lines_on);
+        // The probes side by side: their order is the threads'.
+        let mut calls = fake.calls();
+        calls.sort_by_key(|call| format!("{call:?}"));
+        (calls, ladder.work, kept(&ladder, &out).0)
+    })
+    .collect();
+    assert!(
+        runs[0]
+            .0
+            .iter()
+            .all(|call| !matches!(call, Call::LinesProbe { .. }))
+    );
+    assert_eq!(runs[0], runs[1]);
+    assert_eq!(runs[1], runs[2]);
+    // pin_lines set: no lines probe whatever the pads.
+    let mut config = route_mode(1000.0);
+    config.pin_lines = Some(false);
+    let out = output("lines-probe-setting");
+    let fake = rows_board(&["U1.1"], vec![30, 6, 25, 15]);
+    let mut ladder = ladder(&config, &out, 4);
+    ladder.run(&fake).unwrap();
+    assert!(
+        fake.calls()
+            .iter()
+            .all(|call| !matches!(call, Call::LinesProbe { .. }))
+    );
+    assert!(fake.routes().iter().all(|routed| !routed.lines));
+}
+
+/// Without probes (two layers) the trigger after the leader's run
+/// decides: KiCad's open pads of the best board at U1, a part with a
+/// missed row: the attempts after the leader's run have the lines.
+#[test]
+fn route_mode_unprobed_board_takes_the_lines_after_its_leader() {
+    let config = route_mode(1000.0);
+    let out = output("lines-fallback");
+    let mut fake = Fake::new(|routed| {
+        Some(Outcome {
+            open: if routed.lines { 0 } else { 2 },
+            work: 10.0,
+        })
+    });
+    fake.missed = vec!["U1.4".into()];
+    fake.drc_open = vec!["Pad 4 [SDA] of U1 on F.Cu".into()];
+    let mut ladder = ladder(&config, &out, 2);
+    ladder.run(&fake).unwrap();
+    assert!(
+        fake.calls()
+            .iter()
+            .all(|call| !matches!(call, Call::Probe { .. } | Call::LinesProbe { .. }))
+    );
+    let lines: Vec<(&str, bool)> = fake
+        .routes()
+        .iter()
+        .map(|routed| (routed.rung, routed.lines))
+        .collect();
+    // The regular rungs (the leader's run, connect leading on the tie)
+    // without, its seed round with.
+    assert_eq!(
+        &lines[..3],
+        &[("connect", false), ("tracks", false), ("connect", true)],
+        "{lines:?}"
+    );
+    assert!(ladder.pin_lines_on);
+    assert_eq!(kept(&ladder, &out).0, 0);
+}
+
+#[test]
+fn the_lines_probe_runs_where_rows_are_open_and_within_a_third_of_what_is_left() {
+    assert_eq!(lines_probe_runs(true, 10, 2, 75.0, Some(700.0)), Ok(()));
+    assert_eq!(lines_probe_runs(true, 10, 2, 75.0, Some(225.0)), Ok(()));
+    assert!(lines_probe_runs(true, 10, 2, 75.0, Some(224.0)).is_err());
+    // At 30 s: 3.75 s probes, about 14 s left after four.
+    assert_eq!(lines_probe_runs(true, 85, 3, 3.75, Some(14.0)), Ok(()));
+    assert!(lines_probe_runs(true, 10, 0, 75.0, Some(700.0)).is_err());
+    assert!(lines_probe_runs(true, 0, 2, 75.0, Some(700.0)).is_err());
+    assert!(lines_probe_runs(false, 10, 2, 75.0, Some(700.0)).is_err());
+    assert!(lines_probe_runs(true, 10, 2, 75.0, None).is_err());
+    let missed: Vec<String> = ["U1.1", "U1.2", "U19.3"].map(String::from).to_vec();
+    let open: Vec<String> = ["R1.1", "U1.2", "U19.30"].map(String::from).to_vec();
+    assert_eq!(pads_at_rows(&open, &missed), vec![&open[1]]);
+    assert_eq!(parts_of(&missed), ["U1", "U19"]);
+    // The lines lead at a tenth fewer unfinished nets.
+    assert!(lines_lead(61, 18));
+    assert!(lines_lead(27, 24));
+    assert!(lines_lead(1, 0));
+    assert!(!lines_lead(241, 240));
+    assert!(!lines_lead(10, 10));
+    assert!(!lines_lead(0, 0));
+    assert!(!lines_lead(80, 83));
 }

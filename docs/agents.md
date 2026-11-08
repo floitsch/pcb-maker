@@ -613,19 +613,24 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     whose inner balls leave by vias in their pads or on the surface keep
     no room.
   - `pin_lines` (default unset: the router decides; docs/router.md
-    "Lattice lines where the rows are open (2026-11-08)"): the router's
-    lattice gets lines through the pads of fine-pitch rows it misses. Unset,
-    route mode turns them on after the ladder's first (leader's) run when
-    KiCad's open pads are in such parts (the run log says `open pads at pin
-    rows the regular lattice misses (U19, U15)`), so a board that completes
-    without them never pays for them. Set it true in route mode when the
-    open connections are pads of a 0.4 to 0.5 mm row with nothing else in
-    the way and the leader's run took much of the budget (RP2040_base: 20
-    open with the default, 5 with the lines from the start; the census
-    line `no straight way out` under `PCB_ROUTER_TROUBLE_WHY`, or
-    `dead_pads` on the row with no wall named); on every attempt it moves
-    other boards' routes (+3 -2 strict passes over the designer tier).
-    False keeps the regular lattice.
+    "The rows decided at the probes (2026-11-08)" and "Lattice lines where
+    the rows are open (2026-11-08)"): the router's lattice gets lines
+    through the pads of fine-pitch rows it misses. Unset, route mode
+    decides twice: at the probes, where the leader's probe leaves pads
+    unfinished at such rows, its rung is probed once more with the lines
+    and they stay on when that probe leaves a tenth fewer nets unfinished
+    (the run log: `probe pours=... with lines at the pin rows: 18 nets
+    unfinished ...: it leads`); else after the ladder's leader's run when
+    KiCad's open pads are in such parts (`open pads at pin rows the
+    regular lattice misses (U19, U15)`). A board that completes without
+    them never pays for them. Set it true in route mode when the open
+    connections are pads of a 0.4 to 0.5 mm row with nothing else in the
+    way and neither log line shows (a board without probes: fewer than
+    four layers or 120 connections, on a short budget; the census line
+    `no straight way out` under `PCB_ROUTER_TROUBLE_WHY`, or `dead_pads`
+    on the row with no wall named); on every attempt it moves other
+    boards' routes (+3 -2 strict passes over the designer tier). False
+    keeps the regular lattice.
   - `blind_vias` (default false; off by the evidence of 2026-11-05; docs/router.md "Blind, buried and
     micro vias"): on a board of three or more layers that allows them,
     a via that joins two layers pierces only the shortest allowed span

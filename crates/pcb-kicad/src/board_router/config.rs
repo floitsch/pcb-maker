@@ -451,11 +451,16 @@ pub struct KiCadBoardRouterConfig {
     /// the rows are open (2026-11-08)"): lines through the pads of
     /// fine-pitch rows the regular lattice misses (a part's rows at its
     /// own phase over a band, else single lines). Unset (the default), the
-    /// route-mode ladder decides: after the leader's run, when KiCad's open
-    /// pads lie in parts whose rows the regular lattice misses, the rest
-    /// of the ladder runs with the lines (designer tier: OpenAirScope and
-    /// koeg-board pass, none lost); true puts them on every attempt, false
-    /// never. `PCB_ROUTER_PIN_LINES` (0 or 1) overrides this.
+    /// route-mode ladder decides: at the probes, where the leader's probe
+    /// leaves pads unfinished at rows the regular lattice misses and the
+    /// leader's rung probed once more with the lines leaves a tenth fewer
+    /// nets unfinished, the continuation and the rest of the ladder run
+    /// with the lines ("The rows decided at the probes (2026-11-08)":
+    /// RP2040_base 20 -> 5 open); else after the leader's run, when
+    /// KiCad's open pads lie in parts whose rows the regular lattice
+    /// misses (OpenAirScope and koeg-board pass, none lost); true puts them
+    /// on every attempt, false never. `PCB_ROUTER_PIN_LINES` (0 or 1)
+    /// overrides this.
     #[serde(default)]
     pub pin_lines: Option<bool>,
     /// Prepared fan-outs for BGAs (board_router/bga_fanout.rs; docs/router.md,

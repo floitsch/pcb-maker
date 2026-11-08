@@ -165,8 +165,9 @@ pub struct Config {
     /// pin rows the regular lattice misses get lines through their centres
     /// (a part's rows at its own phase over a band, else single lines).
     /// Off by default here (docs/router.md, "Lattice lines at pin rows
-    /// (2026-11-07)"); the KiCad ladder turns it on after its leader's run
-    /// where the open pads are at such rows ("Lattice lines where the rows
+    /// (2026-11-07)"); the KiCad ladder turns it on at its probes or after
+    /// its leader's run where the open pads are at such rows ("The rows
+    /// decided at the probes (2026-11-08)", "Lattice lines where the rows
     /// are open (2026-11-08)"), and the KiCad router settings' `pin_lines`
     /// and `PCB_ROUTER_PIN_LINES` set it.
     pub pin_lines: crate::pin_lines::Lines,

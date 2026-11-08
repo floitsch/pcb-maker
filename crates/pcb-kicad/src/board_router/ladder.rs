@@ -140,13 +140,90 @@ pub(crate) trait LadderRunner: Sync {
     fn pour_loss(&self, _directory: &Path, _attempt: &KiCadBoardRouterConfig) -> Option<f64> {
         None
     }
-    /// The parts (footprint references) with a pin row whose straight exit
-    /// the regular lattice of `attempt` misses (`pin_lines::missing`): where
+    /// The pads (labels, "U19.12") of pin rows whose straight exit the
+    /// regular lattice of `attempt` misses (`pin_lines::missing`): where
     /// lattice lines at pin rows can open a pad. Not charged (a lowering
-    /// and the lines' arithmetic, once).
-    fn missed_row_parts(&self, _attempt: &KiCadBoardRouterConfig) -> Vec<String> {
+    /// and the lines' arithmetic, once a ladder: `Ladder::missed_pads`).
+    fn missed_row_pads(&self, _attempt: &KiCadBoardRouterConfig) -> Vec<String> {
         Vec::new()
     }
+    /// After a probe: the pads its negotiation left unfinished
+    /// (`Router::unfinished_pads` within `OPEN_PAD_NEAR`), sorted.
+    fn probe_open_pads(&self, _probe: &Self::Probe) -> Vec<String> {
+        Vec::new()
+    }
+}
+
+/// A probe's pad counts as unfinished where a node of its net in another
+/// net's clearance lies this close to it (mm; `pin_lines::ROW_GAP`, the
+/// reach of a pad's neighbours in a row).
+pub(crate) const OPEN_PAD_NEAR: f64 = core::pin_lines::ROW_GAP;
+
+/// The probe of the leader's rung on the lattice with lines at the pin
+/// rows (`Ladder::lines_probe`) takes at most this share of the work left
+/// under the ladder's bound when it would start (its work is one rung
+/// probe's): a board near its limit keeps most of its continuation.
+pub(crate) const LINES_PROBE_SHARE: f64 = 1.0 / 3.0;
+
+/// The probe with lines at the pin rows leads only where it leaves at
+/// least this share fewer nets unfinished than the leader's probe without
+/// (`lines_lead`): any change of the lattice moves a probe's count (on the
+/// designer tier's row boards a rung's probe went from 191 to 404 and from
+/// 161 to 32 with the lines), and jetson's 241 -> 240 at the fingerprints'
+/// quarter budget led to a continuation of 60 open against 27.
+pub(crate) const LINES_PROBE_MARGIN: f64 = 0.1;
+
+/// Whether the probe with lines (`lines` unfinished nets) leads the
+/// leader's probe without (`without`): fewer, by `LINES_PROBE_MARGIN` of
+/// `without` at least.
+pub(crate) fn lines_lead(without: usize, lines: usize) -> bool {
+    lines < without && lines as f64 <= without as f64 * (1.0 - LINES_PROBE_MARGIN)
+}
+
+/// The parts (footprint references) of `pads` ("U19.12" -> "U19"),
+/// sorted, without repeats.
+pub(crate) fn parts_of(pads: &[String]) -> Vec<String> {
+    let mut parts: Vec<String> = pads
+        .iter()
+        .map(|pad| core::pin_lines::part_of(pad).to_string())
+        .collect();
+    parts.sort();
+    parts.dedup();
+    parts
+}
+
+/// Whether the leader's probe is run once more on the lattice with lines
+/// at the pin rows (`Ladder::lines_probe`): the lines are the ladder's to
+/// choose (`automatic`), not on yet, the leader's probe left nets
+/// unfinished (`leader_unfinished`), some of its unfinished pads are pads
+/// whose exit the regular lattice misses (`at_rows`), and the probe's work
+/// fits `LINES_PROBE_SHARE` of what is left under the bound (`left`; None:
+/// no bound, a layout's ladder, which does not run it).
+pub(crate) fn lines_probe_runs(
+    automatic: bool,
+    leader_unfinished: usize,
+    at_rows: usize,
+    probe_work: f64,
+    left: Option<f64>,
+) -> Result<(), &'static str> {
+    if !automatic || leader_unfinished == 0 {
+        return Err("");
+    }
+    if at_rows == 0 {
+        return Err("no pad its probe left unfinished is at a row the regular lattice misses");
+    }
+    match left {
+        Some(left) if probe_work <= LINES_PROBE_SHARE * left => Ok(()),
+        Some(_) => Err("its work is more than a third of what is left under the bound"),
+        None => Err(""),
+    }
+}
+
+/// The pads of `open` that are in `missed`, both sorted.
+pub(crate) fn pads_at_rows<'p>(open: &'p [String], missed: &[String]) -> Vec<&'p String> {
+    open.iter()
+        .filter(|pad| missed.binary_search(pad).is_ok())
+        .collect()
 }
 
 /// The message of a caught panic.
@@ -554,6 +631,9 @@ pub(crate) struct Ladder<'a> {
     /// the pin rows (`pin_lines_from_here`): its open pads were at rows
     /// the regular lattice misses.
     pin_lines_on: bool,
+    /// The pads of pin rows whose exit the regular lattice misses
+    /// (`LadderRunner::missed_row_pads`), once asked for.
+    missed_pads: Option<Vec<String>>,
     /// Steps that did not run, with why: the report's `skipped` when the
     /// board stays incomplete.
     pub(crate) skipped: Vec<String>,
@@ -728,6 +808,7 @@ impl<'a> Ladder<'a> {
             best: None,
             best_attempt: None,
             pin_lines_on: false,
+            missed_pads: None,
             skipped: Vec::new(),
             failed: Vec::new(),
             panic_at: None,
@@ -1373,15 +1454,13 @@ impl<'a> Ladder<'a> {
     /// routes as without lines (docs/router.md, "Lattice lines where the
     /// rows are open (2026-11-08)").
     fn pin_lines_from_here<R: LadderRunner>(&mut self, runner: &R) {
-        let automatic =
-            self.config.pin_lines.is_none() && core::pin_lines::lines_override().is_none();
-        if !automatic || self.pin_lines_on || !self.open_best() {
+        if !self.lines_automatic() || self.pin_lines_on || !self.open_best() {
             return;
         }
-        let Some((attempt, _)) = self.best_attempt.as_ref() else {
+        let Some((attempt, _)) = self.best_attempt.clone() else {
             return;
         };
-        let missed = runner.missed_row_parts(attempt);
+        let missed = parts_of(self.missed_pads(runner, &attempt));
         if missed.is_empty() {
             return;
         }
@@ -1401,6 +1480,163 @@ impl<'a> Ladder<'a> {
         if let Some((attempt, _)) = self.best_attempt.as_mut() {
             attempt.pin_lines = Some(true);
         }
+    }
+
+    /// Whether the ladder chooses the lines at the pin rows: `pin_lines`
+    /// unset and no `PCB_ROUTER_PIN_LINES`.
+    fn lines_automatic(&self) -> bool {
+        self.config.pin_lines.is_none() && core::pin_lines::lines_override().is_none()
+    }
+
+    /// The pads of pin rows whose exit the regular lattice misses, asked
+    /// of the runner once a ladder (the pads and the regular lattice are
+    /// the same for every rung).
+    fn missed_pads<R: LadderRunner>(
+        &mut self,
+        runner: &R,
+        attempt: &KiCadBoardRouterConfig,
+    ) -> &[String] {
+        self.missed_pads.get_or_insert_with(|| {
+            let mut pads = runner.missed_row_pads(attempt);
+            pads.sort();
+            pads.dedup();
+            pads
+        })
+    }
+
+    /// The trigger at the probes (route mode, the leader first, the lines
+    /// the ladder's to choose): where the leader's probe left pads
+    /// unfinished at pin rows the regular lattice misses an exit of, its
+    /// rung is probed once more on the lattice with lines at the pin rows,
+    /// with the same work; where it leaves a tenth fewer nets unfinished
+    /// (`lines_lead`) it leads, and the continuation and the rest of the
+    /// ladder run with the lines; else the leader without lines goes on.
+    /// The probe's work is one rung probe's, and it runs only within
+    /// `LINES_PROBE_SHARE` of what is left under the bound
+    /// (`lines_probe_runs`). A board whose leader's probe leaves no pad at
+    /// such a row pays nothing and routes as without it. Where the probe
+    /// with lines does not lead, the trigger after the leader's run
+    /// (`pin_lines_from_here`) still applies (docs/router.md, "The rows
+    /// decided at the probes (2026-11-08)").
+    #[allow(clippy::type_complexity, clippy::too_many_arguments)]
+    fn lines_probe<R: LadderRunner>(
+        &mut self,
+        runner: &R,
+        leader: (usize, usize, R::Probe, R::Board, KiCadBoardRouterConfig),
+        probe_work: f64,
+        counts_all: bool,
+        probes_count: f64,
+    ) -> (usize, usize, R::Probe, R::Board, KiCadBoardRouterConfig) {
+        // `PCB_LADDER_LINES_PROBE=0`: the trigger after the leader's run
+        // alone (as on 2026-11-08 before this), for A/B on one binary.
+        let wanted =
+            std::env::var("PCB_LADDER_LINES_PROBE").map_or(true, |value| value.trim() != "0");
+        let automatic = wanted && self.leader_first && self.lines_automatic() && !self.pin_lines_on;
+        if !automatic || leader.0 == 0 {
+            return leader;
+        }
+        let missed = self.missed_pads(runner, &leader.4).to_vec();
+        if missed.is_empty() {
+            return leader;
+        }
+        let open = runner.probe_open_pads(&leader.2);
+        let at = pads_at_rows(&open, &missed);
+        let verdict = lines_probe_runs(true, leader.0, at.len(), probe_work, self.bound_left());
+        eprintln!(
+            "ladder: the leader's probe ({}) left {} unfinished, {} pad(s) of them at pin rows the regular lattice misses ({} missed in {}){}",
+            self.probe_name(leader.1),
+            leader.0,
+            at.len(),
+            missed.len(),
+            parts_of(&missed).join(", "),
+            match verdict {
+                Ok(()) => format!(
+                    ": its rung probed once more with lines at the pin rows ({probe_work:.1} s of work, {:.0} s left under the bound)",
+                    self.bound_left().unwrap_or(0.0)
+                ),
+                Err("") => String::new(),
+                Err(why) => format!(": no probe with lines ({why})"),
+            }
+        );
+        if verdict.is_err() {
+            return leader;
+        }
+        let (unfinished, mode, router, board, attempt) = leader;
+        let mut lines_attempt = attempt.clone();
+        lines_attempt.pin_lines = Some(true);
+        let name = format!(
+            "the probe of rung {} with lines at the pin rows",
+            self.rung_name(mode)
+        );
+        let lowered = isolate(|| runner.lower(&lines_attempt, self.modes[mode].0));
+        let Some(Ok(lines_board)) = self.survived(&name, lowered) else {
+            return (unfinished, mode, router, board, attempt);
+        };
+        if self.charges_all {
+            self.charge(0.0, 0.0, 0.0, runner.lowering_work(&lines_board));
+        }
+        let panics = self.panic_due("probe");
+        let started = std::time::Instant::now();
+        let probed = isolate(|| {
+            let mut lines_router = runner.build(&lines_board, &lines_attempt, false);
+            if panics {
+                test_panic("probe");
+            }
+            let limit = if counts_all {
+                let work = runner.work(&lines_router);
+                let shared = work.shared.total();
+                (probe_work - (work.build - shared) - shared / probes_count).max(0.01)
+            } else {
+                probe_work
+            };
+            let lines_unfinished = runner.probe(&mut lines_router, limit, mode);
+            (lines_unfinished, lines_router)
+        });
+        let Some((lines_unfinished, mut lines_router)) = self.survived(&name, probed) else {
+            return (unfinished, mode, router, board, attempt);
+        };
+        let work = runner.work(&lines_router);
+        let lattice = if self.charges_all {
+            let lattice = self.lattice_charge(work.build, work.shared, 1.0);
+            self.charge(work_of(work.expansions), work.pour, lattice, 0.0);
+            lattice
+        } else {
+            self.charge(work_of(work.expansions), 0.0, 0.0, 0.0);
+            0.0
+        };
+        let lines_lead = lines_lead(unfinished, lines_unfinished);
+        eprintln!(
+            "probe {} with lines at the pin rows: {lines_unfinished} nets unfinished after {:.0} s (work: search {:.2} s, pour {:.2} s, lattice {:.2} s): {}",
+            self.probe_name(mode),
+            started.elapsed().as_secs_f64(),
+            work_of(work.expansions),
+            work.pour,
+            lattice,
+            if lines_lead {
+                format!(
+                    "it leads ({unfinished} without); the continuation and the rest of the ladder with the lines"
+                )
+            } else {
+                format!(
+                    "the probe without lines leads ({unfinished}; the lines lead only at {:.0} % fewer)",
+                    LINES_PROBE_MARGIN * 100.0
+                )
+            }
+        );
+        if !lines_lead {
+            return (unfinished, mode, router, board, attempt);
+        }
+        drop(router);
+        runner.speak(&mut lines_router, &lines_attempt);
+        self.pin_lines_on = true;
+        self.probe_counts[mode] = Some(lines_unfinished);
+        (
+            lines_unfinished,
+            mode,
+            lines_router,
+            lines_board,
+            lines_attempt,
+        )
     }
 
     /// Notes the first attempt's open count: the work kept for the
@@ -1714,6 +1950,8 @@ impl<'a> Ladder<'a> {
         // from here, the leader's continuation takes what it needs again.
         let idle = core::router::release_idle_search_arrays();
         crate::mem_profile::note("the probes' idle search arrays freed:", idle);
+        let leader = leader
+            .map(|leader| self.lines_probe(runner, leader, probe_work, counts_all, probes_count));
         if let Some((_, mode, router, board, mut attempt)) = leader {
             // The continuation and the attempts that vary it count their
             // search (the ladder's shares by the proportion of search).

@@ -478,6 +478,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "route mode's steps start without room for their first negotiation iteration (the rule before 2026-10-21; for attributing rows).",
     ),
     (
+        "PCB_LADDER_LINES_PROBE",
+        Kind::Switch,
+        "`0`: route mode's ladder does not probe its leader's rung once more with lattice lines at the pin rows where the leader's probe leaves pads unfinished at rows the regular lattice misses; the trigger after the leader's run alone decides (as before 2026-11-08's \"The rows decided at the probes\"; for A/B on one binary).",
+    ),
+    (
         "PCB_LADDER_LEADER_FIRST",
         Kind::Switch,
         "`0` or `1`: route mode's ladder runs the leading rung's seed round and finer pitches before the rungs of other pour modes, and those only where their probe left at most twice the leader's unfinished nets (wins over the router setting `leader_first`; default on; `0` the order before 2026-11-07).",

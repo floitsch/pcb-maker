@@ -627,7 +627,11 @@ impl LadderRunner for KiCadRunner<'_> {
         MemoryLimits::read(self.memory_mb)
     }
 
-    fn missed_row_parts(&self, attempt: &KiCadBoardRouterConfig) -> Vec<String> {
+    fn probe_open_pads(&self, router: &core::router::Router) -> Vec<String> {
+        router.unfinished_pads(super::ladder::OPEN_PAD_NEAR)
+    }
+
+    fn missed_row_pads(&self, attempt: &KiCadBoardRouterConfig) -> Vec<String> {
         let Ok(board) = lower(self.parsed, attempt, true).map(|lowered| lowered.board) else {
             return Vec::new();
         };
@@ -636,13 +640,13 @@ impl LadderRunner for KiCadRunner<'_> {
             .into_iter()
             .filter(|line| line.kind == core::pin_lines::LineKind::Exit)
             .collect();
-        let mut parts: Vec<String> = core::pin_lines::missing(&lines, &grid)
+        let mut pads: Vec<String> = core::pin_lines::missing(&lines, &grid)
             .into_iter()
-            .map(|line| core::pin_lines::part_of(&line.label).to_string())
+            .map(|line| line.label.clone())
             .collect();
-        parts.sort();
-        parts.dedup();
-        parts
+        pads.sort();
+        pads.dedup();
+        pads
     }
 
     fn pour_loss(&self, directory: &Path, attempt: &KiCadBoardRouterConfig) -> Option<f64> {

@@ -5680,6 +5680,41 @@ fn a_spoke_cut_short_of_its_end_joins_the_fill_beside_it() {
 }
 
 #[test]
+fn a_probes_unfinished_pads_are_its_open_terminals_and_those_near_its_conflicts() {
+    // One layer: A crosses B and C, so a short negotiation ends in conflict.
+    let mut router = crossed_net();
+    router.config.max_iterations = 2;
+    router.probe(1.0);
+    let work = (router.expansions(), router.pour_work());
+    // Within 0 mm: the terminals no tree reaches only.
+    let mut open: Vec<String> = Vec::new();
+    for (net, state) in router.nets.iter().enumerate() {
+        for (index, connected) in state.connected.iter().enumerate() {
+            if state.routable && !state.complete && !connected {
+                open.push(router.board.nets[net].terminals[index].label.clone());
+            }
+        }
+    }
+    open.sort();
+    assert_eq!(router.unfinished_pads(0.0), open);
+    // Within the board: every pad of a net in conflict too.
+    let conflicted: Vec<usize> = (0..3)
+        .filter(|net| !router.conflicts(*net as NetId).is_empty())
+        .collect();
+    assert!(!conflicted.is_empty());
+    let all = router.unfinished_pads(100.0);
+    for net in conflicted {
+        for terminal in &router.board.nets[net].terminals {
+            assert!(all.contains(&terminal.label), "{all:?}");
+        }
+    }
+    // The crossings lie far from every pad.
+    assert_eq!(router.unfinished_pads(0.8), open);
+    // It reads the state only.
+    assert_eq!((router.expansions(), router.pour_work()), work);
+}
+
+#[test]
 fn a_subset_probe_routes_only_its_nets() {
     let mut router = crossed_net();
     let standing = router.probe_subset(&[1], 1.0);

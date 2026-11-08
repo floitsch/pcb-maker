@@ -333,6 +333,43 @@ impl Router {
         count
     }
 
+    /// After `probe`: the pads (their terminals' labels, "U19.12") the
+    /// negotiation has not finished: a routable net's terminal its tree
+    /// does not reach, and a terminal with a node of its net in another
+    /// net's clearance within `near` mm of its anchor. What the ladder's
+    /// lines at the pin rows are judged by (`Ladder::lines_probe`). Reads
+    /// the state only: no work is counted (a pour net's pads off its pour's
+    /// main piece are not looked for, the pour analysis counts work).
+    /// Sorted, without repeats.
+    pub fn unfinished_pads(&self, near: f64) -> Vec<String> {
+        let mut labels = Vec::new();
+        for net in 0..self.nets.len() as NetId {
+            let state = &self.nets[net as usize];
+            if !state.routable {
+                continue;
+            }
+            let terminals = &self.board.nets[net as usize].terminals;
+            let conflicts: Vec<crate::geometry::Point> = self
+                .conflicts(net)
+                .into_iter()
+                .map(|(_, cell)| self.grid.center_of(cell as usize))
+                .collect();
+            for (index, terminal) in terminals.iter().enumerate() {
+                let open = !state.complete && !state.connected.get(index).copied().unwrap_or(true);
+                let fought = conflicts.iter().any(|point| {
+                    let (dx, dy) = (point[0] - terminal.anchor[0], point[1] - terminal.anchor[1]);
+                    dx * dx + dy * dy <= near * near
+                });
+                if (open || fought) && !terminal.label.is_empty() {
+                    labels.push(terminal.label.clone());
+                }
+            }
+        }
+        labels.sort();
+        labels.dedup();
+        labels
+    }
+
     /// After `probe`: what the layout's race ranks probed placements by
     /// (`race_probe`, docs/placer.md, "The race's route probe"): the
     /// terminals left open, as `board_open_terminals` counts them, plus
