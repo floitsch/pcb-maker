@@ -825,6 +825,32 @@ pub fn hot_spot_links(
     }
 }
 
+/// `text` (the router's words, which number its layers: "layer 7: ...")
+/// with KiCad's layer names (`layer_names`, by the router's index): "B.Cu:
+/// ..." (trial 8: a dead pad's wall said "layer 7").
+pub(crate) fn name_layers(text: &str, layer_names: &[String]) -> String {
+    let mut named = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("layer ") {
+        let after = &rest[at + "layer ".len()..];
+        let digits = after.chars().take_while(char::is_ascii_digit).count();
+        let index = after[..digits].parse::<usize>().ok();
+        match index.and_then(|index| layer_names.get(index)) {
+            Some(name) if digits > 0 && after[digits..].starts_with(':') => {
+                named.push_str(&rest[..at]);
+                named.push_str(name);
+                rest = &after[digits..];
+            }
+            _ => {
+                named.push_str(&rest[..at + "layer ".len()]);
+                rest = after;
+            }
+        }
+    }
+    named.push_str(rest);
+    named
+}
+
 pub(super) fn diagnostics(
     board: &core::Board,
     result: &core::RoutingResult,
@@ -852,7 +878,7 @@ pub(super) fn diagnostics(
                 net: board.nets[dead.net as usize].name.clone(),
                 at: round(dead.anchor),
                 near: dead.near.clone(),
-                wall: dead.wall.clone(),
+                wall: name_layers(&dead.wall, layer_names),
             })
             .collect(),
         conflicted_nets: result
@@ -883,5 +909,22 @@ pub(super) fn diagnostics(
             })
             .collect(),
         starved_thermals: Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod layer_name_tests {
+    use super::name_layers;
+
+    #[test]
+    fn a_dead_pads_wall_names_kicads_layers() {
+        let names: Vec<String> = ["F.Cu", "In1.Cu", "B.Cu"].map(String::from).to_vec();
+        assert_eq!(
+            name_layers("layer 2: a 0.100 mm track may end at (1, 2); layer 0: the contact holds no track end", &names),
+            "B.Cu: a 0.100 mm track may end at (1, 2); F.Cu: the contact holds no track end"
+        );
+        // Not a layer of the list, or no colon: as it was.
+        assert_eq!(name_layers("layer 9: x", &names), "layer 9: x");
+        assert_eq!(name_layers("the layer 1 of it", &names), "the layer 1 of it");
     }
 }
