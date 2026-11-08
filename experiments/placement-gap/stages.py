@@ -32,9 +32,6 @@ and with a variant's start (`PCB_PLACER_START`):
   seats the designer's poses, then the refinement (its `legal` stage is
   the minimal legalisation, its `final` the refinement from there);
 - `off`: `ours` without the trace (the identity check of the dump);
-- `glue-multi`: `ours` with the stacks of parts with three nets or more
-  glued into banks in the descent (`PCB_PLACER_STACKS`; the variants
-  `bank`, `glue` of 2026-11-08 are gone with their switch values);
 - `<variant>-noanneal`: the variant without the anneal
   (`PCB_PLACER_SKIP_ANNEAL`: each level's legaliser seats the global
   placement's poses).
@@ -119,10 +116,6 @@ VARIANTS = {
     # `ours` with the placer's debug lines in place.log (the skeleton's
     # parts without a place, the levels' walk).
     "debug": {"PCB_PLACER_DEBUG": "1"},
-    # The multi-net stacks glued into banks in the descent (the
-    # measurement's switch; docs/placer.md, "The netlist's stacks are lost
-    # in the descent, not at the start (2026-11-08)").
-    "glue-multi": {"PCB_PLACER_STACKS": "glue-multi"},
     "global-all": {"PCB_PLACER_START_STAGE": "global"},
     "global-active": {"PCB_PLACER_START_STAGE": "global"},
     "anneal": {"PCB_PLACER_START_STAGE": "anneal"},

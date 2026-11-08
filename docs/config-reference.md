@@ -42,7 +42,7 @@ The environment variables are indexed in the hand-over
 | [Layout settings: race_probe](#layout-settings-race_probe) | 3 | 3 | 0 | 3 | 3 |
 | [Layout settings: move_descent](#layout-settings-move_descent) | 7 | 7 | 0 | 7 | 0 |
 | [Placer core](#placer-core) | 13 | - | 0 | 13 | - |
-| [Placer core: global](#placer-core-global) | 14 | - | 0 | 14 | - |
+| [Placer core: global](#placer-core-global) | 13 | - | 0 | 13 | - |
 | [Placer core: anneal](#placer-core-anneal) | 8 | - | 0 | 8 | - |
 
 ## Router settings
@@ -553,7 +553,6 @@ The `move_descent` object of the layout settings (an experiment, off when absent
 | `global.frame_interval` | `usize` | `5` | - | Every this many iterations the poses are kept as a frame (for animations); 0 keeps none but the last. |
 | `global.seed` | `u64` | `1` | `seed` | Seed of the start's noise: the parts start near the fixed parts' pin centroid (or the board's centre), the fillers anywhere. |
 | `global.warm` | `Option<std::sync::Arc<Vec<bool>>>` | unset | - | A diagnostic warm start (`crate::Start`): per component, whether it starts at its pose's centre without the start's noise. `None`: every part from the start point. |
-| `global.stacks` | `Stacks` | `Off` | - | What the global placement does with the netlist's stacks (`Stacks`; by default the measurement switch `PCB_PLACER_STACKS`, off where it is unset). |
 
 ## Placer core: anneal
 

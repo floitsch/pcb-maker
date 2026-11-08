@@ -20,18 +20,17 @@ used to be here; code comments and docs that cite `docs/handover.md,
   2683 -> 2668 unconnected (RP2040_base 20 -> 5); expansion tier 25 -> 26
   (backplane); fingerprints and short tier unchanged. Open problem 2.
 
-- **The netlist's stacks (branch netlist-stacks, 2026-11-08).** The
-  netlist start's stacks (parts on the same nets on one spot) are lost in
-  the global placement's descent, not at the start: a bank at the start is
-  undone wherever no wire holds the parts. Glued through the descent
-  (`PCB_PLACER_STACKS=glue`, a measurement switch, off), video's memory
-  modules seat in their skeletons and its first route goes 116 -> 2 open
-  terminals (median, all five seeds); stage 1 over the dense set fails its
-  bar (-1.2 %, p 0.347: the capacitor banks are other draws, MegaDrive
-  +22 %). Glued for parts with three nets or more only (`glue-multi`:
-  video alone on the dense set) -1.4 %, p 0.031, ten boards unchanged.
-  The 4in1-mini's courtyard level is not its routing loss. Stage 2 is the
-  coordinator's call. Open problem 4.
+- **The netlist's stacks (branch netlist-stacks, 2026-11-08; not
+  taken).** The netlist start's stacks (parts on the same nets on one
+  spot) are lost in the global placement's descent, not at the start: a
+  bank at the start is undone wherever no wire holds the parts. Glued
+  through the descent, video's memory modules seat in their skeletons:
+  KiCad unconnected 92 -> 0 by the median, better on five of five seeds,
+  three strict passes. Stage 2 over the 19 sweep boards the multi-net rule
+  acts on (census of 155 boards): SNSP-CPU-01, katia and RP2040_base worse
+  beyond their seed spread, vaio_re's one strict pass lost; by the rule the
+  switch and the glue code are gone (in the branch's history). Open
+  problem 4.
 
 - **The passives' stall and the netlist's stacks (branch passives-descent,
   2026-11-08).** The passives' stall around a held skeleton costs nothing
@@ -713,34 +712,29 @@ ranks what keeps the designer tier's 41 failing boards open.
    the switch removed. Next candidates then: the 4in1-mini's bulk-capacitor
    bank and for video a stack's spread that does not reach the 4in1's
    MOSFET pairs and passives.
-   **The netlist's stacks (2026-11-08, placer.md "The netlist's stacks are lost in the descent, not at the start (2026-11-08)")**: a stack (`stacks.rs`) is movable parts on one side
-   whose nets have nine tenths in common (every net for parts with fewer
-   than ten; video's modules, each its own `RAS<k>-`, 0.96; no MOSFET and
-   gate resistor, no half bridge, no capacitors on different rails) and
-   whose solved bodies overlap; it starts as a bank at its pitch (the shape
-   adding the least wire). Stage 0: stacks are on every dense board, the
-   same-net ones capacitors on a rail and ground. A bank at the start is
-   undone by the descent where no wire holds the parts (the 4in1-mini's 22
-   CL: spread 1.37 after the descent from one spot, 1.39 from the bank;
-   x1933 had them as spread): "interchangeable parts only" changed nothing
-   because it ran in the skeleton's phase, where the capacitors are absent.
-   Glued (a bank moves as one body in the descent): video keeps a skeleton
-   on five of five seeds (main one), 15 of 20 seat (8 of 16), its active
-   parts at 0.22 to 0.33 / 0.68 to 0.93 against the designer's (main 0.41
-   to 0.73 / 0.24 to 0.72); the 4in1-mini's plain placements seat without
-   touching courtyards on about half their seeds (kept on three of five
-   rows), its skeletons never; the 4in1's objective 1.01 and 1.05. Stage 1
-   (`glue`): first-route open -1.2 % weighted, sign-flip p 0.347, NOT the
-   bar; video 116 -> 2 (all five), the 4in1-mini -1.0 %, MegaDrive +22 %.
-   `glue-multi` (parts with three nets or more: video alone): -1.4 %, p
-   0.031, every pair sum falls, video 116 -> 3. **Open**: stage 2 of
-   `glue-multi` (video's full layouts; repeated multi-net parts in the
-   corpus), the 4in1-mini's skeletons that need the courtyards (a probe
-   keeping its 22-capacitor bank in the skeleton: every seed falls back,
-   the plain placements seat level 7 on 7 of 15), and the anneal that
-   takes a glued capacitor bank apart.
-   Also: stages.py ran every variant but `ours` and `off` from the
-   designer's poses (`netnoise`, `netpush` of 2026-11-07 among them).
+   **The netlist's stacks (2026-11-08, placer.md "The netlist's stacks
+   are lost in the descent, not at the start (2026-11-08)"; not taken)**:
+   a stack is movable parts on one side whose nets have nine tenths in
+   common and whose solved bodies overlap. Stage 0: stacks are on every
+   dense board, the same-net ones capacitors on a rail and ground; a bank
+   at the start is undone by the descent where no wire holds the parts
+   (the 4in1-mini's 22 CL as spread after the descent from one spot as
+   from the bank, and as x1933's), and "interchangeable parts only" changed
+   nothing because it ran in the skeleton's phase, where the capacitors are
+   absent. Glued (a bank moves as one body in the descent), video keeps a
+   skeleton on five of five seeds and its active parts lie near the
+   designer's (0.22 to 0.33 / 0.68 to 0.93). Stage 1 of `glue`: -1.2 %, p
+   0.347 (capacitor banks: other draws). Stage 2 of `glue-multi` (parts
+   with three nets or more) on the 19 sweep boards it acts on: video 92
+   -> 0 unconnected (five of five, three strict passes), but SNSP-CPU-01
+   (9.8 -> 16.4), katia and RP2040_base worse beyond their spread and
+   vaio_re's strict pass lost: removed by the rule. **Open**: a rule by
+   bus width (24 nets or more: video, SNSP, mackerel, the 486) with
+   SNSP's loss explained; the 4in1-mini's skeletons that need the
+   courtyards (with the glue its plain placements seat level 7 on about
+   half their seeds, its skeletons never; a probe keeping the
+   22-capacitor bank in the skeleton made every seed fall back); the
+   anneal that takes a glued capacitor bank apart.
 5. **Starved thermals as the only failure** on complete boards (rosco,
    Castor, mackerel-30, k30, mackerel-08, Hub, PixelWave, BAGEL; counts
    fell to 0-5 since the spoke model). Since 2026-10-21
@@ -1357,7 +1351,6 @@ Switches and experiment hooks (change the result):
 - `PCB_PROBES_SIDE_BY_SIDE`: `N`: at most N probes of the probe ladder at once (1: one after the other).
 - `PCB_PLACER_START`: `<board>`: a diagnostic start: the placer's stages from `PCB_PLACER_START_STAGE` on start from this board's poses, by reference (docs/placer.md, "Where the arrangement is lost (2026-11-04)").
 - `PCB_PLACER_START_STAGE`: with `PCB_PLACER_START`: `global` (default: the global placement starts from the poses), `anneal` (no global placement), `legalize` (no global placement and no anneal: the legaliser seats the poses, the refinement follows).
-- `PCB_PLACER_STACKS`: a measurement switch (until the coordinator decides on stage 2): `glue`, the netlist's stacks (parts that share nine tenths of their nets and whose solved bodies overlap) start as banks at their pitch and move as one body in the global placement's descent; `bank`, the banks at the start only; `glue-multi`, `glue` for parts with three nets or more only (video's memory modules; no capacitor on a rail and ground); `glue-same`, `bank-same`: only parts that share every net (docs/placer.md, "The netlist's stacks are lost in the descent, not at the start (2026-11-08)").
 - `PCB_PLACER_SKIP_ANNEAL`: a diagnostic: no anneal at any level; each level's legaliser seats the global placement's poses (or `PCB_PLACER_START`'s), the refinement follows (docs/placer.md, "Where the arrangement is lost (2026-11-04)").
 - `PCB_PLACER_START_PARTS`: `<file>`: with `PCB_PLACER_START_STAGE=global`, a JSON list of `REF#n` (the n-th footprint of that reference): only these start from the board's poses, the others from the placer's own start.
 

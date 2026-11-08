@@ -11,32 +11,33 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
-## Committed on 2026-11-08 (the netlist's stacks: lost in the descent; glued banks, a measurement switch)
+## Committed on 2026-11-08 (the netlist's stacks: lost in the descent, not at the start; glued banks measured and not taken)
 
-Branch netlist-stacks (docs/placer.md "The netlist's stacks are lost in the descent, not at the start (2026-11-08)"; everything in `build/glob3/`).
+Branch netlist-stacks (docs/placer.md "The netlist's stacks are lost in
+the descent, not at the start (2026-11-08)"; everything in `build/glob3/`).
 
-- **Stacks** (`crates/pcb-placer/src/stacks.rs`: `net_keys`, `shared`,
-  `find_stacks`, `bank_columns`, `bank_centers`; `global::spread_stacks`,
-  `GlobalConfig::stacks`, `Stacks`): parts on one side whose nets have a
-  share in common (0.9) and whose solved bodies overlap start as a bank at
-  their pitch; glued, a bank moves as one body in the descent (its
-  members' summed forces over their summed preconditioners, their angles
-  kept). Behind the measurement switch `PCB_PLACER_STACKS` (`bank`,
-  `glue`, `glue-same`, `bank-same`, `glue-multi`), off by default: no
-  placement changes without it.
-- **The trace** has each part's pin nets and the nets' table; `stages.py
-  stacks` measures the stacks per seed and phase, the variants `bank`,
-  `glue`, `glue-multi`.
-- **Stage 0**: the descent undoes a bank at the start wherever no wire
-  holds the parts; glued, video's skeletons seat (a skeleton kept on five
-  of five seeds) and its active parts lie near the designer's; the
-  4in1-mini's plain placements seat without touching courtyards on about
-  half their seeds, its skeletons never.
-- **Stage 1** (`glue`, five seed pairs, first route): -1.2 %, sign-flip p
-  0.347, NOT the bar (about -5 % at p <= 0.25); video 116 -> 2 open by the
-  median, MegaDrive +22 %, the 4in1-mini -1.0 %. `glue-multi` (video
-  alone on the dense set): -1.4 %, p 0.031, every pair sum falls. Stage 2
-  is the coordinator's call; the switch stays until then.
+- **Stays**: the trace has each part's pin nets and the nets' table;
+  `stages.py stacks` measures the netlist's stacks per seed and phase (the
+  coincident stacks at the solve, the same-net groups, their arrangement
+  at each stage, the levels that left members out); `screen.py
+  --board-file` runs a stage 2 on the boards a change acts on.
+- **Measured and removed** (in the branch's history, commit 3fe37485 and
+  its parents): stacks (`stacks.rs`: parts with nine tenths of their nets
+  in common whose solved bodies overlap) spread into banks at the start
+  and glued through the descent (`global::spread_stacks`, `Stacks`), the
+  switch `PCB_PLACER_STACKS` (`bank`, `glue`, `glue-multi`) and the census
+  probe `PCB_PLACER_STACKS_CENSUS`.
+- **Stage 0**: the descent undoes a bank at the start where no wire holds
+  the parts; glued, video's skeletons seat.
+- **Stage 1** (`glue`, the dense set, first route): -1.2 %, p 0.347, not
+  the bar; video 116 -> 2 open terminals.
+- **Census and stage 2** (`glue-multi`, parts with three nets or more): 24
+  of 155 boards place differently (19 sweep, 5 expansion, the latter routed
+  from the designer's placement); full layouts on the 19 at five seeds:
+  video 92 -> 0 unconnected (five of five, three strict passes),
+  SNSP-CPU-01, katia and RP2040_base worse beyond their spread, vaio_re's
+  strict pass lost (38 -> 40 strict over the set): not taken by the rule.
+
 ## Committed on 2026-11-08 (fresh-agent trial 8: a bank of capacitors, pin rows, an HDI board, a supply drawn wide)
 
 Branch fresh-agent-trial-8 (`build/ux8/pcb-maker-b` to `-e`).

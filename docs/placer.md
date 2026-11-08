@@ -10539,9 +10539,13 @@ stall costs nothing; the netlist's stacks and the bulk capacitors do
 losses: the 4in1-mini's 22 bulk capacitors CL32 to CL55 (+BATT and GND)
 solved to one spot and the board needing touching courtyards on every
 seed, and video's eight memory modules within 1 mm and its skeletons
-falling back. The bet: spread a stack as a bank at the start.
+falling back. The bet: spread a stack as a bank at the start. **Not
+taken** (stage 2 below): the code (`stacks.rs`, `global::spread_stacks`,
+the glue in the descent, the census probe) is in the branch's history
+(commit 3fe37485 and its parents); the trace's nets and `stages.py stacks`
+stay.
 
-**A stack** (`crates/pcb-placer/src/stacks.rs`): movable parts on one
+**A stack** (`crates/pcb-placer/src/stacks.rs`, in history): movable parts on one
 side whose nets have at least a share in common (the nets on both over
 the nets on either, `stacks::shared`; two or more nets each) and whose
 solved bodies, halos included, overlap (`find_stacks`, chained). **The
@@ -10550,9 +10554,9 @@ nets that is "share every net"; video's modules (51 nets each, 50 shared,
 each its own 3-pin `RAS<k>-`) share 0.96. A MOSFET and its gate resistor
 (one net of four, 0.25), a half bridge's two MOSFETs (0.2), decoupling
 capacitors on different rails (one of three) are not reached. On the
-nine dense boards the place checks run (the kept seed of layout seed 1,
-both phases' solves), the rule reaches beyond "share every net" only
-video's modules (28 pairs, 0.96 each).
+nine dense boards the place checks run, the rule reaches beyond "share
+every net" video's modules (28 pairs, 0.96 each) by the kept seed's
+traces; the census below finds SNSP-CPU-01's U15 and U16 too.
 
 **The bank** (`spread_stacks` in `global.rs`, after the solve, before the
 tenth of the noise): the stack's members fill cells of the largest
@@ -10576,8 +10580,8 @@ half extent; any nets) and the groups on the same nets, with their
 arrangement at the phase's stages (the rms distance from the centroid
 over the radius of their area's disc, a packed cluster about 0.7; the
 anisotropy; row, cluster or scattered), the centroid's move, the levels
-whose walk left members out. Variants `bank`, `glue` (and `-debug`) set
-the measurement's switch `PCB_PLACER_STACKS`.
+whose walk left members out. The variants `bank`, `glue` and `glue-multi`
+set the measurement's switch `PCB_PLACER_STACKS` (gone with the code).
 
 **Stage 0, the stacks** (the nine dense boards the race places, layout
 seeds 1 and 101, the 4in1-mini and video at seeds 1 to 401, the layout's
@@ -10739,34 +10743,103 @@ nightly and eleven after it, `build/glob3/stage1`, 2026-11-08 04:21 to
   apart again (stage 0): a different draw of each seed, not a lever.
 
 **Glued for parts with three nets or more only** (`glue-multi`: not the
-capacitors on a rail and ground; on the dense set that is video's modules
-alone, by the place checks' traces). The on side for video at all five
+capacitors on a rail and ground; on the dense set video's modules and, as
+the census found later, SNSP-CPU-01's U15 and U16; the traces of the kept
+seeds had shown video's alone). The on side for video at all five
 seeds and for MegaDrive and the 4in1-mini (`build/glob3/stage1-multi`,
 binary `pcb-maker-g`; 16 runs): MegaDrive and the 4in1-mini equal off on
 every seed (byte for byte the placement of off), off's video seed 1 by
 `-g` equals `-e`'s (92). Video **116 to 3** by the median (3, 0, 34, 2, 3
 against 92, 159, 116, 111, 165); with every other board as off,
-`placer_ab` (`build/glob3/stage1-multi-compare.md`): weighted **-1.4 %**
+`placer_ab` (`build/glob3/stage1-multi-compare.md`; SNSP-CPU-01 taken
+as off there, which the census shows wrong): weighted **-1.4 %**
 (the noise file's interval -2.5 to -0.3 %), **sign-flip p 0.031** (the
 least five pairs allow; the noise file's p 0.017), every pair sum falls
 (783 to 694, 706 to 547, 667 to 585, 733 to 624, 796 to 634), sum of
 medians 744 to 631 (-15.2 %). One board better, ten equal: the rule's
 weighted effect cannot reach -5 % from video alone.
 
-**Decision: the coordinator's (stage 2).** Stage 1 of `glue` as specified
-(nine tenths of the nets, capacitors included) fails the bar (-1.2 %, p
-0.347). What it found: the netlist's stacks are lost in the descent, not
-at the start; glued through the descent, video's memory modules seat in
-their skeletons and its first route goes from 116 to 2 or 3 open terminals
-on every seed, the board whose placement loses most in the designer tier
-(+201). `glue-multi` is that and nothing else on the dense set (-1.4 %, p
-0.031, ten boards unchanged); its stage 2 would be video's full layouts
-at five seeds and a look at the corpus boards with repeated multi-net
-parts. The 4in1-mini's courtyard level is not its routing loss; its
-skeletons are what needs the courtyards (the probe above). The switch
-`PCB_PLACER_STACKS` stays as the measurement's until the decision; off by
-default, nothing changes without it. CPU: stage 0's 75 place checks 15 330
-CPU s, stage 1 60 671 s, `glue-multi` 9 487 s; about 24 CPU hours.
+**After stage 1 (the coordinator):** `glue` out (its switch values gone);
+`glue-multi` to a stage 2 scoped to where it acts, since video is the
+designer tier's largest placement loss (+201). The rule: `glue-multi`
+becomes the code path without a switch if video's KiCad unconnected falls
+on at least four of five seeds, no qualifying board is worse beyond its
+seed spread and no strict pass is lost; otherwise the switch and the glue
+go out.
+
+**The census** (`PCB_PLACER_STACKS_CENSUS=<file>`, a probe in the branch's
+history: the whole board's netlist solve under the multi-net rule, its
+stacks written, the process ended; seconds per board, `build/glob3/census`)
+on the 109 sweep boards and the 46 of the expansion intake: 27 boards have
+a stack. Place checks at the layout's seed off and on, the placed boards'
+sha256: the placement differs on 24 (19 sweep, 5 expansion) and is the same
+on the three PolyKybd molecule panels the census also names (their copies
+are held in the flow); protoesp and Glasgow (no stack) are byte for byte
+the same. The 19 sweep boards and their stacks: video (U12 to U19),
+SNSP-CPU-01 (U15, U16), mackerel-08-v1 (U6 to U12), mackerel-10-v1 (U3 and
+U4, U5 and U6), homebrew_486 (U11 to U18 in four pairs), katia (U6, U10),
+silkscreen_pcb (U13, U14), neotron-pico (J1303, U1302), RP2040_base (J4,
+U30), vaio_re (Q3, Q4), capybully (SW12 and SW13, SW37 and SW48), Batch_1
+(ESD1 and 2, three groups of connectors, LDO1 to 3, seven RGB pairs),
+SUMEC_MK_IV (J3, J4, J7), OM-60-Flex (J2, J3), TelemetryOnboard (three
+connector groups), the 4in1 panel, the OpenRX panel and two molecule
+panels; the five expansion boards (repeated connectors, J and U pairs) are
+routed from the designer's placement in their tier, the short tier's
+twelve have none: both identical by construction. The probe solves the
+whole problem, not the race's phases: a stack only a phase's solve makes
+would be missed.
+
+**Stage 2** (full layouts, tasks v7, `--quality`, the reference rates,
+`--expected-gb` from the nightly's estimates; the 19 sweep boards at the
+five screen seeds, both arms on `build/glob3/pcb-maker-h` = x1938 with the
+switch, off without it (the stack code does not run there); `screen.py
+--board-file --full --quality`, eleven in flight, `build/glob3/stage2`,
+2026-11-08 08:25 to 13:02; 233 104 CPU seconds: off 117 233, on 115 871).
+KiCad unconnected per seed (1, 101, 201, 301, 401), strict passes:
+
+| board | off (mean, range) | on (mean) | strict off / on |
+| --- | --- | --- | ---: |
+| video | 79/115/92/78/120 (96.8, 78-120) | 0/0/12/0/3 (3.0) | 0 / 3 |
+| SNSP-CPU-01 | 2/18/8/17/4 (9.8, 2-18) | 16/5/14/28/19 (16.4) | 0 / 0 |
+| katia | 3/3/2/3/4 (3.0, 2-4) | 3/3/2/7/8 (4.6) | 0 / 0 |
+| RP2040_base | 38/38/35/37/38 (37.2, 35-38) | 36/36/38/41/45 (39.2) | 0 / 0 |
+| vaio_re | 1/4/1/1/0 (1.4, 0-4) | 1/1/3/2/4 (2.2) | 1 / 0 |
+| capybully | 3/0/1/0/2 (1.2, 0-3) | 1/0/0/3/2 (1.2) | 2 / 2 |
+| Batch_1 | 142/115/102/126/117 (120.4) | 122/109/108/124/136 (119.8) | 0 / 0 |
+| OpenRX-panel-rev2 | 75/79/95/83/82 (82.8) | 77/77/79/91/93 (83.4) | 0 / 0 |
+| SUMEC_MK_IV | 7/5/6/5/6 (5.8) | 4/6/6/6/6 (5.6) | 0 / 0 |
+| OM-60-Flex, TelemetryOnboard, homebrew_486, mackerel-08-v1, mackerel-10-v1, neotron-pico, silkscreen_pcb | 0 on every seed | 0 on every seed | 5 / 5 each |
+| 4in1 panel, two molecule panels | no result (the panel's boards are mixed) | no result | 0 / 0 |
+
+- `placer_ab compare` (KiCad unconnected, `build/glob3/stage2-compare.md`):
+  weighted -20.2 % (the boards with a noise entry: video and SNSP-CPU-01),
+  sign-flip p 0.033, the noise file's p 0.050; sum of medians 348 to 267;
+  every pair sum falls (350 to 260, 377 to 237, 342 to 262, 350 to 302,
+  373 to 316). Strict passes 38 to 40.
+- **Video falls on five of five seeds** (92 to 0 by the median; complete
+  on seeds 1, 101 and 301: three strict passes gained).
+- **Worse beyond the seed spread**: SNSP-CPU-01 (9.8 to 16.4, worse on four
+  seeds, 19 and 28 above off's highest 18), katia (7 and 8 against off's 2
+  to 4), RP2040_base (41 and 45 against 35 to 38). **A strict pass lost**:
+  vaio_re's seed 401 (0 to 4; off passes on one seed of five, on none);
+  capybully's moves from seed 301 to 201.
+- **Decision (by the rule): not taken.** Video passes its part, but three
+  boards are worse beyond their spread and a strict pass is lost. The
+  switch `PCB_PLACER_STACKS` and the glue code are removed; the trace's
+  nets, `stages.py stacks` and `screen.py --board-file` stay. The finding
+  stands: the descent, not the start, scatters a stack where no wire holds
+  it, and glued through the descent video's memory modules seat in their
+  skeletons and route nearly complete. The parts the multi-net rule glues
+  differ in kind: video's modules have 67 nets, mackerel's and the 486's
+  RAM 30 to 32, SNSP's U15 and U16 28, katia's U6 and U10 three, vaio_re's
+  Q3 and Q4 three, RP2040_base's J4 and U30 six; a rule by bus width (24
+  nets or more: video, SNSP, mackerel, the 486, the 4in1 panel's U2) is
+  the candidate if the lever is taken up again, with SNSP's loss to
+  explain.
+
+CPU: stage 0 15 330 s, stage 1 60 671 s, `glue-multi`'s stage-1 rows
+9 487 s, the census and the identity place checks about 9 000 s, stage 2
+233 104 s; about 91 CPU hours.
 
 ## What went wrong on the way (kept as lessons)
 
