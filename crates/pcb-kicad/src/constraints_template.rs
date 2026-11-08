@@ -840,6 +840,12 @@ pub fn constraints_template(directory: &Path, board_id: &str) -> Result<serde_js
             widened.join(", ")
         ));
     }
+    let held: BTreeSet<String> = near
+        .iter()
+        .filter_map(|entry| entry["part"].as_str().map(str::to_string))
+        .collect();
+    let (rows, row_comments) = banks(&parts, &footprints, &held)?;
+    comment.extend(row_comments);
     comment.extend(length_rule_comments(directory, board_id, &path, &parts));
     comment.push("To fill in: parts that must not move (fixed), keepouts (antennas, mounting hardware), regions, the outline if the board has none (docs/constraints.md).".into());
     let mut template = serde_json::json!({
@@ -853,7 +859,101 @@ pub fn constraints_template(directory: &Path, board_id: &str) -> Result<serde_js
     if !near.is_empty() {
         template["near"] = near.into();
     }
+    if !rows.is_empty() {
+        template["row"] = rows.into();
+    }
     Ok(template)
+}
+
+/// The fewest parts that make a bank (`banks`).
+const BANK_PARTS: usize = 6;
+
+/// The gap the template keeps between a bank's pads (mm): a common copper
+/// clearance; the row's own check holds the project's.
+const BANK_GAP: f64 = 0.2;
+
+/// Banks of parts: `BANK_PARTS` or more two-pad parts of one footprint on
+/// the same two nets that no `near` entry holds (`held`): a bulk capacitor
+/// bank. The netlist's start puts parts on the same nets at one spot and
+/// the placement spreads them where they fit (trial 8: the 4in1-mini's 22
+/// 1206 capacitors on +BATT and GND came back around the board's edge; a
+/// row as the designer's block left 69 unconnected against 89, one layout
+/// each). Each becomes a `row` with columns at its pads' pitch (their span
+/// and `BANK_GAP`), the row across the parts' short side, about as wide as
+/// it is tall; with a comment.
+fn banks(
+    parts: &[Part],
+    footprints: &[&Expr],
+    held: &BTreeSet<String>,
+) -> Result<(Vec<serde_json::Value>, Vec<String>), String> {
+    let mut groups: BTreeMap<(String, String, String), Vec<usize>> = BTreeMap::new();
+    for (index, part) in parts.iter().enumerate() {
+        if held.contains(&part.reference) || part.pads.len() != 2 {
+            continue;
+        }
+        let (Some(a), Some(b)) = (&part.pads[0].1, &part.pads[1].1) else {
+            continue;
+        };
+        if a == b {
+            continue;
+        }
+        let (first, second) = if a < b { (a, b) } else { (b, a) };
+        groups
+            .entry((part.name.clone(), first.clone(), second.clone()))
+            .or_default()
+            .push(index);
+    }
+    let mut rows = Vec::new();
+    let mut comments = Vec::new();
+    for ((name, first, second), members) in groups {
+        let mut references: Vec<String> = members
+            .iter()
+            .map(|index| parts[*index].reference.clone())
+            .collect();
+        references.sort_by(|a, b| crate::canonical_order::natural_cmp(a, b));
+        references.dedup();
+        if members.len() < BANK_PARTS || references.len() < 2 {
+            continue;
+        }
+        // The pads' span on the board, as the first part (the row's
+        // leader) is turned.
+        let leader = members
+            .iter()
+            .copied()
+            .find(|index| parts[*index].reference == references[0])
+            .unwrap_or(members[0]);
+        let pads = crate::placement_constraints::pad_boxes(footprints[leader])?;
+        let Some(span) = pads.iter().map(|(bounds, ..)| *bounds).reduce(|a, b| {
+            [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])]
+        }) else {
+            continue;
+        };
+        let size = [span[2] - span[0], span[3] - span[1]];
+        let up = |value: f64| ((value + BANK_GAP) / 0.05 - 1.0e-9).ceil() * 0.05;
+        let (axis, pitch, row_pitch) = if size[0] <= size[1] {
+            ("x", up(size[0]), up(size[1]))
+        } else {
+            ("y", up(size[1]), up(size[0]))
+        };
+        let count = members.len();
+        let columns = ((count as f64 * row_pitch / pitch).sqrt().round() as usize).clamp(1, count);
+        let round = |value: f64| (value * 100.0).round() / 100.0;
+        rows.push(serde_json::json!({
+            "parts": references,
+            "pitch_mm": round(pitch),
+            "row_pitch_mm": round(row_pitch),
+            "columns": columns,
+            "axis": axis,
+        }));
+        comments.push(format!(
+            "row: {count} parts of {} on {first} and {second} ({}, ...) look like a bank (bulk capacitors). The placement starts every part where its nets pull it, which for parts on the same two nets is one spot, and spreads them where they fit; this row keeps them one block of {columns} columns, {} mm apart along the board's {axis} and {} mm between the lines (their pads' span and {BANK_GAP} mm, as turned now), as designers lay a bank (trial 8's 4in1-mini: 69 unconnected against 89, one layout each). Give the row's first part a place (place with x and y) where the bank belongs, or delete the entry to let the placer spread them.",
+            name.rsplit(':').next().unwrap_or(&name),
+            references.iter().take(3).cloned().collect::<Vec<_>>().join(", "),
+            round(pitch),
+            round(row_pitch),
+        ));
+    }
+    Ok((rows, comments))
 }
 
 #[cfg(test)]
@@ -890,6 +990,57 @@ mod tests {
                 (pad "2" smd rect (at -0.9 0) (size 0.9 1.2) (layers "F.Cu") (net 2 "GND"))))"#
         );
         fs::write(dir.join("t.kicad_pcb"), text).unwrap();
+    }
+
+    /// Six 1206 capacitors on +BATT and GND that no near entry holds, a
+    /// bank: one row with columns at their pads' pitch, across their short
+    /// side (trial 8's 4in1-mini). Five are no bank.
+    #[test]
+    fn a_bank_of_parts_on_two_nets_becomes_a_row() {
+        let template = |count: usize| {
+            let dir = std::env::temp_dir().join(format!("ux8-template-bank-{count}-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).unwrap();
+            // Turned 90 degrees: the pads (1.15 x 1.8, 2.95 mm apart) lie
+            // along the board's y, 1.8 mm across x.
+            let capacitor = |n: usize| {
+                format!(
+                    r#"(footprint "Capacitor_SMD:C_1206_3216Metric" (at 50 50 90) (property "Reference" "CL{n}") (property "Value" "4.7uF")
+                        (pad "1" smd roundrect (at -1.475 0 90) (size 1.15 1.8) (layers "F.Cu") (net 1 "+BATT"))
+                        (pad "2" smd roundrect (at 1.475 0 90) (size 1.15 1.8) (layers "F.Cu") (net 2 "GND")))"#
+                )
+            };
+            let parts: Vec<String> = (30..30 + count).map(capacitor).collect();
+            fs::write(
+                dir.join("t.kicad_pcb"),
+                format!(
+                    r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+                    (gr_rect (start 0 0) (end 100 100) (layer "Edge.Cuts")) {})"#,
+                    parts.join(" ")
+                ),
+            )
+            .unwrap();
+            let template = constraints_template(&dir, "t").unwrap();
+            fs::remove_dir_all(&dir).unwrap();
+            template
+        };
+        let six = template(6);
+        let row = &six["row"][0];
+        assert_eq!(row["parts"].as_array().unwrap().len(), 6);
+        assert_eq!(row["parts"][0], "CL30");
+        assert_eq!(row["axis"], "x");
+        assert_eq!(row["pitch_mm"], 2.0);
+        assert_eq!(row["row_pitch_mm"], 4.3);
+        assert_eq!(row["columns"], 4);
+        assert!(
+            six["comment"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|line| line.as_str().unwrap().starts_with("row: 6 parts of C_1206_3216Metric on +BATT and GND")),
+            "{six}"
+        );
+        assert!(template(5).get("row").is_none());
     }
 
     #[test]

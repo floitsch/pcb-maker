@@ -812,10 +812,16 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
                         + "\n",
                 )
                 .map_err(|error| format!("failed to write {file}: {error}"))?;
+                let rows = constraints["row"].as_array().map_or(0, Vec::len);
                 eprintln!(
-                    "constraints template: {file} ({} edge, {} near entries; read its comments)",
+                    "constraints template: {file} ({} edge, {} near entries{}; read its comments)",
                     constraints["edge"].as_array().map_or(0, Vec::len),
-                    constraints["near"].as_array().map_or(0, Vec::len)
+                    constraints["near"].as_array().map_or(0, Vec::len),
+                    if rows > 0 {
+                        format!(", {rows} row (a bank of parts on two nets)")
+                    } else {
+                        String::new()
+                    }
                 );
             }
             println!(
