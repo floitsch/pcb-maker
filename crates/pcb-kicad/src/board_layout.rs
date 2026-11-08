@@ -544,6 +544,12 @@ pub struct KiCadBoardLayoutResult {
     /// designer's placement at this budget gets the routing work this
     /// layout's last router got (review 2026-10-21, H3).
     pub final_ladder_budget_seconds: Option<f64>,
+    /// Whether the layout's routes had lattice lines at the pin rows from
+    /// the kept placement's probe on, and why, in one line (`pin_lines`
+    /// unset: the race's decision, `race_lines_probe`); absent where they
+    /// did not (the final ladder's own decision is in `routed`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pin_lines: Option<String>,
     pub moves: Vec<KiCadBoardLayoutMove>,
     /// What the move descent did (`move_descent`; absent when it did not
     /// run).
@@ -1304,6 +1310,118 @@ pub fn placement_check_config(
     Ok(placer_config)
 }
 
+/// Whether the layout's race decides the lines at the pin rows: the
+/// router config's `pin_lines` unset and no `PCB_ROUTER_PIN_LINES` (true
+/// puts them on every route of the layout, as before; false on none).
+pub(crate) fn race_lines_automatic(config: &KiCadBoardRouterConfig) -> bool {
+    config.pin_lines.is_none() && core::pin_lines::lines_override().is_none()
+}
+
+/// The lines at the pin rows decided at the kept placement's probe
+/// (docs/router.md, "A layout's rows decided by its probe's open pads (2026-11-08)"):
+/// where the race's probe of the placement it keeps left nets unfinished
+/// (`unfinished`) at pads of pin rows whose straight exit the regular
+/// lattice misses (`pin_lines::missed_exit_pads`, against
+/// `Router::unfinished_pads` within `OPEN_PAD_NEAR`), and a probe's work
+/// (`probe_seconds`) is at most `LINES_PROBE_SHARE` of the layout's work
+/// left (`left`), the first route starts over on the lattice with the
+/// lines: a router built with them probes as the race did (its count in
+/// the log beside the probe's without), and the first route resumes it;
+/// every route of the layout after it has the lines. Unlike route mode's
+/// probes, the count of that probe does not decide: on RP2040_base's
+/// layout the probe with lines left 82 nets unfinished against 75
+/// without, and the first route with them ended at 11 open terminals
+/// against 40 (`PCB_LAYOUT_LINES_PROBE=lead` keeps them only where the
+/// probe with them leaves a tenth fewer, `lines_lead`). Returns the work
+/// charged (that probe's search, as the race charges its probes; none
+/// where it did not run) and, where the lines are taken, the router and
+/// why. A placement whose probe leaves no pad at such a row routes as
+/// without it: nothing is built and nothing charged (the pads' lists read
+/// the board and the router's state).
+fn race_lines_probe(
+    board: &core::Board,
+    config: &core::Config,
+    kept: &core::router::Router,
+    unfinished: usize,
+    probe_seconds: f64,
+    left: f64,
+    router_mb: f64,
+) -> (f64, Option<(core::router::Router, String)>) {
+    if unfinished == 0 {
+        return (0.0, None);
+    }
+    let missed = core::pin_lines::missed_exit_pads(board, &config.pitches);
+    if missed.is_empty() {
+        return (0.0, None);
+    }
+    let open = kept.unfinished_pads(crate::board_router::OPEN_PAD_NEAR);
+    let at = crate::board_router::pads_at_rows(&open, &missed);
+    let verdict = crate::board_router::lines_probe_runs(
+        true,
+        unfinished,
+        at.len(),
+        probe_seconds,
+        Some(left),
+    );
+    eprintln!(
+        "placement race: the kept placement's probe left {unfinished} unfinished, {} pad(s) of them at pin rows the regular lattice misses ({} missed in {}){}",
+        at.len(),
+        missed.len(),
+        crate::board_router::parts_of(&missed).join(", "),
+        match verdict {
+            Ok(()) => format!(
+                ": the first route starts over with lines at the pin rows ({probe_seconds:.0} s of work probed again, {left:.0} s left)"
+            ),
+            Err(why) => format!(": no lines ({why})"),
+        }
+    );
+    if verdict.is_err() {
+        return (0.0, None);
+    }
+    let mut lines_config = config.clone();
+    lines_config.pin_lines = core::pin_lines::Lines::Exits;
+    crate::ledger::reserve_at_least(
+        crate::board_router::resident_mb() + router_mb,
+        "the race's probe with lines at the pin rows",
+    );
+    let mut router = core::router::Router::new(board, &lines_config);
+    let lines_unfinished = router.probe(probe_seconds);
+    let work = router.expansions() as f64 / core::router::expansions_per_second();
+    let lead_only = crate::board_router::layout_lines_probes().lead;
+    let taken = !lead_only || crate::board_router::lines_lead(unfinished, lines_unfinished);
+    let (without, with) = (kept.probe_standing(), router.probe_standing());
+    eprintln!(
+        "placement race: the kept placement's probe with lines at the pin rows: {lines_unfinished} nets unfinished, {unfinished} without (work {work:.0} s; open terminals {} against {}, in conflict {} against {}): {}",
+        with.open_terminals,
+        without.open_terminals,
+        with.conflicted,
+        without.conflicted,
+        if taken {
+            "the first route and every route after it with the lines".to_string()
+        } else {
+            format!(
+                "the probe without lines leads (PCB_LAYOUT_LINES_PROBE=lead: the lines only at {:.0} % fewer)",
+                crate::board_router::LINES_PROBE_MARGIN * 100.0
+            )
+        }
+    );
+    let parts =
+        crate::board_router::parts_of(&at.iter().map(|pad| (*pad).clone()).collect::<Vec<_>>());
+    (
+        work,
+        taken.then(|| {
+            (
+                router,
+                format!(
+                    "decided at the kept placement's probe: it left {unfinished} nets unfinished with {} pad(s) at pin rows the regular lattice misses ({}), so the first route started over with lines at those rows (its probe {lines_unfinished} nets unfinished) and every route after it had them",
+                    at.len(),
+                    parts.join(", ")
+                ),
+            )
+        }),
+    )
+}
+
 pub fn layout_kicad_board(
     source_directory: &Path,
     board_id: &str,
@@ -1921,6 +2039,9 @@ pub fn layout_kicad_board(
     let mut routed_pool_index = labels[0];
     let mut race = Vec::new();
     let mut race_report = None;
+    // Why the routes from the kept placement's probe on have lines at the
+    // pin rows (`race_lines_probe`), where they do.
+    let mut lines_why: Option<String> = None;
     let (mut router, mut result) = if seeds == 1
         && pin_swaps.is_none()
         && !others.is_empty()
@@ -2216,6 +2337,31 @@ pub fn layout_kicad_board(
             problem = lower_placement(&pcb, &placer_config)?;
             relaxation.apply(&mut problem.problem);
         }
+        // The lines at the pin rows, decided at the kept placement's probe
+        // by the pads it left unfinished (`race_lines_probe`; the setting
+        // unset; not with the repair probe, whose probe is a whole first
+        // route).
+        if !repair
+            && crate::board_router::layout_lines_probes().race
+            && race_lines_automatic(router_config)
+        {
+            let left = (work_deadline - work - pool_excess).max(0.0);
+            let (lines_work, lead) = race_lines_probe(
+                &board,
+                &core_config,
+                &kept,
+                race[chosen],
+                probe_seconds,
+                left,
+                router_mb,
+            );
+            work += lines_work;
+            if let Some((mut lines_router, why)) = lead {
+                lines_router.config_mut().verbose = core_config.verbose;
+                kept = lines_router;
+                lines_why = Some(why);
+            }
+        }
         let kept_result = chosen;
         routed_pool_index = labels[chosen];
         race_report = Some(KiCadRaceReport {
@@ -2266,6 +2412,18 @@ pub fn layout_kicad_board(
         let (router, result, first_work) = route_once(&board);
         work += first_work;
         (router, result)
+    };
+    // Decided at the race: every route after it (the moves' in place, the
+    // final ladder's attempts) has the lines.
+    let lines_config;
+    let router_config = if lines_why.is_some() {
+        lines_config = KiCadBoardRouterConfig {
+            pin_lines: Some(true),
+            ..router_config.clone()
+        };
+        &lines_config
+    } else {
+        router_config
     };
     let mut best = score(&result, &board);
     let first_route_seconds = first_started.elapsed().as_secs_f64();
@@ -3337,6 +3495,11 @@ pub fn layout_kicad_board(
         fs::write(&placed_board, format!("{}\n", encode(&placed_pcb)))
             .map_err(|error| format!("failed to write {}: {error}", placed_board.display()))?;
     }
+    // Lines the race decided: the board kept (the layout's own or the
+    // final ladder's, which had them from the router config) says why.
+    if let Some(why) = &lines_why {
+        routed.pin_lines = Some(why.clone());
+    }
     let routed_work = routed.work_seconds;
     let kicad_check_work_seconds = checks_charged.work();
     let layout = KiCadBoardLayoutResult {
@@ -3356,6 +3519,7 @@ pub fn layout_kicad_board(
         stopped_after_first_route: config.stop_after_first_route,
         placement_digest,
         final_ladder_budget_seconds,
+        pin_lines: lines_why,
         moves,
         move_descent,
         outline_sizing,

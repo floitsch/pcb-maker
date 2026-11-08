@@ -640,18 +640,7 @@ impl LadderRunner for KiCadRunner<'_> {
         let Ok(board) = lower(self.parsed, attempt, true).map(|lowered| lowered.board) else {
             return Vec::new();
         };
-        let grid = core::grid::Grid::choose(&board, &core_config(attempt).pitches);
-        let lines: Vec<core::pin_lines::PinLine> = core::pin_lines::pin_lines(&board, grid.pitch)
-            .into_iter()
-            .filter(|line| line.kind == core::pin_lines::LineKind::Exit)
-            .collect();
-        let mut pads: Vec<String> = core::pin_lines::missing(&lines, &grid)
-            .into_iter()
-            .map(|line| line.label.clone())
-            .collect();
-        pads.sort();
-        pads.dedup();
-        pads
+        core::pin_lines::missed_exit_pads(&board, &core_config(attempt).pitches)
     }
 
     fn pour_loss(&self, directory: &Path, attempt: &KiCadBoardRouterConfig) -> Option<f64> {

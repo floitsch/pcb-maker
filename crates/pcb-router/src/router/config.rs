@@ -168,8 +168,10 @@ pub struct Config {
     /// (2026-11-07)"); the KiCad ladder turns it on at its probes or after
     /// its leader's run where the open pads are at such rows ("The rows
     /// decided at the probes (2026-11-08)", "Lattice lines where the rows
-    /// are open (2026-11-08)"), and the KiCad router settings' `pin_lines`
-    /// and `PCB_ROUTER_PIN_LINES` set it.
+    /// are open (2026-11-08)"), a KiCad layout at the kept placement's
+    /// probe ("A layout's rows decided by its probe's open pads (2026-11-08)"), and
+    /// the KiCad router settings' `pin_lines` and `PCB_ROUTER_PIN_LINES`
+    /// set it.
     pub pin_lines: crate::pin_lines::Lines,
     /// The pour model as the measurement of a written board takes it
     /// (`measured_board`'s starved thermals, its solid step, and

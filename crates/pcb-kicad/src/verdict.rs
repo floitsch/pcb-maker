@@ -1937,9 +1937,13 @@ fn fine_rows(note: &KiCadHotSpotNote, board: &crate::Expr) -> Vec<(String, f64)>
 }
 
 /// A layout left open whose hot spot lies at a fine-pitch row, routed
-/// without lines at the pin rows: route mode's ladder decides them by
-/// itself, a layout's routes only by the setting (trial 8: the rp2040
-/// motor controller's hot spot at U15's 0.4 mm row).
+/// without lines at the pin rows: the layout decides them by itself at
+/// the kept placement's probe and at its final ladder's probes (since
+/// 2026-11-08, docs/router.md "A layout's rows decided by its probe's open pads"),
+/// so here the probes left no pad at a row the regular lattice misses, or
+/// the probe with lines did not lead; the setting forces them on every
+/// route (trial 8: the rp2040 motor controller's hot spot at U15's 0.4 mm
+/// row, before the layout decided them).
 fn layout_pin_lines_action(facts: &KiCadRunFacts) -> Option<String> {
     if facts.command != "layout-kicad-board" || facts.pin_lines.is_some() {
         return None;
@@ -1957,7 +1961,7 @@ fn layout_pin_lines_action(facts: &KiCadRunFacts) -> Option<String> {
         .map(|(part, pitch)| format!("{part} ({pitch} mm pitch)"))
         .collect();
     Some(format!(
-        "the hot spot lies at the pin rows of {}: a layout routes them on the regular lattice unless the router config says \"pin_lines\": true (route mode decides it by itself), which puts lattice lines through the rows' pads; lay out again with it and compare (trial 8: RP2040_base's layout at the reference's rates, one placement: 38 unconnected without, 4 with; the 4in1-mini's, 88 either way)",
+        "the hot spot lies at the pin rows of {}, routed on the regular lattice: the layout puts lattice lines through such rows' pads by itself only where its probes leave pads open at rows the regular lattice misses and the probe with the lines leaves a tenth fewer nets unfinished, which did not happen here; \"pin_lines\": true in the router config puts them on every route: lay out again with it and compare (trial 8, before the layout decided them: RP2040_base at the reference's rates, one placement: 38 unconnected without, 4 with; the 4in1-mini's, 88 either way)",
         listed.join(", ")
     ))
 }
@@ -5153,6 +5157,9 @@ mod tests {
         };
         assert!(named(&facts), "{:?}", judge(&facts).next_actions);
         facts.pin_lines = Some("on: pin_lines true in the router config".into());
+        assert!(!named(&facts));
+        // The layout decided them itself: no action asks for them.
+        facts.pin_lines = Some("decided at the kept placement's probe: ...".into());
         assert!(!named(&facts));
         facts.pin_lines = None;
         facts.command = "route-kicad-board".into();

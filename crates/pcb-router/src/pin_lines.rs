@@ -360,6 +360,26 @@ pub fn missing<'a>(lines: &'a [PinLine], grid: &crate::grid::Grid) -> Vec<&'a Pi
         .collect()
 }
 
+/// The pads (labels, "U19.12") of pin rows whose straight exit the
+/// regular lattice of `pitches` (`Grid::choose`) misses: where lines at the
+/// pin rows can open a pad. Sorted, without repeats. Route mode's ladder
+/// and a layout's race ask it once a board (docs/router.md, "The rows
+/// decided at the probes (2026-11-08)").
+pub fn missed_exit_pads(board: &Board, pitches: &[f64]) -> Vec<String> {
+    let grid = crate::grid::Grid::choose(board, pitches);
+    let lines: Vec<PinLine> = pin_lines(board, grid.pitch)
+        .into_iter()
+        .filter(|line| line.kind == LineKind::Exit)
+        .collect();
+    let mut pads: Vec<String> = missing(&lines, &grid)
+        .into_iter()
+        .map(|line| line.label.clone())
+        .collect();
+    pads.sort();
+    pads.dedup();
+    pads
+}
+
 /// The positions to add per axis for `lines`: one per group of lines
 /// whose slack intervals meet (the middle of their common part), groups
 /// closer than `min_gap` merged. Sorted.
@@ -971,6 +991,34 @@ mod tests {
         };
         assert_eq!(missing(&lines, &grid(0.0)).len(), 5);
         assert!(missing(&lines, &grid(0.03)).is_empty());
+    }
+
+    #[test]
+    fn the_pads_the_regular_lattice_misses_are_the_minority_rows() {
+        // Seven pads at phase 0 of the 0.1 mm lattice and three at 0.03 mm
+        // (another part): the narrow pads vote for phase 0, so the lattice
+        // misses the second part's exits and holds the first's.
+        let mut board = row_board([2.0, 3.0], 7, 0.4, [0.2, 0.8], 0.2, 0.2);
+        let other = row_board([2.03, 6.0], 4, 0.4, [0.2, 0.8], 0.2, 0.2);
+        let offset = board.obstacles.len();
+        for (index, mut obstacle) in other.obstacles.into_iter().enumerate() {
+            obstacle.label = format!("U2.{}", index + 1);
+            obstacle.net = Some((offset + index) as u32);
+            board.obstacles.push(obstacle);
+        }
+        for (index, mut net) in other.nets.into_iter().enumerate() {
+            net.name = format!("M{index}");
+            net.terminals[0].pad = offset + index;
+            net.terminals[0].label = format!("U2.{}", index + 1);
+            board.nets.push(net);
+        }
+        assert_eq!(
+            missed_exit_pads(&board, &[0.1]),
+            vec!["U2.1", "U2.2", "U2.3", "U2.4"]
+        );
+        // One part alone: the lattice takes its phase and misses nothing.
+        let alone = row_board([2.03, 3.0], 5, 0.4, [0.2, 0.8], 0.2, 0.2);
+        assert!(missed_exit_pads(&alone, &[0.1]).is_empty());
     }
 
     #[test]

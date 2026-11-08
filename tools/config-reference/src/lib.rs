@@ -483,6 +483,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "`0`: route mode's ladder does not probe its leader's rung once more with lattice lines at the pin rows where the leader's probe leaves pads unfinished at rows the regular lattice misses; the trigger after the leader's run alone decides (as before 2026-11-08's \"The rows decided at the probes\"; for A/B on one binary).",
     ),
     (
+        "PCB_LAYOUT_LINES_PROBE",
+        Kind::Switch,
+        "`0`: a layout decides no lattice lines at the pin rows itself (the layout before 2026-11-08's \"A layout's rows decided by its probe's open pads\"; for A/B on one binary); `race`: only at the kept placement's probe; `ladder`: only at the final ladder's probes; unset: both (the router setting `pin_lines` and `PCB_ROUTER_PIN_LINES` win over it).",
+    ),
+    (
         "PCB_LADDER_LEADER_FIRST",
         Kind::Switch,
         "`0` or `1`: route mode's ladder runs the leading rung's seed round and finer pitches before the rungs of other pour modes, and those only where their probe left at most twice the leader's unfinished nets (wins over the router setting `leader_first`; default on; `0` the order before 2026-11-07).",

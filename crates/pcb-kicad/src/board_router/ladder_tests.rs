@@ -1774,3 +1774,130 @@ fn the_lines_probe_runs_where_rows_are_open_and_within_a_third_of_what_is_left()
     assert!(!lines_lead(0, 0));
     assert!(!lines_lead(80, 83));
 }
+
+/// A layout's final ladder (its work deadline) decides at its probes as
+/// route mode does: the leader's probe left pads unfinished at rows the
+/// regular lattice misses, its rung is probed once more with the lines
+/// (a layout's probe work, 75 s), leads, and the continuation and every
+/// attempt after it have the lines.
+#[test]
+fn a_layouts_ladder_decides_the_lines_at_its_probes() {
+    let mut config = route_mode(1000.0);
+    config.deadline_work = Some(1500.0);
+    let out = output("layout-lines-probe");
+    let fake = rows_board(&["R3.1", "U1.2"], vec![30, 6, 25, 15]);
+    let mut ladder = ladder(&config, &out, 4);
+    ladder.run(&fake).unwrap();
+    let lines: Vec<Call> = fake
+        .calls()
+        .into_iter()
+        .filter(|call| matches!(call, Call::LinesProbe { .. }))
+        .collect();
+    assert_eq!(
+        lines,
+        vec![Call::LinesProbe {
+            mode: 1,
+            work: 75.0
+        }]
+    );
+    assert!(ladder.pin_lines_on);
+    let routes = fake.routes();
+    assert!(!routes.is_empty());
+    assert!(routes.iter().all(|routed| routed.lines), "{routes:?}");
+    assert_eq!(kept(&ladder, &out).0, 1);
+}
+
+/// A layout's final ladder whose leader's probe leaves no pad at a missed
+/// row, whose regular lattice misses none, or whose lines the layout
+/// already decided (`pin_lines` true from the race) or the setting
+/// refuses, runs no probe with lines; without one it routes as before.
+#[test]
+fn a_layouts_ladder_without_open_pads_at_missed_rows_pays_nothing() {
+    let mut config = route_mode(1000.0);
+    config.deadline_work = Some(1500.0);
+    let runs: Vec<(Vec<Call>, f64, usize)> =
+        [rows_board(&["R3.1", "U2.1"], vec![30, 6, 25, 15]), {
+            let mut fake = rows_board(&["U1.1"], vec![30, 6, 25, 15]);
+            fake.missed.clear();
+            fake
+        }]
+        .into_iter()
+        .enumerate()
+        .map(|(index, fake)| {
+            let out = output(&format!("layout-lines-none-{index}"));
+            let mut ladder = ladder(&config, &out, 4);
+            ladder.run(&fake).unwrap();
+            assert!(!ladder.pin_lines_on);
+            let mut calls = fake.calls();
+            calls.sort_by_key(|call| format!("{call:?}"));
+            (calls, ladder.work, kept(&ladder, &out).0)
+        })
+        .collect();
+    assert!(
+        runs[0]
+            .0
+            .iter()
+            .all(|call| !matches!(call, Call::LinesProbe { .. }))
+    );
+    assert_eq!(runs[0], runs[1]);
+    for setting in [true, false] {
+        let mut config = config.clone();
+        config.pin_lines = Some(setting);
+        let out = output(&format!("layout-lines-setting-{setting}"));
+        let fake = rows_board(&["U1.1"], vec![30, 6, 25, 15]);
+        let mut ladder = ladder(&config, &out, 4);
+        ladder.run(&fake).unwrap();
+        // The four rungs' probes (each with the lines where the setting
+        // is true) and no probe more.
+        let probes = fake
+            .calls()
+            .iter()
+            .filter(|call| matches!(call, Call::Probe { .. } | Call::LinesProbe { .. }))
+            .count();
+        assert_eq!(probes, 4, "{:?}", fake.calls());
+        assert!(fake.routes().iter().all(|routed| routed.lines == setting));
+    }
+}
+
+#[test]
+fn the_layouts_lines_decisions_follow_the_switch() {
+    let both = LayoutLinesProbes {
+        race: true,
+        ladder: true,
+        lead: false,
+    };
+    assert_eq!(layout_lines_probes_of(None), both);
+    assert_eq!(layout_lines_probes_of(Some("1")), both);
+    assert_eq!(
+        layout_lines_probes_of(Some("lead")),
+        LayoutLinesProbes {
+            race: true,
+            ladder: true,
+            lead: true
+        }
+    );
+    assert_eq!(
+        layout_lines_probes_of(Some("0")),
+        LayoutLinesProbes {
+            race: false,
+            ladder: false,
+            lead: false
+        }
+    );
+    assert_eq!(
+        layout_lines_probes_of(Some(" race")),
+        LayoutLinesProbes {
+            race: true,
+            ladder: false,
+            lead: false
+        }
+    );
+    assert_eq!(
+        layout_lines_probes_of(Some("ladder")),
+        LayoutLinesProbes {
+            race: false,
+            ladder: true,
+            lead: false
+        }
+    );
+}

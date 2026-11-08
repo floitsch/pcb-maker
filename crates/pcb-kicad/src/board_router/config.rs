@@ -458,8 +458,12 @@ pub struct KiCadBoardRouterConfig {
     /// with the lines ("The rows decided at the probes (2026-11-08)":
     /// RP2040_base 20 -> 5 open); else after the leader's run, when
     /// KiCad's open pads lie in parts whose rows the regular lattice
-    /// misses (OpenAirScope and koeg-board pass, none lost); true puts them
-    /// on every attempt, false never. `PCB_ROUTER_PIN_LINES` (0 or 1)
+    /// misses (OpenAirScope and koeg-board pass, none lost). A layout
+    /// decides at the kept placement's probe: where it left pads unfinished
+    /// at such rows, the first route starts over with the lines and every
+    /// route after it has them; else its final ladder decides at its probes
+    /// ("A layout's rows decided by its probe's open pads (2026-11-08)"). True puts
+    /// them on every attempt, false never. `PCB_ROUTER_PIN_LINES` (0 or 1)
     /// overrides this.
     #[serde(default)]
     pub pin_lines: Option<bool>,

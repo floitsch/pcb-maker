@@ -197,8 +197,9 @@ pub(crate) fn parts_of(pads: &[String]) -> Vec<String> {
 /// choose (`automatic`), not on yet, the leader's probe left nets
 /// unfinished (`leader_unfinished`), some of its unfinished pads are pads
 /// whose exit the regular lattice misses (`at_rows`), and the probe's work
-/// fits `LINES_PROBE_SHARE` of what is left under the bound (`left`; None:
-/// no bound, a layout's ladder, which does not run it).
+/// fits `LINES_PROBE_SHARE` of what is left (`left`: under the bound in
+/// route mode, the layout's work left in a layout's race and final
+/// ladder; None: not known, it does not run).
 pub(crate) fn lines_probe_runs(
     automatic: bool,
     leader_unfinished: usize,
@@ -217,6 +218,62 @@ pub(crate) fn lines_probe_runs(
         Some(_) => Err("its work is more than a third of what is left under the bound"),
         None => Err(""),
     }
+}
+
+/// Which of a layout's decisions of the lines at the pin rows run
+/// (`layout_lines_probes`): at the kept placement's probe in the race
+/// (`race`), at the final ladder's probes (`ladder`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LayoutLinesProbes {
+    pub(crate) race: bool,
+    pub(crate) ladder: bool,
+    /// The measured alternative (`lead`): the race keeps the lines only
+    /// where the probe with them leaves a tenth fewer nets unfinished, as
+    /// route mode's probes do (`lines_lead`); by default it takes them
+    /// wherever the kept placement's probe left pads at missed rows.
+    pub(crate) lead: bool,
+}
+
+/// `PCB_LAYOUT_LINES_PROBE` (`value`): `0` neither of a layout's decisions
+/// of the lines at the pin rows (main's layout before 2026-11-08, for A/B
+/// on one binary), `race` the race's alone, `ladder` the final ladder's
+/// alone, `lead` both with the race's lines kept only where its probe
+/// with them leads (the measured alternative); unset (or anything else)
+/// both (docs/router.md, "A layout's rows decided by its probe's open pads
+/// (2026-11-08)").
+pub(crate) fn layout_lines_probes_of(value: Option<&str>) -> LayoutLinesProbes {
+    match value.map(str::trim) {
+        Some("0") | Some("off") => LayoutLinesProbes {
+            race: false,
+            ladder: false,
+            lead: false,
+        },
+        Some("race") => LayoutLinesProbes {
+            race: true,
+            ladder: false,
+            lead: false,
+        },
+        Some("ladder") => LayoutLinesProbes {
+            race: false,
+            ladder: true,
+            lead: false,
+        },
+        Some("lead") => LayoutLinesProbes {
+            race: true,
+            ladder: true,
+            lead: true,
+        },
+        _ => LayoutLinesProbes {
+            race: true,
+            ladder: true,
+            lead: false,
+        },
+    }
+}
+
+/// `layout_lines_probes_of` the environment.
+pub(crate) fn layout_lines_probes() -> LayoutLinesProbes {
+    layout_lines_probes_of(std::env::var("PCB_LAYOUT_LINES_PROBE").ok().as_deref())
 }
 
 /// The pads of `open` that are in `missed`, both sorted.
@@ -1525,7 +1582,11 @@ impl<'a> Ladder<'a> {
     /// such a row pays nothing and routes as without it. Where the probe
     /// with lines does not lead, the trigger after the leader's run
     /// (`pin_lines_from_here`) still applies (docs/router.md, "The rows
-    /// decided at the probes (2026-11-08)").
+    /// decided at the probes (2026-11-08)"). A layout's final ladder (its
+    /// leader the best probe, its share the layout's work left) decides
+    /// the same way where the layout's race left the lines to it
+    /// (`PCB_LAYOUT_LINES_PROBE`; "A layout's rows decided by its probe's open pads
+    /// (2026-11-08)"); it has no trigger after the leader's run.
     #[allow(clippy::type_complexity, clippy::too_many_arguments)]
     fn lines_probe<R: LadderRunner>(
         &mut self,
@@ -1535,11 +1596,19 @@ impl<'a> Ladder<'a> {
         counts_all: bool,
         probes_count: f64,
     ) -> (usize, usize, R::Probe, R::Board, KiCadBoardRouterConfig) {
+        // A layout's final ladder (its work deadline) decides at its probes
+        // too, where the layout's race left the lines to it
+        // (`PCB_LAYOUT_LINES_PROBE`); what is left is the layout's work.
+        let layout = self.config.deadline_work.is_some();
         // `PCB_LADDER_LINES_PROBE=0`: the trigger after the leader's run
         // alone (as on 2026-11-08 before this), for A/B on one binary.
-        let wanted =
-            std::env::var("PCB_LADDER_LINES_PROBE").map_or(true, |value| value.trim() != "0");
-        let automatic = wanted && self.leader_first && self.lines_automatic() && !self.pin_lines_on;
+        let wanted = if layout {
+            layout_lines_probes().ladder
+        } else {
+            std::env::var("PCB_LADDER_LINES_PROBE").map_or(true, |value| value.trim() != "0")
+        };
+        let automatic =
+            wanted && (self.leader_first || layout) && self.lines_automatic() && !self.pin_lines_on;
         if !automatic || leader.0 == 0 {
             return leader;
         }
@@ -1549,7 +1618,12 @@ impl<'a> Ladder<'a> {
         }
         let open = runner.probe_open_pads(&leader.2);
         let at = pads_at_rows(&open, &missed);
-        let verdict = lines_probe_runs(true, leader.0, at.len(), probe_work, self.bound_left());
+        let left = if layout {
+            Some(self.work_left().max(0.0))
+        } else {
+            self.bound_left()
+        };
+        let verdict = lines_probe_runs(true, leader.0, at.len(), probe_work, left);
         eprintln!(
             "ladder: the leader's probe ({}) left {} unfinished, {} pad(s) of them at pin rows the regular lattice misses ({} missed in {}){}",
             self.probe_name(leader.1),
@@ -1559,8 +1633,9 @@ impl<'a> Ladder<'a> {
             parts_of(&missed).join(", "),
             match verdict {
                 Ok(()) => format!(
-                    ": its rung probed once more with lines at the pin rows ({probe_work:.1} s of work, {:.0} s left under the bound)",
-                    self.bound_left().unwrap_or(0.0)
+                    ": its rung probed once more with lines at the pin rows ({probe_work:.1} s of work, {:.0} s left{})",
+                    left.unwrap_or(0.0),
+                    if layout { "" } else { " under the bound" }
                 ),
                 Err("") => String::new(),
                 Err(why) => format!(": no probe with lines ({why})"),
