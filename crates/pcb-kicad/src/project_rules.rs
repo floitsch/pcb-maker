@@ -1046,11 +1046,15 @@ pub fn resolve_project_rules(
         if layers.is_empty() || layers.len() == copper.len() {
             continue;
         }
+        // A geometry the rule aims at (an opt or a maximum); a minimum
+        // alone is the process's floor on those layers (the 4in1-mini's
+        // 2 oz outer copper), no impedance to order (trial 8: its release
+        // asked for impedance control on Default).
         for constraint in rule.constraints.iter().filter(|constraint| {
             matches!(
                 constraint.kind.as_str(),
                 "track_width" | "diff_pair_gap" | "diff_pair_width"
-            )
+            ) && (constraint.opt.is_some() || constraint.max.is_some())
         }) {
             report.layer_geometry_rules.push(KiCadLayerGeometryRule {
                 rule: rule.name.clone(),

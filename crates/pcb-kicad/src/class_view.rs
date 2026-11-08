@@ -880,6 +880,9 @@ pub(crate) mod tests {
         let classes = class_layers(&report, &parse(&text).unwrap());
         let default = classes.iter().find(|class| class.class == "Default").unwrap();
         assert_eq!(default.warning, None);
+        // Nor an impedance to order on the release.
+        assert!(report.layer_geometry_rules.is_empty());
+        assert!(controlled_impedance(&report, &["SDA".to_string()]).is_none());
         // A maximum on those layers is a width aimed at: kept.
         fs::write(
             directory.join("board.kicad_dru"),
