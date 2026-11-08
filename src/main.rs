@@ -812,13 +812,18 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
                         + "\n",
                 )
                 .map_err(|error| format!("failed to write {file}: {error}"))?;
-                let rows = constraints["row"].as_array().map_or(0, Vec::len);
+                let banks = constraints["comment"].as_array().map_or(0, |lines| {
+                    lines
+                        .iter()
+                        .filter(|line| line.as_str().is_some_and(|line| line.starts_with("bank: ")))
+                        .count()
+                });
                 eprintln!(
                     "constraints template: {file} ({} edge, {} near entries{}; read its comments)",
                     constraints["edge"].as_array().map_or(0, Vec::len),
                     constraints["near"].as_array().map_or(0, Vec::len),
-                    if rows > 0 {
-                        format!(", {rows} row (a bank of parts on two nets)")
+                    if banks > 0 {
+                        format!(", {banks} bank of parts on two nets with its row in a comment")
                     } else {
                         String::new()
                     }

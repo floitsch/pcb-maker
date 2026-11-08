@@ -851,7 +851,7 @@ pub fn constraints_template(directory: &Path, board_id: &str) -> Result<serde_js
         .ok()
         .filter(|clearance| *clearance > 0.0)
         .unwrap_or(BANK_GAP);
-    let (rows, row_comments) = banks(&parts, &footprints, &held, clearance)?;
+    let row_comments = banks(&parts, &footprints, &held, clearance)?;
     comment.extend(row_comments);
     comment.extend(length_rule_comments(directory, board_id, &path, &parts));
     comment.push("To fill in: parts that must not move (fixed), keepouts (antennas, mounting hardware), regions, the outline if the board has none (docs/constraints.md).".into());
@@ -865,9 +865,6 @@ pub fn constraints_template(directory: &Path, board_id: &str) -> Result<serde_js
     }
     if !near.is_empty() {
         template["near"] = near.into();
-    }
-    if !rows.is_empty() {
-        template["row"] = rows.into();
     }
     Ok(template)
 }
@@ -888,18 +885,19 @@ const BANK_NEIGHBOUR_GAP: f64 = 0.1;
 /// the same two nets that no `near` entry holds (`held`): a bulk capacitor
 /// bank. The netlist's start puts parts on the same nets at one spot and
 /// the placement spreads them where they fit (trial 8: the 4in1-mini's 22
-/// 1206 capacitors on +BATT and GND came back around the board's edge; a
-/// row as the designer's block left 69 unconnected against 89, one layout
-/// each). Each becomes a `row` with columns at its pads' pitch, the row
-/// across the parts' short side (neighbours `BANK_NEIGHBOUR_GAP` apart, the
-/// lines `clearance`), about as wide as it is tall with the fewest empty
-/// places in its last line; with a comment.
+/// 1206 capacitors on +BATT and GND came back around the board's edge).
+/// Each gets a comment holding the `row` that keeps it one block, with
+/// columns at its pads' pitch, across the parts' short side (neighbours
+/// `BANK_NEIGHBOUR_GAP` apart, the lines `clearance`), about as wide as it
+/// is tall with the fewest empty places in its last line. A comment, not
+/// an entry: as a row the mini's bank left 69 and 103 unconnected against
+/// 89 without (one layout each).
 fn banks(
     parts: &[Part],
     footprints: &[&Expr],
     held: &BTreeSet<String>,
     clearance: f64,
-) -> Result<(Vec<serde_json::Value>, Vec<String>), String> {
+) -> Result<Vec<String>, String> {
     let mut groups: BTreeMap<(String, String, String), Vec<usize>> = BTreeMap::new();
     for (index, part) in parts.iter().enumerate() {
         if held.contains(&part.reference) || part.pads.len() != 2 {
@@ -917,7 +915,6 @@ fn banks(
             .or_default()
             .push(index);
     }
-    let mut rows = Vec::new();
     let mut comments = Vec::new();
     for ((name, first, second), members) in groups {
         let mut references: Vec<String> = members
@@ -964,22 +961,22 @@ fn banks(
             .min_by_key(|columns| (count.div_ceil(*columns) * columns - count, *columns))
             .unwrap_or(1);
         let round = |value: f64| (value * 100.0).round() / 100.0;
-        rows.push(serde_json::json!({
+        let row = serde_json::json!({
             "parts": references,
             "pitch_mm": round(pitch),
             "row_pitch_mm": round(row_pitch),
             "columns": columns,
             "axis": axis,
-        }));
+        });
         comments.push(format!(
-            "row: {count} parts of {} on {first} and {second} ({}, ...) look like a bank (bulk capacitors). The placement starts every part where its nets pull it, which for parts on the same two nets is one spot, and spreads them where they fit; this row keeps them one block of {columns} columns, {} mm apart along the board's {axis} (their pads' span and {BANK_NEIGHBOUR_GAP} mm: neighbours face with one net) and {} mm between the lines (the span and the copper clearance, {clearance} mm: every part of a row is turned alike, so the lines face with two nets), as turned now, as designers lay a bank (trial 8's 4in1-mini: 69 unconnected against 89, one layout each). Give the row's first part a place (place with x and y) where the bank belongs, or delete the entry to let the placer spread them.",
+            "bank: {count} parts of {} on {first} and {second} ({}, ...) look like a bank (bulk capacitors). The placement starts every part where its nets pull it, which for parts on the same two nets is one spot, and spreads them where they fit. To keep them one block as designers lay a bank, add this row and a place for its first part (place with x and y): \"row\": [{row}] ({columns} columns, {} mm apart along the board's {axis}: their pads' span and {BANK_NEIGHBOUR_GAP} mm, neighbours facing with one net; {} mm between the lines: the span and the copper clearance, {clearance} mm, as every part of a row is turned alike and the lines face with two nets). Not written as an entry: on trial 8's 4in1-mini a row left 69 and 103 unconnected against 89 without (one layout each), no better.",
             name.rsplit(':').next().unwrap_or(&name),
             references.iter().take(3).cloned().collect::<Vec<_>>().join(", "),
             round(pitch),
             round(row_pitch),
         ));
     }
-    Ok((rows, comments))
+    Ok(comments)
 }
 
 #[cfg(test)]
@@ -1052,21 +1049,33 @@ mod tests {
             template
         };
         let six = template(6);
-        let row = &six["row"][0];
+        assert!(six.get("row").is_none(), "a comment, not an entry: {six}");
+        let comment = six["comment"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|line| line.as_str())
+            .find(|line| line.starts_with("bank: 6 parts of C_1206_3216Metric on +BATT and GND"))
+            .unwrap()
+            .to_string();
+        let pasted = comment.split("\"row\": ").nth(1).unwrap();
+        let end = pasted.find("] (").unwrap() + 1;
+        let rows: serde_json::Value = serde_json::from_str(&pasted[..end]).unwrap();
+        let row = &rows[0];
         assert_eq!(row["parts"].as_array().unwrap().len(), 6);
         assert_eq!(row["parts"][0], "CL30");
         assert_eq!(row["axis"], "x");
         assert_eq!(row["pitch_mm"], 1.9);
         assert_eq!(row["row_pitch_mm"], 4.3);
         assert_eq!(row["columns"], 3);
+        let five = template(5);
         assert!(
-            six["comment"].as_array().unwrap().iter().any(|line| line
-                .as_str()
+            !five["comment"]
+                .as_array()
                 .unwrap()
-                .starts_with("row: 6 parts of C_1206_3216Metric on +BATT and GND")),
-            "{six}"
+                .iter()
+                .any(|line| line.as_str().unwrap().starts_with("bank:"))
         );
-        assert!(template(5).get("row").is_none());
     }
 
     #[test]
