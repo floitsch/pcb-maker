@@ -30,7 +30,7 @@ The environment variables are indexed in the hand-over
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
 | [Router settings: net_classes entries](#router-settings-net_classes-entries) | 6 | 6 | 0 | 6 | 2 |
 | [Router settings: connection rules](#router-settings-connection-rules) | 4 | 4 | 0 | 4 | 0 |
-| [Router report: rules](#router-report-rules) | 6 | - | 0 | 6 | - |
+| [Router report: rules](#router-report-rules) | 7 | - | 0 | 7 | - |
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 20 | - | 9 | 20 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 78 | - | 0 | 78 | - |
@@ -237,6 +237,7 @@ Not a setting: the `rules` object of the router's report (`board-router.json`), 
 | `rules.narrowest_track_mm` | `f64` | The narrowest track width of the nets' classes as routed. |
 | `rules.neck_width_mm` | `f64` | The neck-down width out of small pads. |
 | `rules.narrowed` | `Vec<KiCadNarrowedClass>` | The nets the narrow-signal step routed below their class's width, per class (absent when the step did not run or narrowed none): KiCad's DRC does not check a class's width, so nothing else says it (trial 7: Sisu's RF_ANT nets, 0.1422 mm for 50 ohms, written at 0.1 mm). |
+| `rules.blind_vias` | `bool` | Whether vias could pierce only some layers (`blind_vias`, or `PCB_ROUTER_BLIND_VIAS`): without it every via is a through via, whatever the designer's board used (`via_spans_designer`). |
 | `project` (flattened: the next table's keys) | `crate::project_rules::KiCadProjectRulesReport` | KiCad's defaults taken and the custom rules read, kept or skipped. |
 
 ## Router report: rules from the project
@@ -262,7 +263,7 @@ The fields `project` flattens into `rules`; each is left out when empty. Source:
 | `rules.via_minimums` | `[f64; 3]` | The board's via minimums: diameter, drill, annular width (board setup, custom rules on every via). |
 | `rules.net_classes` | `BTreeMap<String, Vec<String>>` | Per net (as the router names it): its classes, the highest priority first ("Default" for a net in none). |
 | `rules.class_values` | `BTreeMap<String, [Option<f64>; 2]>` | Per class of the project: its track width and clearance as the project states them (before the board's minimums). |
-| `rules.layer_track_widths` | `BTreeMap<String, BTreeMap<String, f64>>` | Per net (as the router names it) that a custom `track_width` rule bounds on some layers only: per such layer the width the rule sets (its opt, else its min, else its max): the designer's widths per layer, as for one impedance on outer and inner layers. |
+| `rules.layer_track_widths` | `BTreeMap<String, BTreeMap<String, f64>>` | Per net (as the router names it) that a custom `track_width` rule with an opt or a maximum bounds on some layers only: per such layer the width the rule sets (its opt, else its min, else its max): the designer's widths per layer, as for one impedance on outer and inner layers (a minimum alone, a process floor such as 2 oz outer copper's, is none). |
 | `rules.track_disallowed_layers` | `BTreeMap<String, Vec<String>>` | Per net a custom `disallow track` rule keeps off copper layers: those layers. |
 | `rules.layer_geometry_rules` | `Vec<KiCadLayerGeometryRule>` | The custom rules' track geometry on some copper layers only (a `track_width`, `diff_pair_gap` or `diff_pair_width` constraint whose layer clause or condition names a strict subset of the board's copper layers): a designer's controlled impedance. |
 
