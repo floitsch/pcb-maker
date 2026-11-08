@@ -844,7 +844,14 @@ pub fn constraints_template(directory: &Path, board_id: &str) -> Result<serde_js
         .iter()
         .filter_map(|entry| entry["part"].as_str().map(str::to_string))
         .collect();
-    let (rows, row_comments) = banks(&parts, &footprints, &held)?;
+    // The copper clearance two lines of a bank keep (the project's
+    // largest, as the placer keeps it).
+    let clearance = crate::resolve_project_rules(&path.with_extension("kicad_pro"), &path)
+        .map(|config| crate::board_placer::largest_clearance(&config))
+        .ok()
+        .filter(|clearance| *clearance > 0.0)
+        .unwrap_or(BANK_GAP);
+    let (rows, row_comments) = banks(&parts, &footprints, &held, clearance)?;
     comment.extend(row_comments);
     comment.extend(length_rule_comments(directory, board_id, &path, &parts));
     comment.push("To fill in: parts that must not move (fixed), keepouts (antennas, mounting hardware), regions, the outline if the board has none (docs/constraints.md).".into());
@@ -868,9 +875,14 @@ pub fn constraints_template(directory: &Path, board_id: &str) -> Result<serde_js
 /// The fewest parts that make a bank (`banks`).
 const BANK_PARTS: usize = 6;
 
-/// The gap the template keeps between a bank's pads (mm): a common copper
-/// clearance; the row's own check holds the project's.
+/// The gap two lines of a bank keep between their pads where the project
+/// states no clearance (mm).
 const BANK_GAP: f64 = 0.2;
+
+/// The gap between neighbours in a line of a bank (mm): their facing pads
+/// are of one net (every part of a row turned alike), as in the
+/// designer's bank of the 4in1-mini (1.8 mm pads at 1.9 mm).
+const BANK_NEIGHBOUR_GAP: f64 = 0.1;
 
 /// Banks of parts: `BANK_PARTS` or more two-pad parts of one footprint on
 /// the same two nets that no `near` entry holds (`held`): a bulk capacitor
@@ -878,13 +890,15 @@ const BANK_GAP: f64 = 0.2;
 /// the placement spreads them where they fit (trial 8: the 4in1-mini's 22
 /// 1206 capacitors on +BATT and GND came back around the board's edge; a
 /// row as the designer's block left 69 unconnected against 89, one layout
-/// each). Each becomes a `row` with columns at its pads' pitch (their span
-/// and `BANK_GAP`), the row across the parts' short side, about as wide as
-/// it is tall; with a comment.
+/// each). Each becomes a `row` with columns at its pads' pitch, the row
+/// across the parts' short side (neighbours `BANK_NEIGHBOUR_GAP` apart, the
+/// lines `clearance`), about as wide as it is tall with the fewest empty
+/// places in its last line; with a comment.
 fn banks(
     parts: &[Part],
     footprints: &[&Expr],
     held: &BTreeSet<String>,
+    clearance: f64,
 ) -> Result<(Vec<serde_json::Value>, Vec<String>), String> {
     let mut groups: BTreeMap<(String, String, String), Vec<usize>> = BTreeMap::new();
     for (index, part) in parts.iter().enumerate() {
@@ -934,14 +948,21 @@ fn banks(
             continue;
         };
         let size = [span[2] - span[0], span[3] - span[1]];
-        let up = |value: f64| ((value + BANK_GAP) / 0.05 - 1.0e-9).ceil() * 0.05;
-        let (axis, pitch, row_pitch) = if size[0] <= size[1] {
-            ("x", up(size[0]), up(size[1]))
+        let up = |value: f64| (value / 0.01 - 1.0e-6).ceil() * 0.01;
+        let (axis, short, long) = if size[0] <= size[1] {
+            ("x", size[0], size[1])
         } else {
-            ("y", up(size[1]), up(size[0]))
+            ("y", size[1], size[0])
         };
+        let pitch = up(short + BANK_NEIGHBOUR_GAP);
+        let row_pitch = up(long + clearance);
         let count = members.len();
-        let columns = ((count as f64 * row_pitch / pitch).sqrt().round() as usize).clamp(1, count);
+        // About square; of the column counts around that, the one leaving
+        // the fewest empty places in the last line, then the fewest.
+        let square = (count as f64 * row_pitch / pitch).sqrt().round() as usize;
+        let columns = (square.saturating_sub(1).max(1)..=(square + 1).min(count))
+            .min_by_key(|columns| (count.div_ceil(*columns) * columns - count, *columns))
+            .unwrap_or(1);
         let round = |value: f64| (value * 100.0).round() / 100.0;
         rows.push(serde_json::json!({
             "parts": references,
@@ -951,7 +972,7 @@ fn banks(
             "axis": axis,
         }));
         comments.push(format!(
-            "row: {count} parts of {} on {first} and {second} ({}, ...) look like a bank (bulk capacitors). The placement starts every part where its nets pull it, which for parts on the same two nets is one spot, and spreads them where they fit; this row keeps them one block of {columns} columns, {} mm apart along the board's {axis} and {} mm between the lines (their pads' span and {BANK_GAP} mm, as turned now), as designers lay a bank (trial 8's 4in1-mini: 69 unconnected against 89, one layout each). Give the row's first part a place (place with x and y) where the bank belongs, or delete the entry to let the placer spread them.",
+            "row: {count} parts of {} on {first} and {second} ({}, ...) look like a bank (bulk capacitors). The placement starts every part where its nets pull it, which for parts on the same two nets is one spot, and spreads them where they fit; this row keeps them one block of {columns} columns, {} mm apart along the board's {axis} (their pads' span and {BANK_NEIGHBOUR_GAP} mm: neighbours face with one net) and {} mm between the lines (the span and the copper clearance, {clearance} mm: every part of a row is turned alike, so the lines face with two nets), as turned now, as designers lay a bank (trial 8's 4in1-mini: 69 unconnected against 89, one layout each). Give the row's first part a place (place with x and y) where the bank belongs, or delete the entry to let the placer spread them.",
             name.rsplit(':').next().unwrap_or(&name),
             references.iter().take(3).cloned().collect::<Vec<_>>().join(", "),
             round(pitch),
@@ -1035,9 +1056,9 @@ mod tests {
         assert_eq!(row["parts"].as_array().unwrap().len(), 6);
         assert_eq!(row["parts"][0], "CL30");
         assert_eq!(row["axis"], "x");
-        assert_eq!(row["pitch_mm"], 2.0);
+        assert_eq!(row["pitch_mm"], 1.9);
         assert_eq!(row["row_pitch_mm"], 4.3);
-        assert_eq!(row["columns"], 4);
+        assert_eq!(row["columns"], 3);
         assert!(
             six["comment"].as_array().unwrap().iter().any(|line| line
                 .as_str()
