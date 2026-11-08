@@ -1109,7 +1109,7 @@ verdict that say the same. `pcb-maker --help` and `pcb-maker <command> --help` l
 | 1 | `router_complete_unverified` | KiCad's check was skipped (`PCB_SKIP_NATIVE`, `skip_native_verification`; `kicad_checked: false`) and the router's own count finds nothing open. Not a pass: KiCad's connectivity and DRC decide, and they did not run. | Check the board (`drc-kicad-board`) before using it. |
 | 2 | `usage_error` | Bad arguments or input: a missing file, invalid JSON, an unknown key or part, an output directory that exists. Nothing was routed. | Fix the input the message names. |
 | 3 | `cut` | Incomplete, and the wall clock (not the work) cut the run short (`cut`): the result depends on the machine's load. | Rerun on a less loaded machine or with a larger budget. |
-| 4 | `internal_error` | An internal error or a panic; also a KiCad check that ran but left no readable report (`drc.json`) for the verdict to rest on. | Report it with the input. |
+| 4 | `internal_error` | An internal error or a panic; also a KiCad check that ran but left no readable report (`drc.json`) for the verdict to rest on. | Report it with the input; where kicad-cli died of a signal (KiCad 10.0.7's refill crashed on trial 8's OpenAIO-Whoop, SIGSEGV, and did not repeat) the next action says it is KiCad's: run again into a new output directory. |
 
 A process killed by a signal (a harness's timeout, out of memory) has no
 verdict; its exit status is the signal's (128 + n in a shell). Its output
