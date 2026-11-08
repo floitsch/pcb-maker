@@ -11,6 +11,31 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Measured on 2026-11-08 (nightly: layout sweep v35, matched designer tier)
+
+Written by the nightly from `build/nightly/2026-11-08/` (main b090e40;
+[benchmarks.md](benchmarks.md#layout-sweep-v35-2026-11-08)). The guard
+held: every stage ran, no row was cut or killed, the sweep has at least
+100 rows with a result.
+
+- **Layout sweep v35**: **68 of 109 pass the strict rule** (67 per
+  type), 1697 unconnected in all, strict errors 19, 3 without a result.
+  Against the nightly of 2026-11-07: better 22, same 72, worse 12,
+  strict passes 63 -> 68 (gained MIDAS-MK1-revA, OpenAirScope,
+  DSP-ADAU1452, poly_kybd_split72_right, ghoul).
+- **Medians against the designer's**: vias x0.65, length x0.98, open
+  0.000 (mean 0.068), bends x1.01, stair-steps +33.5, crossings +0.
+- **Matched designer tier** (budget scale 0.663): 74 strict passes (73
+  per type); over the 100 target boards placement 71 %, routing 29 % of
+  the open connections (placement 77 %, routing 23 % without MegaDrive).
+- **Placement costs most** on Batch_1 (+140: 142 / 2), protoesp (+86: 87
+  / 1), video (+79: 79 / 0), glasgow revC3 (+68: 85 / 17), OpenESC-30x30
+  4in1 (+67: 79 / 12).
+- **Worse beyond noise**: protoesp 30 -> 87, Batch_1 123 -> 142,
+  eurorack-pmod-pcb 8 -> 18, poly_kb_molecule_4x5 294 -> 304,
+  jetson-nano-baseboard 1 -> 4, link 3 -> 5, SUMEC_MK_IV 6 -> 7,
+  osprey_rev_a 1 -> 2, capybully 2 -> 3.
+
 ## Committed on 2026-11-08 (the rows decided at the probes)
 
 Branch pin-lines-probes (docs/router.md "The rows decided at the probes
