@@ -174,6 +174,34 @@ class Traces(unittest.TestCase):
                 env = stages.unit_command(arguments, f"b-s1-{variant}")[2]
                 self.assertEqual("PCB_PLACER_START" in env, designer, variant)
 
+    def test_the_netlists_stacks_by_their_nets_and_what_the_stages_make_of_them(self):
+        def part(reference, nets, centers, side="Front"):
+            return {"reference": reference, "nets": nets, "body": [2.0, 1.0], "halo": 0.0, "side": side,
+                    "centers": centers, "angles": [0.0] * 5}
+        # Three capacitors on nets 1 and 2 on one spot at the start, a row
+        # at the end; a resistor on nets 2 and 3 beside them; one on nets 1
+        # and 2 on the other side.
+        seed = {"stages": ["start", "global", "annealed", "legal", "final"],
+                "relaxation": {"spacing": 0.2}, "walk": [[7, ["C2"], 10.0], [9, [], 12.0]],
+                "parts": [part("C1", [1, 2], [[10, 10]] * 4 + [[8, 10]]),
+                          part("C2", [2, 1], [[10.1, 10]] * 4 + [[10, 10]]),
+                          part("C3", [1, 2], [[10, 10.1]] * 4 + [[12, 10]]),
+                          part("R1", [2, 3], [[10.2, 10.2]] * 5),
+                          part("C4", [1, 2], [[10, 10]] * 5, side="Back")]}
+        nets = [{"name": f"N{n}", "pins": 4} for n in range(4)]
+        result = stages.measure_stacks(seed, nets)
+        census = result[0]["census"]
+        # On the spot: C1, C2, C3 and R1 on the front (a chain), C4 alone behind.
+        self.assertEqual((census["stacks"], census["sizes"], census["same_nets"]), (1, [4], 0))
+        groups = [entry for entry in result[1:]]
+        self.assertEqual([entry["members"] for entry in groups], [["C1", "C2", "C3"]])
+        stack = groups[0]
+        self.assertTrue(stack["nets"]["same"])
+        self.assertEqual(stack["left_out"], [(7, ["C2"])])
+        final = stack["stages"]["final"]
+        self.assertEqual(stages.arrangement_word(final), "row")
+        self.assertLess(stack["spread_at_start"]["spread"], 0.1)
+
     def test_unit_names(self):
         self.assertEqual(stages.unit_parts("SNSP-CPU-01-s101-global-active"), ("SNSP-CPU-01", 101, "global-active"))
         with self.assertRaises(SystemExit):

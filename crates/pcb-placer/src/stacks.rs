@@ -138,7 +138,9 @@ pub fn bank_columns(count: usize, cell: Point, spans: &[(f64, Point)], room: Poi
                 wire += weight * (extent[axis] - span[axis]).max(0.0);
             }
         }
-        let beyond: f64 = (0..2).map(|axis| (extent[axis] - room[axis]).max(0.0)).sum();
+        let beyond: f64 = (0..2)
+            .map(|axis| (extent[axis] - room[axis]).max(0.0))
+            .sum();
         (wire + 1.0e3 * weight * beyond, extent[0].max(extent[1]))
     };
     let mut best = (1, cost(1));
@@ -257,7 +259,10 @@ mod tests {
         let keys = [key(0), key(1), key(2)];
         let centers = [[50.0, 50.0], [50.2, 50.1], [50.1, 49.9]];
         let half = [[58.0, 4.0]; 3];
-        assert_eq!(find_stacks(&centers, &half, &[0; 3], &keys, 0.9), vec![vec![0, 1, 2]]);
+        assert_eq!(
+            find_stacks(&centers, &half, &[0; 3], &keys, 0.9),
+            vec![vec![0, 1, 2]]
+        );
         assert!(find_stacks(&centers, &half, &[0; 3], &keys, 1.0).is_empty());
     }
 
@@ -310,7 +315,10 @@ mod tests {
             at.iter().map(|p| p[0]).sum::<f64>() / 5.0,
             at.iter().map(|p| p[1]).sum::<f64>() / 5.0,
         ];
-        assert!((mean[0] - 10.0).abs() < 1.0e-9 && (mean[1] - 20.0).abs() < 1.0e-9, "{at:?}");
+        assert!(
+            (mean[0] - 10.0).abs() < 1.0e-9 && (mean[1] - 20.0).abs() < 1.0e-9,
+            "{at:?}"
+        );
         // At the pitch: neighbours in a row 2 mm apart, rows 1 mm apart.
         assert!((at[1][0] - at[0][0] - 2.0).abs() < 1.0e-9);
         assert!((at[3][1] - at[0][1] - 1.0).abs() < 1.0e-9);

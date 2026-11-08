@@ -112,15 +112,22 @@ fn spread_stacks(
             .flatten()
             .copied()
             .filter(|net| {
-                members
-                    .iter()
-                    .all(|body| keys[*body].as_ref().is_some_and(|key| key.binary_search(net).is_ok()))
+                members.iter().all(|body| {
+                    keys[*body]
+                        .as_ref()
+                        .is_some_and(|key| key.binary_search(net).is_ok())
+                })
             })
             .collect();
         let spans: Vec<(f64, Point)> = common
             .iter()
             .map(|net| {
-                let mut extent = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+                let mut extent = [
+                    f64::INFINITY,
+                    f64::INFINITY,
+                    f64::NEG_INFINITY,
+                    f64::NEG_INFINITY,
+                ];
                 for (owner, at) in &pins_of[*net] {
                     if owner.is_some_and(|owner| members.binary_search(&owner).is_ok()) {
                         continue;
@@ -141,7 +148,10 @@ fn spread_stacks(
             })
             .collect();
         let cell = members.iter().fold([0.0f64; 2], |cell, body| {
-            [cell[0].max(2.0 * half[*body][0]), cell[1].max(2.0 * half[*body][1])]
+            [
+                cell[0].max(2.0 * half[*body][0]),
+                cell[1].max(2.0 * half[*body][1]),
+            ]
         });
         let columns = crate::stacks::bank_columns(members.len(), cell, &spans, room);
         let rows = members.len().div_ceil(columns);
@@ -154,8 +164,10 @@ fn spread_stacks(
         let extent = [columns as f64 * cell[0], rows as f64 * cell[1]];
         for axis in 0..2 {
             if extent[axis] <= room[axis] {
-                centroid[axis] = centroid[axis]
-                    .clamp(low[axis] + extent[axis] / 2.0, high[axis] - extent[axis] / 2.0);
+                centroid[axis] = centroid[axis].clamp(
+                    low[axis] + extent[axis] / 2.0,
+                    high[axis] - extent[axis] / 2.0,
+                );
             }
         }
         // The members fill the cells row by row in the order of their
@@ -181,10 +193,18 @@ fn spread_stacks(
                     .take(4)
                     .map(|body| problem.components[movable[*body]].name.as_str())
                     .collect();
-                format!("{} [{}{}]", members.len(), names.join(" "), if members.len() > 4 { " ..." } else { "" })
+                format!(
+                    "{} [{}{}]",
+                    members.len(),
+                    names.join(" "),
+                    if members.len() > 4 { " ..." } else { "" }
+                )
             })
             .collect();
-        eprintln!("placer: netlist stacks banked ({count} movable): {}", said.join("; "));
+        eprintln!(
+            "placer: netlist stacks banked ({count} movable): {}",
+            said.join("; ")
+        );
     }
     stacks
 }
@@ -237,7 +257,9 @@ pub struct GlobalConfig {
     /// it starts at its pose's centre without the start's noise. `None`:
     /// every part from the start point.
     pub warm: Option<std::sync::Arc<Vec<bool>>>,
-    /// The netlist's stacks (`Stacks`).
+    /// What the global placement does with the netlist's stacks
+    /// (`Stacks`; by default the measurement switch `PCB_PLACER_STACKS`,
+    /// off where it is unset).
     pub stacks: Stacks,
 }
 
@@ -1087,7 +1109,8 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
             let mut weight = 0.0;
             for body in members {
                 for axis in 0..2 {
-                    force[axis] += wire_gradient[*body][axis] + lambda * density_gradient[*body][axis];
+                    force[axis] +=
+                        wire_gradient[*body][axis] + lambda * density_gradient[*body][axis];
                 }
                 weight += precondition(&bodies[*body]);
             }
