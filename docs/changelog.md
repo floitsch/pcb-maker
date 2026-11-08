@@ -13,7 +13,7 @@ v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
 ## Committed on 2026-11-08 (fresh-agent trial 8: a bank of capacitors, pin rows, an HDI board, a supply drawn wide)
 
-Branch fresh-agent-trial-8 (`build/ux8/pcb-maker-b` to `-d`).
+Branch fresh-agent-trial-8 (`build/ux8/pcb-maker-b` to `-e`).
 [Trial 8](reviews/2026-11-08-fresh-agent-trial-8.md): a new agent took
 OpenDrone's OpenESC-20x20 4in1-mini (the netlist's start and its bank of
 22 bulk capacitors, steered with a `row`; a fab release), Twisted-Fields'
@@ -63,6 +63,8 @@ unchanged.
   order that weight (the mini's 2 oz outer layers).
 - **Dead pads**: the wall names KiCad's layers (`B.Cu: ...`), not the
   router's index.
+- **kicad-cli's crash**: a check that kicad-cli died of a signal (the
+  Whoop's refill, SIGSEGV) says it is KiCad's and to run again.
 - agents.md: the threads (`RAYON_NUM_THREADS`), the cookbook's bank,
   the verdict's new fields; SKILL.md; constraints.md's `row`.
 

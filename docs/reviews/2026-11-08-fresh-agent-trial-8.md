@@ -9,8 +9,9 @@ to fix what was found. Binaries: `build/bin/pcb-maker-x1938` (main
 18f01076, the nightly's of 2026-11-08) for every first run;
 `build/ux8/pcb-maker-b` (the branch's first eight fixes) for the
 RP2040 route's second run, the row refusals and the bank's place checks;
-`-c` (all fixes) for the bank's layout, the pinned pin-lines pair and the
-reruns named below. KiCad 10.0.7, a shared machine (load 9 to 24 on 32
+`-c` (all fixes but the last three) for the bank's layout, the pinned
+pin-lines pairs and the RP2040 route's third run, `-d` (the bank as a
+comment) for the template, `-e` (all fixes) for the Whoop's last route. KiCad 10.0.7, a shared machine (load 9 to 24 on 32
 cores, another agent's pool beside; at most 12 of our threads,
 `RAYON_NUM_THREADS=4` a run; no run waited in the memory ledger).
 
