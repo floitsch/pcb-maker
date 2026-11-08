@@ -186,13 +186,18 @@ pub(crate) fn track_lengths(pcb: &Expr) -> BTreeMap<String, BTreeMap<String, f64
             form.children().get(2)?.atom()?.parse().ok()?,
         ])
     };
+    // KiCad 9 and before name a track's net by its code (`(net 5)`).
+    let codes = crate::kicad_nets::net_codes(pcb);
     let mut lengths: BTreeMap<String, BTreeMap<String, f64>> = BTreeMap::new();
     for item in pcb.children() {
         let kind = item.head();
         if !matches!(kind, Some("segment" | "arc")) {
             continue;
         }
-        let (Some(net), Some(layer)) = (node_net(item), form_atom(item, "layer", 1)) else {
+        let (Some(net), Some(layer)) = (
+            crate::kicad_nets::item_net(item, &codes),
+            form_atom(item, "layer", 1),
+        ) else {
             continue;
         };
         if !layer.ends_with(".Cu") || !names.routable(net) {
@@ -419,13 +424,19 @@ pub(crate) fn track_widths(pcb: &Expr) -> BTreeMap<String, BTreeMap<i64, f64>> {
             form.children().get(2)?.atom()?.parse().ok()?,
         ])
     };
+    // KiCad 9 and before name a track's net by its code (`(net 5)`): the
+    // rp2040 motor controller's designer board.
+    let codes = crate::kicad_nets::net_codes(pcb);
     let mut widths: BTreeMap<String, BTreeMap<i64, f64>> = BTreeMap::new();
     for item in pcb.children() {
         let kind = item.head();
         if !matches!(kind, Some("segment" | "arc")) {
             continue;
         }
-        let (Some(net), Some(layer)) = (node_net(item), form_atom(item, "layer", 1)) else {
+        let (Some(net), Some(layer)) = (
+            crate::kicad_nets::item_net(item, &codes),
+            form_atom(item, "layer", 1),
+        ) else {
             continue;
         };
         if !layer.ends_with(".Cu") || !names.routable(net) {
@@ -839,6 +850,14 @@ pub(crate) mod tests {
         };
         let designer = track_widths(&board(2.0, 0.25));
         assert_eq!(designer["VBAT"][&2000], 10.0);
+        // A KiCad 9 board names the nets of its tracks by code.
+        let coded = parse(
+            r#"(kicad_pcb (net 0 "") (net 1 "VBAT")
+  (segment (start 0 0) (end 10 0) (width 2) (layer "F.Cu") (net 1)))"#,
+        )
+        .unwrap();
+        assert_eq!(track_widths(&coded)["VBAT"][&2000], 10.0);
+        assert_eq!(track_lengths(&coded)["VBAT"]["F.Cu"], 10.0);
         let widths = designer_widths(&report, &designer, &track_widths(&board(0.2, 0.2)));
         assert_eq!(widths.len(), 1, "{widths:?}");
         assert_eq!(widths[0].net, "VBAT");
