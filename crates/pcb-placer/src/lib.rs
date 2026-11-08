@@ -1186,6 +1186,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
             overflow: 0.0,
             start: problem.poses.clone(),
             history: Vec::new(),
+            stacks: Vec::new(),
         },
         _ => global::global_place(problem, &config.global),
     };

@@ -30,26 +30,28 @@ const NETLIST_NOISE: f64 = 0.1;
 pub enum Stacks {
     /// Left on their spot (the start's noise separates them).
     Off,
-    /// Spread into banks at the start: the parts whose nets have at least
-    /// this share in common (`stacks::shared`).
-    Bank(f64),
-    /// Spread into banks that move as one body in the descent.
-    Glue(f64),
-    /// `Glue` for parts with three nets or more only (not the capacitors
-    /// on a rail and ground: video's memory modules).
-    GlueMultiNet(f64),
+    /// Spread into banks that move as one body in the descent: the parts
+    /// with `least_nets` nets or more whose nets have `share` in common
+    /// (`stacks::shared`). A bank at the start only is undone by the
+    /// descent where no wire holds its parts, and glued banks of capacitors
+    /// on a rail and ground are taken apart by the anneal (stage 1 of
+    /// 2026-11-08: -1.2 %, not taken); for parts with three nets or more
+    /// (video's memory modules) the glue is the lever.
+    Glue { share: f64, least_nets: usize },
 }
 
 impl Stacks {
-    /// The measurement's switch `PCB_PLACER_STACKS` (`bank`, `bank-same`,
-    /// `glue`, `glue-same`, `glue-multi`; unset: off).
+    /// The parts with three nets or more that share nine tenths of them.
+    pub const MULTI_NET: Stacks = Stacks::Glue {
+        share: 0.9,
+        least_nets: 3,
+    };
+
+    /// The measurement's switch `PCB_PLACER_STACKS` (`glue-multi`:
+    /// `MULTI_NET`; unset: off).
     pub fn from_env() -> Self {
         match std::env::var("PCB_PLACER_STACKS").as_deref() {
-            Ok("bank") => Stacks::Bank(0.9),
-            Ok("bank-same") => Stacks::Bank(1.0),
-            Ok("glue") => Stacks::Glue(0.9),
-            Ok("glue-same") => Stacks::Glue(1.0),
-            Ok("glue-multi") => Stacks::GlueMultiNet(0.9),
+            Ok("glue-multi") => Stacks::MULTI_NET,
             _ => Stacks::Off,
         }
     }
@@ -561,6 +563,9 @@ pub struct GlobalResult {
     /// The descent's state every `HISTORY_INTERVAL` iterations and at its
     /// last.
     pub history: Vec<GlobalStep>,
+    /// The netlist's stacks glued into banks (`GlobalConfig::stacks`), by
+    /// component index.
+    pub stacks: Vec<Vec<usize>>,
 }
 
 pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
@@ -657,6 +662,7 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
             iterations: 0,
             overflow: 0.0,
             history: Vec::new(),
+            stacks: Vec::new(),
         };
     }
     let mut bodies: Vec<Body> = movable
@@ -824,8 +830,10 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
         })
         .collect();
     let nets = problem.net_weights.len();
-    // The banks that move as one body in the descent (body indices).
+    // The banks that move as one body in the descent (body indices), and
+    // the same by component index.
     let mut glued: Vec<Vec<usize>> = Vec::new();
+    let mut stacked: Vec<Vec<usize>> = Vec::new();
     {
         // The parts start where the netlist's quadratic wirelength puts
         // them (`initial::quadratic_start`), with a tenth of the noise
@@ -884,16 +892,10 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
             },
         );
         crate::add_work(solve_work);
-        let banks = match config.stacks {
-            Stacks::Off => None,
-            Stacks::Bank(share) => Some((share, 2, false)),
-            Stacks::Glue(share) => Some((share, 2, true)),
-            Stacks::GlueMultiNet(share) => Some((share, 3, true)),
-        };
-        if let Some((least_share, least_nets, glue)) = banks {
+        if let Stacks::Glue { share, least_nets } = config.stacks {
             let stacks = spread_stacks(
                 problem,
-                least_share,
+                share,
                 least_nets,
                 &movable,
                 &bodies[..count],
@@ -902,9 +904,11 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
                 &held,
                 &mut centers,
             );
-            if glue {
-                glued = stacks;
-            }
+            stacked = stacks
+                .iter()
+                .map(|members| members.iter().map(|body| movable[*body]).collect())
+                .collect();
+            glued = stacks;
         }
         for body in 0..count {
             major[body] = [
@@ -1291,6 +1295,7 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
         overflow,
         start: start_poses,
         history,
+        stacks: stacked,
     }
 }
 

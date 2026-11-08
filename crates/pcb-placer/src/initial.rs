@@ -577,36 +577,45 @@ mod tests {
         };
         // Off: the four solve to one spot, a tenth of the noise apart.
         let (problem, off) = stack_of_four(Stacks::Off);
+        assert!(off.stacks.is_empty());
         let start = centers(&problem, &off.start);
-        let apart = |at: &[Point]| -> f64 {
-            let mut least = f64::INFINITY;
-            for a in 0..at.len() {
-                for b in a + 1..at.len() {
-                    least = least.min((at[a][0] - at[b][0]).abs().max((at[a][1] - at[b][1]).abs()));
-                }
-            }
-            least
-        };
-        assert!(apart(&start) < 0.5, "{start:?}");
-        // A bank: no two of the 2 x 1 mm bodies overlap at the start.
-        let (problem, bank) = stack_of_four(Stacks::Bank(1.0));
-        let start = centers(&problem, &bank.start);
+        let mut least = f64::INFINITY;
         for a in 0..4 {
             for b in a + 1..4 {
-                let (dx, dy) = (
-                    (start[a][0] - start[b][0]).abs(),
-                    (start[a][1] - start[b][1]).abs(),
+                least = least.min(
+                    (start[a][0] - start[b][0])
+                        .abs()
+                        .max((start[a][1] - start[b][1]).abs()),
                 );
-                assert!(dx >= 2.0 - 0.1 || dy >= 1.0 - 0.1, "{start:?}");
             }
         }
-        // Glued, the bank moves as one: the members keep their offsets
-        // from the start to the end of the descent.
-        let (problem, glued) = stack_of_four(Stacks::Glue(1.0));
+        assert!(least < 0.5, "{start:?}");
+        // Two-net parts are no stack for the multi-net rule.
+        let (_, multi) = stack_of_four(Stacks::MULTI_NET);
+        assert!(multi.stacks.is_empty());
+        assert_eq!(multi.poses, off.poses);
+        // Glued, a bank: no two of the 2 x 1 mm bodies overlap at the start
+        // (but for the tenth of the noise), and the members keep their
+        // offsets from the start to the end of the descent.
+        let glue = Stacks::Glue {
+            share: 1.0,
+            least_nets: 2,
+        };
+        let (problem, glued) = stack_of_four(glue);
+        assert_eq!(glued.stacks, vec![vec![1, 2, 3, 4]]);
         let (first, last) = (
             centers(&problem, &glued.start),
             centers(&problem, &glued.poses),
         );
+        for a in 0..4 {
+            for b in a + 1..4 {
+                let (dx, dy) = (
+                    (first[a][0] - first[b][0]).abs(),
+                    (first[a][1] - first[b][1]).abs(),
+                );
+                assert!(dx >= 2.0 - 0.1 || dy >= 1.0 - 0.1, "{first:?}");
+            }
+        }
         for index in 1..4 {
             for axis in 0..2 {
                 let before = first[index][axis] - first[0][axis];
@@ -615,7 +624,7 @@ mod tests {
             }
         }
         // Deterministic.
-        let (_, again) = stack_of_four(Stacks::Glue(1.0));
+        let (_, again) = stack_of_four(glue);
         assert_eq!(glued.poses, again.poses);
     }
 }

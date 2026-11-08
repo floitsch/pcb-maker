@@ -72,7 +72,10 @@ def units(arguments):
     extra = on_environment(arguments.on_env)
     result = []
     seeds = [int(seed) for seed in arguments.seeds.split(",")] if arguments.seeds else SEEDS
-    boards = [b for b in DENSE if not arguments.boards or b.split("__")[-1] in arguments.boards.split(",")]
+    pool = DENSE
+    if arguments.board_file:
+        pool = [line.strip() for line in Path(arguments.board_file).read_text().splitlines() if line.strip()]
+    boards = [b for b in pool if not arguments.boards or b.split("__")[-1] in arguments.boards.split(",")]
     for seed in seeds:
         for board in sorted(boards, key=lambda b: -estimate(b, arguments.estimates)[1]):
             for side in arguments.sides.split(","):
@@ -105,6 +108,8 @@ def main():
                         help="an environment variable for the on side only (repeatable)")
     parser.add_argument("--seeds", help="placer seeds, comma-separated (default: 1,101,201,301,401)")
     parser.add_argument("--boards", help="boards by their last name part, comma-separated (default: all eleven)")
+    parser.add_argument("--board-file", help="the boards (full task names, one per line) instead of the eleven "
+                        "dense boards: a stage 2 scoped to the boards a change acts on")
     parser.add_argument("--full", action="store_true",
                         help="full layouts (stage 2 of the protocol), not stopped after the first route")
     parser.add_argument("--slots", type=int, default=5)
