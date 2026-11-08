@@ -2192,7 +2192,7 @@ fn apply_rows(
         // puts two members' pads on each other (trial 5: a row of two 0402
         // capacitors turned along the axis at 1 mm, 1.82 mm long, came back
         // shorted, with no word before the run).
-        let mut member_pads: Vec<(usize, Vec<[f64; 4]>)> = Vec::new();
+        let mut member_pads: Vec<(usize, usize, Vec<[f64; 4]>)> = Vec::new();
         for (place, member) in members.iter().enumerate() {
             if leaders.contains_key(member) || leaders.values().any(|leader| leader == member) {
                 return Err(format!("{} is in two rows", references[*member]));
@@ -2241,7 +2241,7 @@ fn apply_rows(
                 .far_courtyard
                 .extend(shift(&component.far_courtyard));
             carried.pads.extend(shift(&pad_boxes[*member]));
-            member_pads.push((*member, shift(&pad_boxes[*member])));
+            member_pads.push((*member, place, shift(&pad_boxes[*member])));
             carried.courtless.extend(shift(&component.courtless));
             carried.slots.extend(shift(&component.slots));
             if shaped {
@@ -2284,21 +2284,58 @@ fn apply_rows(
         let meet = |a: &[f64; 4], b: &[f64; 4]| {
             a[0] < b[2] - 0.01 && b[0] < a[2] - 0.01 && a[1] < b[3] - 0.01 && b[1] < a[3] - 0.01
         };
-        for (index, (first, pads)) in member_pads.iter().enumerate() {
-            for (second, others) in &member_pads[index + 1..] {
+        for (index, (first, first_place, pads)) in member_pads.iter().enumerate() {
+            for (second, second_place, others) in &member_pads[index + 1..] {
                 if pads.iter().any(|a| others.iter().any(|b| meet(a, b))) {
-                    let along = |member: usize| {
-                        let size = problem.components[member].body_size;
-                        if axis[0] > 0.5 { size[0] } else { size[1] }
+                    // Two parts of one line are `pitch_mm` apart along the
+                    // axis, of two lines `row_pitch_mm` across it (trial 8:
+                    // the 4in1-mini's bank of 1206 capacitors, its lines
+                    // too close, was told about pitch_mm and the parts'
+                    // size in their own frame, and every pitch_mm the agent
+                    // tried was refused).
+                    let one_line = first_place / columns == second_place / columns;
+                    let (setting, now, direction) = if one_line {
+                        ("pitch_mm", row.pitch_mm, axis)
+                    } else {
+                        ("row_pitch_mm", line_pitch, across)
+                    };
+                    // The direction in the parts' frame, and the length
+                    // their pads take along it.
+                    let local = core::problem::rotate(direction, angle);
+                    let reach = |member: usize, far: bool| -> f64 {
+                        let mut value = if far { f64::NEG_INFINITY } else { f64::INFINITY };
+                        for b in &pad_boxes[member] {
+                            for corner in [[b[0], b[1]], [b[0], b[3]], [b[2], b[1]], [b[2], b[3]]] {
+                                let along = corner[0] * local[0] + corner[1] * local[1];
+                                value = if far { value.max(along) } else { value.min(along) };
+                            }
+                        }
+                        value
+                    };
+                    let needed = reach(*first, true) - reach(*second, false);
+                    let board_axis = if direction[0].abs() > 0.5 { "x" } else { "y" };
+                    let unset = if !one_line && row.row_pitch_mm.is_none() {
+                        " (row_pitch_mm is not given: it takes pitch_mm)"
+                    } else {
+                        ""
                     };
                     return Err(format!(
-                        "row {:?}: at pitch_mm {} the pads of {} and {} lie on each other (their bodies are {:.2} mm along {}): give a pitch_mm of at least that, or turn the parts (rotation)",
+                        "row {:?}: the pads of {} and {} lie on each other ({}): turned as the row's first part is ({} degrees), the parts' pads span {:.2} mm along the board's {board_axis}, so {setting} must be more than that (now {}{unset}); or turn the parts (the first part's rotation turns the row)",
                         row.parts,
-                        row.pitch_mm,
                         references[*first],
                         references[*second],
-                        along(*first).max(along(*second)),
-                        if axis[0] > 0.5 { "x" } else { "y" }
+                        if one_line {
+                            "neighbours in a line".to_string()
+                        } else {
+                            format!(
+                                "lines {} and {} of the grid",
+                                first_place / columns + 1,
+                                second_place / columns + 1
+                            )
+                        },
+                        angle,
+                        needed,
+                        now,
                     ));
                 }
             }
@@ -3986,12 +4023,9 @@ mod tests {
     /// 1 mm pitch came back shorted by the layout).
     #[test]
     fn a_row_whose_pitch_puts_pads_on_pads_is_refused() {
-        let rows = |pitch: f64| {
+        let grid = |row: &str| {
             let (mut problem, references, pads) = problem();
-            let row: KiCadRowConstraint = serde_json::from_str(&format!(
-                r#"{{"parts": ["C1", "C2"], "pitch_mm": {pitch}}}"#
-            ))
-            .unwrap();
+            let row: KiCadRowConstraint = serde_json::from_str(row).unwrap();
             let pad = vec![[-1.0, -0.5, -0.4, 0.5], [0.4, -0.5, 1.0, 0.5]];
             apply_rows(
                 &mut problem,
@@ -4002,13 +4036,27 @@ mod tests {
             )
             .map(|_| ())
         };
+        let rows = |pitch: f64| grid(&format!(r#"{{"parts": ["C1", "C2"], "pitch_mm": {pitch}}}"#));
         let error = rows(1.0).unwrap_err();
         assert!(
-            error.contains("the pads of C1 and C2 lie on each other")
-                && error.contains("give a pitch_mm of at least"),
+            error.contains("the pads of C1 and C2 lie on each other (neighbours in a line)")
+                && error.contains("the parts' pads span 2.00 mm along the board's x, so pitch_mm must be more than that (now 1)"),
             "{error}"
         );
         assert!(rows(2.0).is_ok());
+        // Two lines of a grid too close: the setting is row_pitch_mm, the
+        // span the pads' across the axis (trial 8's bank of capacitors
+        // was told about pitch_mm).
+        let error = grid(r#"{"parts": ["C1", "C2"], "pitch_mm": 3, "columns": 1, "row_pitch_mm": 0.5}"#)
+            .unwrap_err();
+        assert!(
+            error.contains("(lines 1 and 2 of the grid)")
+                && error.contains("span 1.00 mm along the board's y, so row_pitch_mm must be more than that (now 0.5)"),
+            "{error}"
+        );
+        let error = grid(r#"{"parts": ["C1", "C2"], "pitch_mm": 0.5, "columns": 1}"#).unwrap_err();
+        assert!(error.contains("(row_pitch_mm is not given: it takes pitch_mm)"), "{error}");
+        assert!(grid(r#"{"parts": ["C1", "C2"], "pitch_mm": 3, "columns": 1, "row_pitch_mm": 1.5}"#).is_ok());
     }
 
     #[test]
