@@ -527,4 +527,106 @@ mod tests {
             assert!(top < 3.0, "seed {seed}: the edge part at y {top}");
         }
     }
+
+    /// Four parts on the same two nets between two fixed parts (the nets'
+    /// other ends) on a 40 x 30 mm board, the global placement with
+    /// `stacks`.
+    fn stack_of_four(stacks: crate::global::Stacks) -> (Problem, crate::global::GlobalResult) {
+        let mut components = vec![part(9, true)];
+        components.extend((0..4).map(|_| part(10, false)));
+        components.push(part(11, true));
+        let mut poses = vec![
+            Pose {
+                position: [20.0, 15.0],
+                angle: 0.0,
+            };
+            6
+        ];
+        poses[0].position = [5.0, 15.0];
+        poses[5].position = [35.0, 15.0];
+        let problem = Problem {
+            outline: vec![[0.0, 0.0], [40.0, 0.0], [40.0, 30.0], [0.0, 30.0]],
+            components,
+            net_weights: vec![1.0; 13],
+            poses,
+            spacing: 0.5,
+            grid: 0.25,
+            edge_margin: 0.5,
+            min_spacing: 0.2,
+            far_side_pads_only: false,
+            escape: None,
+            crossings: None,
+            pieces: Vec::new(),
+            constraints: Default::default(),
+        };
+        let config = GlobalConfig {
+            stacks,
+            ..GlobalConfig::default()
+        };
+        let result = global_place(&problem, &config);
+        (problem, result)
+    }
+
+    #[test]
+    fn a_stack_starts_as_a_bank_and_glued_stays_one() {
+        use crate::global::Stacks;
+        let centers = |problem: &Problem, poses: &[Pose]| -> Vec<Point> {
+            (1..5)
+                .map(|index| problem.components[index].center(poses[index]))
+                .collect()
+        };
+        // Off: the four solve to one spot, a tenth of the noise apart.
+        let (problem, off) = stack_of_four(Stacks::Off);
+        assert!(off.stacks.is_empty());
+        let start = centers(&problem, &off.start);
+        let mut least = f64::INFINITY;
+        for a in 0..4 {
+            for b in a + 1..4 {
+                least = least.min(
+                    (start[a][0] - start[b][0])
+                        .abs()
+                        .max((start[a][1] - start[b][1]).abs()),
+                );
+            }
+        }
+        assert!(least < 0.5, "{start:?}");
+        // Two-net parts are no stack for the multi-net rule.
+        let (_, multi) = stack_of_four(Stacks::MULTI_NET);
+        assert!(multi.stacks.is_empty());
+        assert_eq!(multi.poses, off.poses);
+        // Glued, a bank: no two of the 2 x 1 mm bodies overlap at the start
+        // (but for the tenth of the noise), and the members keep their
+        // offsets from the start to the end of the descent.
+        let glue = Stacks::Glue {
+            share: 1.0,
+            least_nets: 2,
+            least_common: 0,
+            least_members: 2,
+        };
+        let (problem, glued) = stack_of_four(glue);
+        assert_eq!(glued.stacks, vec![vec![1, 2, 3, 4]]);
+        let (first, last) = (
+            centers(&problem, &glued.start),
+            centers(&problem, &glued.poses),
+        );
+        for a in 0..4 {
+            for b in a + 1..4 {
+                let (dx, dy) = (
+                    (first[a][0] - first[b][0]).abs(),
+                    (first[a][1] - first[b][1]).abs(),
+                );
+                assert!(dx >= 2.0 - 0.1 || dy >= 1.0 - 0.1, "{first:?}");
+            }
+        }
+        for index in 1..4 {
+            for axis in 0..2 {
+                let before = first[index][axis] - first[0][axis];
+                let after = last[index][axis] - last[0][axis];
+                assert!((before - after).abs() < 1.0e-6, "{first:?} {last:?}");
+            }
+        }
+        // Deterministic.
+        let (_, again) = stack_of_four(glue);
+        assert_eq!(glued.poses, again.poses);
+    }
 }

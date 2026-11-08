@@ -643,6 +643,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "with `PCB_PLACER_START`: `global` (default: the global placement starts from the poses), `anneal` (no global placement), `legalize` (no global placement and no anneal: the legaliser seats the poses, the refinement follows).",
     ),
     (
+        "PCB_PLACER_STACKS",
+        Kind::Switch,
+        "a measurement switch (until the coordinator decides on stage 2): `glue`, the netlist's stacks (parts that share nine tenths of their nets and whose solved bodies overlap) start as banks at their pitch and move as one body in the global placement's descent; `bank`, the banks at the start only; `glue-multi`, `glue` for parts with three nets or more only (video's memory modules; no capacitor on a rail and ground); `glue-same`, `bank-same`: only parts that share every net (docs/placer.md, \"The netlist's stacks are lost in the descent, not at the start (2026-11-08)\").",
+    ),
+    (
         "PCB_PLACER_SKIP_ANNEAL",
         Kind::Switch,
         "a diagnostic: no anneal at any level; each level's legaliser seats the global placement's poses (or `PCB_PLACER_START`'s), the refinement follows (docs/placer.md, \"Where the arrangement is lost (2026-11-04)\").",
