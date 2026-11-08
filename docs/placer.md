@@ -10543,7 +10543,10 @@ falling back. The bet: spread a stack as a bank at the start. **Not
 taken** (stage 2 below): the code (`stacks.rs`, `global::spread_stacks`,
 the glue in the descent, the census probe) is in the branch's history
 (commit 3fe37485 and its parents); the trace's nets and `stages.py stacks`
-stay.
+stay. *Since "Banks on a wide bus glued through the descent
+(2026-11-08)" the glue is back as the default for banks of three parts or
+more on 24 shared nets (`Stacks::BANKS`); the pairs and the multi-net rule
+stay out.*
 
 **A stack** (`crates/pcb-placer/src/stacks.rs`, in history): movable parts on one
 side whose nets have at least a share in common (the nets on both over
@@ -10840,6 +10843,129 @@ KiCad unconnected per seed (1, 101, 201, 301, 401), strict passes:
 CPU: stage 0 15 330 s, stage 1 60 671 s, `glue-multi`'s stage-1 rows
 9 487 s, the census and the identity place checks about 9 000 s, stage 2
 233 104 s; about 91 CPU hours.
+
+## Banks on a wide bus glued through the descent (2026-11-08)
+
+Branch bus-stacks (everything in `build/glob4/`). "The netlist's stacks
+are lost in the descent, not at the start (2026-11-08)" glued the
+multi-net stacks through the descent and lost by the rule: video 92 -> 0
+unconnected, but SNSP-CPU-01, katia and RP2040_base worse beyond their
+seed spread and vaio_re's strict pass lost. Its suggestion: glue only the
+stacks on a wide bus, with SNSP-CPU-01's loss explained. The glue
+(`stacks.rs`, `global::spread_stacks`, the members' summed forces in the
+descent) came back from commit 3fe37485 behind the measurement's switch
+`PCB_PLACER_STACKS` with the rule narrowed (`bus:<nets>[:<members>]`:
+nine tenths of the nets and at least `<nets>` nets in common,
+`stacks::common`; groups of `<members>` at least). **Taken**: banks of
+three parts or more on 24 shared nets or more are glued by default
+(`Stacks::BANKS`, `GlobalConfig::stacks`); the switch and the census probe
+are gone (in the branch's history).
+
+**What 24 nets mean.** Parts that share nine tenths of their nets and 24
+or more of them are memories on one parallel bus: address and data lines
+and the strobes, each part with its own select (a 62256 SRAM: 15 address
+lines, 8 data lines, /OE, /WE, the rails; a 72-pin SIMM socket's 50 shared
+lines). The census with the multi-net rule (`PCB_PLACER_STACKS_CENSUS`,
+which now wrote each stack's common nets; 155 boards, the sweep's 109 and
+the expansion intake's 46, `build/glob4/census/glue-multi`) has a gap
+between 21 and 27 common nets. Below it connectors and repeated parts:
+OM-60-Flex's J2/J3 21, Batch_1's J1/J4/J8 17, the panels' copies 18 and
+less, RP2040_base's J4/U30 6, katia's U6/U10 and vaio_re's Q3/Q4 3. Above
+it five boards, all memories: video's eight SIMM sockets U12 to U19 (50
+common nets of 51 each), mackerel-08's seven SRAMs U6 to U12 (30),
+homebrew_486's four pairs U11/U15 to U14/U18 (31; a pair per byte lane of
+the 32-bit bus), mackerel-10's two pairs U3/U4 and U5/U6 (29) and
+SNSP-CPU-01's U15/U16 (27: the S-DSP's two 32 KB audio SRAMs, selects
+SCE0 and SCE1). (glob3's "67 nets" for video counted pads.)
+
+**SNSP-CPU-01: the pair is not lost, so gluing it only redraws the
+board.** Place checks at the five screen seeds, off and glued (`bus`,
+traced; `build/glob4/snsp`), first routes at the task budget
+(`build/glob4/snsp-fr`), glob3's stage-2 layouts:
+
+- The designer's U15 and U16 are no bank: U15 at 0°, U16 at 90° and 24 mm
+  to its left, an L around the S-DSP.
+- **The plain descent does not scatter the pair.** After the skeleton's
+  descent U15 and U16 lie about a body apart on every one of the 48
+  traced race seeds (spread 0.49 to 1.15 by stages.py's measure; the two
+  bodies touching along x 0.51, along y 0.78): their 27 shared nets hold
+  them. Video's eight modules after the same descent: 1.33 to 1.53
+  (scattered; their glued bank 0.38). Glued, the pair is a row at the
+  cell's pitch (0.71 to 0.78).
+- **The pair ends the same in both arms.** In every kept placement (and
+  in glob3's stage-2 layouts) U15 and U16 end at 0° as a row 19.7 mm
+  apart at y 136.5 (spread 0.78, all ten kept seeds), glued or not: the
+  anneal and the legaliser decide it.
+- **No loss in the mechanism.** Every skeleton seats at level 0 in both
+  arms (48 of 48 race seeds each, none left out, no fallback), so the
+  glued pair blocks nothing; the placer's objective at the end is the
+  same (median over the race seeds 24 797 glued against 25 356 off; the
+  kept seeds 23 347 to 25 744 against 22 400 to 25 397). Neither the
+  bank's orientation (a row where the plain descent made a column) nor
+  its pitch survives the anneal.
+- **What the glue changes is the draw.** The active parts of one seed
+  lie 16 to 23 mm apart between off and on in glob3's stage-2 layouts, as
+  far as two off seeds lie apart (15 to 26 mm): gluing the pair reseeds
+  the board. Off against on at one seed, against two seeds of one arm
+  (mean active-part distance, mm): SNSP 19.1 / 20.3, katia 24.7 / 23.0,
+  RP2040_base 33.6 / 29.8, vaio_re 9.7 / 10.5, homebrew_486 38.2 / 40.1.
+  Video alone converges: its glued seeds lie 18.9 mm apart, the plain
+  ones 46.2.
+- First routes, glued against off: 24/21, 31/10, 20/52, 36/31, 30/42
+  (median 30 -> 31, +2.9 %, sign-flip p 0.656): a redraw with a wider
+  spread, as glob3's stage 2 (off 2 to 18, on 5 to 28).
+
+So SNSP's loss has no mechanism to fix: two parts on one bus end as
+neighbours by their wires, and the glue only spends the seed's draw. The
+pairs of homebrew_486 and mackerel-10 alike (after the plain descent
+homebrew_486's pairs about a body apart on 16 of 24 race seeds, 0.77
+to 0.89; the anneal splits or keeps them in both arms). Gluing
+pays where the descent cannot find the bank's order: three or more
+members on one bus, which the density pushes apart in all directions
+(video). **The criterion: three members or more** (`least_members`),
+not a board: it keeps video and mackerel-08 and drops every pair. Its
+census (`bus:24:3`, `build/glob4/census/bus` with the members' count):
+two of 155 boards, both in the sweep; no board of the short tier (its
+twelve have no stack at 24 nets) or the expansion intake. Identity:
+SNSP-CPU-01 and katia placed with the switch and without are byte for
+byte the same (`build/glob4/identity`), and the default binary places
+video as the switch did and SNSP as off (`build/glob4/identity-c`).
+
+**Stage 2** (full layouts, tasks v7, `--quality`, the reference rates,
+`--expected-gb` from the nightly's estimates; video and mackerel-08 at
+the five screen seeds, both arms on `build/glob4/pcb-maker-b` = x1940
+with the switch, off without it; `screen.py --board-file --full
+--quality`, four to eight in flight, `build/glob4/stage2`, 2026-11-08
+13:55 to 15:05; CPU 19 302 s, off 9 438, on 9 864). KiCad unconnected
+per seed (1, 101, 201, 301, 401), strict passes:
+
+| board | off | on | strict off / on |
+| --- | --- | --- | ---: |
+| video | 79/115/92/78/120 (96.8) | 0/0/12/0/3 (3.0) | 0 / 3 |
+| mackerel-08-v1 | 0/0/0/0/0 | 0/0/0/0/0 | 5 / 5 |
+
+`placer_ab compare` (KiCad unconnected, `build/glob4/stage2-compare.md`):
+video 92 -> 0 by the median (-39.0 % weighted, weight 16), every pair sum
+falls (79 to 0, 115 to 0, 92 to 12, 78 to 0, 120 to 3), sign-flip p 0.033
+(the least five pairs allow), the noise file's p 0.007; mackerel-08 equal.
+
+- **The rule holds**: video falls on five of five seeds (three strict
+  passes gained), mackerel-08 stays complete and strictly passing on all
+  five in both arms (its placement differs on every seed; vias 36 to 130
+  against 51 to 85, length +1 % by the mean: a redraw), no strict pass
+  lost (5 to 8 over the two boards). Video's off is glob3's off to the
+  board (x1938 and x1940 place it alike) and its on glob3's glue-multi
+  row for row: the bank of eight is what moves it.
+- **Decision: taken**, the glue of banks of three on a wide bus is the
+  code path (`Stacks::BANKS`, no switch); the multi-net rule and the
+  pairs stay out. Left: the 4in1-mini's bulk capacitors (a same-net bank
+  the anneal takes apart, "The netlist's stacks are lost in the descent")
+  and the pairs, which need no glue.
+
+CPU: the census 155 boards twice (about 600 s), SNSP's place checks
+3 647 s and first routes 8 761 s, the bank boards' and identity place
+checks 2 751 s plus 643 s, stage 2 19 302 s (off 9 438, on 9 864);
+about 10 CPU hours.
 
 ## What went wrong on the way (kept as lessons)
 

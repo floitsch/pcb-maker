@@ -42,7 +42,7 @@ The environment variables are indexed in the hand-over
 | [Layout settings: race_probe](#layout-settings-race_probe) | 3 | 3 | 0 | 3 | 3 |
 | [Layout settings: move_descent](#layout-settings-move_descent) | 7 | 7 | 0 | 7 | 0 |
 | [Placer core](#placer-core) | 13 | - | 0 | 13 | - |
-| [Placer core: global](#placer-core-global) | 13 | - | 0 | 13 | - |
+| [Placer core: global](#placer-core-global) | 14 | - | 0 | 14 | - |
 | [Placer core: anneal](#placer-core-anneal) | 8 | - | 0 | 8 | - |
 
 ## Router settings
@@ -209,7 +209,7 @@ One entry of `net_classes`. Source: `KiCadNetClassRequest` in [crates/pcb-kicad/
 | Key | Type | Default | Docs | Description |
 |---|---|---|---|---|
 | `net_classes[].name` | `String` | required | placer.md | The class's name in the `.kicad_pro` (not empty, not `Default`). |
-| `net_classes[].nets` | `Vec<String>` | required | router.md | Net names or KiCad wildcard patterns (`*`, `?`), with or without the sheet path's leading `/`. |
+| `net_classes[].nets` | `Vec<String>` | required | router.md, placer.md | Net names or KiCad wildcard patterns (`*`, `?`), with or without the sheet path's leading `/`. |
 | `net_classes[].track_width_mm` | `Option<f64>` | optional | - | Track width of the class's nets (unset: what each net had). |
 | `net_classes[].clearance_mm` | `Option<f64>` | optional | - | Clearance of the class's nets (unset: what each net had). |
 | `net_classes[].via_diameter_mm` | `Option<f64>` | optional | - | Via diameter of the class's nets (unset: what each net had). |
@@ -553,6 +553,7 @@ The `move_descent` object of the layout settings (an experiment, off when absent
 | `global.frame_interval` | `usize` | `5` | - | Every this many iterations the poses are kept as a frame (for animations); 0 keeps none but the last. |
 | `global.seed` | `u64` | `1` | `seed` | Seed of the start's noise: the parts start near the fixed parts' pin centroid (or the board's centre), the fillers anywhere. |
 | `global.warm` | `Option<std::sync::Arc<Vec<bool>>>` | unset | - | A diagnostic warm start (`crate::Start`): per component, whether it starts at its pose's centre without the start's noise. `None`: every part from the start point. |
+| `global.stacks` | `Stacks` | `Glue {share: 0.9, least_nets: 3, least_common: 24, least_members: 3}` | - | What the global placement does with the netlist's stacks (`Stacks`; by default `Stacks::BANKS`). |
 
 ## Placer core: anneal
 

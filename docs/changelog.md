@@ -11,6 +11,32 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-08 (banks on a wide bus glued through the descent, by default)
+
+Branch bus-stacks (docs/placer.md "Banks on a wide bus glued through the
+descent (2026-11-08)"; everything in `build/glob4/`).
+
+- **On, no switch**: the glue of 3fe37485 (`stacks.rs`,
+  `global::spread_stacks`, the members' summed forces in the descent)
+  for banks of three parts or more with three nets or more that share
+  nine tenths of their nets and 24 at least (`Stacks::BANKS`,
+  `GlobalConfig::stacks`; `stacks::common`, `find_stacks`'s
+  `least_common` and `least_members`).
+- **SNSP-CPU-01 diagnosed**: its two SRAMs (27 shared nets) end as a row
+  in both arms; the plain descent keeps the pair a body apart, the
+  skeletons seat alike, the objective is alike, and the glued layouts lie
+  as far from off's as two off seeds: gluing a pair redraws the board
+  (first routes 30 -> 31, p 0.656). Pairs are left out.
+- **Census** (155 boards): video's eight SIMM sockets (50 shared nets) and
+  mackerel-08's seven SRAMs (30); none of the short tier or the expansion
+  intake; SNSP-CPU-01 and katia byte for byte as before.
+- **Stage 2** (video and mackerel-08, five seeds, full layouts against
+  x1940): video 92 -> 0 unconnected by the median, better on five of five,
+  strict 0 -> 3; mackerel-08 complete and strict on all ten rows.
+- The measurement's switch `PCB_PLACER_STACKS` and the census probe
+  `PCB_PLACER_STACKS_CENSUS` were used and removed (in the branch's
+  history); the config reference lists `global.stacks`.
+
 ## Committed on 2026-11-08 (the netlist's stacks: lost in the descent, not at the start; glued banks measured and not taken)
 
 Branch netlist-stacks (docs/placer.md "The netlist's stacks are lost in

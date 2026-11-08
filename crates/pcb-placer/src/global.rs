@@ -25,7 +25,8 @@ const NETLIST_NOISE: f64 = 0.1;
 
 /// What the global placement does with the netlist's stacks
 /// (`spread_stacks`; docs/placer.md, "The netlist's stacks are lost in the
-/// descent, not at the start (2026-11-08)").
+/// descent, not at the start (2026-11-08)" and "Banks on a wide bus glued
+/// through the descent (2026-11-08)").
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Stacks {
     /// Left on their spot (the start's noise separates them).
@@ -36,9 +37,9 @@ pub enum Stacks {
     /// (`stacks::common`), in groups of `least_members` at least. A bank at
     /// the start only is undone by the descent where no wire holds its
     /// parts, and glued banks of capacitors on a rail and ground are taken
-    /// apart by the anneal (stage 1 of 2026-11-08: -1.2 %, not taken); for
-    /// parts with three nets or more (video's memory modules) the glue is
-    /// the lever.
+    /// apart by the anneal (stage 1 of 2026-11-08: -1.2 %, not taken);
+    /// glued pairs only redraw the board (SNSP-CPU-01's two SRAMs end as
+    /// neighbours either way).
     Glue {
         share: f64,
         least_nets: usize,
@@ -48,63 +49,16 @@ pub enum Stacks {
 }
 
 impl Stacks {
-    /// The parts with three nets or more that share nine tenths of them
-    /// (`glue-multi` of 2026-11-08).
-    pub const MULTI_NET: Stacks = Stacks::Glue {
-        share: 0.9,
-        least_nets: 3,
-        least_common: 0,
-        least_members: 2,
-    };
-
-    /// The parts on one parallel bus: nine tenths of their nets and 24 at
-    /// least in common (a memory's address and data lines).
-    pub const BUS: Stacks = Stacks::Glue {
+    /// Banks on a wide parallel bus (the default): three parts or more with
+    /// three nets or more that share nine tenths of their nets and 24 at
+    /// least (a memory's address and data lines; video's eight SIMM
+    /// sockets, 50 shared nets, and mackerel-08's seven SRAMs, 30).
+    pub const BANKS: Stacks = Stacks::Glue {
         share: 0.9,
         least_nets: 3,
         least_common: 24,
-        least_members: 2,
+        least_members: 3,
     };
-
-    /// The measurement's switch `PCB_PLACER_STACKS`: `glue-multi`
-    /// (`MULTI_NET`), `bus` (`BUS`), `bus:<nets>` or `bus:<nets>:<members>`
-    /// (`BUS` with `least_common` and `least_members`); unset: off.
-    pub fn from_env() -> Self {
-        let value = std::env::var("PCB_PLACER_STACKS").unwrap_or_default();
-        Self::parse(&value)
-    }
-
-    /// `from_env`'s reading of the switch's value.
-    pub fn parse(value: &str) -> Self {
-        if value == "glue-multi" {
-            return Stacks::MULTI_NET;
-        }
-        let mut words = value.split(':');
-        if words.next() != Some("bus") {
-            return Stacks::Off;
-        }
-        let Stacks::Glue {
-            share,
-            least_nets,
-            mut least_common,
-            mut least_members,
-        } = Stacks::BUS
-        else {
-            unreachable!()
-        };
-        if let Some(nets) = words.next().and_then(|word| word.parse().ok()) {
-            least_common = nets;
-        }
-        if let Some(members) = words.next().and_then(|word| word.parse().ok()) {
-            least_members = members;
-        }
-        Stacks::Glue {
-            share,
-            least_nets,
-            least_common,
-            least_members,
-        }
-    }
 }
 
 /// Spreads the netlist's stacks (`crate::stacks`) at the solved `centers`
@@ -333,8 +287,7 @@ pub struct GlobalConfig {
     /// every part from the start point.
     pub warm: Option<std::sync::Arc<Vec<bool>>>,
     /// What the global placement does with the netlist's stacks
-    /// (`Stacks`; by default the measurement switch `PCB_PLACER_STACKS`,
-    /// off where it is unset).
+    /// (`Stacks`; by default `Stacks::BANKS`).
     pub stacks: Stacks,
 }
 
@@ -354,7 +307,7 @@ impl Default for GlobalConfig {
             frame_interval: 5,
             seed: 1,
             warm: None,
-            stacks: Stacks::from_env(),
+            stacks: Stacks::BANKS,
         }
     }
 }
@@ -1506,26 +1459,4 @@ pub fn choose_rotations(
         changed |= best.1 != original;
     }
     changed
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_stacks_switch_reads_its_rules() {
-        assert_eq!(Stacks::parse(""), Stacks::Off);
-        assert_eq!(Stacks::parse("glue"), Stacks::Off);
-        assert_eq!(Stacks::parse("glue-multi"), Stacks::MULTI_NET);
-        assert_eq!(Stacks::parse("bus"), Stacks::BUS);
-        assert_eq!(
-            Stacks::parse("bus:16:3"),
-            Stacks::Glue {
-                share: 0.9,
-                least_nets: 3,
-                least_common: 16,
-                least_members: 3,
-            }
-        );
-    }
 }

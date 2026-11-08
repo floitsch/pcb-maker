@@ -33,6 +33,18 @@ used to be here; code comments and docs that cite `docs/handover.md,
   2683 -> 2668 unconnected (RP2040_base 20 -> 5); expansion tier 25 -> 26
   (backplane); fingerprints and short tier unchanged. Open problem 2.
 
+- **Banks on a wide bus glued (branch bus-stacks, 2026-11-08).** The
+  netlist's stacks of three parts or more that share nine tenths of their
+  nets and 24 at least (memories on one parallel bus) move as one bank
+  through the global placement's descent, by default (`Stacks::BANKS`).
+  SNSP-CPU-01's loss under the multi-net rule was a redraw: its two SRAMs
+  end as neighbours with and without the glue, and a glued pair only
+  reseeds the board; pairs are therefore left out. Census: video and
+  mackerel-08 of 155 boards (none of the short tier or the expansion
+  intake). Stage 2 on both: video 92 -> 0 KiCad unconnected by the median,
+  better on five of five seeds, three strict passes gained; mackerel-08
+  complete and strict on all five in both arms. Open problem 4.
+
 - **The netlist's stacks (branch netlist-stacks, 2026-11-08; not
   taken).** The netlist start's stacks (parts on the same nets on one
   spot) are lost in the global placement's descent, not at the start: a
@@ -746,9 +758,20 @@ ranks what keeps the designer tier's 41 failing boards open.
    with three nets or more) on the 19 sweep boards it acts on: video 92
    -> 0 unconnected (five of five, three strict passes), but SNSP-CPU-01
    (9.8 -> 16.4), katia and RP2040_base worse beyond their spread and
-   vaio_re's strict pass lost: removed by the rule. **Open**: a rule by
-   bus width (24 nets or more: video, SNSP, mackerel, the 486) with
-   SNSP's loss explained; the 4in1-mini's skeletons that need the
+   vaio_re's strict pass lost: removed by the rule.
+   **Banks on a wide bus (2026-11-08, placer.md "Banks on a wide bus glued
+   through the descent (2026-11-08)"; on, no switch)**: glued only where
+   three parts or more share nine tenths of their nets and 24 at least
+   (the census's gap lies between 21 and 27 shared nets: below it
+   connectors and repeated parts, above it memories). SNSP-CPU-01's U15
+   and U16 (27 nets) end as a row in both arms; the plain descent leaves
+   the pair about a body apart on all 48 race seeds, objective and skeletons
+   alike, and the glued pair's layouts lie as far from off's as two off
+   seeds: a redraw (first routes 30 -> 31 by the median, p 0.656), not a
+   mechanism. Pairs are left out by the members' count; video and
+   mackerel-08 qualify. Stage 2: video 79/115/92/78/120 -> 0/0/12/0/3
+   (three strict passes), mackerel-08 0 on every row in both arms.
+   **Open**: the 4in1-mini's skeletons that need the
    courtyards (with the glue its plain placements seat level 7 on about
    half their seeds, its skeletons never; a probe keeping the
    22-capacitor bank in the skeleton made every seed fall back); the

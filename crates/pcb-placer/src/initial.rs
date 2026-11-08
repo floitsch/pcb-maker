@@ -590,10 +590,10 @@ mod tests {
             }
         }
         assert!(least < 0.5, "{start:?}");
-        // Two-net parts are no stack for the multi-net rule.
-        let (_, multi) = stack_of_four(Stacks::MULTI_NET);
-        assert!(multi.stacks.is_empty());
-        assert_eq!(multi.poses, off.poses);
+        // Two-net parts are no bank on a bus.
+        let (_, banks) = stack_of_four(Stacks::BANKS);
+        assert!(banks.stacks.is_empty());
+        assert_eq!(banks.poses, off.poses);
         // Glued, a bank: no two of the 2 x 1 mm bodies overlap at the start
         // (but for the tenth of the noise), and the members keep their
         // offsets from the start to the end of the descent.

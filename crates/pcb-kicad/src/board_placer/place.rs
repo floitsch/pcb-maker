@@ -436,66 +436,6 @@ pub fn place_kicad_board(
     placer_config.kicad_last_level = true;
     placer_config.start = warm_start(&lowered)?.map(std::sync::Arc::new);
     placer_config.skip_anneal = std::env::var_os("PCB_PLACER_SKIP_ANNEAL").is_some();
-    // A census probe (`PCB_PLACER_STACKS_CENSUS=<file>`): the whole
-    // board's netlist solve with the stacks of `PCB_PLACER_STACKS` glued
-    // (the bus rule where it is unset), its stacks (members, the nets all
-    // members have, each member's nets) appended to the file as a JSON
-    // line, and the process ends (docs/placer.md, "The netlist's stacks
-    // are lost in the descent, not at the start (2026-11-08)").
-    if let Some(census) = std::env::var_os("PCB_PLACER_STACKS_CENSUS") {
-        let problem = core::global_problem(&lowered.problem, &placer_config);
-        let rule = match placer_config.global.stacks {
-            core::global::Stacks::Off => core::global::Stacks::BUS,
-            rule => rule,
-        };
-        let probe = core::GlobalConfig {
-            max_iterations: 1,
-            frame_interval: 0,
-            stacks: rule,
-            ..placer_config.global.clone()
-        };
-        let result = core::global::global_place(&problem, &probe);
-        let nets_of = |part: usize| -> std::collections::BTreeSet<usize> {
-            problem.components[part]
-                .pins
-                .iter()
-                .map(|pin| pin.net)
-                .collect()
-        };
-        let stacks: Vec<serde_json::Value> = result
-            .stacks
-            .iter()
-            .map(|members| {
-                let mut common = nets_of(members[0]);
-                for part in &members[1..] {
-                    let nets = nets_of(*part);
-                    common.retain(|net| nets.contains(net));
-                }
-                serde_json::json!({
-                    "members": members
-                        .iter()
-                        .map(|part| lowered.references[*part].as_str())
-                        .collect::<Vec<_>>(),
-                    "common": common.len(),
-                    "nets": members.iter().map(|part| nets_of(*part).len()).collect::<Vec<_>>(),
-                })
-            })
-            .collect();
-        let movable = problem
-            .components
-            .iter()
-            .filter(|component| !component.fixed)
-            .count();
-        let line = serde_json::json!({"board": board_id, "movable": movable, "stacks": stacks});
-        use std::io::Write;
-        let mut file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&census)
-            .map_err(|error| error.to_string())?;
-        writeln!(file, "{line}").map_err(|error| error.to_string())?;
-        std::process::exit(0);
-    }
     if let Some(guidance) = &config.global_guidance {
         let router_config = config.guidance_router.clone().unwrap_or_default();
         placer_config.anneal.guidance = Some(core::guidance::Guidance {
