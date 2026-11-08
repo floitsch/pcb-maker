@@ -2280,64 +2280,129 @@ fn apply_rows(
                     });
             }
         }
-        // Overlapping by more than a hundredth of a millimetre.
-        let meet = |a: &[f64; 4], b: &[f64; 4]| {
-            a[0] < b[2] - 0.01 && b[0] < a[2] - 0.01 && a[1] < b[3] - 0.01 && b[1] < a[3] - 0.01
+        // Overlapping by more than a hundredth of a millimetre, the first
+        // box grown by `grow`.
+        let meet = |a: &[f64; 4], b: &[f64; 4], grow: f64| {
+            a[0] - grow < b[2] - 0.01
+                && b[0] < a[2] + grow - 0.01
+                && a[1] - grow < b[3] - 0.01
+                && b[1] < a[3] + grow - 0.01
+        };
+        // A pad's net: the pin whose centre lies in its box.
+        let net_of = |member: usize, pad: &[f64; 4]| -> Option<usize> {
+            problem.components[member]
+                .pins
+                .iter()
+                .find(|pin| {
+                    pin.offset[0] >= pad[0] - 1.0e-6
+                        && pin.offset[0] <= pad[2] + 1.0e-6
+                        && pin.offset[1] >= pad[1] - 1.0e-6
+                        && pin.offset[1] <= pad[3] + 1.0e-6
+                })
+                .map(|pin| pin.net)
+        };
+        // Pads of two nets keep the copper clearance (`min_spacing`): a
+        // row turns every part alike, so two lines of a bank face each
+        // other with opposite nets (trial 8: the 4in1-mini's lines 4.2 mm
+        // apart left 16 clearance findings, GND and +BATT 0.1 mm apart).
+        let clearance = problem.min_spacing.max(0.0);
+        let apart = |first: usize, a_index: usize, second: usize, b_index: usize| -> f64 {
+            match (
+                net_of(first, &pad_boxes[first][a_index]),
+                net_of(second, &pad_boxes[second][b_index]),
+            ) {
+                (Some(x), Some(y)) if x == y => 0.0,
+                _ => clearance,
+            }
         };
         for (index, (first, first_place, pads)) in member_pads.iter().enumerate() {
             for (second, second_place, others) in &member_pads[index + 1..] {
-                if pads.iter().any(|a| others.iter().any(|b| meet(a, b))) {
-                    // Two parts of one line are `pitch_mm` apart along the
-                    // axis, of two lines `row_pitch_mm` across it (trial 8:
-                    // the 4in1-mini's bank of 1206 capacitors, its lines
-                    // too close, was told about pitch_mm and the parts'
-                    // size in their own frame, and every pitch_mm the agent
-                    // tried was refused).
-                    let one_line = first_place / columns == second_place / columns;
-                    let (setting, now, direction) = if one_line {
-                        ("pitch_mm", row.pitch_mm, axis)
-                    } else {
-                        ("row_pitch_mm", line_pitch, across)
-                    };
-                    // The direction in the parts' frame, and the length
-                    // their pads take along it.
-                    let local = core::problem::rotate(direction, angle);
-                    let reach = |member: usize, far: bool| -> f64 {
-                        let mut value = if far { f64::NEG_INFINITY } else { f64::INFINITY };
-                        for b in &pad_boxes[member] {
-                            for corner in [[b[0], b[1]], [b[0], b[3]], [b[2], b[1]], [b[2], b[3]]] {
-                                let along = corner[0] * local[0] + corner[1] * local[1];
-                                value = if far { value.max(along) } else { value.min(along) };
-                            }
-                        }
-                        value
-                    };
-                    let needed = reach(*first, true) - reach(*second, false);
-                    let board_axis = if direction[0].abs() > 0.5 { "x" } else { "y" };
-                    let unset = if !one_line && row.row_pitch_mm.is_none() {
-                        " (row_pitch_mm is not given: it takes pitch_mm)"
-                    } else {
-                        ""
-                    };
-                    return Err(format!(
-                        "row {:?}: the pads of {} and {} lie on each other ({}): turned as the row's first part is ({} degrees), the parts' pads span {:.2} mm along the board's {board_axis}, so {setting} must be more than that (now {}{unset}); or turn the parts (the first part's rotation turns the row)",
-                        row.parts,
-                        references[*first],
-                        references[*second],
-                        if one_line {
-                            "neighbours in a line".to_string()
-                        } else {
-                            format!(
-                                "lines {} and {} of the grid",
-                                first_place / columns + 1,
-                                second_place / columns + 1
-                            )
-                        },
-                        angle,
-                        needed,
-                        now,
-                    ));
+                let conflicts: Vec<(usize, usize, f64)> = pads
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(i, a)| {
+                        others.iter().enumerate().filter_map(move |(j, b)| {
+                            let gap = apart(*first, i, *second, j);
+                            meet(a, b, gap).then_some((i, j, gap))
+                        })
+                    })
+                    .collect();
+                if conflicts.is_empty() {
+                    continue;
                 }
+                // Two parts of one line are `pitch_mm` apart along the
+                // axis, of two lines `row_pitch_mm` across it (trial 8:
+                // the 4in1-mini's bank of 1206 capacitors, its lines too
+                // close, was told about pitch_mm and the parts' size in
+                // their own frame, and every pitch_mm the agent tried was
+                // refused).
+                let one_line = first_place / columns == second_place / columns;
+                let (setting, now, direction) = if one_line {
+                    ("pitch_mm", row.pitch_mm, axis)
+                } else {
+                    ("row_pitch_mm", line_pitch, across)
+                };
+                // The direction in the parts' frame, and the pitch that
+                // clears every pad of the two, with the clearance between
+                // pads of two nets.
+                let local = core::problem::rotate(direction, angle);
+                let along = |b: &[f64; 4], far: bool| -> f64 {
+                    let values = [[b[0], b[1]], [b[0], b[3]], [b[2], b[1]], [b[2], b[3]]]
+                        .map(|corner| corner[0] * local[0] + corner[1] * local[1]);
+                    if far {
+                        values.into_iter().fold(f64::NEG_INFINITY, f64::max)
+                    } else {
+                        values.into_iter().fold(f64::INFINITY, f64::min)
+                    }
+                };
+                let mut needed: f64 = 0.0;
+                let mut kept_apart = false;
+                for (i, a) in pad_boxes[*first].iter().enumerate() {
+                    for (j, b) in pad_boxes[*second].iter().enumerate() {
+                        let gap = apart(*first, i, *second, j);
+                        let pitch = along(a, true) - along(b, false) + gap;
+                        if pitch > needed {
+                            needed = pitch;
+                            kept_apart = gap > 0.0;
+                        }
+                    }
+                }
+                let on_each_other = conflicts.iter().any(|(_, _, gap)| *gap == 0.0)
+                    || conflicts.iter().any(|(i, j, _)| meet(&pads[*i], &others[*j], 0.0));
+                let board_axis = if direction[0].abs() > 0.5 { "x" } else { "y" };
+                let unset = if !one_line && row.row_pitch_mm.is_none() {
+                    " (row_pitch_mm is not given: it takes pitch_mm)"
+                } else {
+                    ""
+                };
+                return Err(format!(
+                    "row {:?}: the pads of {} and {} {} ({}): turned as the row's first part is ({} degrees), they need {:.2} mm along the board's {board_axis}{}, so {setting} must be at least that (now {}{unset}); or turn the parts (the first part's rotation turns the row)",
+                    row.parts,
+                    references[*first],
+                    references[*second],
+                    if on_each_other {
+                        "lie on each other".to_string()
+                    } else {
+                        format!("of two nets come closer than the copper clearance ({clearance} mm)")
+                    },
+                    if one_line {
+                        "neighbours in a line".to_string()
+                    } else {
+                        format!(
+                            "lines {} and {} of the grid",
+                            first_place / columns + 1,
+                            second_place / columns + 1
+                        )
+                    },
+                    angle,
+                    needed,
+                    if kept_apart {
+                        format!(" (the pads' span and {clearance} mm between pads of two nets)")
+                    } else {
+                        " (the pads' span)".to_string()
+                    },
+                    now,
+                ));
             }
         }
         carried.body_center = [(body[0] + body[2]) / 2.0, (body[1] + body[3]) / 2.0];
@@ -4040,7 +4105,7 @@ mod tests {
         let error = rows(1.0).unwrap_err();
         assert!(
             error.contains("the pads of C1 and C2 lie on each other (neighbours in a line)")
-                && error.contains("the parts' pads span 2.00 mm along the board's x, so pitch_mm must be more than that (now 1)"),
+                && error.contains("they need 2.00 mm along the board's x (the pads' span), so pitch_mm must be at least that (now 1)"),
             "{error}"
         );
         assert!(rows(2.0).is_ok());
@@ -4051,12 +4116,39 @@ mod tests {
             .unwrap_err();
         assert!(
             error.contains("(lines 1 and 2 of the grid)")
-                && error.contains("span 1.00 mm along the board's y, so row_pitch_mm must be more than that (now 0.5)"),
+                && error.contains("they need 1.00 mm along the board's y (the pads' span), so row_pitch_mm must be at least that (now 0.5)"),
             "{error}"
         );
         let error = grid(r#"{"parts": ["C1", "C2"], "pitch_mm": 0.5, "columns": 1}"#).unwrap_err();
         assert!(error.contains("(row_pitch_mm is not given: it takes pitch_mm)"), "{error}");
         assert!(grid(r#"{"parts": ["C1", "C2"], "pitch_mm": 3, "columns": 1, "row_pitch_mm": 1.5}"#).is_ok());
+        // Pads of two nets keep the copper clearance: every part turned
+        // alike, a neighbour's pad 2 faces pad 1 (trial 8's bank: GND and
+        // +BATT 0.1 mm apart, 16 clearance findings).
+        let netted = |pitch: f64| {
+            let (mut problem, references, pads) = problem();
+            problem.min_spacing = 0.2;
+            for member in [1, 2] {
+                problem.components[member].pins = vec![
+                    core::Pin { offset: [-0.7, 0.0], net: 0 },
+                    core::Pin { offset: [0.7, 0.0], net: 1 },
+                ];
+            }
+            let row: KiCadRowConstraint = serde_json::from_str(&format!(
+                r#"{{"parts": ["C1", "C2"], "pitch_mm": {pitch}}}"#
+            ))
+            .unwrap();
+            let pad = vec![[-1.0, -0.5, -0.4, 0.5], [0.4, -0.5, 1.0, 0.5]];
+            apply_rows(&mut problem, &references, pads.len(), &[Vec::new(), pad.clone(), pad], &[row])
+                .map(|_| ())
+        };
+        let error = netted(2.1).unwrap_err();
+        assert!(
+            error.contains("of two nets come closer than the copper clearance (0.2 mm)")
+                && error.contains("they need 2.20 mm along the board's x (the pads' span and 0.2 mm between pads of two nets)"),
+            "{error}"
+        );
+        assert!(netted(2.25).is_ok());
     }
 
     #[test]
