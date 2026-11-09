@@ -100,6 +100,7 @@ prints the section; `--checkout` writes another checkout's docs).
 <!-- nightly:begin -->
 | Night | main | Fingerprints | Expansion | Short | Sweep | Designer | Gap (placement / routing) | Against the previous night (better/same/worse) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-11-09 | `80c050719bf8` | changed: jetson-nano-baseboard | 26/46 (strict 26), 556 open | 9/12 (strict 9), 16 open | 69/109 (strict 70), 1552 open | 75/109 (strict 76), 2634 open at 0.676 | 68% / 32% | fingerprints 0/4/0; expansion 1/44/1 (pass +1 -0); short 0/12/0; sweep 6/99/1 (pass +2 -0); designer 5/103/1 (pass +2 -0) |
 | 2026-11-08 | `b090e40d64d3` | changed: Sisu_SSE-9, computie__k30-SBC | 25/46 (strict 25), 557 open | 9/12 (strict 9), 16 open | 67/109 (strict 68), 1697 open | 73/109 (strict 74), 2685 open at 0.663 | 71% / 29% | fingerprints 1/3/0; expansion 1/44/1 (pass +1 -0); short 3/9/0 (pass +2 -0); sweep 22/72/12 (pass +4 -0); designer 14/91/4 (pass +4 -1) |
 | 2026-11-07 | `406dcb94a0f6` | changed: jetson-nano-baseboard, Sisu_SSE-9, computie__k30-SBC, Castor_and_Pollux__mainboard | 24/46 (strict 24), 558 open | 7/12 (strict 7), 21 open | 63/109 (strict 63), 1957 open | 70/109 (strict 67), 2756 open at 0.662 | 70% / 30% | fingerprints 0/4/0; expansion 0/46/0; short 0/12/0; sweep 11/87/8 (pass +3 -3); designer 1/107/1 (pass +0 -1) |
 | 2026-11-06 | `66115bad368e` | identical | 24/46 (strict 24), 558 open | 7/12 (strict 7), 21 open | 63/109 (strict 63), 2100 open | 71/109 (strict 68), 2756 open at 0.647 | 74% / 26% | fingerprints 0/4/0; expansion 0/46/0; short 0/12/0; sweep 16/70/20 (pass +6 -4); designer 1/104/4 |
@@ -113,7 +114,6 @@ prints the section; `--checkout` writes another checkout's docs).
 | 2026-10-29 | `1f0ca50cccfb` | identical | 24/46 (strict 24), 558 open | 8/12 (strict 8), 23 open | 62/109 (strict 62), 2658 open | 71/109 (strict 68), 2795 open at 0.66 | 75% / 25% | fingerprints 0/4/0; expansion 0/46/0; short 1/11/0 (pass +1 -0); sweep 2/105/0 (pass +1 -0); designer 4/102/3 (pass +2 -1) |
 | 2026-10-28T1429 | `c68e9a8f506f` | changed: Sisu_SSE-9 | 24/46 (strict 24), 558 open | 7/12 (strict 7), 28 open | 61/109 (strict 61), 2667 open | 70/109 (strict 68), 2804 open at 0.637 | 74% / 26% | fingerprints 0/4/0; expansion 0/46/0; short 1/9/2 (pass +0 -1); sweep 21/66/20 (pass +5 -3); designer 6/99/4 (pass +2 -0) |
 | 2026-10-28 | `be0e62984304` | identical | 24/46 (strict 24), 558 open | 8/12 (strict 8), 20 open | 59/109 (strict 59), 2924 open | 68/109 (strict 64), 3198 open at 0.68 | 53% / 47% | fingerprints 0/4/0; expansion 0/45/1; short 0/12/0; sweep 6/93/4 (pass +2 -0); designer 2/104/3 (pass +1 -0) |
-| 2026-10-27 | `e7a12a80e4fe` | identical | 24/46 (strict 24), 557 open | 8/12 (strict 8), 20 open | 57/109 (strict 57), 2140 open | 67/109 (strict 63), 3335 open at 0.69 | 52% / 48% | fingerprints 0/4/0; expansion 0/46/0; short 0/12/0; sweep 4/99/0 (pass +1 -1); designer 5/100/4 (pass +0 -1) |
 <!-- nightly:end -->
 
 ## Known issues of the harness
@@ -5278,6 +5278,121 @@ jetson-nano-baseboard 1 -> 4, link 3 -> 5, SUMEC_MK_IV 6 -> 7,
 osprey_rev_a 1 -> 2, capybully 2 -> 3. Within the seed spread: 4in1-mini
 77 -> 88 (spread 29), video 70 -> 79 (spread 193), glasgow revC3 83 ->
 85 (spread 49).
+
+## Layout sweep v36 (2026-11-09)
+
+<!-- nightly-sweep night=2026-11-09 sweep=build/nightly/2026-11-09/sweep.log main=80c050719bf82254ca1de05d5c9ca64a283a21e9 -->
+
+Written by the nightly (`scripts/nightly-report.py --docs`) from
+`build/nightly/2026-11-09/`: main 80c0507 (36 commits after v35's main
+b090e40; 36 commits after the nightly of 2026-11-08's main b090e40),
+binary `pcb-maker-nightly-2026-11-09-80c050719bf8` (sha256
+157cb2e8ef5d), tasks v7 (sha256 c8f95caf5089), `--quality`, at the
+pinned work rates (the measured router rate had a median of 2.5e6, work
+over wall 1.01), 10 jobs x 2 threads, `--order peak-desc`, through the
+memory ledger with `--ledger-priority nightly`: 8830 s wall, largest
+peak 3.3 GB, no row cut or killed in any stage. Per board:
+`build/nightly/2026-11-09/summary.md`, `diff-sweep.txt` and `gap.txt`.
+
+**Inputs.** Every board in both ran on the same input as in v35 (nightly
+2026-11-08).
+
+| | v35 (nightly 2026-11-08) | v36 (nightly 2026-11-09, 80c0507) |
+|---|---|---|
+| pass, per-type rule | 67 of 109 | **69 of 109** |
+| pass, strict rule (rule 4) | 68 of 109 | **70 of 109** |
+| unconnected (all rows) | 1697 | 1552 |
+| unconnected where both have a result on the same input (that run / this) | 1697 / **1552** (106 boards) | - |
+| new DRC errors (per-type rule) | 31 | 27 |
+| new DRC errors (strict rule) | 19 | 15 |
+| vias (rows with a result) | 29561 (106) | 29148 (106) |
+| length (rows with a result) | 752 m (106) | 752 m (106) |
+| work s | 73658 (106) | 72678 (106) |
+| CPU s (unpaired, a shared machine) | 101643 | 87973 |
+| first-route open terminals | 2208 (106) | 2002 (106) |
+| rows cut by the wall clock / killed | 0 / 0 | **0 / 0** |
+| rows without a result | 3 | 3 |
+| our vias in small SMD pads (score-kicad-board) | 0 on all 106 | 0 on all 106 |
+| vias against the designer's (median) | x0.65 (106) | x0.65 (106) |
+| length against the designer's (median) | x0.98 (106) | x0.98 (106) |
+| open over connections (median, mean) | 0.000, 0.068 | 0.000, 0.063 |
+| bends per connection against the designer's (median) | x1.01 | x1.01 |
+| stair-steps, ours less the designer's (median) | +33.5 | +33.5 |
+| pin-row crossings, ours less the designer's (median) | +0 | +1 |
+| ground pour cut, ours less the designer's (median) | -56.6 mm (99; 1 lost) | -56.6 mm (99; 1 lost) |
+| final ladder's share of the budget (median) | 0.676 (34 rows) | **0.613** (34 rows) |
+
+**Against the nightly of 2026-11-08 (v35)** (compare.py, 109 boards in
+both on the same input): better 6, same 99, worse 1; 94 of the 106 with
+a result in both are identical in routed count, unconnected, vias,
+length and strict findings; unconnected there 1697 -> 1552. Better, the
+largest: video 79 -> 0, RP2040_base 38 -> 11, poly_corne_split42_right
+26 -> 5, poly_kybd_split72_left 17 -> 1, jetson-nano-baseboard 4 -> 1,
+ATAT1800 2 -> 0. Worse: Sisu_SSE-9 1 -> 4. Strict passes 68 -> 70:
+gained 2: video (79 open -> none), ATAT1800 (2 open -> none); lost 0.
+
+**Rows without a result, 3** (the nightly of 2026-11-08: 3):
+OpenESC-30x30 4in1-panel (the panel's 2 boards' parts are mixed: 392
+movable parts belong to no sub-board; the previous night the panel's 2
+boards' parts are mixed: 392 movable parts belong to no sub-board),
+poly_kb_molecule_5x4_wave (2 parts without a legal place; the previous
+night 2), poly_kb_molecule_7x5_wave_left (2 parts without a legal place;
+the previous night 2).
+
+**Strict errors, 15 on 7 boards**: link (length_out_of_range 6),
+Sisu_SSE-9 (diff_pair_uncoupled_length_too_long 2), USB_Keypad
+(connection_width 2), vaio_re (solder_mask_bridge 2), Batch_1
+(starved_thermal 1), eurorack-pmod-pcb (solder_mask_bridge 1),
+sbc_allwinner_a13 module (items_not_allowed 1). No board fails the
+strict rule with nothing open. Of the 39 that fail, 18 are within five
+connections and five errors of clean, 11 leave more than 20 open, 3 have
+no result.
+
+### Placement or routing on one binary (matched designer tier, nightly 2026-11-09)
+
+`build/nightly/2026-11-09/designer.log`: 109 boards routed by the same
+binary on the designer's placement at `--budget-scale 0.676` (the median
+final-ladder share of the previous night's sweep, `nightly-report.py
+--ladder-share`; 1014 s of work), `--quality`, 8 jobs x 1 thread,
+`--order peak-desc`: 5900 s wall, largest peak 2.8 GB, no row cut or
+killed, 109 with a result. **75 of 109 pass the per-type rule, 76 the
+strict rule**; 2634 unconnected in all; strict errors 9; medians against
+the designer's own board: vias x0.49, length x1.00, bends x0.82,
+stair-steps +1.
+
+`compare.py --gap build/nightly/2026-11-09/sweep.log
+build/nightly/2026-11-09/designer.log --targets` over the **100 target
+boards with both results** (of 100): **layout open 706, designer-route
+open 226: placement gap +480 (68 %), routing gap 226 (32 %)**; ours is
+worse on 23, the same on 71, better on 6. MegaDrive dominates the
+routing side (the designer route 71 open, ours 57); without it 649
+against 155: placement 76 %, routing 24 %. Over all 106 boards with both
+results (the panels included): 1552 against 1627, placement -5 %,
+routing 105 %. The previous night's split (2026-11-08, 100 target
+boards): 71 % / 29 %.
+
+**The five boards whose placement costs most** (ours / designer route, open connections):
+
+| Board | Connections | Layout open | Designer route open | Placement gap |
+| --- | --- | --- | --- | --- |
+| Batch_1 | 254 | 142 | 2 | +140 |
+| protoesp | 104 | 87 | 1 | +86 |
+| glasgow revC3 | 226 | 85 | 18 | +67 |
+| OpenESC-30x30 4in1 | 152 | 79 | 12 | +67 |
+| 4in1-mini | 152 | 88 | 37 | +51 |
+
+Next: SmartSpin2k_Panelized +51 (51 / 0), eurorack-pmod-pcb +17 (18 /
+1), PCB-Modular-Multi-Protocol-Hub Hub +16 (18 / 2), laptop power +9 (9
+/ 0), RP2040_base +6 (11 / 5). Routing first (the designer route leaves
+as much or more): MegaDrive 71 / ours 57, SNSP-CPU-01 35 / ours 2, katia
+15 / ours 3, reCamera_S101_v1.1 4 / ours 4, vaio_re 3 / ours 1,
+jetson-nano-baseboard 2 / ours 1 and 3 more.
+
+**Worse than the nightly of 2026-11-08, beyond noise** (the next triage;
+a layout is deterministic for its binary, so every change is the
+binary's; on the dense boards of `dense-noise.json` a loss counts only
+when it exceeds the spread of the board's unconnected count over the
+placer seeds there), 1: Sisu_SSE-9 1 -> 4.
 
 ## Expansion intake: 5 834 boards routed on the designer's placement (2026-10-18)
 

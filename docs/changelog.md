@@ -11,6 +11,27 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Measured on 2026-11-09 (nightly: layout sweep v36, matched designer tier)
+
+Written by the nightly from `build/nightly/2026-11-09/` (main 80c0507;
+[benchmarks.md](benchmarks.md#layout-sweep-v36-2026-11-09)). The guard
+held: every stage ran, no row was cut or killed, the sweep has at least
+100 rows with a result.
+
+- **Layout sweep v36**: **70 of 109 pass the strict rule** (69 per
+  type), 1552 unconnected in all, strict errors 15, 3 without a result.
+  Against the nightly of 2026-11-08: better 6, same 99, worse 1, strict
+  passes 68 -> 70 (gained video, ATAT1800).
+- **Medians against the designer's**: vias x0.65, length x0.98, open
+  0.000 (mean 0.063), bends x1.01, stair-steps +33.5, crossings +1.
+- **Matched designer tier** (budget scale 0.676): 76 strict passes (75
+  per type); over the 100 target boards placement 68 %, routing 32 % of
+  the open connections (placement 76 %, routing 24 % without MegaDrive).
+- **Placement costs most** on Batch_1 (+140: 142 / 2), protoesp (+86: 87
+  / 1), glasgow revC3 (+67: 85 / 18), OpenESC-30x30 4in1 (+67: 79 / 12),
+  4in1-mini (+51: 88 / 37).
+- **Worse beyond noise**: Sisu_SSE-9 1 -> 4.
+
 ## Committed on 2026-11-08 (banks on a wide bus glued through the descent, by default)
 
 Branch bus-stacks (docs/placer.md "Banks on a wide bus glued through the

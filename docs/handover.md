@@ -1,4 +1,4 @@
-# Hand-over (state as of 2026-11-08; measured by layout sweep v35, the nightly of 2026-11-08 on main b090e40)
+# Hand-over (state as of 2026-11-09; measured by layout sweep v36, the nightly of 2026-11-09 on main 80c0507)
 
 What the tool does today, which benchmarks count, what is known to be
 wrong, where everything is and how to work on it. What each round of work
@@ -299,7 +299,7 @@ The newest nightly measurement of main (scripts/nightly.sh; the table of
 the last 14 nights is in [benchmarks.md](benchmarks.md#nightly)):
 
 <!-- nightly-state:begin -->
-**Nightly** 2026-11-08 (main b090e40d64d3, `build/nightly/2026-11-08/summary.md`): fingerprints changed: Sisu_SSE-9, computie__k30-SBC; expansion 25/46 (strict 25), 557 open; short 9/12 (strict 9), 16 open; sweep 67/109 (strict 68), 1697 open; designer 73/109 (strict 74), 2685 open at 0.663; gap placement 71%, routing 29%.
+**Nightly** 2026-11-09 (main 80c050719bf8, `build/nightly/2026-11-09/summary.md`): fingerprints changed: jetson-nano-baseboard; expansion 26/46 (strict 26), 556 open; short 9/12 (strict 9), 16 open; sweep 69/109 (strict 70), 1552 open; designer 75/109 (strict 76), 2634 open at 0.676; gap placement 68%, routing 32%.
 <!-- nightly-state:end -->
 
 What main does now, by the nightly of 2026-11-04 (main 688b59c, x1887;
@@ -322,20 +322,19 @@ short tier and the sweep, and OpenAirScope's (0 to 1) in the sweep
 packages measured their own changes on the short tier, the fingerprints
 and place checks (changelog, 2026-11-04 and 2026-11-05).
 
-**Layout sweep v35** (the nightly of 2026-11-08, main b090e40, written
-by the nightly): **68 of 109 pass the strict rule** (67 the per-type
-rule), 1697 unconnected in all, strict errors 19, no row cut or killed,
+**Layout sweep v36** (the nightly of 2026-11-09, main 80c0507, written
+by the nightly): **70 of 109 pass the strict rule** (69 the per-type
+rule), 1552 unconnected in all, strict errors 15, no row cut or killed,
 3 without a result; medians against the designer's board: vias x0.65,
-length x0.98, open 0.000 (mean 0.068), bends x1.01, stair-steps +33.5,
-crossings +0. Against the nightly of 2026-11-07: better 22, same 72,
-worse 12, strict passes 63 -> 68 (gained MIDAS-MK1-revA, OpenAirScope,
-DSP-ADAU1452, poly_kybd_split72_right, ghoul). The matched designer tier
-on the same binary (budget scale 0.663): 74 strict passes (73 per type);
-over the 100 target boards placement 71 %, routing 29 % of the open
-connections (placement 77 %, routing 23 % without MegaDrive).
-`build/nightly/2026-11-08/`; table, gap split, the costliest placements
-and the losers in
-[benchmarks.md](benchmarks.md#layout-sweep-v35-2026-11-08).
+length x0.98, open 0.000 (mean 0.063), bends x1.01, stair-steps +33.5,
+crossings +1. Against the nightly of 2026-11-08: better 6, same 99,
+worse 1, strict passes 68 -> 70 (gained video, ATAT1800). The matched
+designer tier on the same binary (budget scale 0.676): 76 strict passes
+(75 per type); over the 100 target boards placement 68 %, routing 32 %
+of the open connections (placement 76 %, routing 24 % without
+MegaDrive). `build/nightly/2026-11-09/`; table, gap split, the costliest
+placements and the losers in
+[benchmarks.md](benchmarks.md#layout-sweep-v36-2026-11-09).
 
 The sweeps before (v16 to v21 by hand, v22 to v29 written by the
 nightly), their tables, gap splits and triage are in
