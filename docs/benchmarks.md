@@ -35,6 +35,12 @@ DSP-ADAU1452, MegaDrive, SNSP-CPU-01, split72_left) are the placer's
 measurement set: layout mode at the task budgets, 3 x 2, `--only` with
 their names.
 
+The schematic tier's `--import-near` imports with `import-kicad-netlist
+--near-decoupling` (the decoupling capacitors' `near` entries in the new
+`constraints.json`). Measured on the tier, it keeps the unconnected count
+(2 against 2) but the placer misses most of the entries, so the tier's
+passes fall from 10 to 2: the import's flag stays off by default.
+
 **What a package runs.** A router package runs the fingerprints and the
 expansion tier against main's numbers; a placer or layout package adds
 the short tier and, for identity, the dense boards at seed 1. A placer
