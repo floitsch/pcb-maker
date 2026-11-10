@@ -1600,3 +1600,124 @@ fn fixed_pads_whose_boxes_meet_but_not_their_copper_are_not_warned_of() {
     let held = held_parts(&joined, &config).unwrap();
     assert!(held_parts_overlapping(&joined, &held).unwrap().is_empty());
 }
+
+/// `apply`'s problem with `change` made to it first, and the footprints'
+/// own keepouts (`keepouts`).
+fn apply_to(
+    change: impl FnOnce(&mut core::Problem),
+    keepouts: &[Option<[f64; 4]>],
+    json: &str,
+) -> Result<core::Problem, String> {
+    let (mut problem, references, pads) = problem();
+    change(&mut problem);
+    let constraints: KiCadPlacementConstraints =
+        serde_json::from_str(json).map_err(|e| e.to_string())?;
+    apply_constraints(
+        &mut problem,
+        &references,
+        &pads,
+        &[vec![[0.0, -0.5, 1.0, 0.5]], Vec::new(), Vec::new()],
+        keepouts,
+        &[None, None, None],
+        &[false, false, false],
+        &[None, None, None],
+        &constraints,
+        10.0,
+    )?;
+    Ok(problem)
+}
+
+#[test]
+fn an_overhang_turns_the_part_to_point_its_keepout_at_the_edge() {
+    // J1's keepout lies above its body at angle 0: only that angle
+    // points it at the top edge, and the keepout may hang over it.
+    let keepout = [0.0, -2.0, 1.0, -0.6];
+    let problem = apply_to(
+        |_| {},
+        &[Some(keepout), None, None],
+        r#"{"version": 1, "edge": [{"part": "J1", "edge": "left", "overhang": {"edge": "top"}}]}"#,
+    )
+    .unwrap();
+    assert_eq!(problem.components[0].angle_options, vec![0.0]);
+    assert_eq!(problem.constraints.overhangs, vec![(0, Edge::Top, keepout)]);
+    assert_eq!(
+        problem.constraints.edges,
+        vec![(0, Edge::Left, 1.0 + 1.0e-3)]
+    );
+    assert!(!problem.components[0].fixed);
+    // Without `edge` in the overhang, the entry's own edge; turned off
+    // the only angle that points there, the part turns back to it.
+    let problem = apply_to(
+        |problem| problem.poses[0].angle = 180.0,
+        &[Some(keepout), None, None],
+        r#"{"version": 1, "edge": [{"part": "J1", "edge": "top", "overhang": {}}]}"#,
+    )
+    .unwrap();
+    assert_eq!(problem.poses[0].angle, 0.0);
+    assert_eq!(problem.constraints.overhangs, vec![(0, Edge::Top, keepout)]);
+    // Allowed only angles that point it elsewhere: refused.
+    let error = apply_to(
+        |_| {},
+        &[Some(keepout), None, None],
+        r#"{"version": 1, "rotation": [{"part": "J1", "angle": 180}],
+            "edge": [{"part": "J1", "edge": "top", "overhang": {}}]}"#,
+    )
+    .unwrap_err();
+    assert!(
+        error.contains("no allowed rotation points its keepout at the top edge"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_group_without_around_gathers_at_its_largest_part() {
+    let problem = apply_to(
+        |problem| problem.components[2].body_size = [4.0, 3.0],
+        &[None, None, None],
+        r#"{"version": 1, "group": [{"parts": ["J1", "C*"], "max_mm": 2}]}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        problem.constraints.relations,
+        vec![
+            Relation::Near {
+                part: 0,
+                anchor: Anchor::Body(2),
+                max: 2.0
+            },
+            Relation::Near {
+                part: 1,
+                anchor: Anchor::Body(2),
+                max: 2.0
+            }
+        ]
+    );
+    // Every member moves, the fixed J1 too.
+    assert!(problem.components.iter().all(|component| !component.fixed));
+}
+
+#[test]
+fn with_an_outline_fixed_parts_off_the_board_move_unless_they_have_no_pins() {
+    let off_board = |problem: &mut core::Problem| {
+        for index in [0, 2] {
+            problem.poses[index].position = [100.0, 100.0];
+            problem.components[index].fixed = true;
+        }
+        problem.components[0].pins = vec![core::Pin {
+            offset: [0.5, 0.0],
+            net: 0,
+        }];
+    };
+    let problem = apply_to(
+        off_board,
+        &[None, None, None],
+        r#"{"version": 1, "outline": {"width": 30, "height": 20}}"#,
+    )
+    .unwrap();
+    // J1 has a pin: unplaced, it moves; C2 has none and stays.
+    assert!(!problem.components[0].fixed);
+    assert!(problem.components[2].fixed);
+    // Without an outline from the constraints both stay where they are.
+    let problem = apply_to(off_board, &[None, None, None], r#"{"version": 1}"#).unwrap();
+    assert!(problem.components[0].fixed && problem.components[2].fixed);
+}
