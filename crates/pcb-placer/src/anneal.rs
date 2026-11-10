@@ -9,9 +9,16 @@
 //! quarter turns and swaps are judged on wirelength plus an overlap penalty
 //! that grows until no overlap is worth keeping. It starts cold, because the
 //! global placement is already good and must not be scrambled.
+//!
+//! The run's stages are in `anneal/`: its setup, schedule and stages
+//! (run.rs) and its moves with their acceptance (moves.rs).
+
+mod moves;
+mod run;
 
 use crate::constraints;
 use crate::problem::{Point, Pose, Problem, point_in_polygon};
+use run::Run;
 
 /// Boxes as (center, half size), as `Component::far_boxes` and its kin
 /// return them.
@@ -1272,72 +1279,10 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
             poses[*index].angle,
         );
     }
-    let mut state = build_state(problem, poses);
-    // Work per move (before and after), besides the parts the overlap
-    // test visits (counted there): when the outline is not a rectangle,
-    // four corners against it (cheap per edge next to a part's visit);
-    // the wirelength visits the part's pins' nets; the constraint cost
-    // scans the relations. Fitted so that boards as different as katia,
-    // link and OpenESC's do about the same work per second.
-    // The hard constraints' test scans every edge and region entry for
-    // the part's own (a panel's copies put a region on every part).
-    let held = &problem.constraints;
-    // Finding a part's relations scans every relation, and every anchor of
-    // a decoupling capacitor's (glasgow's 82 relations, 23 anchors each).
-    let scan: usize = held
-        .relations
-        .iter()
-        .map(|relation| match relation {
-            constraints::Relation::NearAny { anchors, .. } => 1 + anchors.len() / 16,
-            _ => 1,
-        })
-        .sum();
-    let fixed =
-        scan + if state.rectangular {
-            0
-        } else {
-            problem.outline.len()
-        } + if held.is_empty() {
-            0
-        } else {
-            (held.edges.len() + held.regions.len()) / 2
-        };
-    // The relations a part is in are evaluated before and after its move.
-    let move_work: Vec<u64> = (0..problem.components.len())
-        .map(|index| {
-            let pins: usize = state.incident[index]
-                .iter()
-                .map(|net| state.members[*net].len())
-                .sum();
-            2 * (fixed as u64 + crate::PIN_WORK * pins as u64)
-                + 2 * constraints::relation_work(problem, index)
-        })
-        .collect();
+    let state = build_state(problem, poses);
+    let move_work = run::move_work(problem, &state);
     if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
-        let average = move_work.iter().sum::<u64>() as f64 / move_work.len().max(1) as f64;
-        eprintln!(
-            "anneal: {} parts ({} movable), outline {} ({}), relations {}, linked {}, far-side parts {}, hollow parts {}, move work {average:.0}",
-            problem.components.len(),
-            movable.len(),
-            problem.outline.len(),
-            if state.rectangular {
-                "rectangular"
-            } else {
-                "shaped"
-            },
-            problem.constraints.relations.len(),
-            problem.constraints.linked.len(),
-            problem
-                .components
-                .iter()
-                .filter(|component| !component.far_side.is_empty())
-                .count(),
-            problem
-                .components
-                .iter()
-                .filter(|component| !component.hollow.is_empty())
-                .count(),
-        );
+        run::describe(problem, &state, &movable, &move_work);
     }
     // Ratsnest crossings in the anneal (`Crossings::anneal`): a move pays
     // for the crossings of its parts' nets, and half the swaps trade a
@@ -1347,54 +1292,7 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
         .crossings
         .as_deref()
         .filter(|crossings| crossings.anneal)
-        .map(|crossings| {
-            let mut fact = crossings.clone();
-            for (net, counted) in fact.counted.iter_mut().enumerate() {
-                if state
-                    .members
-                    .get(net)
-                    .is_some_and(|pins| pins.len() > ANNEAL_NET_PINS)
-                {
-                    *counted = false;
-                }
-            }
-            fact
-        });
-    let mut crossings = fact
-        .as_ref()
-        .map(|fact| crate::crossings::CrossingState::new(problem, fact, &state.poses));
-    let peers = if crossings.is_some() {
-        peers(problem, &movable)
-    } else {
-        Vec::new()
-    };
-    let mut tally = Tally {
-        crossings_before: crossings.as_ref().map(|state| state.total()),
-        ..Default::default()
-    };
-    let work_before = crate::work();
-    let mut random = Random(config.seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
-    let bounds = state.bounds;
-    let board = (bounds[2] - bounds[0]).max(bounds[3] - bounds[1]);
-    let grid = if problem.grid > 0.0 {
-        problem.grid
-    } else {
-        0.05
-    };
-    let mut radius = (config.initial_radius * board).max(2.0 * grid);
-    // Millimetres of wirelength one square millimetre of overlap is worth.
-    let mut penalty = 0.5;
-    let mut temperature = 0.3;
-    let penalty_growth = (400.0f64 / penalty).powf(1.0 / config.stages as f64);
-    let radius_decay = ((1.5 * grid) / radius).powf(1.0 / config.stages as f64);
-
-    // The global route's guidance: evaluated now and again whenever its
-    // work stays within its share of the anneal's.
-    let mut guide = config
-        .guidance
-        .as_ref()
-        .map(|guidance| Guide::new(guidance, &mut state, &movable));
-    let mut anneal_work = 0u64;
+        .map(|crossings| run::counted_up_to(crossings, &state.members, ANNEAL_NET_PINS));
     // Bus-group moves: their own crossings state (the nets of up to the
     // groups' bus size), brought to the poses before each batch.
     let groups = config
@@ -1403,294 +1301,20 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
         .filter(|groups| groups.settings.anneal && !groups.groups.is_empty());
     let group_fact = groups.and_then(|groups| {
         problem.crossings.as_deref().map(|crossings| {
-            let mut fact = crossings.clone();
-            for (net, counted) in fact.counted.iter_mut().enumerate() {
-                if state
-                    .members
-                    .get(net)
-                    .is_some_and(|pins| pins.len() > groups.settings.bus_net_pins)
-                {
-                    *counted = false;
-                }
-            }
-            fact
+            run::counted_up_to(crossings, &state.members, groups.settings.bus_net_pins)
         })
     });
-    let mut group_crossings = group_fact
-        .as_ref()
-        .map(|fact| crate::crossings::CrossingState::new(problem, fact, &state.poses));
-    let rigid: Vec<bool> = match groups.filter(|groups| groups.settings.rigid_banks) {
-        Some(groups) => {
-            let mut rigid = vec![false; problem.components.len()];
-            for group in &groups.groups {
-                if group.kind == crate::groups::Kind::Bank {
-                    for &part in &group.chain {
-                        rigid[part] = true;
-                    }
-                }
-            }
-            rigid
-        }
-        None => Vec::new(),
-    };
-    let mut group_tally = GroupTally {
-        crossings_before: group_crossings.as_ref().map(|state| state.total()),
-        ..Default::default()
-    };
-
-    // A move's nets' wirelength terms after it (`wirelength_terms`).
-    let mut terms = Vec::new();
-    for stage in 0..config.stages {
-        if config
-            .deadline
-            .is_some_and(|deadline| std::time::Instant::now() >= deadline)
-            || config
-                .stop_at_work
-                .is_some_and(|stop| crate::work() >= stop)
-        {
-            break;
-        }
-        let mut work = 0;
-        for _ in 0..config.moves_per_part * movable.len() {
-            tally.moves += 1;
-            if let Some(guide) = guide.as_mut()
-                && guide.due(anneal_work + work + state.work.get())
-            {
-                guide.evaluate(&mut state, &movable);
-            }
-            let index = match guide.as_ref().and_then(|guide| guide.cumulative.as_ref()) {
-                Some(cumulative) if random.next() < guide.as_ref().unwrap().bias => {
-                    movable[crate::guidance::pick(cumulative, random.next())]
-                }
-                _ => movable[random.below(movable.len())],
-            };
-            // A bank's members move with their bank (`Settings::rigid_banks`).
-            if rigid.get(index) == Some(&true) {
-                continue;
-            }
-            work += move_work[index];
-            let component = &problem.components[index];
-            let kind = random.next();
-            if kind < 0.12 && movable.len() > 1 {
-                // Swap two parts, keeping each at the other's body centre.
-                let other = match peers.get(index) {
-                    Some(like) if !like.is_empty() && random.next() < PEER_SWAPS => {
-                        like[random.below(like.len())]
-                    }
-                    _ => movable[random.below(movable.len())],
-                };
-                if other == index || rigid.get(other) == Some(&true) {
-                    continue;
-                }
-                work += move_work[other];
-                let second = &problem.components[other];
-                let (first_pose, second_pose) = (state.poses[index], state.poses[other]);
-                let first_new = Pose {
-                    position: component
-                        .position_for_center(second.center(second_pose), first_pose.angle),
-                    angle: first_pose.angle,
-                };
-                let second_new = Pose {
-                    position: second
-                        .position_for_center(component.center(first_pose), second_pose.angle),
-                    angle: second_pose.angle,
-                };
-                let snapped = |part: usize, pose: Pose| Pose {
-                    position: constraints::snap_position(problem, part, pose.position, pose.angle),
-                    angle: pose.angle,
-                };
-                let (first_new, second_new) =
-                    (snapped(index, first_new), snapped(other, second_new));
-                let mut nets = state.incident[index].clone();
-                nets.extend(&state.incident[other]);
-                nets.sort_unstable();
-                nets.dedup();
-                let before = state.cached_wirelength(&nets)
-                    + state.constraint_cost(index)
-                    + state.constraint_cost(other)
-                    + penalty
-                        * (state.overlap(index, state.rects[index])
-                            + state.overlap(other, state.rects[other]));
-                let saved = (state.rects[index], state.rects[other]);
-                state.poses[index] = first_new;
-                state.poses[other] = second_new;
-                let (first_rect, second_rect) =
-                    (state.rect(index, first_new), state.rect(other, second_new));
-                state.set_rect(index, first_rect);
-                state.set_rect(other, second_rect);
-                let after = state.wirelength_terms(&nets, &mut terms)
-                    + state.constraint_cost(index)
-                    + state.constraint_cost(other)
-                    + penalty
-                        * (state.overlap(index, state.rects[index])
-                            + state.overlap(other, state.rects[other]));
-                let delta = after - before;
-                let rejected = match crossings.as_mut() {
-                    Some(crossings) => !judge_with_crossings(
-                        crossings,
-                        &state.poses,
-                        &[index, other],
-                        delta,
-                        temperature,
-                        &mut random,
-                        &mut tally,
-                    ),
-                    None => delta > 0.0 && random.next() >= (-delta / temperature).exp(),
-                };
-                if rejected {
-                    state.poses[index] = first_pose;
-                    state.poses[other] = second_pose;
-                    state.set_rect(index, saved.0);
-                    state.set_rect(other, saved.1);
-                } else {
-                    state.keep_lengths(&nets, &terms);
-                    if let Some(guide) = guide.as_mut() {
-                        guide.accepted += 1;
-                    }
-                }
-                continue;
-            }
-            let old = state.poses[index];
-            let new = if kind < 0.27 && component.angle_options.len() > 1 {
-                let angle = component.angle_options[random.below(component.angle_options.len())];
-                if (angle - old.angle).abs() < 1.0e-9 {
-                    continue;
-                }
-                let position = component.position_for_center(component.center(old), angle);
-                Pose {
-                    position: constraints::snap_position(problem, index, position, angle),
-                    angle,
-                }
-            } else {
-                let step = |random: &mut Random| {
-                    let cells = (radius / grid).max(1.0);
-                    ((random.next() * 2.0 - 1.0) * cells).round() * grid
-                };
-                let position = [
-                    old.position[0] + step(&mut random),
-                    old.position[1] + step(&mut random),
-                ];
-                if position == old.position {
-                    continue;
-                }
-                Pose {
-                    position,
-                    angle: old.angle,
-                }
-            };
-            let before = state.cached_wirelength(&state.incident[index])
-                + state.constraint_cost(index)
-                + penalty * state.overlap(index, state.rects[index]);
-            let saved = state.rects[index];
-            state.poses[index] = new;
-            let new_rect = state.rect(index, new);
-            state.set_rect(index, new_rect);
-            let after = state.wirelength_terms(&state.incident[index], &mut terms)
-                + state.constraint_cost(index)
-                + penalty * state.overlap(index, state.rects[index]);
-            let delta = after - before;
-            let rejected = match crossings.as_mut() {
-                Some(crossings) => !judge_with_crossings(
-                    crossings,
-                    &state.poses,
-                    &[index],
-                    delta,
-                    temperature,
-                    &mut random,
-                    &mut tally,
-                ),
-                None => delta > 0.0 && random.next() >= (-delta / temperature).exp(),
-            };
-            if rejected {
-                state.poses[index] = old;
-                state.set_rect(index, saved);
-            } else {
-                // The nets of a part are its own list: no copy of it.
-                let incident = std::mem::take(&mut state.incident[index]);
-                state.keep_lengths(&incident, &terms);
-                state.incident[index] = incident;
-                if let Some(guide) = guide.as_mut() {
-                    guide.accepted += 1;
-                }
-            }
-        }
-        if let Some(groups) = groups {
-            work += group_batch(
-                &mut state,
-                groups,
-                &move_work,
-                GroupStep {
-                    radius,
-                    temperature,
-                    penalty,
-                },
-                group_crossings.as_mut(),
-                crossings.as_mut(),
-                &mut random,
-                &mut group_tally,
-            );
-            // Its moves keep their own sums: the cache again.
-            state.refresh_lengths();
-        }
-        let stage_work = work + state.work.replace(0);
-        anneal_work += stage_work;
-        crate::add_work(stage_work);
-        penalty *= penalty_growth;
-        radius *= radius_decay;
-        temperature *= 0.975;
-        // The term ends once its work reaches its share of the anneal's
-        // own (`TERM_SHARE`).
-        if let Some(state) = crossings.as_ref() {
-            let done = stage + 1;
-            let projected = anneal_work as f64 / done as f64 * config.stages as f64;
-            if done < config.stages && tally.work as f64 >= TERM_SHARE * projected {
-                tally.term_stages = Some(done);
-                tally.crossings_after = Some(state.total());
-                crossings = None;
-            }
-        }
-    }
-    if let Some(guide) = guide.as_mut() {
-        guide.finish(&mut state, anneal_work);
-    }
-    if groups.is_some() && std::env::var_os("PCB_PLACER_DEBUG").is_some() {
-        eprintln!(
-            "anneal: bus groups: {} moves tried, taken: {} shifts, {} turns, {} swaps, {} reorders; crossings of the groups' nets {:?} -> {:?} (after the last batch)",
-            group_tally.tried,
-            group_tally.taken[0],
-            group_tally.taken[1],
-            group_tally.taken[2],
-            group_tally.taken[3],
-            group_tally.crossings_before,
-            group_crossings.as_ref().map(|state| state.total()),
-        );
-    }
-    if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
-        let work = crate::work() - work_before;
-        let per_move = |amount: u64| amount as f64 / tally.moves.max(1) as f64;
-        eprintln!(
-            "anneal: {} moves, work {:.2} s ({:.0} a move), crossings' share {:.0} a move; judged with crossings {}, cut by the bound {}, taken {}; the term ended after {:?} stages; crossings {:?} -> {:?}",
-            tally.moves,
-            work as f64 / crate::work_per_second(),
-            per_move(work),
-            per_move(tally.work),
-            tally.judged,
-            tally.cut,
-            tally.taken,
-            tally.term_stages,
-            tally.crossings_before,
-            crossings
-                .as_ref()
-                .map(|state| state.total())
-                .or(tally.crossings_after),
-        );
-    }
-    *poses = state.poses.clone();
-    movable
-        .iter()
-        .map(|index| state.overlap(*index, state.rects[*index]))
-        .sum::<f64>()
-        / 2.0
+    let mut run = Run::new(
+        config,
+        state,
+        movable,
+        move_work,
+        fact.as_ref(),
+        groups,
+        group_fact.as_ref(),
+    );
+    run.stages(config);
+    run.finish(poses)
 }
 
 /// The anneal's crossings term counts the nets of up to this many pins.
@@ -2143,6 +1767,59 @@ impl<'a> Guide<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The schedule's overlap penalty grows from 0.5 to 400 and its move
+    /// radius falls to a grid step and a half over the stages, the
+    /// temperature by 0.975 a stage.
+    #[test]
+    fn the_schedule_runs_from_its_start_to_its_ends_over_the_stages() {
+        let mut seed = 0x5DEE_CE66_D1CE_4E5Bu64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let (mut problem, _) = crate::legal::tests::random_board(0, &mut next);
+        problem.grid = 0.25;
+        let config = AnnealConfig::default();
+        let bounds = problem.bounds();
+        let mut schedule = run::Schedule::new(&problem, bounds, &config);
+        let board = (bounds[2] - bounds[0]).max(bounds[3] - bounds[1]);
+        assert_eq!(schedule.radius, (config.initial_radius * board).max(0.5));
+        assert_eq!(
+            (schedule.penalty, schedule.temperature, schedule.grid),
+            (0.5, 0.3, 0.25)
+        );
+        for _ in 0..config.stages {
+            schedule.cool();
+        }
+        let near = |value: f64, expected: f64| (value / expected - 1.0).abs() < 1.0e-9;
+        assert!(near(schedule.penalty, 400.0), "{}", schedule.penalty);
+        assert!(near(schedule.radius, 0.375), "{}", schedule.radius);
+        let temperature = 0.3 * 0.975f64.powi(config.stages as i32);
+        assert!(near(schedule.temperature, temperature));
+        // Without a grid the shifts step by 0.05 mm.
+        problem.grid = 0.0;
+        assert_eq!(run::Schedule::new(&problem, bounds, &config).grid, 0.05);
+    }
+
+    /// The anneal's crossings count only the nets of up to the limit's
+    /// pins; a net counted not before is not after.
+    #[test]
+    fn the_crossings_count_only_the_nets_of_few_pins() {
+        let crossings = crate::crossings::Crossings {
+            counted: vec![true, true, false, true],
+            weight: 1.0,
+            legalise: true,
+            refine: true,
+            anneal: true,
+        };
+        let members = vec![vec![(0, 0); 2], vec![(0, 0); 17], vec![(0, 0); 2]];
+        let fact = run::counted_up_to(&crossings, &members, ANNEAL_NET_PINS);
+        assert_eq!(fact.counted, vec![true, false, false, true]);
+        assert_eq!(fact.weight, 1.0);
+    }
 
     /// The pair flags answer as the constraints' lists, every pair of
     /// random boards, ascending lists and not.
