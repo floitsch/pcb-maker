@@ -652,6 +652,8 @@ struct Track {
     net: Option<String>,
 }
 
+/// Scores the routed board `<directory>/<board_id>.kicad_pcb`: one stage per
+/// family of metrics, assembled into the report.
 pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualityReport, String> {
     let board_path = directory.join(format!("{board_id}.kicad_pcb"));
     let text = fs::read_to_string(&board_path)
@@ -661,7 +663,47 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
     let names = NetNames::of(&pcb);
     let parts = parts_of(&pcb, &names)?;
     let layers = board_router::LayerTable::from_pcb(&pcb)?;
-    let outline = outline::board_loops(&pcb).ok().map(|loops| {
+    let outline = outline_box(&pcb);
+    let (tracks, board_vias) = tracks_and_vias_of(&pcb, &names)?;
+    let vias: Vec<([f64; 2], f64)> = board_vias.iter().map(|via| (via.at, via.drill)).collect();
+
+    let economy = economy_of(&parts, &tracks, &vias, outline, layers.len());
+    let rails = supply_rails(&parts);
+    let decoupling = decoupling_of(&parts, &rails);
+    let crystals = crystals_of(&parts, &rails);
+    let separation = separation_of(&parts, &rails);
+    let assembly = assembly_of(&parts, outline);
+    let connectors = connectors_of(&parts, outline);
+    let manufacturing = manufacturing_of(directory, board_id, &parts, &tracks, &board_vias);
+    let switch_inductors = switch_inductors_of(&parts);
+    let hot_parts = hot_parts_of(&pcb, &names, &parts, &tracks, &vias);
+    let esd = esd_of(&parts);
+    let planes = ground_planes_of(&pcb, &names, &tracks);
+    let cost = cost_of(&parts, &economy, &manufacturing);
+    let aesthetics = aesthetics_of(&parts, &tracks, &vias);
+
+    Ok(KiCadQualityReport {
+        board_id: board_id.into(),
+        economy,
+        aesthetics,
+        decoupling,
+        crystals,
+        separation,
+        assembly,
+        connectors,
+        manufacturing,
+        planes,
+        esd,
+        switch_inductors,
+        hot_parts,
+        cost,
+    })
+}
+
+/// The bounding box `[min x, min y, max x, max y]` of the board outline,
+/// if it has one.
+fn outline_box(pcb: &Expr) -> Option<[f64; 4]> {
+    outline::board_loops(pcb).ok().map(|loops| {
         loops.outline.iter().fold(
             [
                 f64::INFINITY,
@@ -678,11 +720,13 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
                 ]
             },
         )
-    });
+    })
+}
 
-    let codes = net_codes(&pcb);
+/// The board's tracks (segments and arcs) and vias, in file order.
+fn tracks_and_vias_of(pcb: &Expr, names: &NetNames) -> Result<(Vec<Track>, Vec<BoardVia>), String> {
+    let codes = net_codes(pcb);
     let mut tracks = Vec::new();
-    let mut vias = Vec::new();
     let mut board_vias = Vec::new();
     for item in pcb.children() {
         match item.head() {
@@ -703,19 +747,24 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
                     net: item_net(item, &codes).map(|raw| names.normalize(raw).to_string()),
                 });
             }
-            Some("via") => {
-                let via = board_via(item)?;
-                vias.push((via.at, via.drill));
-                board_vias.push(via);
-            }
+            Some("via") => board_vias.push(board_via(item)?),
             _ => {}
         }
     }
+    Ok((tracks, board_vias))
+}
 
-    // Economy.
+/// Board size, layer count, part counts and the track and via extremes.
+fn economy_of(
+    parts: &[Part],
+    tracks: &[Track],
+    vias: &[([f64; 2], f64)],
+    outline: Option<[f64; 4]>,
+    copper_layers: usize,
+) -> KiCadEconomy {
     let mut unique = BTreeSet::new();
     let mut smd_sides = BTreeSet::new();
-    for part in &parts {
+    for part in parts {
         if part.pads.is_empty() {
             continue;
         }
@@ -724,10 +773,10 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
             smd_sides.insert(part.back);
         }
     }
-    let economy = KiCadEconomy {
+    KiCadEconomy {
         width_mm: outline.map_or(0.0, |b| round(b[2] - b[0])),
         height_mm: outline.map_or(0.0, |b| round(b[3] - b[1])),
-        copper_layers: layers.len(),
+        copper_layers,
         parts: parts.iter().filter(|part| !part.pads.is_empty()).count(),
         unique_parts: unique.len(),
         through_hole_parts: parts
@@ -752,43 +801,74 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
                 .map(|track| distance(track.start, track.end))
                 .sum(),
         ),
-    };
+    }
+}
 
-    // Decoupling: supply pins of ICs against small capacitors between a
-    // rail and ground.
-    let rail = |net: &str| !ground(net) && rail_name(net);
+/// A net that is a supply rail by name (not ground).
+fn is_rail(net: &str) -> bool {
+    !ground(net) && rail_name(net)
+}
+
+/// An IC: a U or IC part of three pads or more.
+fn is_ic(part: &Part) -> bool {
+    matches!(part.prefix(), "U" | "IC") && part.pads.len() >= 3
+}
+
+/// A crystal, oscillator or resonator, by reference or footprint.
+fn is_crystal(part: &Part) -> bool {
+    let name = part.footprint.to_ascii_lowercase();
+    part.prefix() == "Y"
+        || name.contains("crystal")
+        || name.contains("oscillator")
+        || name.contains("resonator")
+}
+
+/// A connector, by reference or because its footprint has a mouth.
+fn is_connector(part: &Part) -> bool {
+    matches!(part.prefix(), "J" | "P" | "CN" | "CON" | "USB" | "X") || part.mouth.is_some()
+}
+
+/// The rails: nets that carry an IC's power pin or are named like a rail
+/// (any part's pads).
+fn supply_rails(parts: &[Part]) -> BTreeSet<String> {
     let mut rails = BTreeSet::new();
-    for part in &parts {
+    for part in parts {
         for pad in &part.pads {
             if let Some(net) = &pad.net
                 && !ground(net)
-                && (pad.power_pin || rail(net))
+                && (pad.power_pin || is_rail(net))
             {
                 rails.insert(net.clone());
             }
         }
     }
-    let ic = |part: &Part| matches!(part.prefix(), "U" | "IC") && part.pads.len() >= 3;
-    // A regulator: an IC of at most eight pads with supply pins on two
-    // rails or more (an LDO's input and output). Its input and output
-    // capacitors are bulk ones (1 to 22 uF), and they decouple it: they
-    // count for its pins whatever their value (the fence's U2, an
-    // XC6206: VOUT on +3V3 with only C4, 10 uF, 3.1 mm away, was null).
-    let regulator = |part: &Part| {
-        ic(part)
-            && part.pads.len() <= 8
-            && part
-                .pads
-                .iter()
-                .filter_map(|pad| pad.net.as_ref())
-                .filter(|net| rails.contains(*net))
-                .collect::<BTreeSet<_>>()
-                .len()
-                >= 2
-    };
+    rails
+}
+
+/// A regulator: an IC of at most eight pads with supply pins on two
+/// rails or more (an LDO's input and output). Its input and output
+/// capacitors are bulk ones (1 to 22 uF), and they decouple it: they
+/// count for its pins whatever their value (the fence's U2, an
+/// XC6206: VOUT on +3V3 with only C4, 10 uF, 3.1 mm away, was null).
+fn is_regulator(part: &Part, rails: &BTreeSet<String>) -> bool {
+    is_ic(part)
+        && part.pads.len() <= 8
+        && part
+            .pads
+            .iter()
+            .filter_map(|pad| pad.net.as_ref())
+            .filter(|net| rails.contains(*net))
+            .collect::<BTreeSet<_>>()
+            .len()
+            >= 2
+}
+
+/// Decoupling: supply pins of ICs against small capacitors between a
+/// rail and ground.
+fn decoupling_of(parts: &[Part], rails: &BTreeSet<String>) -> KiCadDecoupling {
     // Per rail, its regulators' pins on it.
     let mut regulator_pads: BTreeMap<String, Vec<[f64; 2]>> = BTreeMap::new();
-    for part in parts.iter().filter(|part| regulator(part)) {
+    for part in parts.iter().filter(|part| is_regulator(part, rails)) {
         for pad in &part.pads {
             if let Some(net) = &pad.net
                 && rails.contains(net)
@@ -806,11 +886,11 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
     let mut bulk_parts: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut capacitor_parts: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut supply_pads: BTreeMap<String, Vec<[f64; 2]>> = BTreeMap::new();
-    for part in parts.iter().filter(|part| ic(part)) {
+    for part in parts.iter().filter(|part| is_ic(part)) {
         for pad in &part.pads {
             if let Some(net) = &pad.net
                 && rails.contains(net)
-                && (pad.power_pin || rail(net))
+                && (pad.power_pin || is_rail(net))
             {
                 supply_pads.entry(net.clone()).or_default().push(pad.center);
             }
@@ -858,15 +938,16 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         }
     }
     let mut pin_distances = Vec::new();
-    for part in parts.iter().filter(|part| ic(part)) {
+    for part in parts.iter().filter(|part| is_ic(part)) {
+        let regulator = is_regulator(part, rails);
         for pad in &part.pads {
             let Some(net) = &pad.net else {
                 continue;
             };
-            if !rails.contains(net) || !(pad.power_pin || rail(net)) {
+            if !rails.contains(net) || !(pad.power_pin || is_rail(net)) {
                 continue;
             }
-            let bulk = regulator(part).then(|| bulk_pads.get(net)).flatten();
+            let bulk = regulator.then(|| bulk_pads.get(net)).flatten();
             let nearest = capacitor_pads
                 .get(net)
                 .into_iter()
@@ -877,7 +958,7 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
             let serving: Vec<String> = capacitor_parts
                 .get(net)
                 .into_iter()
-                .chain(regulator(part).then(|| bulk_parts.get(net)).flatten())
+                .chain(regulator.then(|| bulk_parts.get(net)).flatten())
                 .flatten()
                 .cloned()
                 .collect();
@@ -923,7 +1004,7 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         b.1.unwrap_or(f64::INFINITY)
             .total_cmp(&a.1.unwrap_or(f64::INFINITY))
     });
-    let decoupling = KiCadDecoupling {
+    KiCadDecoupling {
         supply_pins,
         capacitors,
         median_mm: median(&mut found).map(round),
@@ -941,18 +1022,13 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
             .take(5)
             .map(|(_, _, serving)| serving.clone())
             .collect(),
-    };
+    }
+}
 
-    // Crystals: pads to the IC pins on the same nets.
-    let crystal = |part: &Part| {
-        let name = part.footprint.to_ascii_lowercase();
-        part.prefix() == "Y"
-            || name.contains("crystal")
-            || name.contains("oscillator")
-            || name.contains("resonator")
-    };
+/// Crystals: pads to the IC pins on the same nets.
+fn crystals_of(parts: &[Part], rails: &BTreeSet<String>) -> Vec<KiCadCrystal> {
     let mut crystals = Vec::new();
-    for part in parts.iter().filter(|part| crystal(part)) {
+    for part in parts.iter().filter(|part| is_crystal(part)) {
         let mut longest: Option<f64> = None;
         for pad in &part.pads {
             let Some(net) = pad
@@ -962,7 +1038,7 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
             else {
                 continue;
             };
-            for other in parts.iter().filter(|other| ic(other)) {
+            for other in parts.iter().filter(|other| is_ic(other)) {
                 for target in other
                     .pads
                     .iter()
@@ -978,47 +1054,54 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
             longest_mm: longest.map(round),
         });
     }
+    crystals
+}
 
-    // Separation: switching inductors against crystals, antenna modules and
-    // analog parts.
-    let antenna = |part: &Part| {
-        let name = part.footprint.to_ascii_lowercase();
-        name.contains("esp32")
-            || name.contains("esp8266")
-            || name.contains("wroom")
-            || name.contains("antenna")
-            || name.contains("rf_module")
-            || name.contains("nrf24")
-            || name.contains("rfm")
-    };
-    let analog = |part: &Part| {
-        if !ic(part) {
-            return false;
-        }
-        let value = part.value.to_ascii_uppercase();
-        let named = [
-            "OPA", "LM358", "LM324", "TL07", "TL08", "NE5532", "MCP60", "AD8", "INA", "ADS1",
-            "ADC", "PCM", "WM8", "CS42", "CODEC", "REF", "LM4040", "TL431",
-        ]
-        .iter()
-        .any(|key| value.starts_with(key) || value.contains(&format!(" {key}")));
-        let pins = part.pads.iter().any(|pad| {
-            let function = pad.function.as_str();
-            function.starts_with("AIN")
-                || function.starts_with("VREF")
-                || function.starts_with("MIC")
-                || matches!(
-                    function,
-                    "IN+" | "IN-" | "+IN" | "-IN" | "INP" | "INN" | "V+IN" | "V-IN"
-                )
-        });
-        named || pins
-    };
+/// An antenna or RF module, by footprint name.
+fn is_antenna(part: &Part) -> bool {
+    let name = part.footprint.to_ascii_lowercase();
+    name.contains("esp32")
+        || name.contains("esp8266")
+        || name.contains("wroom")
+        || name.contains("antenna")
+        || name.contains("rf_module")
+        || name.contains("nrf24")
+        || name.contains("rfm")
+}
+
+/// An analog IC, by its value or by analog-looking pin functions.
+fn is_analog(part: &Part) -> bool {
+    if !is_ic(part) {
+        return false;
+    }
+    let value = part.value.to_ascii_uppercase();
+    let named = [
+        "OPA", "LM358", "LM324", "TL07", "TL08", "NE5532", "MCP60", "AD8", "INA", "ADS1", "ADC",
+        "PCM", "WM8", "CS42", "CODEC", "REF", "LM4040", "TL431",
+    ]
+    .iter()
+    .any(|key| value.starts_with(key) || value.contains(&format!(" {key}")));
+    let pins = part.pads.iter().any(|pad| {
+        let function = pad.function.as_str();
+        function.starts_with("AIN")
+            || function.starts_with("VREF")
+            || function.starts_with("MIC")
+            || matches!(
+                function,
+                "IN+" | "IN-" | "+IN" | "-IN" | "INP" | "INN" | "V+IN" | "V-IN"
+            )
+    });
+    named || pins
+}
+
+/// Separation: switching inductors against crystals, antenna modules and
+/// analog parts.
+fn separation_of(parts: &[Part], rails: &BTreeSet<String>) -> KiCadSeparation {
     // An inductor switches when one side is a node (neither ground nor a
     // rail) it shares with an IC pin: a regulator's switch node.
     let ic_nets: BTreeSet<&String> = parts
         .iter()
-        .filter(|part| ic(part))
+        .filter(|part| is_ic(part))
         .flat_map(|part| part.pads.iter().filter_map(|pad| pad.net.as_ref()))
         .collect();
     let inductors: Vec<&Part> = parts
@@ -1034,7 +1117,7 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         .collect();
     let sensitive: Vec<&Part> = parts
         .iter()
-        .filter(|part| crystal(part) || antenna(part) || analog(part))
+        .filter(|part| is_crystal(part) || is_antenna(part) || is_analog(part))
         .collect();
     let mut too_close = Vec::new();
     let mut closest: Option<f64> = None;
@@ -1051,14 +1134,22 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
             }
         }
     }
-    let separation = KiCadSeparation {
+    KiCadSeparation {
         inductors: inductors.len(),
         sensitive: sensitive.len(),
         closest_mm: closest.map(round),
         too_close,
-    };
+    }
+}
 
-    // Assembly.
+/// A mounting hole, by reference or footprint.
+fn is_mounting(part: &Part) -> bool {
+    part.prefix() == "H" || part.footprint.to_ascii_lowercase().contains("mountinghole")
+}
+
+/// Assembly: how consistently polarised parts are oriented, and the parts
+/// close to the board edge.
+fn assembly_of(parts: &[Part], outline: Option<[f64; 4]>) -> KiCadAssembly {
     let polarised = |part: &Part| {
         matches!(part.prefix(), "D" | "LED" | "U" | "IC" | "Q")
             || (part.prefix() == "C" && part.footprint.to_ascii_lowercase().contains("cp_"))
@@ -1077,16 +1168,10 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         .values()
         .map(|angles| angles.values().copied().max().unwrap_or(0))
         .sum();
-    let connector = |part: &Part| {
-        matches!(part.prefix(), "J" | "P" | "CN" | "CON" | "USB" | "X") || part.mouth.is_some()
-    };
-    let mounting = |part: &Part| {
-        part.prefix() == "H" || part.footprint.to_ascii_lowercase().contains("mountinghole")
-    };
     let near_edge = match outline {
         Some(board) => parts
             .iter()
-            .filter(|part| !part.pads.is_empty() && !connector(part) && !mounting(part))
+            .filter(|part| !part.pads.is_empty() && !is_connector(part) && !is_mounting(part))
             .filter(|part| {
                 let b = part.body;
                 (b[0] - board[0])
@@ -1099,20 +1184,22 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
             .collect(),
         None => Vec::new(),
     };
-    let assembly = KiCadAssembly {
+    KiCadAssembly {
         polarised: polarised_count,
         orientation_consistency: share(modal, polarised_count),
         near_edge,
-    };
+    }
+}
 
-    // Connectors: mouth at the nearest edge, pointing out.
+/// Connectors: mouth at the nearest edge, pointing out.
+fn connectors_of(parts: &[Part], outline: Option<[f64; 4]>) -> KiCadConnectors {
     let mut with_mouth = 0;
     let mut facing_out = 0;
     let mut not_facing_out = Vec::new();
     if let Some(board) = outline {
         for part in parts
             .iter()
-            .filter(|part| part.mouth.is_some() && connector(part))
+            .filter(|part| part.mouth.is_some() && is_connector(part))
         {
             with_mouth += 1;
             let b = part.body;
@@ -1134,18 +1221,16 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
             }
         }
     }
-    let connectors = KiCadConnectors {
+    KiCadConnectors {
         with_mouth,
         facing_out,
         not_facing_out,
-    };
+    }
+}
 
-    // Manufacturing: vias in small SMD pads (`vias_in_small_smd_pads`),
-    // filled and capped ones apart.
-    let vias_in_pads_at = sites_of(&parts, &board_vias, false);
-    let filled_vias_in_pads = vias_in_pads_at.iter().filter(|site| site.filled).count();
-    let vias_in_pads = vias_in_pads_at.len() - filled_vias_in_pads;
-    let vias_in_large_pads_at = sites_of(&parts, &board_vias, true);
+/// Small two-pad SMD parts whose pads get very unequal track widths: a
+/// tombstoning risk.
+fn tombstone_risks(parts: &[Part], tracks: &[Track]) -> Vec<String> {
     let mut tombstone_risk = Vec::new();
     for part in parts
         .iter()
@@ -1174,6 +1259,12 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
             tombstone_risk.push(part.reference.clone());
         }
     }
+    tombstone_risk
+}
+
+/// The DRC violation counts of `<directory>/drc.json`, if the file is there
+/// and parses.
+fn drc_counts(directory: &Path) -> Option<BTreeMap<String, usize>> {
     let mut drc = None;
     if let Ok(text) = fs::read_to_string(directory.join("drc.json"))
         && let Ok(report) = serde_json::from_str::<serde_json::Value>(&text)
@@ -1189,7 +1280,25 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
             drc.insert("unconnected_items".into(), unconnected);
         }
     }
-    let manufacturing = KiCadManufacturing {
+    drc
+}
+
+/// Manufacturing: vias in small SMD pads (`vias_in_small_smd_pads`),
+/// filled and capped ones apart, tombstone risks and the DRC counts.
+fn manufacturing_of(
+    directory: &Path,
+    board_id: &str,
+    parts: &[Part],
+    tracks: &[Track],
+    board_vias: &[BoardVia],
+) -> KiCadManufacturing {
+    let vias_in_pads_at = sites_of(parts, board_vias, false);
+    let filled_vias_in_pads = vias_in_pads_at.iter().filter(|site| site.filled).count();
+    let vias_in_pads = vias_in_pads_at.len() - filled_vias_in_pads;
+    let vias_in_large_pads_at = sites_of(parts, board_vias, true);
+    let tombstone_risk = tombstone_risks(parts, tracks);
+    let drc = drc_counts(directory);
+    KiCadManufacturing {
         vias_in_pads,
         filled_vias_in_pads,
         vias_in_pads_at,
@@ -1204,7 +1313,12 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
             )
         }),
         drc,
-    };
+    }
+}
+
+/// Each switching inductor with the distance to the nearest IC pin on its
+/// switch node.
+fn switch_inductors_of(parts: &[Part]) -> Vec<(String, Option<f64>)> {
     let mut switch_inductors = Vec::new();
     for part in parts
         .iter()
@@ -1224,36 +1338,55 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         }
         let nearest = parts
             .iter()
-            .filter(|other| ic(other))
+            .filter(|other| is_ic(other))
             .flat_map(|other| &other.pads)
             .filter(|pad| pad.net == switch[0].net)
             .map(|pad| distance(pad.center, switch[0].center))
             .reduce(f64::min);
         switch_inductors.push((part.reference.clone(), nearest.map(round)));
     }
-    // Hot parts: an IC or transistor whose largest pad is at least 2 mm²
-    // and 2.5 times its median pad.
+    switch_inductors
+}
+
+/// The layer names a zone lists (`layers`, or the single `layer`).
+fn zone_layers(zone: &Expr) -> Vec<String> {
+    zone.child("layers")
+        .map(|layers| {
+            layers
+                .children()
+                .iter()
+                .skip(1)
+                .filter_map(Expr::atom)
+                .map(str::to_owned)
+                .collect()
+        })
+        .or_else(|| form_atom(zone, "layer", 1).map(|layer| vec![layer.to_string()]))
+        .unwrap_or_default()
+}
+
+/// A zone's net, normalised; `None` for a zone without one.
+fn zone_net(zone: &Expr, names: &NetNames) -> Option<String> {
+    form_atom(zone, "net_name", 1)
+        .or_else(|| node_net(zone))
+        .map(|raw| names.normalize(raw).to_string())
+}
+
+/// Hot parts: an IC or transistor whose largest pad is at least 2 mm²
+/// and 2.5 times its median pad, with the copper around that pad.
+fn hot_parts_of(
+    pcb: &Expr,
+    names: &NetNames,
+    parts: &[Part],
+    tracks: &[Track],
+    vias: &[([f64; 2], f64)],
+) -> Vec<KiCadHotPart> {
     let zones: Vec<(String, Vec<String>, Vec<[f64; 2]>)> = pcb
         .children()
         .iter()
         .filter(|item| item.head() == Some("zone") && item.child("keepout").is_none())
         .filter_map(|zone| {
-            let net = form_atom(zone, "net_name", 1)
-                .or_else(|| node_net(zone))
-                .map(|raw| names.normalize(raw).to_string())?;
-            let layers: Vec<String> = zone
-                .child("layers")
-                .map(|layers| {
-                    layers
-                        .children()
-                        .iter()
-                        .skip(1)
-                        .filter_map(Expr::atom)
-                        .map(str::to_owned)
-                        .collect()
-                })
-                .or_else(|| form_atom(zone, "layer", 1).map(|layer| vec![layer.to_string()]))
-                .unwrap_or_default();
+            let net = zone_net(zone, names)?;
+            let layers = zone_layers(zone);
             let outline: Vec<[f64; 2]> = zone
                 .child("polygon")
                 .and_then(|polygon| polygon.child("pts"))
@@ -1325,6 +1458,12 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
             vias_in_pad,
         });
     }
+    hot_parts
+}
+
+/// Each ESD protector with the distance from its signal pads to the
+/// nearest connector pad on the same net.
+fn esd_of(parts: &[Part]) -> Vec<(String, Option<f64>)> {
     let mut esd = Vec::new();
     for part in parts
         .iter()
@@ -1338,7 +1477,7 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         {
             for other in parts
                 .iter()
-                .filter(|other| connector(other) && other.reference != part.reference)
+                .filter(|other| is_connector(other) && other.reference != part.reference)
             {
                 for target in other.pads.iter().filter(|target| target.net == pad.net) {
                     let d = distance(pad.center, target.center);
@@ -1348,7 +1487,11 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         }
         esd.push((part.reference.clone(), nearest.map(round)));
     }
-    // Ground pours by layer, and the other nets' tracks on those layers.
+    esd
+}
+
+/// Ground pours by layer, and the other nets' tracks on those layers.
+fn ground_planes_of(pcb: &Expr, names: &NetNames, tracks: &[Track]) -> Vec<KiCadPlane> {
     let mut planes = Vec::new();
     let mut seen = BTreeSet::new();
     for zone in pcb
@@ -1359,29 +1502,13 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         if zone.child("keepout").is_some() {
             continue;
         }
-        let Some(net) = form_atom(zone, "net_name", 1)
-            .or_else(|| node_net(zone))
-            .map(|raw| names.normalize(raw).to_string())
-        else {
+        let Some(net) = zone_net(zone, names) else {
             continue;
         };
         if !ground(&net) {
             continue;
         }
-        let zone_layers: Vec<String> = zone
-            .child("layers")
-            .map(|layers| {
-                layers
-                    .children()
-                    .iter()
-                    .skip(1)
-                    .filter_map(Expr::atom)
-                    .map(str::to_owned)
-                    .collect()
-            })
-            .or_else(|| form_atom(zone, "layer", 1).map(|layer| vec![layer.to_string()]))
-            .unwrap_or_default();
-        for layer in zone_layers {
+        for layer in zone_layers(zone) {
             if !seen.insert((layer.clone(), net.clone())) {
                 continue;
             }
@@ -1400,6 +1527,15 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
             });
         }
     }
+    planes
+}
+
+/// The fabrication cost estimate for ten boards.
+fn cost_of(
+    parts: &[Part],
+    economy: &KiCadEconomy,
+    manufacturing: &KiCadManufacturing,
+) -> crate::cost::KiCadCost {
     let joints = |through: bool| {
         parts
             .iter()
@@ -1407,7 +1543,7 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
             .filter(|pad| pad.net.is_some() && pad.smd != through)
             .count()
     };
-    let cost = crate::cost::estimate(
+    crate::cost::estimate(
         &crate::cost::CostInputs {
             width_mm: economy.width_mm,
             height_mm: economy.height_mm,
@@ -1422,9 +1558,16 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
             tht_joints: joints(true),
         },
         10,
-    );
+    )
+}
 
-    let aesthetics = crate::aesthetics::aesthetics(
+/// The aesthetics metrics of the routed copper.
+fn aesthetics_of(
+    parts: &[Part],
+    tracks: &[Track],
+    vias: &[([f64; 2], f64)],
+) -> crate::aesthetics::KiCadAesthetics {
+    crate::aesthetics::aesthetics(
         &tracks
             .iter()
             .map(|track| crate::aesthetics::AestheticTrack {
@@ -1456,29 +1599,63 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
                 })
             })
             .collect::<Vec<_>>(),
-    );
-
-    Ok(KiCadQualityReport {
-        board_id: board_id.into(),
-        economy,
-        aesthetics,
-        decoupling,
-        crystals,
-        separation,
-        assembly,
-        connectors,
-        manufacturing,
-        planes,
-        esd,
-        switch_inductors,
-        hot_parts,
-        cost,
-    })
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn smd_pad(x: f64) -> Pad {
+        Pad {
+            name: "1".into(),
+            net: Some("N".into()),
+            center: [x, 0.0],
+            half: [0.3, 0.3],
+            smd: true,
+            copper: true,
+            outer: None,
+            size: [0.6, 0.6],
+            corner: 0.0,
+            angle: 0.0,
+            copper_shape: None,
+            custom: false,
+            power_pin: false,
+            function: String::new(),
+        }
+    }
+
+    fn track_at(x: f64, width: f64) -> Track {
+        Track {
+            start: [x, 0.0],
+            end: [x + 3.0, 0.0],
+            mid: None,
+            width,
+            layer: "F.Cu".into(),
+            net: Some("N".into()),
+        }
+    }
+
+    #[test]
+    fn a_small_part_with_unequal_track_widths_is_a_tombstone_risk() {
+        let part = Part {
+            reference: "C1".into(),
+            value: "100n".into(),
+            footprint: "Capacitor_SMD:C_0402_1005Metric".into(),
+            angle: 0.0,
+            back: false,
+            through_hole: false,
+            body: [-1.0, -0.5, 2.0, 0.5],
+            pads: vec![smd_pad(0.0), smd_pad(1.0)],
+            mouth: None,
+        };
+        let parts = [part];
+        assert_eq!(
+            tombstone_risks(&parts, &[track_at(0.0, 0.5), track_at(1.0, 0.2)]),
+            vec!["C1".to_string()]
+        );
+        assert!(tombstone_risks(&parts, &[track_at(0.0, 0.3), track_at(1.0, 0.2)]).is_empty());
+    }
 
     #[test]
     fn values_and_roles_are_read_like_a_designer_writes_them() {
