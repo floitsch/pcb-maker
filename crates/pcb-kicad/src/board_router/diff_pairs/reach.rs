@@ -126,70 +126,7 @@ pub(super) fn grid_reaches(
     extra: &[(core::Shape, f64, &str)],
 ) -> bool {
     let to = goal.unwrap_or(from);
-    let half = pair.width / 2.0;
-    let low = [
-        from[0].min(to[0]) - REACH_MARGIN,
-        from[1].min(to[1]) - REACH_MARGIN,
-    ];
-    let high = [
-        from[0].max(to[0]) + REACH_MARGIN,
-        from[1].max(to[1]) + REACH_MARGIN,
-    ];
-    let columns = ((high[0] - low[0]) / REACH_PITCH).ceil() as usize + 1;
-    let rows = ((high[1] - low[1]) / REACH_PITCH).ceil() as usize + 1;
-    let cell = |column: usize, row: usize| {
-        [
-            low[0] + column as f64 * REACH_PITCH,
-            low[1] + row as f64 * REACH_PITCH,
-        ]
-    };
-    // Per cell: 0 free, else what blocks it (`sources`, from 1).
-    let mut blocked = vec![0u32; columns * rows];
-    let mut sources: Vec<String> = Vec::new();
-    let mut tests = 0usize;
-    // Round a pad narrower than the track and its clearance the router
-    // routes at the neck width (its `neck_reach` of the pad's anchor).
-    let pad_bounds = board.obstacles[pad_index].shape.aabb();
-    let narrow = (pad_bounds.maximum[0] - pad_bounds.minimum[0])
-        .min(pad_bounds.maximum[1] - pad_bounds.minimum[1])
-        < pair.width + pair.clearance;
-    let neck_half = board.neck_width.min(pair.width) / 2.0;
-    let necked = |at: Point| {
-        narrow && (at[0] - from[0]).abs() <= REACH_NECK && (at[1] - from[1]).abs() <= REACH_NECK
-    };
-    // Blocks the cells within `keep` and half the track's width of `shape`.
-    let mut block = |shape: &core::Shape, keep: f64, blocked: &mut Vec<u32>, source: u32| {
-        let reach = keep + half;
-        let bounds = shape.aabb();
-        if bounds.maximum[0] + reach < low[0]
-            || bounds.minimum[0] - reach > high[0]
-            || bounds.maximum[1] + reach < low[1]
-            || bounds.minimum[1] - reach > high[1]
-        {
-            return;
-        }
-        let first = |value: f64, origin: f64| {
-            ((value - reach - origin) / REACH_PITCH).floor().max(0.0) as usize
-        };
-        let last = |value: f64, origin: f64, count: usize| {
-            (((value + reach - origin) / REACH_PITCH).ceil().max(0.0) as usize).min(count - 1)
-        };
-        for row in first(bounds.minimum[1], low[1])..=last(bounds.maximum[1], low[1], rows) {
-            for column in
-                first(bounds.minimum[0], low[0])..=last(bounds.maximum[0], low[0], columns)
-            {
-                let index = row * columns + column;
-                if blocked[index] == 0 {
-                    tests += 1;
-                    let at = cell(column, row);
-                    let width = if necked(at) { neck_half } else { half };
-                    if shape.distance_to_point(at) < keep + width {
-                        blocked[index] = source;
-                    }
-                }
-            }
-        }
-    };
+    let mut grid = ReachGrid::new(board, pair, (pad_index, from), to);
     for &index in near {
         let obstacle = &board.obstacles[index];
         if obstacle.layers & layers == 0
@@ -209,93 +146,222 @@ pub(super) fn grid_reaches(
         if other.is_some() && obstacle.net == other {
             keep = keep.min(pair.gap);
         }
-        sources.push(obstacle.label.clone());
-        block(&obstacle.shape, keep, &mut blocked, sources.len() as u32);
+        grid.sources.push(obstacle.label.clone());
+        let source = grid.sources.len() as u32;
+        grid.block(&obstacle.shape, keep, source);
     }
     for (shape, keep, label) in extra {
-        sources.push(label.to_string());
-        block(shape, *keep, &mut blocked, sources.len() as u32);
+        grid.sources.push(label.to_string());
+        let source = grid.sources.len() as u32;
+        grid.block(shape, *keep, source);
     }
     // The board's edge.
-    sources.push("the edge".into());
-    let edge_source = sources.len() as u32;
+    grid.sources.push("the edge".into());
+    let edge_source = grid.sources.len() as u32;
     for (a, b) in core::geometry::polygon_edges(&board.outline) {
         let edge = core::Shape::Capsule {
             start: a,
             end: b,
             radius: 0.0,
         };
-        block(&edge, board.edge_clearance, &mut blocked, edge_source);
+        grid.block(&edge, board.edge_clearance, edge_source);
     }
-    tested(tests + board.outline.len());
-    // A flood fill from the pad's free cells.
-    let pad = &board.obstacles[pad_index].shape;
-    let mut queue = std::collections::VecDeque::new();
-    let mut seen = vec![false; columns * rows];
-    for row in 0..rows {
-        for column in 0..columns {
-            let index = row * columns + column;
-            // The pad's own cells, blocked or not: a track leaves a pad
-            // from inside it (the router's pad exits).
-            if pad.contains(cell(column, row)) {
-                seen[index] = true;
-                queue.push_back((column, row));
+    tested(grid.tests + board.outline.len());
+    grid.flood(board, (pad_index, from), goal)
+}
+
+/// `grid_reaches`' grid: the window round the pad and the goal, per cell
+/// what blocks it (0 free, else an index into `sources` from 1), and the
+/// distance tests made.
+struct ReachGrid {
+    low: Point,
+    high: Point,
+    columns: usize,
+    rows: usize,
+    blocked: Vec<u32>,
+    sources: Vec<String>,
+    tests: usize,
+    /// Half the track's width, and round a pad narrower than the track and
+    /// its clearance (`narrow`, its anchor `from`) half the neck width.
+    half: f64,
+    narrow: bool,
+    from: Point,
+    neck_half: f64,
+}
+
+impl ReachGrid {
+    /// The grid round the pad `pad_index` (its anchor `from`) and `to`,
+    /// every cell free.
+    fn new(board: &core::Board, pair: &Pair, (pad_index, from): (usize, Point), to: Point) -> Self {
+        let half = pair.width / 2.0;
+        let low = [
+            from[0].min(to[0]) - REACH_MARGIN,
+            from[1].min(to[1]) - REACH_MARGIN,
+        ];
+        let high = [
+            from[0].max(to[0]) + REACH_MARGIN,
+            from[1].max(to[1]) + REACH_MARGIN,
+        ];
+        let columns = ((high[0] - low[0]) / REACH_PITCH).ceil() as usize + 1;
+        let rows = ((high[1] - low[1]) / REACH_PITCH).ceil() as usize + 1;
+        // Per cell: 0 free, else what blocks it (`sources`, from 1).
+        let blocked = vec![0u32; columns * rows];
+        // Round a pad narrower than the track and its clearance the router
+        // routes at the neck width (its `neck_reach` of the pad's anchor).
+        let pad_bounds = board.obstacles[pad_index].shape.aabb();
+        let narrow = (pad_bounds.maximum[0] - pad_bounds.minimum[0])
+            .min(pad_bounds.maximum[1] - pad_bounds.minimum[1])
+            < pair.width + pair.clearance;
+        let neck_half = board.neck_width.min(pair.width) / 2.0;
+        ReachGrid {
+            low,
+            high,
+            columns,
+            rows,
+            blocked,
+            sources: Vec::new(),
+            tests: 0,
+            half,
+            narrow,
+            from,
+            neck_half,
+        }
+    }
+
+    /// The centre of a cell.
+    fn cell(&self, column: usize, row: usize) -> Point {
+        [
+            self.low[0] + column as f64 * REACH_PITCH,
+            self.low[1] + row as f64 * REACH_PITCH,
+        ]
+    }
+
+    /// Whether a track at `at` is necked (round a narrow pad).
+    fn necked(&self, at: Point) -> bool {
+        self.narrow
+            && (at[0] - self.from[0]).abs() <= REACH_NECK
+            && (at[1] - self.from[1]).abs() <= REACH_NECK
+    }
+
+    /// Blocks the cells within `keep` and half the track's width of `shape`
+    /// (by `source`).
+    fn block(&mut self, shape: &core::Shape, keep: f64, source: u32) {
+        let (low, high, rows, columns) = (self.low, self.high, self.rows, self.columns);
+        let reach = keep + self.half;
+        let bounds = shape.aabb();
+        if bounds.maximum[0] + reach < low[0]
+            || bounds.minimum[0] - reach > high[0]
+            || bounds.maximum[1] + reach < low[1]
+            || bounds.minimum[1] - reach > high[1]
+        {
+            return;
+        }
+        let first = |value: f64, origin: f64| {
+            ((value - reach - origin) / REACH_PITCH).floor().max(0.0) as usize
+        };
+        let last = |value: f64, origin: f64, count: usize| {
+            (((value + reach - origin) / REACH_PITCH).ceil().max(0.0) as usize).min(count - 1)
+        };
+        for row in first(bounds.minimum[1], low[1])..=last(bounds.maximum[1], low[1], rows) {
+            for column in
+                first(bounds.minimum[0], low[0])..=last(bounds.maximum[0], low[0], columns)
+            {
+                let index = row * columns + column;
+                if self.blocked[index] == 0 {
+                    self.tests += 1;
+                    let at = self.cell(column, row);
+                    let width = if self.necked(at) {
+                        self.neck_half
+                    } else {
+                        self.half
+                    };
+                    if shape.distance_to_point(at) < keep + width {
+                        self.blocked[index] = source;
+                    }
+                }
             }
         }
     }
-    if queue.is_empty() {
-        // A pad smaller than a cell: the cell at its anchor.
-        let column = (((from[0] - low[0]) / REACH_PITCH).round() as usize).min(columns - 1);
-        let row = (((from[1] - low[1]) / REACH_PITCH).round() as usize).min(rows - 1);
-        seen[row * columns + column] = true;
-        queue.push_back((column, row));
-    }
-    let seeds = queue.len();
-    let mut closest = f64::INFINITY;
-    let mut walls: BTreeSet<u32> = BTreeSet::new();
-    while let Some((column, row)) = queue.pop_front() {
-        let distance = core::geometry::distance(cell(column, row), to);
-        let out =
-            goal.is_none() && (column == 0 || row == 0 || column + 1 == columns || row + 1 == rows);
-        if out || (goal.is_some() && distance <= LAUNCH_CONTACT) {
-            return true;
-        }
-        closest = closest.min(distance);
-        for (dc, dr) in [
-            (1i64, 0i64),
-            (-1, 0),
-            (0, 1),
-            (0, -1),
-            (1, 1),
-            (1, -1),
-            (-1, 1),
-            (-1, -1),
-        ] {
-            let (c, r) = (column as i64 + dc, row as i64 + dr);
-            if c < 0 || r < 0 || c >= columns as i64 || r >= rows as i64 {
-                continue;
-            }
-            let index = r as usize * columns + c as usize;
-            if blocked[index] != 0 {
-                walls.insert(blocked[index]);
-                continue;
-            }
-            if !seen[index] {
-                seen[index] = true;
-                queue.push_back((c as usize, r as usize));
+
+    /// A flood fill from the pad's free cells: whether it reaches `goal`
+    /// (within `LAUNCH_CONTACT`), or without one the window's border.
+    fn flood(
+        &self,
+        board: &core::Board,
+        (pad_index, from): (usize, Point),
+        goal: Option<Point>,
+    ) -> bool {
+        let (columns, rows) = (self.columns, self.rows);
+        let to = goal.unwrap_or(from);
+        let pad = &board.obstacles[pad_index].shape;
+        let mut queue = std::collections::VecDeque::new();
+        let mut seen = vec![false; columns * rows];
+        for row in 0..rows {
+            for column in 0..columns {
+                let index = row * columns + column;
+                // The pad's own cells, blocked or not: a track leaves a pad
+                // from inside it (the router's pad exits).
+                if pad.contains(self.cell(column, row)) {
+                    seen[index] = true;
+                    queue.push_back((column, row));
+                }
             }
         }
+        if queue.is_empty() {
+            // A pad smaller than a cell: the cell at its anchor.
+            let column =
+                (((from[0] - self.low[0]) / REACH_PITCH).round() as usize).min(columns - 1);
+            let row = (((from[1] - self.low[1]) / REACH_PITCH).round() as usize).min(rows - 1);
+            seen[row * columns + column] = true;
+            queue.push_back((column, row));
+        }
+        let seeds = queue.len();
+        let mut closest = f64::INFINITY;
+        let mut walls: BTreeSet<u32> = BTreeSet::new();
+        while let Some((column, row)) = queue.pop_front() {
+            let distance = core::geometry::distance(self.cell(column, row), to);
+            let out = goal.is_none()
+                && (column == 0 || row == 0 || column + 1 == columns || row + 1 == rows);
+            if out || (goal.is_some() && distance <= LAUNCH_CONTACT) {
+                return true;
+            }
+            closest = closest.min(distance);
+            for (dc, dr) in [
+                (1i64, 0i64),
+                (-1, 0),
+                (0, 1),
+                (0, -1),
+                (1, 1),
+                (1, -1),
+                (-1, 1),
+                (-1, -1),
+            ] {
+                let (c, r) = (column as i64 + dc, row as i64 + dr);
+                if c < 0 || r < 0 || c >= columns as i64 || r >= rows as i64 {
+                    continue;
+                }
+                let index = r as usize * columns + c as usize;
+                if self.blocked[index] != 0 {
+                    walls.insert(self.blocked[index]);
+                    continue;
+                }
+                if !seen[index] {
+                    seen[index] = true;
+                    queue.push_back((c as usize, r as usize));
+                }
+            }
+        }
+        if debug() {
+            eprintln!(
+                "diff pair reach {}: {seeds} seeds, closest {closest:.3} of {:.3}; walls {:?}",
+                board.obstacles[pad_index].label,
+                core::geometry::distance(from, to),
+                walls
+                    .iter()
+                    .map(|wall| self.sources[*wall as usize - 1].as_str())
+                    .collect::<Vec<_>>()
+            );
+        }
+        false
     }
-    if debug() {
-        eprintln!(
-            "diff pair reach {}: {seeds} seeds, closest {closest:.3} of {:.3}; walls {:?}",
-            board.obstacles[pad_index].label,
-            core::geometry::distance(from, to),
-            walls
-                .iter()
-                .map(|wall| sources[*wall as usize - 1].as_str())
-                .collect::<Vec<_>>()
-        );
-    }
-    false
 }

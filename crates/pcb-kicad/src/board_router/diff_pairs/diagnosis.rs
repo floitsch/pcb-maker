@@ -135,120 +135,149 @@ pub(super) fn plan_reach_check(
     config: &KiCadBoardRouterConfig,
 ) {
     for link in &plan.links {
-        let pair = &plan.pairs[link.pair];
-        let nets = [pair.positive, pair.negative];
         for end in (0..2).filter(|&end| !link.fixed[end]) {
             for polarity in 0..2 {
-                let (net, partner) = (nets[polarity], nets[1 - polarity]);
-                let pad = link.pads[end][polarity];
-                let terminal = board.nets[net as usize]
-                    .terminals
-                    .iter()
-                    .find(|terminal| core::geometry::distance(terminal.anchor, pad) < 1.0e-6)
-                    .cloned();
-                let Some(terminal) = terminal else {
-                    continue;
-                };
-                let target = &link.runs[end][polarity];
-                let planned = |index: usize| index >= plan.obstacles;
-                let steps: [(&str, &Gone<'_>); 5] = [
-                    ("reaches", &|_, _| false),
-                    ("freed without the link's lead", &|index, obstacle| {
-                        planned(index) && obstacle.net == Some(link.net)
-                    }),
-                    (
-                        "freed without the partner's plan copper",
-                        &|index, obstacle| {
-                            planned(index)
-                                && (obstacle.net == Some(link.net) || obstacle.net == Some(partner))
-                        },
-                    ),
-                    ("freed without the other links' plan copper", &|index, _| {
-                        planned(index)
-                    }),
-                    (
-                        "freed without the board's other pads",
-                        &|index, obstacle| planned(index) || obstacle.net != Some(partner),
-                    ),
-                ];
-                let verdict = steps
-                    .iter()
-                    .find(|(_, gone)| trial_reaches(board, net, (&terminal, target), *gone, config))
-                    .map_or("not even alone with its partner", |(name, _)| *name);
-                // The plan's own check (`stub_reaches`) on the planned board.
-                let near = obstacles_near(
-                    board,
-                    pad,
-                    core::geometry::distance(pad, target.anchor) + REACH_MARGIN + 1.0,
-                );
-                let grid = stub_reaches(
-                    board,
-                    &near,
-                    pair,
-                    (&terminal, polarity),
-                    target.anchor,
-                    target.layers,
-                    &[],
-                );
-                let start = link.starts[end];
-                let outward = unit(sub(link.launches[end], start));
-                // What lies near the straight line from the pad to the end.
-                let mut near: Vec<String> = Vec::new();
-                if !verdict.starts_with("reaches") {
-                    let layer = target.layers;
-                    for obstacle in &board.obstacles {
-                        if obstacle.net == Some(net) || obstacle.layers & layer == 0 {
-                            continue;
-                        }
-                        let gap = obstacle
-                            .shape
-                            .distance_to_segment(link.stubs[end][polarity], target.anchor)
-                            - pair.width / 2.0;
-                        if gap < pair.clearance + 0.05 {
-                            near.push(format!(
-                                "{} [{}] {:.3}",
-                                obstacle.label,
-                                obstacle
-                                    .net
-                                    .map_or("-".to_string(), |owner| if owner == partner {
-                                        "partner".to_string()
-                                    } else if owner == link.net {
-                                        "link".to_string()
-                                    } else {
-                                        board
-                                            .nets
-                                            .get(owner as usize)
-                                            .map_or("?".into(), |n| n.name.clone())
-                                    }),
-                                gap
-                            ));
-                        }
-                    }
-                }
-                let local = |point: Point| {
-                    let v = sub(point, start);
-                    format!("({:.2}, {:.2})", dot(v, outward), cross(outward, v))
-                };
-                eprintln!(
-                    "pairs reach: {} link {} end {} ({} end, {:.3} mm): {verdict}; grid {}; along/across the run from its start: pad {}, partner's pad {}, stub end {}, partner's end {}; near the straight stub: {near:?}",
-                    board.nets[net as usize].name,
-                    link.link + 1,
-                    ["a", "b"][end],
-                    if end_crossed(link, end) {
-                        "crossed"
-                    } else {
-                        "straight"
-                    },
-                    core::geometry::distance(pad, target.anchor),
-                    if grid { "reaches" } else { "does not" },
-                    local(pad),
-                    local(link.pads[end][1 - polarity]),
-                    local(target.anchor),
-                    local(link.ends[end][1 - polarity]),
-                );
+                stub_reach_check(board, plan, link, (end, polarity), config);
             }
         }
     }
+}
+
+/// `plan_reach_check` of the stub of `polarity` at `end` of `link`: its
+/// verdict, the plan's own check (`stub_reaches`), the pads and ends along
+/// and across the run, and what lies near the straight stub, as one line
+/// (`pairs reach: ...`).
+fn stub_reach_check(
+    board: &core::Board,
+    plan: &PairPlan,
+    link: &LinkPlan,
+    (end, polarity): (usize, usize),
+    config: &KiCadBoardRouterConfig,
+) {
+    let pair = &plan.pairs[link.pair];
+    let nets = [pair.positive, pair.negative];
+    let (net, partner) = (nets[polarity], nets[1 - polarity]);
+    let pad = link.pads[end][polarity];
+    let terminal = board.nets[net as usize]
+        .terminals
+        .iter()
+        .find(|terminal| core::geometry::distance(terminal.anchor, pad) < 1.0e-6)
+        .cloned();
+    let Some(terminal) = terminal else {
+        return;
+    };
+    let target = &link.runs[end][polarity];
+    let planned = |index: usize| index >= plan.obstacles;
+    let steps: [(&str, &Gone<'_>); 5] = [
+        ("reaches", &|_, _| false),
+        ("freed without the link's lead", &|index, obstacle| {
+            planned(index) && obstacle.net == Some(link.net)
+        }),
+        (
+            "freed without the partner's plan copper",
+            &|index, obstacle| {
+                planned(index) && (obstacle.net == Some(link.net) || obstacle.net == Some(partner))
+            },
+        ),
+        ("freed without the other links' plan copper", &|index, _| {
+            planned(index)
+        }),
+        (
+            "freed without the board's other pads",
+            &|index, obstacle| planned(index) || obstacle.net != Some(partner),
+        ),
+    ];
+    let verdict = steps
+        .iter()
+        .find(|(_, gone)| trial_reaches(board, net, (&terminal, target), *gone, config))
+        .map_or("not even alone with its partner", |(name, _)| *name);
+    // The plan's own check (`stub_reaches`) on the planned board.
+    let near = obstacles_near(
+        board,
+        pad,
+        core::geometry::distance(pad, target.anchor) + REACH_MARGIN + 1.0,
+    );
+    let grid = stub_reaches(
+        board,
+        &near,
+        pair,
+        (&terminal, polarity),
+        target.anchor,
+        target.layers,
+        &[],
+    );
+    let start = link.starts[end];
+    let outward = unit(sub(link.launches[end], start));
+    // What lies near the straight line from the pad to the end.
+    let mut near: Vec<String> = Vec::new();
+    if !verdict.starts_with("reaches") {
+        near = near_straight_stub(board, pair, link, (end, polarity), (net, partner), target);
+    }
+    let local = |point: Point| {
+        let v = sub(point, start);
+        format!("({:.2}, {:.2})", dot(v, outward), cross(outward, v))
+    };
+    eprintln!(
+        "pairs reach: {} link {} end {} ({} end, {:.3} mm): {verdict}; grid {}; along/across the run from its start: pad {}, partner's pad {}, stub end {}, partner's end {}; near the straight stub: {near:?}",
+        board.nets[net as usize].name,
+        link.link + 1,
+        ["a", "b"][end],
+        if end_crossed(link, end) {
+            "crossed"
+        } else {
+            "straight"
+        },
+        core::geometry::distance(pad, target.anchor),
+        if grid { "reaches" } else { "does not" },
+        local(pad),
+        local(link.pads[end][1 - polarity]),
+        local(target.anchor),
+        local(link.ends[end][1 - polarity]),
+    );
+}
+
+/// What lies near the straight line from the stub's start to its end
+/// (`target`) on its layer: other nets' copper within the pair's clearance
+/// and a little more, by label, owner (the partner, the link) and gap.
+fn near_straight_stub(
+    board: &core::Board,
+    pair: &Pair,
+    link: &LinkPlan,
+    (end, polarity): (usize, usize),
+    (net, partner): (core::NetId, core::NetId),
+    target: &core::Terminal,
+) -> Vec<String> {
+    let mut near: Vec<String> = Vec::new();
+    let layer = target.layers;
+    for obstacle in &board.obstacles {
+        if obstacle.net == Some(net) || obstacle.layers & layer == 0 {
+            continue;
+        }
+        let gap = obstacle
+            .shape
+            .distance_to_segment(link.stubs[end][polarity], target.anchor)
+            - pair.width / 2.0;
+        if gap < pair.clearance + 0.05 {
+            near.push(format!(
+                "{} [{}] {:.3}",
+                obstacle.label,
+                obstacle
+                    .net
+                    .map_or("-".to_string(), |owner| if owner == partner {
+                        "partner".to_string()
+                    } else if owner == link.net {
+                        "link".to_string()
+                    } else {
+                        board
+                            .nets
+                            .get(owner as usize)
+                            .map_or("?".into(), |n| n.name.clone())
+                    }),
+                gap
+            ));
+        }
+    }
+    near
 }
 
 /// `PCB_ROUTER_PAIRS_WHY`: why the stub of `net` (`polarity`) at `end` of
@@ -279,108 +308,27 @@ pub(super) fn stub_why(
     ) {
         return None;
     }
-    let pads: Vec<&core::Obstacle> = board
-        .obstacles
-        .iter()
-        .filter(|obstacle| obstacle.net == Some(net) && obstacle.kind == core::ObstacleKind::Copper)
+    let mut copper = NetPieces::of(board, route, net, reach);
+    let pad_items: Vec<usize> = (0..copper.pads.len())
+        .filter(|&index| copper.pads[index].shape.distance_to_point(pad) <= 1.0e-6)
+        .map(|index| copper.count + copper.vias.len() + index)
         .collect();
-    let (segments, vias) = (&route.segments, &route.vias);
-    let (count, total) = (segments.len(), segments.len() + vias.len() + pads.len());
-    let touches = |a: usize, b: usize| -> bool {
-        let (a, b) = (a.min(b), a.max(b));
-        let segment = |index: usize| &segments[index];
-        if b < count {
-            let (x, y) = (segment(a), segment(b));
-            let keep = (x.width + y.width) / 2.0 + 1.0e-6;
-            x.layer == y.layer
-                && core::geometry::segment_segment_distance(x.start, x.end, y.start, y.end) <= keep
-        } else if b < count + vias.len() {
-            let via = &vias[b - count];
-            if a < count {
-                let x = segment(a);
-                core::geometry::point_segment_distance(via.at, x.start, x.end)
-                    <= (x.width + via.diameter) / 2.0 + 1.0e-6
-            } else {
-                core::geometry::distance(via.at, vias[a - count].at) < 1.0e-6
-            }
-        } else {
-            let obstacle = pads[b - count - vias.len()];
-            if a < count {
-                let x = segment(a);
-                obstacle.layers & (1 << x.layer) != 0
-                    && obstacle.shape.distance_to_segment(x.start, x.end) <= x.width / 2.0 + 1.0e-6
-            } else if a < count + vias.len() {
-                let via = &vias[a - count];
-                obstacle.shape.distance_to_point(via.at) <= via.diameter / 2.0 + 1.0e-6
-            } else {
-                false
-            }
-        }
-    };
-    let mut parent: Vec<usize> = (0..total).collect();
-    for a in 0..total {
-        for b in a + 1..total {
-            if touches(a, b) {
-                let (x, y) = (root(&mut parent, a), root(&mut parent, b));
-                if x != y {
-                    parent[x.max(y)] = x.min(y);
-                }
-            }
-        }
-    }
-    let at = |item: usize, lead: (Point, Point)| {
-        item < count
-            && [segments[item].start, segments[item].end]
-                .into_iter()
-                .any(|point| {
-                    core::geometry::point_segment_distance(point, lead.0, lead.1) <= reach + 1.0e-6
-                })
-    };
-    let pad_items: Vec<usize> = (0..pads.len())
-        .filter(|&index| pads[index].shape.distance_to_point(pad) <= 1.0e-6)
-        .map(|index| count + vias.len() + index)
-        .collect();
-    let component = |item: usize, parent: &mut Vec<usize>| {
-        let home = root(parent, item);
-        (0..total)
-            .filter(|&other| root(parent, other) == home)
-            .collect::<Vec<usize>>()
-    };
-    let describe = |items: &[usize]| {
-        let mut labels: Vec<String> = items
-            .iter()
-            .filter(|&&item| item >= count + vias.len())
-            .map(|&item| pads[item - count - vias.len()].label.clone())
-            .collect();
-        labels.dedup();
-        let tracks = items.iter().filter(|&&item| item < count).count();
-        let via_count = items
-            .iter()
-            .filter(|&&item| item >= count && item < count + vias.len())
-            .count();
-        let own_end = items.iter().any(|&item| at(item, lead));
-        let other_end = items.iter().any(|&item| at(item, other_lead));
-        format!(
-            "{tracks} tracks, {via_count} vias, pads [{}]{}{}",
-            labels.join(" "),
-            if own_end { ", its end" } else { "" },
-            if other_end {
-                ", the link's other end"
-            } else {
-                ""
-            }
-        )
-    };
     let from_pad = pad_items
         .first()
-        .map(|&item| component(item, &mut parent))
+        .map(|&item| copper.component(item))
         .unwrap_or_default();
-    let at_end: Vec<usize> = (0..count).filter(|&item| at(item, lead)).collect();
+    let at_end: Vec<usize> = (0..copper.count)
+        .filter(|&item| copper.at(item, lead))
+        .collect();
     let end_side = at_end
         .first()
-        .map(|&item| describe(&component(item, &mut parent)))
+        .map(|&item| {
+            let component = copper.component(item);
+            copper.describe(&component, (lead, other_lead))
+        })
         .unwrap_or_else(|| "no track".into());
-    let nearest = segments
+    let nearest = route
+        .segments
         .iter()
         .flat_map(|segment| [segment.start, segment.end])
         .map(|point| core::geometry::point_segment_distance(point, lead.0, lead.1))
@@ -405,10 +353,146 @@ pub(super) fn stub_why(
         if pad_items.is_empty() {
             "no pad found".into()
         } else {
-            describe(&from_pad)
+            copper.describe(&from_pad, (lead, other_lead))
         },
         end_side,
         nearest,
         reach
     ))
+}
+
+/// A net's copper in pieces (`stub_why`): items are its route's segments,
+/// then its vias, then its copper on the board (`pads`), joined where they
+/// touch (union-find `parent`); `reach` is how far a track's end may lie
+/// from a stub's end's copper and reach it.
+struct NetPieces<'a> {
+    segments: &'a [core::Segment],
+    vias: &'a [core::Via],
+    pads: Vec<&'a core::Obstacle>,
+    count: usize,
+    total: usize,
+    parent: Vec<usize>,
+    reach: f64,
+}
+
+impl<'a> NetPieces<'a> {
+    /// The pieces of `net`'s `route` and its copper on `board`.
+    fn of(board: &'a core::Board, route: &'a core::NetRoute, net: core::NetId, reach: f64) -> Self {
+        let pads: Vec<&core::Obstacle> = board
+            .obstacles
+            .iter()
+            .filter(|obstacle| {
+                obstacle.net == Some(net) && obstacle.kind == core::ObstacleKind::Copper
+            })
+            .collect();
+        let (segments, vias) = (&route.segments, &route.vias);
+        let (count, total) = (segments.len(), segments.len() + vias.len() + pads.len());
+        let mut pieces = NetPieces {
+            segments,
+            vias,
+            pads,
+            count,
+            total,
+            parent: (0..total).collect(),
+            reach,
+        };
+        for a in 0..total {
+            for b in a + 1..total {
+                if pieces.touches(a, b) {
+                    let (x, y) = (root(&mut pieces.parent, a), root(&mut pieces.parent, b));
+                    if x != y {
+                        pieces.parent[x.max(y)] = x.min(y);
+                    }
+                }
+            }
+        }
+        pieces
+    }
+
+    /// Whether items `a` and `b` touch (their copper overlaps).
+    fn touches(&self, a: usize, b: usize) -> bool {
+        let (segments, vias, count) = (self.segments, self.vias, self.count);
+        let (a, b) = (a.min(b), a.max(b));
+        let segment = |index: usize| &segments[index];
+        if b < count {
+            let (x, y) = (segment(a), segment(b));
+            let keep = (x.width + y.width) / 2.0 + 1.0e-6;
+            x.layer == y.layer
+                && core::geometry::segment_segment_distance(x.start, x.end, y.start, y.end) <= keep
+        } else if b < count + vias.len() {
+            let via = &vias[b - count];
+            if a < count {
+                let x = segment(a);
+                core::geometry::point_segment_distance(via.at, x.start, x.end)
+                    <= (x.width + via.diameter) / 2.0 + 1.0e-6
+            } else {
+                core::geometry::distance(via.at, vias[a - count].at) < 1.0e-6
+            }
+        } else {
+            let obstacle = self.pads[b - count - vias.len()];
+            if a < count {
+                let x = segment(a);
+                obstacle.layers & (1 << x.layer) != 0
+                    && obstacle.shape.distance_to_segment(x.start, x.end) <= x.width / 2.0 + 1.0e-6
+            } else if a < count + vias.len() {
+                let via = &vias[a - count];
+                obstacle.shape.distance_to_point(via.at) <= via.diameter / 2.0 + 1.0e-6
+            } else {
+                false
+            }
+        }
+    }
+
+    /// Whether item `item` is a track with an end at `lead` (within the
+    /// reach).
+    fn at(&self, item: usize, lead: (Point, Point)) -> bool {
+        item < self.count
+            && [self.segments[item].start, self.segments[item].end]
+                .into_iter()
+                .any(|point| {
+                    core::geometry::point_segment_distance(point, lead.0, lead.1)
+                        <= self.reach + 1.0e-6
+                })
+    }
+
+    /// The items of `item`'s piece.
+    fn component(&mut self, item: usize) -> Vec<usize> {
+        let home = root(&mut self.parent, item);
+        (0..self.total)
+            .filter(|&other| root(&mut self.parent, other) == home)
+            .collect::<Vec<usize>>()
+    }
+
+    /// A piece's tracks, vias and pads, and whether it reaches the stub's
+    /// end (`lead`) or the link's other end (`other_lead`).
+    fn describe(
+        &self,
+        items: &[usize],
+        (lead, other_lead): ((Point, Point), (Point, Point)),
+    ) -> String {
+        let (count, vias) = (self.count, self.vias.len());
+        let mut labels: Vec<String> = items
+            .iter()
+            .filter(|&&item| item >= count + vias)
+            .map(|&item| self.pads[item - count - vias].label.clone())
+            .collect();
+        labels.dedup();
+        let tracks = items.iter().filter(|&&item| item < count).count();
+        let via_count = items
+            .iter()
+            .filter(|&&item| item >= count && item < count + vias)
+            .count();
+        let own_end = items.iter().any(|&item| self.at(item, lead));
+        let other_end = items.iter().any(|&item| self.at(item, other_lead));
+        format!(
+            "{tracks} tracks, {via_count} vias, pads [{}]{}{}",
+            labels.join(" "),
+            if own_end { ", its end" } else { "" },
+            if other_end {
+                ", the link's other end"
+            } else {
+                ""
+            }
+        )
+    }
 }

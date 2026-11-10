@@ -23,41 +23,6 @@ pub(super) fn prune_stub(
         .iter()
         .filter(|obstacle| obstacle.net == Some(net) && obstacle.kind == core::ObstacleKind::Copper)
         .collect();
-    // Whether a track end of `width` at `point` overlaps other copper of
-    // the net (as the router joins copper: `joins_copper`).
-    // The tracks that meet the track's other end do not count (KiCad finds
-    // a short track's end dangling though its copper overlaps the next).
-    let touches = |route: &core::NetRoute, index: usize, point: Point, layer: usize| {
-        let half = route
-            .segments
-            .get(index)
-            .map_or(0.0, |segment| segment.width / 2.0);
-        let far = route.segments.get(index).map(|segment| {
-            if core::geometry::distance(segment.start, point) < 1.0e-6 {
-                segment.end
-            } else {
-                segment.start
-            }
-        });
-        let meets_far = |segment: &core::Segment| {
-            far.is_some_and(|far| {
-                core::geometry::distance(segment.start, far) < 1.0e-6
-                    || core::geometry::distance(segment.end, far) < 1.0e-6
-            })
-        };
-        route.segments.iter().enumerate().any(|(other, segment)| {
-            other != index
-                && !meets_far(segment)
-                && segment.layer == layer
-                && core::geometry::point_segment_distance(point, segment.start, segment.end)
-                    <= segment.width / 2.0 + half + 1.0e-6
-        }) || route.vias.iter().any(|via| {
-            core::geometry::distance(via.at, point) <= via.diameter / 2.0 + half + 1.0e-6
-        }) || own.iter().any(|obstacle| {
-            obstacle.layers & (1 << layer) != 0
-                && obstacle.shape.distance_to_point(point) <= half + 1.0e-6
-        })
-    };
     // The dangling end at the stub's end.
     let mut at: Option<(Point, usize)> =
         route
@@ -70,7 +35,7 @@ pub(super) fn prune_stub(
                     .find(|&end| {
                         core::geometry::point_segment_distance(end, lead.0, lead.1)
                             <= reach + 1.0e-6
-                            && !touches(route, index, end, segment.layer)
+                            && !end_touches(route, &own, index, end, segment.layer)
                     })
                     .map(|end| (end, segment.layer))
             });
@@ -82,7 +47,7 @@ pub(super) fn prune_stub(
         }) else {
             break;
         };
-        if touches(route, index, point, layer) {
+        if end_touches(route, &own, index, point, layer) {
             break;
         }
         let segment = route.segments.remove(index);
@@ -97,50 +62,7 @@ pub(super) fn prune_stub(
                     <= (candidate.width + segment.width) / 2.0 + 1.0e-6
         });
         if alone {
-            // A via there that joins nothing else of the net but one track
-            // on another layer goes too, and the chain goes on along that
-            // track (a stub that changed layers: KiCad's via_dangling).
-            let Some(via) = route
-                .vias
-                .iter()
-                .position(|via| core::geometry::distance(via.at, other) < 1.0e-6)
-            else {
-                continue;
-            };
-            let (at_via, diameter) = (route.vias[via].at, route.vias[via].diameter);
-            if own
-                .iter()
-                .any(|obstacle| obstacle.shape.distance_to_point(at_via) <= diameter / 2.0 + 1.0e-6)
-                || route.vias.iter().enumerate().any(|(index, other_via)| {
-                    index != via
-                        && core::geometry::distance(other_via.at, at_via)
-                            <= (other_via.diameter + diameter) / 2.0 + 1.0e-6
-                })
-            {
-                continue;
-            }
-            let meeting: Vec<&core::Segment> = route
-                .segments
-                .iter()
-                .filter(|candidate| {
-                    core::geometry::point_segment_distance(at_via, candidate.start, candidate.end)
-                        <= (candidate.width + diameter) / 2.0 + 1.0e-6
-                })
-                .collect();
-            match meeting[..] {
-                [] => {
-                    route.vias.remove(via);
-                }
-                [next]
-                    if core::geometry::distance(next.start, at_via) < 1.0e-6
-                        || core::geometry::distance(next.end, at_via) < 1.0e-6 =>
-                {
-                    let next_layer = next.layer;
-                    route.vias.remove(via);
-                    at = Some((at_via, next_layer));
-                }
-                _ => {}
-            }
+            at = past_via(route, &own, other);
             continue;
         }
         // The next track of the chain, if `other` is its end and touches
@@ -154,10 +76,105 @@ pub(super) fn prune_stub(
         if let [(index, candidate)] = next[..]
             && (core::geometry::distance(candidate.start, other) < 1.0e-6
                 || core::geometry::distance(candidate.end, other) < 1.0e-6)
-            && !touches(route, index, other, layer)
+            && !end_touches(route, &own, index, other, layer)
         {
             at = Some((other, layer));
         }
+    }
+}
+
+/// Whether a track end of `width` at `point` overlaps other copper of
+/// the net (as the router joins copper: `joins_copper`): `route`'s other
+/// tracks on `layer` and vias, the net's copper `own`.
+/// The tracks that meet the track's other end do not count (KiCad finds
+/// a short track's end dangling though its copper overlaps the next).
+fn end_touches(
+    route: &core::NetRoute,
+    own: &[&core::Obstacle],
+    index: usize,
+    point: Point,
+    layer: usize,
+) -> bool {
+    let half = route
+        .segments
+        .get(index)
+        .map_or(0.0, |segment| segment.width / 2.0);
+    let far = route.segments.get(index).map(|segment| {
+        if core::geometry::distance(segment.start, point) < 1.0e-6 {
+            segment.end
+        } else {
+            segment.start
+        }
+    });
+    let meets_far = |segment: &core::Segment| {
+        far.is_some_and(|far| {
+            core::geometry::distance(segment.start, far) < 1.0e-6
+                || core::geometry::distance(segment.end, far) < 1.0e-6
+        })
+    };
+    route.segments.iter().enumerate().any(|(other, segment)| {
+        other != index
+            && !meets_far(segment)
+            && segment.layer == layer
+            && core::geometry::point_segment_distance(point, segment.start, segment.end)
+                <= segment.width / 2.0 + half + 1.0e-6
+    }) || route
+        .vias
+        .iter()
+        .any(|via| core::geometry::distance(via.at, point) <= via.diameter / 2.0 + half + 1.0e-6)
+        || own.iter().any(|obstacle| {
+            obstacle.layers & (1 << layer) != 0
+                && obstacle.shape.distance_to_point(point) <= half + 1.0e-6
+        })
+}
+
+/// Where a pruned track's far end `other` joins nothing else on its layer:
+/// a via there that joins nothing else of the net but one track on another
+/// layer goes too, and the chain goes on along that track (a stub that
+/// changed layers: KiCad's via_dangling); the next end to prune, if any.
+fn past_via(
+    route: &mut core::NetRoute,
+    own: &[&core::Obstacle],
+    other: Point,
+) -> Option<(Point, usize)> {
+    let via = route
+        .vias
+        .iter()
+        .position(|via| core::geometry::distance(via.at, other) < 1.0e-6)?;
+    let (at_via, diameter) = (route.vias[via].at, route.vias[via].diameter);
+    if own
+        .iter()
+        .any(|obstacle| obstacle.shape.distance_to_point(at_via) <= diameter / 2.0 + 1.0e-6)
+        || route.vias.iter().enumerate().any(|(index, other_via)| {
+            index != via
+                && core::geometry::distance(other_via.at, at_via)
+                    <= (other_via.diameter + diameter) / 2.0 + 1.0e-6
+        })
+    {
+        return None;
+    }
+    let meeting: Vec<&core::Segment> = route
+        .segments
+        .iter()
+        .filter(|candidate| {
+            core::geometry::point_segment_distance(at_via, candidate.start, candidate.end)
+                <= (candidate.width + diameter) / 2.0 + 1.0e-6
+        })
+        .collect();
+    match meeting[..] {
+        [] => {
+            route.vias.remove(via);
+            None
+        }
+        [next]
+            if core::geometry::distance(next.start, at_via) < 1.0e-6
+                || core::geometry::distance(next.end, at_via) < 1.0e-6 =>
+        {
+            let next_layer = next.layer;
+            route.vias.remove(via);
+            Some((at_via, next_layer))
+        }
+        _ => None,
     }
 }
 
