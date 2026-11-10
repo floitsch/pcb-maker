@@ -779,7 +779,7 @@ fn assign_controllers(groups: &mut [MatrixGroup], net: &Netlist, switches: &BTre
 /// Recognises the key matrix of a netlist. None when no part looks like a
 /// switch; a matrix without groups when switches share no row and column
 /// nets (keys wired directly to pins).
-pub(crate) fn infer_key_matrix<'a>(parts: &'a [MatrixPart]) -> Option<KeyMatrix> {
+pub(crate) fn infer_key_matrix(parts: &[MatrixPart]) -> Option<KeyMatrix> {
     let net = Netlist::new(parts)?;
     let mut all_terminals = switch_terminals(&net);
     let (mut cells, mut unassigned) = pair_switches(&net, &all_terminals);

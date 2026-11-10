@@ -355,6 +355,10 @@ fn is_free(bounds: Box2, blocked: &[Box2], taken: &[Box2]) -> bool {
         && !taken.iter().any(|b| overlaps(bounds, *b, 0.2))
 }
 
+/// An artwork piece's items (their indices in the board) and the shift
+/// that moves them.
+type ArtworkMove = (Vec<usize>, [f64; 2]);
+
 /// Where a piece of board silkscreen ended up.
 enum Spot {
     /// Free where it is.
@@ -473,7 +477,7 @@ fn plan_artwork_moves(
     taken: &mut [Vec<Box2>; 2],
     outline: Option<Box2>,
     stuck: &mut Vec<String>,
-) -> Result<Vec<(Vec<usize>, [f64; 2])>, String> {
+) -> Result<Vec<ArtworkMove>, String> {
     let mut moves = Vec::new();
     for (members, back, bounds) in artwork_clusters(pcb)? {
         let side = back as usize;
@@ -542,7 +546,7 @@ fn plan_text_moves(
 /// frame, their angles absolute. Counts each into `report.moved`.
 fn write_moves(
     pcb: &mut Expr,
-    artwork_moves: Vec<(Vec<usize>, [f64; 2])>,
+    artwork_moves: Vec<ArtworkMove>,
     text_moves: Vec<(usize, [f64; 2])>,
     report: &mut KiCadLabelReport,
 ) -> Result<(), String> {
@@ -641,7 +645,7 @@ pub(crate) fn place_labels(
         ..Default::default()
     };
     let mut taken: [Vec<Box2>; 2] = [Vec::new(), Vec::new()];
-    let mut artwork_moves: Vec<(Vec<usize>, [f64; 2])> = Vec::new();
+    let mut artwork_moves: Vec<ArtworkMove> = Vec::new();
     let mut text_moves: Vec<(usize, [f64; 2])> = Vec::new();
     // The board's own silkscreen texts and graphics stay; labels keep off
     // them.
