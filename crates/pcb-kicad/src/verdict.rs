@@ -947,8 +947,10 @@ pub fn input_findings_note(findings: &[&DrcFinding], dru: &str, alone: bool) -> 
                         // A footprint's item whose reference is blank.
                         _ if of_a_footprint(description) => exclude(),
                         Some(_) => exclude(),
+                        // A name with a quote or a backslash would need
+                        // escapes in the rule's string and its condition.
                         None => match item_net(description) {
-                            Some(net) if !net.contains('\'') && !net.contains('"') => {
+                            Some(net) if !net.contains(['\'', '"', '\\']) => {
                                 edge_nets.insert(net);
                             }
                             _ => exclude(),
