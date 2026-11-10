@@ -40,7 +40,7 @@ def main():
         'supervisor': supervisor, 'downloaded_native_boards': len(manifest['boards']),
         'harvest_outcomes': dict(Counter(r['status'] for r in outcomes.values())),
         'repositories': len({b['repository'] for b in manifest['boards']}),
-        'stages': stages, 'samples': read(data / 'samples/status.json'),
+        'stages': stages,
         'converted_boards': len(read(data / 'converted-manifest.json', {'boards': []})['boards']),
         'stop_requested': (data / 'STOP').exists(),
     }
@@ -57,8 +57,6 @@ def main():
             continue
         print(f"{name}: {stage['completed']}/{stage['total']} completed, {stage['active']} active, {stage['pending']} pending; gate {stage.get('gate')}; updated {stage.get('updated_at')}")
         print('  ', json.dumps(stage.get('categories', {}), sort_keys=True))
-    if answer['samples']:
-        print('Placement variants:', json.dumps(answer['samples'], sort_keys=True))
 
 
 if __name__ == '__main__':

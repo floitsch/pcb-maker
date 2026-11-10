@@ -54,14 +54,7 @@ show progress. Per-stage status files update while a batch is running.
    with a higher memory cap. Route selected nontrivial cases with a
    **300-second work budget**, recording changes in completion, vias and
    length. Batches advance rather than repeating the first selected boards.
-5. **Placement data.** For eligible boards, save features and exact boards
-   for the designer placement plus three deterministic legal perturbations.
-   Route those saved variants for up to 300 work seconds. Their input
-   hashes join features to outcomes. Exported features alone never imply a
-   success label; incomplete, invalid and missing-check outcomes remain
-   explicit. Functional/mechanical placement constraints beyond those in
-   the source are not inferred by these perturbations.
-6. **Other formats.** Retain Eagle/Altium originals; try native conversion
+5. **Other formats.** Retain Eagle/Altium originals; try native conversion
    in bounded batches. Read-back failures are quarantined. Successful
    conversions are experimental routing inputs with inferred rules and
    disabled automatic neural-training eligibility until semantic fidelity
@@ -88,19 +81,16 @@ source quality alongside routing time. Existing comparison suites do not
 automatically acquire these boards: `benchmark_candidate` is an admission
 proposal, not promotion into a published benchmark.
 
-Placement data uses a deterministic **80/10/10 repository-family split**.
-All revisions from a repository stay together. This is conservative for
-large collections; shared designs across different repositories still need
-family auditing. Source files are not redistributed by this repository.
+Source files are not redistributed by this repository. (Until 2026-11-10 a
+stage also exported placement features and perturbed variants for the
+congestion model, removed with it.)
 
 ## Artifacts and reproducibility
 
 - `data/harvest.jsonl`: source/rejection/duplicate/conversion-pending journal.
 - `data/manifest.json`: accepted native intake boards and pinned provenance.
-- `data/runs/{quick,high-memory,deep,placement-labels}/`: results, status,
+- `data/runs/{quick,high-memory,deep}/`: results, status,
   input snapshots, configs, logs, native reports and pinned binary hashes.
-- `data/samples/`: immutable placement feature arrays, exact variant boards,
-  family splits and the variant routing manifest.
 - `data/conversions/`, `data/converted-manifest.json`: experimental imports.
 
 Every triage fingerprint includes actual board and rule-file contents,
