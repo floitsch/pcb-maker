@@ -20,8 +20,7 @@ the diff against the previous nightly that ran each stage (compare.py,
 also `diff-<stage>.txt`: better, same, worse, and the boards whose pass
 status changed). Its last line is the guard's verdict.
 
-`--docs <night>` publishes a night the way the hand-written sweep
-sections v19 to v21 did, into four files:
+`--docs <night>` publishes a night into three files:
 
 - docs/benchmarks.md: a section "Layout sweep vN (<date>)" (vN: the
   night's own number when it has a section, else one more than the
@@ -34,16 +33,20 @@ sections v19 to v21 did, into four files:
   the rows without a result, the strict errors, the matched designer
   tier's gap split over the target boards, the five costliest
   placements, the losers beyond the seed spreads of dense-noise.json;
-  and the night's row of the "Nightly" table (newest first, 14 nights);
+  and the night's row of the "Nightly" table (newest first, 14 nights).
+  Only the newest KEEP_SWEEPS numbered sweep sections stay: the new one
+  and the previous one, which the next night's section reads (its
+  marker: night, sweep log, main) to compare with. Older ones are
+  removed, so the file does not grow; git keeps them;
 - README.md: the "Boards harvested from GitHub" bullet from "pcb-maker
   places and routes" on, and the two rows of the newest nightly above
   the table's first layout row (an earlier nightly's two rows replaced);
 - docs/handover.md: the title's state, the nightly state line, the
   night note after the last "**Layout sweep vN**" paragraph (an earlier
-  nightly's note replaced);
-- docs/changelog.md: "Measured on <date> (nightly: layout sweep vN,
-  matched designer tier)", above the first section of that date or
-  older.
+  nightly's note replaced).
+
+The night's numbers also go into the commit message (`--commit`); there
+is no changelog file: git history is the changelog.
 
 Writing a night again replaces its own parts. The guard (guard()): only
 a night on which every stage ran, no row of any stage was cut or killed
@@ -52,7 +55,7 @@ nothing is written and the reason is printed.
 
 `--commit` publishes the nights after the newest one docs/benchmarks.md
 has (the newest night alone when it has none; at most three, oldest
-first) into the main checkout and commits the four files alone on main
+first) into the main checkout and commits the three files alone on main
 ("nightly <date>: layout sweep vN, ...") and pushes. Only when the
 checkout is on main, its working tree has no change to a tracked file
 and `git pull --ff-only origin main` succeeds; otherwise it writes
@@ -500,10 +503,12 @@ def main_checkout():
 # this many rows with a result.
 MIN_SWEEP_RESULTS = 100
 # The files a published night changes, relative to the checkout.
-DOC_FILES = ("docs/benchmarks.md", "README.md", "docs/handover.md", "docs/changelog.md")
+DOC_FILES = ("docs/benchmarks.md", "README.md", "docs/handover.md")
+# The numbered sweep sections docs/benchmarks.md keeps: the newest and the
+# one before it (previous_sweep reads it when the newest is written again).
+KEEP_SWEEPS = 2
 SWEEP_HEADING = re.compile(r"^## Layout sweep v(\d+) \(([^)\n]*)\)[^\n]*$", re.M)
 SWEEP_MARKER = re.compile(r"<!-- nightly-sweep night=(\S+) sweep=(\S+) main=(\S+) -->")
-CHANGELOG_HEADING = re.compile(r"^## [A-Z][a-z]+ on (\d{4}-\d{2}-\d{2}) \(", re.M)
 README_BULLET = "- **Boards harvested from GitHub**"
 README_SPLIT = "pcb-maker places and routes"
 README_LAYOUT_ROW = "| Layout from stacked parts and constraints"
@@ -922,7 +927,7 @@ def binary_label(run):
 class Writeup:
     """The night's published write-up: the sweep section of
     docs/benchmarks.md, the README's headline and rows, the hand-over's
-    title and night note, the changelog section."""
+    title and night note."""
 
     def __init__(self, compare, record, nights, benchmarks_text, root=None, spreads=None):
         self.compare = compare
@@ -1197,7 +1202,7 @@ class Writeup:
                                                          for n, b, a, s in within) + ".")
         return wrap(text)
 
-    # --- the four documents ------------------------------------------------------
+    # --- the three documents -----------------------------------------------------
 
     def section(self):
         lines = [f"## {self.title}", "",
@@ -1338,33 +1343,6 @@ class Writeup:
                     f"{g['layout_open']} of the v{self.number} layout there | - |")
         return layout, designer
 
-    def changelog_section(self):
-        o = self.mine["objectives"]
-        d = self.designer_numbers["objectives"]
-        scale = (self.record["stages"]["designer"].get("summary") or {}).get("budget_scale")
-        costly = sorted((entry for entry in self.gap_table if entry["placement_gap"] is not None),
-                        key=lambda entry: (-entry["placement_gap"], entry["name"]))[:5]
-        diff = self.against_previous or self.against_numbered
-        beyond = losers(diff, self.spreads)[0] if diff else []
-        lines = [f"## Measured on {self.date} (nightly: layout sweep v{self.number}, matched designer tier)", "",
-                 wrap(f"Written by the nightly from `build/nightly/{self.night}/` (main {self.short_sha()}; "
-                      f"[benchmarks.md](benchmarks.md#{self.anchor})). The guard held: every stage ran, no row "
-                      "was cut or killed, the sweep has at least 100 rows with a result."), ""]
-        items = [
-            f"**Layout sweep v{self.number}**: **{o['passes_strict']} of {o['rows']} pass the strict rule** "
-            f"({o['passes']} per type), {o['unconnected']} unconnected in all, strict errors "
-            f"{o['new_errors_strict']}, {len(self.fails['none'])} without a result. "
-            + capital("; ".join(self.comparisons_short())) + ".",
-            f"**Medians against the designer's**: {self.medians_text()}.",
-            f"**Matched designer tier** (budget scale {scale:g}): {d['passes_strict']} strict passes "
-            f"({d['passes']} per type); {self.gap_short()}.",
-            "**Placement costs most** on " + listing(f"{name_of(e['name'])} ({e['placement_gap']:+d}: "
-                                                     f"{e['layout']} / {e['designer']})" for e in costly) + ".",
-            "**Worse beyond noise**: " + listing(f"{name_of(n)} {b} -> {a}" for n, b, a, _ in beyond) + "."]
-        for item in items:
-            lines.append(wrap(item, initial="- ", subsequent="  "))
-        return "\n".join(lines) + "\n"
-
 
 # --- merging the write-up into the documents --------------------------------------
 
@@ -1436,43 +1414,39 @@ def merge_handover(text, title, note):
     return "\n\n".join(paragraphs)
 
 
-def merge_changelog(text, heading, section):
-    """docs/changelog.md with the section: in place of a section of the same
-    heading, else above the first section dated on or before its date
-    (newest first)."""
-    if heading in text:
-        start = text.index(heading)
-        rest = text[section_end(text, start):]
-        return text[:start] + section + ("\n" + rest if rest else "")
-    date = re.search(r"\d{4}-\d{2}-\d{2}", heading).group(0)
-    for match in CHANGELOG_HEADING.finditer(text):
-        if match.group(1) <= date:
-            return text[:match.start()] + section + "\n" + text[match.start():]
-    return text.rstrip("\n") + "\n\n" + section
+def prune_sweeps(text, keep=KEEP_SWEEPS):
+    """docs/benchmarks.md with only the `keep` highest numbered "Layout
+    sweep vN" sections (each with its "### " subsections, up to the next
+    "## " heading); the older ones removed. The rest of the file stays as
+    it is."""
+    sections = sweep_sections(text)
+    kept = set(sorted((int(match.group(1)) for match, _ in sections), reverse=True)[:keep])
+    for match, _ in reversed(sections):
+        if int(match.group(1)) not in kept:
+            text = text[:match.start()] + text[section_end(text, match.start()):]
+    return text
 
 
 def write_up(checkout, record, nights, harness=REPO, root=None, spreads=None):
-    """{path: new text} of the four documents with the night published,
+    """{path: new text} of the three documents with the night published,
     and the Writeup."""
     compare = load_compare(harness)
     checkout = Path(checkout)
     texts = {path: (checkout / path).read_text() for path in DOC_FILES}
     writeup = Writeup(compare, record, nights, texts["docs/benchmarks.md"], root=root, spreads=spreads)
     benchmarks = merge_section(texts["docs/benchmarks.md"], writeup.night, writeup.number, writeup.section())
-    benchmarks = merge_table(benchmarks, table_row(record))
+    benchmarks = prune_sweeps(merge_table(benchmarks, table_row(record)))
     handover = merge_state(texts["docs/handover.md"], state_line(record))
     handover = merge_handover(handover, writeup.handover_title(), writeup.handover_note())
-    changelog = writeup.changelog_section()
     new = {"docs/benchmarks.md": benchmarks,
            "README.md": merge_readme(texts["README.md"], writeup.readme_headline(), writeup.readme_rows()),
-           "docs/handover.md": handover,
-           "docs/changelog.md": merge_changelog(texts["docs/changelog.md"], changelog.split("\n", 1)[0], changelog)}
+           "docs/handover.md": handover}
     return new, writeup
 
 
 def publish(checkout, night_directory, harness=REPO, min_results=MIN_SWEEP_RESULTS, dry_run=False, root=None,
             spreads=None):
-    """`--docs`: the night into `checkout`'s four documents when the guard
+    """`--docs`: the night into `checkout`'s three documents when the guard
     lets it (else the reason, nothing written). Returns the Writeup or
     None."""
     night_directory = Path(night_directory)
