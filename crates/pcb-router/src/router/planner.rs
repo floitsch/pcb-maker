@@ -200,7 +200,7 @@ const ENTRY_KNOWN: u8 = 2;
 /// The tile planner's arrays (`plan_corridor`), kept in the thread's
 /// scratch from plan to plan: until 2026-11-05 each plan allocated six
 /// arrays of the tile graph and its heap (a plan a search, 22 000 a
-/// route of a dense board; the fifth router round, docs/profiling.md).
+/// route of a dense board; the fifth router round, docs/profiling.md, "Router rounds", item 5).
 /// Each plan starts them afresh (`reset`), so a plan finds what it found
 /// with new ones.
 #[derive(Default)]

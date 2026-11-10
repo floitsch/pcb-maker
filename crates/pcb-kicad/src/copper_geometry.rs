@@ -720,8 +720,7 @@ mod tests {
         assert_eq!(rectangular_board_outline_area(&pcb).unwrap(), Some(400.0));
     }
 
-    /// The remapper trial's outline (docs/reviews/2026-10-18-remapper-
-    /// agent-diagnostic-trial.md): lines and arcs, which the router's
+    /// The remapper trial's outline: lines and arcs, which the router's
     /// lowering reads and the board's statistics and the verification
     /// preview now read the same way (they took one rectangle or one loop
     /// of lines only).

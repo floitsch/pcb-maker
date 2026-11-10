@@ -296,7 +296,7 @@ impl Router {
             // The search node the next pop most likely takes (unless this
             // expansion pushes a lesser key), asked for an expansion ahead:
             // the popped node's own record was a cache miss (2 to 4 % of
-            // the route's CPU; the second round, docs/profiling.md).
+            // the route's CPU; the second round, docs/profiling.md, "Router rounds", item 2).
             let next = heap.next_hint();
             if next != NO_KEY {
                 let next = (next & u32::MAX as u64) as usize;
@@ -402,7 +402,7 @@ impl Router {
             // occupancy lie a row of the lattice away, on other cache
             // lines, and a step's branches would otherwise wait for each
             // load in turn (the profile round of 2026-10-25,
-            // docs/profiling.md).
+            // docs/profiling.md, "Router rounds", item 1).
             if corridor_test != 2 {
                 let occupancy_map = class * (layers + 1) + layer;
                 for row in [cell.wrapping_sub(nx + 1), cell + nx - 1] {
@@ -425,7 +425,7 @@ impl Router {
             // steps towards -x start from, a row below and above. Their
             // loads were the search's costliest line (6 to 8 % of the
             // route's CPU; the second round of 2026-10-27,
-            // docs/profiling.md).
+            // docs/profiling.md, "Router rounds", item 2).
             if corridor_test != 2 {
                 let (rising, falling) = (
                     self.diagonal_map(class, layer, 0),
@@ -893,7 +893,7 @@ impl Router {
     /// every node the walk would reach arrived by a step, and it would
     /// find nothing): until 2026-10-25 every expansion walked back with
     /// two divisions a step, 3 to 6.5 % of the route's CPU (the profile
-    /// round, docs/profiling.md).
+    /// round, docs/profiling.md, "Router rounds", item 1).
     #[allow(clippy::too_many_arguments)]
     #[inline(always)]
     fn hops_from_a_via(

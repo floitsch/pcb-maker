@@ -135,7 +135,7 @@ impl Router {
                 // from the other copper first. (A plain pad whose centre
                 // lies in another item's clearance does the same with its
                 // copper on branch pad-access-starts, measured and not
-                // taken: docs/router.md, "What walls a pad (2026-11-07)".)
+                // taken: docs/router.md, "What walls a pad".)
                 starts = self.contact_starts(net, layer, contact, narrowest);
                 if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
                     eprintln!(

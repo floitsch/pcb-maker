@@ -44,8 +44,7 @@ pub const WORK_RATE_VARIABLE: &str = "PCB_WORK_RATE";
 /// The canned search's expansions per second on the reference (the 5950X,
 /// one thread pinned to a core, load 12, as the search's rate was
 /// calibrated: load under 10 at the start, 10 to 17 while it ran):
-/// `calibrate-work-rate` 2026-10-21, 6.78 to 7.03 M (docs/changelog.md,
-/// "Committed on 2026-10-21 (runtime calibration)"). The canned lattice
+/// `calibrate-work-rate` 2026-10-21, 6.78 to 7.03 M. The canned lattice
 /// (240 k nodes, about 50 MB of maps) is beyond the caches, as a board's
 /// is: the rate falls with the memory traffic of other jobs, 3.3 to 5.7 M
 /// on eight cores at load 18.

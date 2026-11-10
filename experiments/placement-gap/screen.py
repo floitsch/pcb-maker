@@ -4,7 +4,7 @@
 # found in the LICENSE file.
 """Stage 1 of the placer protocol for a placer switch: the five seed pairs
 on the eleven dense boards with `stop_after_first_route` (docs/benchmarks.md,
-"The ladder of placer measurements (2026-10-28)"); with `--full`, stage 2:
+"The ladder of placer measurements"); with `--full`, stage 2:
 the same units as full layouts.
 
     screen.py --out DIR --off-binary PATH --on-binary PATH --on '{"align_rows": {}}' [--slots 5]

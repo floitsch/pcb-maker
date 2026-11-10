@@ -11,7 +11,7 @@ use pcb_placer as core;
 /// up to four pins 1, a 20-pin rail 0.16 (the placer since its start; the
 /// nets designers keep short count three times on top). The other
 /// weightings measured (`net_weight`: `sqrt`, `flat`, `rail`) were removed
-/// on 2026-11-04 (docs/placer.md, "Net weights (2026-11-04)").
+/// on 2026-11-04 (docs/placer.md, "Net weights").
 pub fn net_weight(pins: usize) -> f64 {
     (3.0 / (pins as f64 - 1.0).max(1.0)).min(1.0)
 }
@@ -130,17 +130,17 @@ pub struct KiCadBoardPlacerConfig {
     /// 60 % there (quick tier). Bulk capacitors (4.7 uF and more) 5 mm.
     pub decoupling_mm: Option<f64>,
     /// Decoupling at the pins (default off; docs/placer.md, "Decoupling at
-    /// the pins (2026-10-26)"): each decoupling capacitor is pulled to the
-    /// nearest of every supply pin of its rail on the ICs (an RP2350's ten
-    /// +3V3 pins), not only to each IC's first pin on the rail, at 1 mm
+    /// the pins"): each decoupling capacitor is pulled to the nearest of
+    /// every supply pin of its rail on the ICs (an RP2350's ten +3V3 pins),
+    /// not only to each IC's first pin on the rail, at 1 mm
     /// (`decoupling_mm`); and near relations follow their anchors in the
     /// legaliser (`follow_anchors`: a part near another is legalised right
     /// after it, from its annealed place moved as far as its anchor moved,
     /// and pays for the relation at each spot). The trial's rp2350-dual-usb
-    /// went from 14 % of its capacitors within 3 mm of a pin to 50 %; on
-    /// the eleven dense boards the capacitors' median fell on nine and rose
-    /// on the two OpenESC boards, KiCad's unconnected within the noise
-    /// (summed medians 974 to 987), so by the agreed rule it is a switch.
+    /// went from 14 % of its capacitors within 3 mm of a pin to 50 %; on the
+    /// eleven dense boards the capacitors' median fell on nine and rose on
+    /// the two OpenESC boards, KiCad's unconnected within the noise (summed
+    /// medians 974 to 987), so by the agreed rule it is a switch.
     pub decoupling_near: bool,
     /// On a board of several pieces (two boards side by side), the parts
     /// a net joins to fixed parts on one piece stay on that piece. On:
@@ -163,7 +163,7 @@ pub struct KiCadBoardPlacerConfig {
     /// and the replicated parts that are not legal where they land and
     /// the parts in no copy are placed after it. `board-placer.json` and
     /// the verdict report the copies (`panel_copies`; docs/placer.md,
-    /// "Panel copies (2026-10-26)"). Boards without copies place as with
+    /// "Panel copies"). Boards without copies place as with
     /// it off.
     pub panel_copies: bool,
     /// Sub-boards of a panel of different boards (on by default; false
@@ -175,7 +175,7 @@ pub struct KiCadBoardPlacerConfig {
     /// sub-board's pins only, and no part sits on a tab. Panels of copies
     /// (`panel_copies`) are placed as such. `board-placer.json` and the
     /// verdict report the sub-boards (`sub_boards`; docs/placer.md,
-    /// "Sub-boards in a panel (2026-10-27)").
+    /// "Sub-boards in a panel").
     pub sub_boards: bool,
     /// The reference board (the layout's `--reference`): where its
     /// footprints lie says which sub-board each part belongs to. Set by
@@ -251,7 +251,7 @@ pub struct KiCadBoardPlacerConfig {
     /// must carry them, shape the global placement's density, the rotation
     /// choice, the legaliser and the refinement; in a layout the
     /// refinement corrects the estimate by the global route's overflow
-    /// attribution (docs/placer.md, "Escape demand (2026-10-23)").
+    /// attribution (docs/placer.md, "Escape demand").
     #[serde(default = "default_escape_demand")]
     pub escape_demand: Option<KiCadEscapeDemand>,
     /// Ratsnest crossings as a placement cost (on since 2026-10-24; `null`
@@ -261,9 +261,8 @@ pub struct KiCadBoardPlacerConfig {
     /// wirelength per crossing the moved part's nets make, and the
     /// layout's race ranks the seeds' placements by their crossings beside
     /// the congestion score. Keys `weight`, `legalise`, `refine`,
-    /// `rank_seeds`, `anneal`, `global` (defaults 3 mm, on, on, on, on
-    /// since 2026-10-28, off; docs/placer.md, "Ratsnest crossings
-    /// (2026-10-24)").
+    /// `rank_seeds`, `anneal`, `per_layer` (defaults 3 mm, on, on, on, on
+    /// since 2026-10-28, off; docs/placer.md, "Ratsnest crossings").
     #[serde(default = "default_ratsnest_crossings")]
     pub ratsnest_crossings: Option<KiCadRatsnestCrossings>,
     /// Bus-group moves (off by default; `{}` for the defaults): banks of
@@ -282,13 +281,12 @@ pub struct KiCadBoardPlacerConfig {
     /// crossings. Defaults: `min_shared` 4, `bus_net_pins` 24,
     /// `passive_pins` 4, `passive_area_mm2` 16, `reach_mm` 3, `arrange`,
     /// `anneal`, `rigid_banks` and `refine` true, `anneal_moves` 2,
-    /// `max_bank` 16 (docs/placer.md, "Bus-group moves (2026-10-26)").
+    /// `max_bank` 16 (docs/placer.md, "Bus-group moves").
     #[serde(default)]
     pub bus_groups: Option<KiCadBusGroups>,
     /// A race over skeletons (on since 2026-11-05 where a seed's placement
     /// work reaches `min_work_seconds`; `null` turns it off; docs/placer.md,
-    /// "A race over skeletons (2026-11-04)", "The fixes, and stage 1 again
-    /// (2026-11-05)" and "The skeleton's budget (2026-11-05)"): each seed
+    /// "A race over skeletons" and "The skeleton's budget"): each seed
     /// places the skeleton
     /// first, every part but the free passives (two-pad resistors,
     /// capacitors, inductors, ferrites and fuses by reference or
@@ -301,7 +299,7 @@ pub struct KiCadBoardPlacerConfig {
     /// fits by area; then holds the skeleton and places the passives
     /// around it, from the skeleton's relaxation level on but no looser
     /// than the first level without the small parts' halos (2,
-    /// `PASSIVES_FIRST_LEVEL`; "The passives' first level (2026-11-06)").
+    /// `PASSIVES_FIRST_LEVEL`; "The passives' first level").
     /// A region the lowering gives an outline's piece keeps no passive in
     /// the skeleton. The skeleton
     /// takes at most `work_share` of the seed's work, the passives the
@@ -320,7 +318,7 @@ pub struct KiCadBoardPlacerConfig {
     pub skeleton_race: Option<KiCadSkeletonRace>,
     /// Differential pairs' series parts as rows of two (off unless set;
     /// following the router's `diff_pairs` was measured and not taken:
-    /// docs/placer.md, "Pair rows (2026-11-04)", "Following diff_pairs"): two free parts of one
+    /// docs/placer.md, "Pair rows", "Following diff_pairs"): two free parts of one
     /// footprint with two pads each, whose pads of one number lie on the
     /// two nets of a pair KiCad pairs by name (`TX_P` and `TX_N`: a pair's
     /// AC-coupling capacitors or series resistors) and that no constraint
@@ -345,8 +343,8 @@ pub struct KiCadBoardPlacerConfig {
     /// its pads, or the router's `via_in_pad`), each enclosed pad's via
     /// goes through the board, and other parts on the other side keep off
     /// it as off a through-hole pin, with the clearances a via needs
-    /// (docs/placer.md, "Length maxima and the far side of vias in pads
-    /// (2026-10-28)"). Nothing changes on a board without such a footprint.
+    /// (docs/placer.md, "The far side of a via in a BGA's pad").
+    /// Nothing changes on a board without such a footprint.
     pub via_in_pad_far_side: bool,
     /// Room around grid arrays (on): around each grid array whose inner
     /// balls the router's fan-out serves with dog-bones in the diagonal
@@ -361,7 +359,7 @@ pub struct KiCadBoardPlacerConfig {
     /// rings), where only the array's own decoupling capacitors may sit,
     /// outside the fan-out's via sites. Fixed parts stay where they are
     /// (reported). Nothing changes on a board without a grid array
-    /// (docs/placer.md, "Room around grid arrays (2026-11-04)").
+    /// (docs/placer.md, "Room around grid arrays").
     pub bga_room: bool,
     /// Length maxima (on): for each net with a `length` rule and a
     /// maximum (the project's `.kicad_dru`, as the router reads it), every
@@ -373,7 +371,7 @@ pub struct KiCadBoardPlacerConfig {
     /// changes on a board without such a rule.
     pub length_maxima: bool,
     /// Length minima (off; measured on the firestarter and oro's link,
-    /// docs/placer.md, "Length minima (2026-11-04)"): for each net with a `length` rule and a
+    /// docs/placer.md, "Length minima"): for each net with a `length` rule and a
     /// minimum whose pins lie on two parts (the project's `.kicad_dru`, as
     /// the router reads it), the two parts' pins are kept at least half
     /// the minimum apart, octilinearly, by a penalty in the global
@@ -392,18 +390,18 @@ pub struct KiCadBoardPlacerConfig {
     /// check from the router's rules where the switch is on).
     #[serde(skip)]
     pub pair_geometry: std::collections::BTreeMap<String, PairGeometry>,
-    /// Pads without a way out (off; docs/placer.md "Pads without a way
-    /// out (2026-11-04)"): after each seed's placement, every pad is
-    /// tested for a way out as the router sees the board (a legal lattice
-    /// path from its nodes on the statics at the class width, the placement
-    /// lowered as the layout routes it); a part with a pad another part, a keepout or the board
-    /// edge closes is moved or turned (it or the parts that close the pad,
-    /// within `reach_mm`, the cheapest of `candidates` poses in wirelength
-    /// that leaves fewer pads closed around it), and the pads left closed
-    /// are reported (`pad_exits` in board-placer.json, the verdict's next
-    /// actions). Needs the router's configuration (the layout and the
-    /// place check give it). `PCB_PLACER_PAD_EXITS=1` turns it on with
-    /// the defaults (`reach_mm` 1, `candidates` 16), `0` off.
+    /// Pads without a way out (off; docs/placer.md "Pads without a way out"):
+    /// after each seed's placement, every pad is tested for a way out as the
+    /// router sees the board (a legal lattice path from its nodes on the
+    /// statics at the class width, the placement lowered as the layout routes
+    /// it); a part with a pad another part, a keepout or the board edge
+    /// closes is moved or turned (it or the parts that close the pad, within
+    /// `reach_mm`, the cheapest of `candidates` poses in wirelength that
+    /// leaves fewer pads closed around it), and the pads left closed are
+    /// reported (`pad_exits` in board-placer.json, the verdict's next
+    /// actions). Needs the router's configuration (the layout and the place
+    /// check give it). `PCB_PLACER_PAD_EXITS=1` turns it on with the defaults
+    /// (`reach_mm` 1, `candidates` 16), `0` off.
     #[serde(default)]
     pub pad_exits: Option<KiCadPadExits>,
 }
@@ -548,9 +546,7 @@ pub struct KiCadEscapeDemand {
     /// share of the board's footprints is fixed, escape demand is not
     /// applied (the placement is the one without it). The movable parts of
     /// such boards are mostly passives among fixed parts, whose nets leave
-    /// towards the fixed parts they belong to (docs/placer.md, "Per-board
-    /// losers of the defaults (2026-10-25)" and "The 45 fixed-heavy boards
-    /// (2026-10-26)").
+    /// towards the fixed parts they belong to (docs/placer.md, "Escape demand").
     pub fixed_share: Option<f64>,
 }
 
@@ -604,8 +600,7 @@ pub struct KiCadRatsnestCrossings {
     /// A guard (off by default): the weight scales by two over the
     /// routing layers (unchanged on two layers, two thirds on three, half
     /// on four): with more layers a crossing costs a via and a layer
-    /// change rather than a detour (docs/placer.md, "Per-board losers of
-    /// the defaults (2026-10-25)").
+    /// change rather than a detour (docs/placer.md, "Ratsnest crossings").
     pub per_layer: bool,
 }
 

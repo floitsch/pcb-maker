@@ -221,9 +221,8 @@ pub struct Board {
     pub attachment: Attachment,
     /// The via spans the board allows beside the through via (blind,
     /// buried and micro vias; docs/router.md, "Blind, buried and micro
-    /// vias (2026-11-05)"). Empty: every via is a through via, as before
-    /// the spans; the router's maps and its routes are then those of a
-    /// board without them.
+    /// vias"). Empty: every via is a through via, as before the spans; the
+    /// router's maps and its routes are then those of a board without them.
     pub via_spans: Vec<ViaSpan>,
 }
 
@@ -397,7 +396,7 @@ pub struct PinRowGap {
     /// clean-up's and the bend round's reroutes), not by the negotiation
     /// nor the via reduction: a wider row (an SOT-23's 1.9 mm, a 2.54 mm
     /// header) whose charge in the negotiation cost connections
-    /// (docs/router.md, "Pin-row gaps from 1.5 to 2.6 mm in the clean-up").
+    /// (docs/router.md, "Pin-row gaps and compaction in the clean-up").
     pub cleanup_only: bool,
 }
 

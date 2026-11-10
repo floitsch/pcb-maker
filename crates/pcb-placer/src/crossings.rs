@@ -3,11 +3,11 @@
 // found in the LICENSE file.
 
 //! Ratsnest crossings (`Problem::crossings`, docs/placer.md "Ratsnest
-//! crossings (2026-10-24)"): per counted net the minimum spanning tree of
-//! its pins (Prim's, straight distance), and the pairs of tree lines of
-//! different nets that properly cross. Wirelength cannot see two orders of
-//! the same parts along a bus; the crossings can, and on a board of few
-//! layers each one is a via pair or a detour.
+//! crossings"): per counted net the minimum spanning tree of its pins
+//! (Prim's, straight distance), and the pairs of tree lines of different nets
+//! that properly cross. Wirelength cannot see two orders of the same parts
+//! along a bus; the crossings can, and on a board of few layers each one is a
+//! via pair or a detour.
 //!
 //! The count is the placement ablation's (`pcb-maker
 //! ablate-kicad-placement`, which calls `spanning_tree` and

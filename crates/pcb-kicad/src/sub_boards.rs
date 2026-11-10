@@ -7,8 +7,7 @@
 //! net on the designer's own board (130 on the 4in1 panel), and after the
 //! tabs are broken they are different nets. Placed and routed as one
 //! board, the parts interleave and the router tries to join the same-named
-//! nets across the tabs (docs/placer.md, "Sub-boards in a panel
-//! (2026-10-27)").
+//! nets across the tabs (docs/placer.md, "Sub-boards in a panel").
 //!
 //! - `Pieces`: the outline's pieces without its tabs: the board area
 //!   rasterised, opened by `NECK_RADIUS_MM` (eroded and grown back), so

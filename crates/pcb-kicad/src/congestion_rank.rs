@@ -12,7 +12,7 @@
 //! the other inner layers (averaged). Until 2026-11-10 these maps were
 //! the input of a learned congestion predictor (the `pcb-congestion`
 //! crate), which ranked placements no better than RUDY and was removed
-//! (docs/congestion-model.md).
+//! (docs/handover.md, "Tried and not taken").
 
 use super::*;
 use crate::board_layout::footprint_items;

@@ -75,8 +75,7 @@ class StrictRules(unittest.TestCase):
 
 
 class StrictCounts(unittest.TestCase):
-    """Rows without a result fail the strict rule too (review 2026-10-21,
-    L1), the schematic tier's missing footprints fail both rules (L3)."""
+    """Rows without a result fail the strict rule too, the schematic tier's missing footprints fail both rules (L3)."""
 
     def test_rows_without_a_result_count_as_strict_failures(self):
         rows = [row("a", "1/1", 0, 0, 0, new_findings_strict={}), {"name": "b", "error": "timed out", "native": None}]

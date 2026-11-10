@@ -1,8 +1,7 @@
 // Copyright (C) 2026 Toit contributors.
 
 //! Fixture tests through the binary, on the committed fixture boards
-//! (docs/handover.md, "The fixture boards"; review 2026-10-21, "Proposed
-//! fixture tests"):
+//! (docs/handover.md, "The fixture boards"):
 //!
 //! - F1 (`tests/fixtures/f1`): 2 layers, 13 parts, 30 x 25 mm, KiCad 10's
 //!   format written by hand: a QFN with an exposed pad and thermal vias, a

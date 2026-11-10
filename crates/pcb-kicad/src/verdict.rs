@@ -384,7 +384,7 @@ fn distance(a: [f64; 2], b: [f64; 2]) -> f64 {
 /// it is at the same place where its item is within `SAME_PLACE_MM` of
 /// theirs (`DrcItem::located`: never a zone KiCad places at (0, 0), as for
 /// a `connection_width` on a pour, where any of ours matched any of the
-/// designer's on that pour by its uuid; review 2026-10-21, H2), or where it
+/// designer's on that pour by its uuid), or where it
 /// is the same item, not a zone, with the same description word for word,
 /// KiCad's measured values included (a pad's annular ring, a footprint's
 /// courtyard: a property of the item, which moved with its part).
@@ -2486,8 +2486,7 @@ pub struct KiCadVerdict {
     /// Where the run's lattice searches went (corridors, windows, the
     /// board; the negotiation's and the hard searches' apart, with their
     /// work) and the board-wide fallbacks refused, summed over every
-    /// router of the run (docs/router.md, "Capacitated corridors
-    /// (2026-10-24)").
+    /// router of the run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub corridors: Option<crate::KiCadCorridors>,
     /// A layout's placement race (with or without `race_probe`): every

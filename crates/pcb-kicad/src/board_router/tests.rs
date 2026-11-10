@@ -4493,7 +4493,7 @@ mod solid_starved_tests {
     }
 }
 
-/// Hostile and odd boards (docs/reviews/2026-10-21-review-robustness.md).
+/// Hostile and odd boards: each ends in a verdict, never a crash.
 mod robustness_tests {
     use super::*;
 

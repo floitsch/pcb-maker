@@ -2,9 +2,9 @@
 // Use of this source code is governed by an MIT-style license that can be
 // found in the LICENSE file.
 
-//! Bus groups (`Config::bus_groups`, docs/placer.md "Bus-group moves
-//! (2026-10-26)"): the units a designer places as one, moved as one by the
-//! anneal and the refinement.
+//! Bus groups (`Config::bus_groups`, docs/placer.md "Bus-group moves"): the
+//! units a designer places as one, moved as one by the anneal and the
+//! refinement.
 //!
 //! - A **bank**: parts of one footprint that share a bus (at least
 //!   `min_shared` small nets between every two that are linked): a

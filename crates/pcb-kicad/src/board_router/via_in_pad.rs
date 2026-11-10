@@ -1,7 +1,6 @@
 // Copyright (C) 2026 Toit contributors.
 
-//! Vias in the pads of a fine-pitch BGA (docs/router.md, "Vias in BGA pads
-//! (2026-10-28)").
+//! Vias in the pads of a fine-pitch BGA (docs/router.md, "Vias in BGA pads").
 //!
 //! No via goes into an SMD pad by default (`Board::no_via_pads`): an open
 //! hole takes the pad's solder. A fine-pitch BGA's inner balls have no

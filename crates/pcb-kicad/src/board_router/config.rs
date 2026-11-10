@@ -174,12 +174,14 @@ pub struct KiCadBoardRouterConfig {
     /// the pair's width and gap: each link between the pair's parts is a
     /// net of the route at the pair's envelope, negotiated with the other
     /// nets and offset into the two nets' tracks when written; the pads'
-    /// stubs and what the coupled runs leave open are ordinary routing.
-    /// Route mode only. Default by need: on where the project's custom
-    /// rules ask for pairs (a `diff_pair_gap` or `diff_pair_uncoupled`
-    /// constraint that holds for a net KiCad pairs), else off;
-    /// `PCB_ROUTER_DIFF_PAIRS=1` (or `0`) decides where the settings name
-    /// none. An explicit value always wins.
+    /// stubs and what the coupled runs leave open are ordinary routing. Route
+    /// mode defaults by need: on where the project's custom rules ask for
+    /// pairs (a `diff_pair_gap` or `diff_pair_uncoupled` constraint that
+    /// holds for a net KiCad pairs), else off; `PCB_ROUTER_DIFF_PAIRS=1` (or
+    /// `0`) decides where the settings name none. An explicit value always
+    /// wins, and an explicit true also plans pairs in a layout
+    /// (docs/router.md, "The layout's own routes"); a layout's routes
+    /// otherwise keep them off.
     #[serde(default)]
     pub diff_pairs: Option<bool>,
     /// Differential pairs: a return via of the reference net beside each
@@ -251,8 +253,7 @@ pub struct KiCadBoardRouterConfig {
     /// kept where it comes out nearer its target, complete and clean.
     /// `PCB_ROUTER_LENGTH_REROUTE=1` (or `0`) decides where the settings
     /// name none; off by default (measured on the firestarter: no length
-    /// finding fewer; docs/router.md, "Length minima: the placer's share
-    /// and the reroute (2026-11-04)").
+    /// finding fewer; docs/router.md, "Length minima: the placer's share and the reroute").
     #[serde(default)]
     pub length_reroute: Option<bool>,
     /// The project's `length` and `skew` rules with the nets they hold for
@@ -260,7 +261,7 @@ pub struct KiCadBoardRouterConfig {
     #[serde(skip)]
     pub length_rules: Vec<KiCadLengthRule>,
     /// Skew and length rules on some copper layers only (docs/router.md,
-    /// "Skew groups' layers (2026-11-06)"): KiCad counts a net's copper
+    /// "Skew groups' layers"): KiCad counts a net's copper
     /// on those layers alone, so a net routed elsewhere leaves the rule's
     /// group. `"designer"`: each net of such a rule prefers the side of
     /// the rule's layers the designer's board (the `--reference`, else
@@ -447,28 +448,26 @@ pub struct KiCadBoardRouterConfig {
     #[serde(default)]
     pub exact_escape_stubs: Option<bool>,
     /// Lattice lines at pin rows (router `pin_lines`; docs/router.md,
-    /// "Lattice lines at pin rows (2026-11-07)" and "Lattice lines where
-    /// the rows are open (2026-11-08)"): lines through the pads of
-    /// fine-pitch rows the regular lattice misses (a part's rows at its
-    /// own phase over a band, else single lines). Unset (the default), the
-    /// route-mode ladder decides: at the probes, where the leader's probe
-    /// leaves pads unfinished at rows the regular lattice misses and the
-    /// leader's rung probed once more with the lines leaves a tenth fewer
-    /// nets unfinished, the continuation and the rest of the ladder run
-    /// with the lines ("The rows decided at the probes (2026-11-08)":
-    /// RP2040_base 20 -> 5 open); else after the leader's run, when
-    /// KiCad's open pads lie in parts whose rows the regular lattice
-    /// misses (OpenAirScope and koeg-board pass, none lost). A layout
-    /// decides at the kept placement's probe: where it left pads unfinished
-    /// at such rows, the first route starts over with the lines and every
-    /// route after it has them; else its final ladder decides at its probes
-    /// ("A layout's rows decided by its probe's open pads (2026-11-08)"). True puts
-    /// them on every attempt, false never. `PCB_ROUTER_PIN_LINES` (0 or 1)
-    /// overrides this.
+    /// "Lattice lines at pin rows" and "Lattice lines where the rows are
+    /// open"): lines through the pads of fine-pitch rows the regular lattice
+    /// misses (a part's rows at its own phase over a band, else single
+    /// lines). Unset (the default), the route-mode ladder decides: at the
+    /// probes, where the leader's probe leaves pads unfinished at rows the
+    /// regular lattice misses and the leader's rung probed once more with the
+    /// lines leaves a tenth fewer nets unfinished, the continuation and the
+    /// rest of the ladder run with the lines ("The rows decided at the
+    /// probes": RP2040_base 20 -> 5 open); else after the leader's run, when
+    /// KiCad's open pads lie in parts whose rows the regular lattice misses
+    /// (OpenAirScope and koeg-board pass, none lost). A layout decides at the
+    /// kept placement's probe: where it left pads unfinished at such rows,
+    /// the first route starts over with the lines and every route after it
+    /// has them; else its final ladder decides at its probes ("A layout's
+    /// rows decided by its probe's open pads"). True puts them on every
+    /// attempt, false never. `PCB_ROUTER_PIN_LINES` (0 or 1) overrides this.
     #[serde(default)]
     pub pin_lines: Option<bool>,
     /// Prepared fan-outs for BGAs (board_router/bga_fanout.rs; docs/router.md,
-    /// "Prepared fan-outs for BGAs (2026-11-04)"): before routing, every
+    /// "Prepared fan-outs for BGAs"): before routing, every
     /// ball of a grid array's inner rings (those no track between the outer
     /// balls serves) gets a stub and a via in a diagonal gap, the largest of
     /// the class's and the project's via sizes that keeps every clearance,
@@ -479,7 +478,7 @@ pub struct KiCadBoardRouterConfig {
     #[serde(default)]
     pub bga_fanout: Option<bool>,
     /// Blind, buried and micro vias (board_router/via_spans.rs;
-    /// docs/router.md, "Blind, buried and micro vias (2026-11-05)"): the
+    /// docs/router.md, "Blind, buried and micro vias"): the
     /// router routes each via as the shortest span the board allows that
     /// holds the two layers it joins, copper and a hole on those layers
     /// only (the others stay free), and writes it as KiCad's blind, buried
@@ -503,7 +502,7 @@ pub struct KiCadBoardRouterConfig {
     #[serde(default)]
     pub fixed_plane_stubs: Option<bool>,
     /// The trouble-makers' repair after the hard repair (router
-    /// `trouble_repair`; docs/experiments/human-level-routing.md):
+    /// `trouble_repair`; docs/router.md, "The trouble-makers' repair"):
     /// unset, the router's default; `PCB_ROUTER_TROUBLE` overrides this.
     #[serde(default)]
     pub trouble_repair: Option<bool>,
@@ -550,7 +549,7 @@ pub struct KiCadBoardRouterConfig {
     /// fill) get a solid zone connection in the result, and the board is
     /// verified again (one more KiCad check, charged as work). On
     /// unless false (since 2026-10-21: four boards of the v18 sweep failed
-    /// on starved thermals alone, which this passes; docs/changelog.md).
+    /// on starved thermals alone, which this passes).
     /// False keeps the designer's thermal reliefs where KiCad finds them
     /// starved: reliefs are there for soldering.
     #[serde(default)]

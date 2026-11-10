@@ -12,12 +12,12 @@
 //! `PCB_ROUTER_TROUBLE_WHY`).
 //!
 //! It was the first half of the fan-out step (`fanout`, off; docs/router.md,
-//! "Fan-out before negotiation (2026-10-28)"), which chose one way out per
+//! "Tried and rejected"), which chose one way out per
 //! pad jointly with its neighbours, diagonal ways and via sites included,
 //! and reserved it against other nets by a cost before the negotiation.
 //! Reserving the ways moved which pad of a crossing pair stays open and
 //! cost passes elsewhere; the step was removed on 2026-11-04
-//! (docs/handover.md, "Removed experiments (2026-11-04)").
+//! (docs/handover.md, "Tried and not taken").
 
 use super::*;
 

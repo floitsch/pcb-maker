@@ -3,7 +3,7 @@
 # Use of this source code is governed by an MIT-style license that can be
 # found in the LICENSE file.
 """The share of a run's search work charged to a grid array's nets
-(docs/router.md, "Prepared fan-outs for BGAs (2026-11-04)").
+(docs/router.md, "Prepared fan-outs for BGAs").
 
     work_share.py <escapes.json entry key> <network.json>...
 

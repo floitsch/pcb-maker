@@ -2,9 +2,7 @@
 # Use of this source code is governed by an MIT-style license that can be
 # found in the LICENSE file.
 
-"""Copies a KiCad project with one footprint moved (docs/placer.md, "A
-far-side pad under fine pitch, and what it was (2026-11-05)": U10 moved
-by 0.02 to 0.05 mm onto the router's lattice).
+"""Copies a KiCad project with one footprint moved (U10 moved by 0.02 to 0.05 mm onto the router's lattice).
 
     python3 shift.py <project dir> <out dir> <board stem> <ref> <dx mm> <dy mm>
 """

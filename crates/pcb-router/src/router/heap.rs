@@ -37,7 +37,7 @@ pub(super) const NO_KEY: u64 = u64::MAX;
 /// least: they stop a level or two below the root, where the heap's last
 /// key, moved to the root by a plain pop, sank to the bottom through every
 /// level (the sift's loads were 10 to 15 % of the route's CPU;
-/// docs/profiling.md). A pop with the root still empty fills it as a
+/// docs/profiling.md, "Router rounds", item 1). A pop with the root still empty fills it as a
 /// plain pop does. The heap pops the same keys either way.
 #[derive(Default)]
 pub(super) struct KeyHeap {
@@ -165,7 +165,7 @@ impl KeyHeap {
 /// a second one that is popped stale later (since 2026-10-27: 39 to 41 % of
 /// the pops were stale, and a stale pop left the next pop to sift the
 /// heap's last key down through every level; the third router round,
-/// docs/profiling.md). A key is lowered only for its own state (`heap_key`:
+/// docs/profiling.md, "Router rounds", item 3). A key is lowered only for its own state (`heap_key`:
 /// the estimate's bits above the state, so a lower cost through the same
 /// heuristic gives a key no greater), and the heap holds a state's least
 /// key, which the lazy heap popped first, so the nodes expand in the same

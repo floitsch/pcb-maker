@@ -1,8 +1,7 @@
 // Copyright (C) 2026 Toit contributors.
 
 //! Blind, buried and micro vias (docs/router.md, "Blind, buried and micro
-//! vias (2026-11-05)"): which via spans a board allows, and the size of a
-//! micro via.
+//! vias"): which via spans a board allows, and the size of a micro via.
 //!
 //! KiCad 8 and later allow every via kind on every board (the board setup's
 //! switches `allow_blind_buried_vias` and `allow_microvias` are gone; KiCad

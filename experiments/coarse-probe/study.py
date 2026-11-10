@@ -1,15 +1,15 @@
 # Copyright (C) 2026 Toit contributors.
 #
-# A coarse whole first route as a placement ranker (docs/placer.md, "A
-# coarse whole first route as the race probe (2026-10-27)"): the trouble
-# study's 75 placements (build/trouble1-study/rows.json: the eleven dense
-# boards over the layout seeds of x1828, their final KiCad unconnected, the
-# race's 75 s probe as the runs recorded it and the first route's open
-# terminals) are routed whole by `pcb-maker probe-coarse-placement` at a
-# reduced fidelity (pitch factor, iteration cap, repairs), at two budgets,
-# and each setting's ranking of the seeds is compared with the finals as
-# the trouble study compared its probes: Spearman, top-1, regret per board
-# and summed, a race of k placements, and the cost.
+# A coarse whole first route as a placement ranker (docs/placer.md, "Tried and
+# rejected"): the trouble study's 75 placements
+# (build/trouble1-study/rows.json: the eleven dense boards over the layout
+# seeds of x1828, their final KiCad unconnected, the race's 75 s probe as the
+# runs recorded it and the first route's open terminals) are routed whole by
+# `pcb-maker probe-coarse-placement` at a reduced fidelity (pitch factor,
+# iteration cap, repairs), at two budgets, and each setting's ranking of the
+# seeds is compared with the finals as the trouble study compared its probes:
+# Spearman, top-1, regret per board and summed, a race of k placements, and
+# the cost.
 #
 #   python3 -I experiments/coarse-probe/study.py run <out-dir> --binary build/bin/pcb-maker-xNNNN [--jobs 4] [--variants a,b]
 #   python3 -I experiments/coarse-probe/study.py analyse <out-dir>

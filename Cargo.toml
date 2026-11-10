@@ -3,7 +3,7 @@ name = "pcb-maker"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-description = "GPU-first experiments in coupled PCB placement and routing"
+description = "A placer and router for KiCad boards, driven by agents"
 
 [workspace]
 members = [

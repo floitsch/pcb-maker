@@ -141,7 +141,7 @@ pub struct Component {
     /// Parts that may meet the part's `far_side` boxes from
     /// `FarOpen::from` on: the room kept under a grid array on the far
     /// side lets the array's own decoupling capacitors in, not other parts
-    /// (docs/placer.md, "Room around grid arrays (2026-11-04)"). Default:
+    /// (docs/placer.md, "Room around grid arrays"). Default:
     /// none, every box blocks every part.
     pub far_open: FarOpen,
 }
@@ -205,9 +205,9 @@ pub struct Problem {
     /// Bounding boxes of the board's pieces when it has several (two boards
     /// side by side): a part held at an edge is held at its piece's edge.
     pub pieces: Vec<[f64; 4]>,
-    /// Escape demand (`crate::escape`, an experiment): where parts' tracks
-    /// leave their bodies and whether the channels between parts carry
-    /// them. `None`: off.
+    /// Escape demand (`crate::escape`; on in pcb-kicad's default settings):
+    /// where parts' tracks leave their bodies and whether the channels
+    /// between parts carry them. `None`: off.
     pub escape: Option<std::sync::Arc<crate::escape::Escape>>,
     /// Ratsnest crossings (`crate::crossings`, on by default): the
     /// legaliser and the refinement pay for the crossings of the moved

@@ -1,12 +1,12 @@
 # Copyright (C) 2026 Toit contributors.
 #
-# The trouble-maker probe as a placement ranker (docs/placer.md, "The
-# trouble-maker probe (2026-10-26)"): every placement of the eleven dense
-# boards over the layout seeds of one binary family is probed with
-# `pcb-maker probe-trouble-placement` (each background mode, two budgets,
-# two trouble sets), and the probe's ranking of the seeds is compared with
-# the final KiCad unconnected, beside the race's 75 s probe (as the runs
-# recorded it) and the first route's open terminals.
+# The trouble-maker probe as a placement ranker (docs/placer.md, "Tried and
+# rejected"): every placement of the eleven dense boards over the layout seeds
+# of one binary family is probed with `pcb-maker probe-trouble-placement`
+# (each background mode, two budgets, two trouble sets), and the probe's
+# ranking of the seeds is compared with the final KiCad unconnected, beside
+# the race's 75 s probe (as the runs recorded it) and the first route's open
+# terminals.
 #
 #   python3 -I experiments/trouble-probe/study.py run <out-dir> --binary build/bin/pcb-maker-xNNNN [--jobs 4]
 #   python3 -I experiments/trouble-probe/study.py analyse <out-dir>

@@ -4,7 +4,7 @@
 # found in the LICENSE file.
 """Where in the placer the arrangement of the active parts leaves the
 designer's, and whether the designer's arrangement is a fixed point of each
-stage (docs/placer.md, "Where the arrangement is lost (2026-11-04)").
+stage (docs/placer.md, "Where the arrangement is lost").
 
     stages.py run --inputs DIR --out DIR --binary PATH [--slots 3] [--threads 2] UNIT...
     stages.py route --inputs DIR --out DIR --binary PATH [--slots 2] UNIT...
@@ -66,8 +66,7 @@ per seed and stage (the trace's stages: `global`, `annealed`, `legal`,
   parts in the designer's that are among its three nearest in ours.
 
 `passives` measures the passives around a held skeleton (the race over
-skeletons' phase 2; docs/placer.md, "The passives' descent around a held
-skeleton (2026-11-08)"), per traced unit and seed placed by skeleton: the
+skeletons' phase 2; docs/placer.md, "A race over skeletons"), per traced unit and seed placed by skeleton: the
 held parts are the movable parts that do not move from the passives'
 `start` to `final`, the passives the others. Per stage (`start`, `global`,
 `annealed`, `legal`, `final`): how many passives have their centre inside
@@ -77,8 +76,7 @@ objective by term at each stage; the passives' descent (iterations, the
 overflow at the stop); and the relaxation level's halos, tight bodies and
 courtyard spacing. Writes `<out>/passives.md` and `<out>/passives.json`.
 
-`stacks` measures the netlist's stacks (docs/placer.md, "The netlist's
-stacks are lost in the descent, not at the start (2026-11-08)"), per
+`stacks` measures the netlist's stacks (docs/placer.md, "The global placement's start" and "Banks on a wide bus glued through the descent"), per
 traced unit, seed and phase (the skeleton's solve, the whole or the
 passives'): the coincident stacks at the solve's start (centres within half
 the smaller half extent, any nets: how many, how large, how many on the

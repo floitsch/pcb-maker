@@ -1,14 +1,14 @@
 // Copyright (C) 2026 Toit contributors.
 
 //! The trouble-maker probe (`pcb-maker probe-trouble-placement`, a
-//! research command; docs/placer.md, "The trouble-maker probe
-//! (2026-10-26)"): a placed board's difficulty measured by routing only
-//! the nets that made trouble (the nets in conflict when a previous run's
-//! negotiation ended, the nets it left open; or, cold, the nets with the
-//! most pins times the largest box), first and alone, with a small work
-//! budget, against a background for the other nets: none, a fixed escape
-//! stub out of each of their pads, or the global route's use of the tiles
-//! by them as a cost. Deterministic: the budget is work.
+//! research command; docs/placer.md, "Tried and rejected"): a placed
+//! board's difficulty measured by routing only the nets that made trouble
+//! (the nets in conflict when a previous run's negotiation ended, the nets it
+//! left open; or, cold, the nets with the most pins times the largest box),
+//! first and alone, with a small work budget, against a background for the
+//! other nets: none, a fixed escape stub out of each of their pads, or the
+//! global route's use of the tiles by them as a cost. Deterministic: the
+//! budget is work.
 
 use super::global_route::lower_placed;
 use crate::*;

@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Toit contributors.
 
 //! Pads without a way out (`Config::pad_exits`, off by default;
-//! docs/placer.md "Pads without a way out (2026-11-04)"): a pad that
+//! docs/placer.md "Pads without a way out"): a pad that
 //! lies in a pocket of the router's lattice closed by fixed copper, a
 //! keepout or the board edge around it (no legal path from its nodes
 //! leaves, reaches a via site or another pad of its net) can be connected

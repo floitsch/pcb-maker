@@ -1,9 +1,8 @@
 # Copyright (C) 2026 Toit contributors.
 #
 # Cheaper stages of the placer-default protocol calibrated against two
-# experiments with complete full-budget rows (docs/placer.md, "Cheaper
-# stages of the placer protocol, calibrated (2026-10-28)"; docs/benchmarks.md,
-# "The ladder of placer measurements (2026-10-28)"):
+# experiments with complete full-budget rows (docs/benchmarks.md, "The ladder of
+# placer measurements"):
 #
 # - cross: crossings in the anneal, x1851 both sides (off: defaults; on:
 #   `ratsnest_crossings.anneal`), build/cross3-*;

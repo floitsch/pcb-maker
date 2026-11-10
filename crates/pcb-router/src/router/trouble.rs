@@ -9,7 +9,7 @@
 //! the open terminals of all of them together drop, or stay and fewer of
 //! the nets are open. An exchange may displace 12 nets, or twice the
 //! trouble-maker's open terminals where that is more
-//! (docs/experiments/human-level-routing.md; docs/router.md, item 7).
+//! (docs/router.md, "The trouble-makers' repair").
 
 use super::*;
 
@@ -37,7 +37,7 @@ pub(super) struct TroubleSettings {
     pub ties: bool,
     /// The order of the trouble-makers in a round
     /// (`PCB_ROUTER_TROUBLE_ORDER`, `open`; `few` measured on 2026-10-23
-    /// and not kept, docs/changelog.md).
+    /// and not kept).
     pub order: TroubleOrder,
     /// 2: a displaced net that comes out worse may displace others in
     /// turn; 1: not.
@@ -54,7 +54,7 @@ pub(super) struct TroubleSettings {
     /// its margin, not grown) while that could still make the exchange
     /// pass; never board-wide. The hard search's window grown fourfold and
     /// its board-wide fallback were most of the victims' work, mostly
-    /// failing (docs/changelog.md, 2026-10-23); `0` that full search.
+    /// failing (measured 2026-10-23); `0` that full search.
     pub local: bool,
     /// An exchange is undone as soon as the victims routed so far leave
     /// it no way to pass (`PCB_ROUTER_TROUBLE_EARLY`, on): the victims not

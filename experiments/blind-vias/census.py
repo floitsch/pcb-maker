@@ -3,7 +3,7 @@
 # Use of this source code is governed by an MIT-style license that can be
 # found in the LICENSE file.
 """Which boards allow or use blind, buried and micro vias (docs/router.md,
-"Blind, buried and micro vias (2026-11-04)").
+"Blind, buried and micro vias").
 
     census.py [--root benchmarks/real/external/github] [--bgas build/bga1/census/bgas.json]
               [--out DIR]

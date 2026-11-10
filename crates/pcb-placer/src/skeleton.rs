@@ -2,17 +2,16 @@
 // Use of this source code is governed by an MIT-style license that can be
 // found in the LICENSE file.
 
-//! The race over skeletons (docs/placer.md, "A race over skeletons
-//! (2026-11-04)"): a seed's placement in two phases. First the skeleton,
-//! every part but the free passives, is placed alone: the passives are
-//! absent (no pins, no body, no constraint of theirs) and each skeleton
-//! part's body grows by the area of the passives it owns, so that the
-//! skeleton leaves them their room; a net that ran through a two-pin
-//! passive on small signal nets is one net in the skeleton (a series
-//! resistor keeps its two ends' parts together). Then the skeleton is held
-//! (fixed at its poses) and the passives are placed around it, from the
-//! skeleton's relaxation level on. The layout's race ranks the seeds'
-//! placements as it ranks any.
+//! The race over skeletons (docs/placer.md, "A race over skeletons"): a
+//! seed's placement in two phases. First the skeleton, every part but the
+//! free passives, is placed alone: the passives are absent (no pins, no body,
+//! no constraint of theirs) and each skeleton part's body grows by the area
+//! of the passives it owns, so that the skeleton leaves them their room; a
+//! net that ran through a two-pin passive on small signal nets is one net in
+//! the skeleton (a series resistor keeps its two ends' parts together). Then
+//! the skeleton is held (fixed at its poses) and the passives are placed
+//! around it, from the skeleton's relaxation level on. The layout's race
+//! ranks the seeds' placements as it ranks any.
 
 use crate::constraints::{Anchor, Relation};
 use crate::problem::{Pose, Problem, Side};
@@ -695,9 +694,8 @@ pub fn place_skeleton(
     // around a skeleton grown by their tight bodies (vaio_re 26 to 36
     // without room, jetson 86 to 109), and `skip_to_tight` sent them to
     // the tight levels with the seed's whole work; the plain placement
-    // seats both boards at level 2 (docs/placer.md, "The first night
-    // (2026-11-06)"). A skeleton that skipped past it (protoesp's gain)
-    // keeps its level.
+    // seats both boards at level 2. A skeleton that skipped past it
+    // (protoesp's gain) keeps its level.
     second.first_level = skeleton.level.max(PASSIVES_FIRST_LEVEL);
     let passives = place(&holding, &second);
     report.passive_work = passives.work;

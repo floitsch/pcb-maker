@@ -1,8 +1,7 @@
 // Copyright (C) 2026 Toit contributors.
 
-//! Prepared fan-outs for BGAs (docs/router.md, "Prepared fan-outs for BGAs
-//! (2026-11-04)"; router settings `bga_fanout`, `PCB_ROUTER_BGA_FANOUT`;
-//! on by default).
+//! Prepared fan-outs for BGAs (docs/router.md, "Prepared fan-outs for BGAs";
+//! router settings `bga_fanout`, `PCB_ROUTER_BGA_FANOUT`; on by default).
 //!
 //! A ball of a grid array's inner rings leaves the part only by a via:
 //! once the channels between the outer balls are taken (one track a
@@ -1015,8 +1014,7 @@ pub(crate) fn far_side_balls(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Vec
 }
 
 /// A grid array's escapes as the placer keeps room for them
-/// (`array_rooms`; the placer's `bga_room`, docs/placer.md, "Room around
-/// grid arrays (2026-11-04)").
+/// (`array_rooms`; the placer's `bga_room`, docs/placer.md, "Room around grid arrays").
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ArrayRoom {
     /// Index of the footprint in the board's order.

@@ -23,20 +23,17 @@ use super::*;
 /// at a time and one search thread (the whole process's peak), on five
 /// intake boards and Castor, jetson, k30: peak over maps 1.05-1.68 where
 /// the maps are 240-760 MB, 2.5-3.2 on the three v16 boards (about 300 MB
-/// of maps and up to 570 MB beside them); the line covers every board
-/// (docs/changelog.md, "ladder memory and work bound"). Measured again
+/// of maps and up to 570 MB beside them); the line covers every board. Measured again
 /// 2026-10-22 after the maps shrank and freed blocks went back to the
 /// system (`configure_malloc`), one router at a time, one thread, a
 /// ladder of 60 s of work: katia 2189 MB of maps, 2534 peak; jiran-ble-lite
 /// at 0.05 mm 1589, 1608; the laptop motherboard 636, 897; Sisu 491, 721;
-/// k30 247, 406; jetson 223, 796; Castor 193, 392 (docs/changelog.md,
-/// "router memory"). Was 1.7 and 460 MB: the slope then carried the
+/// k30 247, 406; jetson 223, 796; Castor 193, 392. Was 1.7 and 460 MB: the slope then carried the
 /// allocator's retention (katia's 1.75 GB with no router left). Measured
 /// again 2026-10-23 after the occupancy, the search records and the pour
 /// maps shrank, the same way: katia 1408 MB of maps, 1763 peak;
 /// jiran-ble-lite 1141, 1212; the laptop motherboard 497, 774; Sisu 379,
-/// 554; k30 194, 357; jetson 165, 744; Castor 134, 328 (docs/changelog.md,
-/// "router memory, round 2"): what lies beside the maps hardly follows
+/// 554; k30 194, 357; jetson 165, 744; Castor 134, 328: what lies beside the maps hardly follows
 /// them (katia 355 MB, jetson 579), so the slope is 1 and the offset
 /// passes jetson by 21 MB. Was 1.2 and 540 MB (jetson 6 MB over).
 pub(crate) const PEAK_RESIDENT_PER_MAPS: f64 = 1.0;

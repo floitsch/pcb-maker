@@ -1,13 +1,13 @@
 # Copyright (C) 2026 Toit contributors.
 #
 # The race's picks in the ripped-count A/B (docs/placer.md, "The race ranks
-# its probes by the ripped count (2026-10-27)"). The on side's races report
-# each probe's unfinished nets and its ripped count, so the placement the
-# unfinished count keeps (off: RACE_CONFIDENT_MARGIN, 5 %) is known from the
-# on run; where it is the one the ripped count kept, the layouts are
-# byte-identical (the probes and the kept router are the same, the rip-up
-# runs on copies and charges no work), and the off side reuses the on row.
-# Only the races whose pick changed ran on the off binary.
+# its probes by the ripped count"). The on side's races report each probe's
+# unfinished nets and its ripped count, so the placement the unfinished count
+# keeps (off: RACE_CONFIDENT_MARGIN, 5 %) is known from the on run; where it
+# is the one the ripped count kept, the layouts are byte-identical (the probes
+# and the kept router are the same, the rip-up runs on copies and charges no
+# work), and the off side reuses the on row. Only the races whose pick changed
+# ran on the off binary.
 #
 #   python3 -I experiments/race-ripped/picks.py table SEED...      # per race: the probes, both picks, both finals
 #   python3 -I experiments/race-ripped/picks.py compare SEED... [--noise FILE]   # placer_ab compare on the spliced off side

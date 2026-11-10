@@ -16,8 +16,7 @@
 //! has no via more, is at most `bend_round_length` longer and has fewer
 //! jogs and staircases (`keep_bend_round`). A renegotiation of those nets
 //! at the raised cost (the via reduction's twin) was measured first and
-//! is no use: every round grew the vias (docs/router.md, "The bend round
-//! (2026-11-06)").
+//! is no use: every round grew the vias (docs/router.md, "The bend round").
 
 use super::straighten::{direction_of, jogs_and_staircases};
 use super::*;

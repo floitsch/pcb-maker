@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Toit contributors.
 
 //! The race over skeletons' class rule: which footprints are passives
-//! (docs/placer.md, "A race over skeletons (2026-11-04)"), the one place
+//! (docs/placer.md, "A race over skeletons"), the one place
 //! the rule lives. The placement is `pcb_placer::skeleton`'s.
 
 use super::*;
@@ -32,8 +32,7 @@ pub struct KiCadSkeletonRace {
     /// the short tier's 200 s the skeleton's half of a seed's work makes
     /// OpenFC's skeleton skip to the tight levels (`skip_to_tight`) on a
     /// quarter of its seeds, and the race keeps those; it walks its levels
-    /// on every seed from about 475 s (docs/placer.md, "The skeleton's
-    /// budget (2026-11-05)").
+    /// on every seed from about 475 s (docs/placer.md, "The skeleton's budget").
     pub min_work_seconds: f64,
 }
 

@@ -3,9 +3,9 @@
 // found in the LICENSE file.
 
 //! Read-only views of a router's negotiation state on its coarse tiles,
-//! for the congestion model's training labels (see
-//! `docs/congestion-model.md`). A child module of `router`, so it reads the
-//! router's private maps without accessors there.
+//! for the training labels of the congestion predictor that was dropped
+//! (docs/handover.md, "Tried and not taken"). A child module of `router`, so
+//! it reads the router's private maps without accessors there.
 
 use super::{Router, TILE};
 use crate::board::Board;

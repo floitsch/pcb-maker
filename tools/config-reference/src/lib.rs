@@ -130,7 +130,7 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_ROUTER_NO_BEND_ROUND",
         Kind::Switch,
-        "turns the router's bend round off (`bend_round`, on since 2026-11-06): after the via reduction, each complete signal net with a jog or a staircase rerouted alone at a raised bend cost and kept only if it stays complete with no via more, at most 1 % longer and fewer jogs and staircases (docs/router.md, \"The bend round (2026-11-06)\"; a diagnostic, for A/B).",
+        "turns the router's bend round off (`bend_round`, on since 2026-11-06): after the via reduction, each complete signal net with a jog or a staircase rerouted alone at a raised bend cost and kept only if it stays complete with no via more, at most 1 % longer and fewer jogs and staircases (docs/router.md, \"The bend round\"; a diagnostic, for A/B).",
     ),
     (
         "PCB_ROUTER_BEND_ROUND_COST",
@@ -190,7 +190,7 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_ROUTER_TROUBLE",
         Kind::Switch,
-        "overrides the router's `trouble_repair` (`0` off, anything else on): the trouble-makers' repair after the hard repair (an open net routed through others at a price, the nets it displaces routed again hard, kept when the open terminals drop; docs/experiments/human-level-routing.md).",
+        "overrides the router's `trouble_repair` (`0` off, anything else on): the trouble-makers' repair after the hard repair (an open net routed through others at a price, the nets it displaces routed again hard, kept when the open terminals drop; docs/router.md, \"The trouble-makers' repair\").",
     ),
     (
         "PCB_ROUTER_EXACT_ESCAPES",
@@ -200,37 +200,37 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_ROUTER_CORRIDOR_ESCAPES",
         Kind::Switch,
-        "overrides the router's `corridor_escapes` (`0` off, anything else on; on by default since 2026-11-05): a pad without a legal node of its own whose escape nodes lie in a pocket the lattice closes leaves by a corridor stub off the lattice, a path through the region its track keeps its clearances in to a legal node beyond the pocket (OpenFC's U10.5; docs/router.md, \"Corridors of pocketed pads (2026-11-05)\").",
+        "overrides the router's `corridor_escapes` (`0` off, anything else on; on by default since 2026-11-05): a pad without a legal node of its own whose escape nodes lie in a pocket the lattice closes leaves by a corridor stub off the lattice, a path through the region its track keeps its clearances in to a legal node beyond the pocket (OpenFC's U10.5; docs/router.md, \"Corridors of pocketed pads\").",
     ),
     (
         "PCB_ROUTER_CORRIDOR_CENSUS",
         Kind::Diagnostic,
-        "set: the router prints one `corridor census:` line per escape pad and lattice on stderr (its escape nodes' pocket open or closed on the lattice, and whether a corridor stub leaves it); `experiments/corridors/census.py` reads them (docs/router.md, \"Corridors of pocketed pads (2026-11-05)\").",
+        "set: the router prints one `corridor census:` line per escape pad and lattice on stderr (its escape nodes' pocket open or closed on the lattice, and whether a corridor stub leaves it); `experiments/corridors/census.py` reads them (docs/router.md, \"Corridors of pocketed pads\").",
     ),
     (
         "PCB_ROUTER_PIN_LINES",
         Kind::Switch,
-        "overrides the router settings' `pin_lines` (`0` or `off`: the regular lattice; `1` or `exits`: lattice lines through the pads of pin rows the regular lattice misses; off by default): a part whose row exits share a phase gets the lattice at that phase over its rows and 1 mm around (a band, where the narrow pads in it vote for that phase), other exits a line added or moved onto them; the lattice's lines are then per-axis coordinate tables (docs/router.md, \"Lattice lines at pin rows (2026-11-07)\").",
+        "overrides the router settings' `pin_lines` (`0` or `off`: the regular lattice; `1` or `exits`: lattice lines through the pads of pin rows the regular lattice misses; off by default): a part whose row exits share a phase gets the lattice at that phase over its rows and 1 mm around (a band, where the narrow pads in it vote for that phase), other exits a line added or moved onto them; the lattice's lines are then per-axis coordinate tables (docs/router.md, \"Lattice lines at pin rows\").",
     ),
     (
         "PCB_ROUTER_PIN_LINES_PROBE",
         Kind::Diagnostic,
-        "set: the router prints `pin lines:` lines on stderr for each lattice it builds and the finer pitches 0.075 and 0.05 mm: the lines the pin rows and pad gaps ask for, which the regular lattice misses, and what the bands and single lines would place for the exits (`2`: every missed line too) (docs/router.md, \"Lattice lines at pin rows (2026-11-07)\").",
+        "set: the router prints `pin lines:` lines on stderr for each lattice it builds and the finer pitches 0.075 and 0.05 mm: the lines the pin rows and pad gaps ask for, which the regular lattice misses, and what the bands and single lines would place for the exits (`2`: every missed line too) (docs/router.md, \"Lattice lines at pin rows\").",
     ),
     (
         "PCB_ROUTER_BGA_FANOUT",
         Kind::Switch,
-        "overrides the router's `bga_fanout` (`0` off, anything else on; on by default): before routing, the inner balls of every grid array (those no track between the outer balls serves) whose net's own via does not fit a diagonal gap get a stub and a through via in a diagonal gap, the largest of the class's and the project's via sizes that keeps every clearance, as fixed copper of the ball's net that its route may end on; written only where the route uses it; the placer keeps the far side free under those vias (docs/router.md, \"Prepared fan-outs for BGAs (2026-11-04)\").",
+        "overrides the router's `bga_fanout` (`0` off, anything else on; on by default): before routing, the inner balls of every grid array (those no track between the outer balls serves) whose net's own via does not fit a diagonal gap get a stub and a through via in a diagonal gap, the largest of the class's and the project's via sizes that keeps every clearance, as fixed copper of the ball's net that its route may end on; written only where the route uses it; the placer keeps the far side free under those vias (docs/router.md, \"Prepared fan-outs for BGAs\").",
     ),
     (
         "PCB_ROUTER_BLIND_VIAS",
         Kind::Switch,
-        "overrides the router's `blind_vias` (`0` off, anything else on; off by default): where the board allows via spans short of the stack (`via_spans`, the designer's blind, buried and micro vias, a KiCad 6 or 7 project's switches), a via takes the shortest allowed span holding the two layers it joins, copper and a hole only there, written as KiCad's blind, buried or micro via; a BGA's dog-bone takes the shortest span to a routable layer (docs/router.md, \"Blind, buried and micro vias (2026-11-05)\").",
+        "overrides the router's `blind_vias` (`0` off, anything else on; off by default): where the board allows via spans short of the stack (`via_spans`, the designer's blind, buried and micro vias, a KiCad 6 or 7 project's switches), a via takes the shortest allowed span holding the two layers it joins, copper and a hole only there, written as KiCad's blind, buried or micro via; a BGA's dog-bone takes the shortest span to a routable layer (docs/router.md, \"Blind, buried and micro vias\").",
     ),
     (
         "PCB_LAYOUT_MOVE_DESCENT",
         Kind::Switch,
-        "overrides the layout's `move_descent` (`0` off, anything else on with layout.json's settings or the defaults): the move descent after the first route (docs/experiments/move-descent.md).",
+        "overrides the layout's `move_descent` (`0` off, anything else on with layout.json's settings or the defaults): the move descent after the first route (docs/architecture.md, \"Off by default, still in the code\").",
     ),
     (
         "PCB_ROUTER_TROUBLE_PRESENT",
@@ -290,7 +290,7 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_ROUTER_TROUBLE_WHY",
         Kind::Diagnostic,
-        "the trouble-makers' repair prints every exchange's outcome (kept, or why refused; a refusal names the nets left in conflict and what their conflicts name), and after the repair the crossing census: every open pad of a fine-pitch row, what closes its straight ways out, and whether a row neighbour's target crosses its own (docs/router.md, \"Crossings decided in the repair (2026-11-03)\").",
+        "the trouble-makers' repair prints every exchange's outcome (kept, or why refused; a refusal names the nets left in conflict and what their conflicts name), and after the repair the crossing census: every open pad of a fine-pitch row, what closes its straight ways out, and whether a row neighbour's target crosses its own (docs/router.md, \"The crossing census\").",
     ),
     (
         "PCB_ROUTER_BGA_FANOUT_WHY",
@@ -300,12 +300,12 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_ROUTER_NET_WORK",
         Kind::Diagnostic,
-        "`<file>`: the search expansions per net over the process (every router, every phase), written to the file as JSON at each router's finish; the last write holds the whole run (docs/router.md, \"Prepared fan-outs for BGAs (2026-11-04)\").",
+        "`<file>`: the search expansions per net over the process (every router, every phase), written to the file as JSON at each router's finish; the last write holds the whole run (docs/router.md, \"Prepared fan-outs for BGAs\").",
     ),
     (
         "PCB_PLACER_PAD_EXITS",
         Kind::Switch,
-        "overrides the placer's `pad_exits` (`1` on with the defaults where the config has none, `0` off; off by default): after each seed's placement the router's test of every pad's way out on the statics, the parts whose pads another part or the edge closes moved or turned, the pads left closed in board-placer.json's `pad_exits` and the verdict (docs/placer.md, \"Pads without a way out (2026-11-04)\").",
+        "overrides the placer's `pad_exits` (`1` on with the defaults where the config has none, `0` off; off by default): after each seed's placement the router's test of every pad's way out on the statics, the parts whose pads another part or the edge closes moved or turned, the pads left closed in board-placer.json's `pad_exits` and the verdict (docs/placer.md, \"Pads without a way out\").",
     ),
     (
         "PCB_PAD_EXITS_WHY",
@@ -355,12 +355,12 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_ROUTER_LENGTH_REROUTE",
         Kind::Switch,
-        "turns the length reroute on (1) or off (0) where the settings name none (`length_reroute`; unset, off): a net still short of its `length` minimum (or its `skew` group's) after the meanders is routed again alone, the other nets' tracks kept and kept off by half a meander's height more than the clearance beyond 1.5 mm of its pads, meandered again and kept where it ends nearer its window (docs/router.md, \"Length minima: the placer's share and the reroute (2026-11-04)\").",
+        "turns the length reroute on (1) or off (0) where the settings name none (`length_reroute`; unset, off): a net still short of its `length` minimum (or its `skew` group's) after the meanders is routed again alone, the other nets' tracks kept and kept off by half a meander's height more than the clearance beyond 1.5 mm of its pads, meandered again and kept where it ends nearer its window (docs/router.md, \"Length minima: the placer's share and the reroute\").",
     ),
     (
         "PCB_ROUTER_LENGTH_RULE_LAYERS",
         Kind::Switch,
-        "where the settings name none, which side of a layer-limited length or skew rule's layers its nets prefer (`length_rule_layers`; unset, `designer`): `designer` the side the designer's board (`--reference`, else the input's own tracks) runs each on, `rule` the rule's layers for all of them, `off` none (docs/router.md, \"Skew groups' layers (2026-11-06)\").",
+        "where the settings name none, which side of a layer-limited length or skew rule's layers its nets prefer (`length_rule_layers`; unset, `designer`): `designer` the side the designer's board (`--reference`, else the input's own tracks) runs each on, `rule` the rule's layers for all of them, `off` none (docs/router.md, \"Skew groups' layers\").",
     ),
     (
         "PCB_ROUTER_LAYER_PREFERENCE_COST",
@@ -385,7 +385,7 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_ROUTER_BUS_BUNDLES",
         Kind::Switch,
-        "sets the router's `bus_bundles` (an experiment, off): buses of four or more nets joining the same footprints route first, in pad order, inside one corridor, side by side (docs/experiments/bus-bundles.md).",
+        "sets the router's `bus_bundles` (an experiment, off): buses of four or more nets joining the same footprints route first, in pad order, inside one corridor, side by side (docs/architecture.md, \"Off by default, still in the code\").",
     ),
     (
         "PCB_ROUTER_BUS_LANE",
@@ -505,7 +505,7 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_LADDER_PROBES_COUNT_ALL",
         Kind::Switch,
-        "route mode's rung probes stop on all their work (search, pour analyses, lattice and their part of the static maps) instead of on their search (an experiment: leaders changed; docs/changelog.md, probe overhead).",
+        "route mode's rung probes stop on all their work (search, pour analyses, lattice and their part of the static maps) instead of on their search (an experiment: leaders changed; docs/router.md, \"All the work charged\").",
     ),
     (
         "PCB_LADDER_CONTINUATION_LATTICE",
@@ -635,7 +635,7 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_PLACER_START",
         Kind::Switch,
-        "`<board>`: a diagnostic start: the placer's stages from `PCB_PLACER_START_STAGE` on start from this board's poses, by reference (docs/placer.md, \"Where the arrangement is lost (2026-11-04)\").",
+        "`<board>`: a diagnostic start: the placer's stages from `PCB_PLACER_START_STAGE` on start from this board's poses, by reference (docs/placer.md, \"Where the arrangement is lost\").",
     ),
     (
         "PCB_PLACER_START_STAGE",
@@ -645,7 +645,7 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_PLACER_SKIP_ANNEAL",
         Kind::Switch,
-        "a diagnostic: no anneal at any level; each level's legaliser seats the global placement's poses (or `PCB_PLACER_START`'s), the refinement follows (docs/placer.md, \"Where the arrangement is lost (2026-11-04)\").",
+        "a diagnostic: no anneal at any level; each level's legaliser seats the global placement's poses (or `PCB_PLACER_START`'s), the refinement follows (docs/placer.md, \"Where the arrangement is lost\").",
     ),
     (
         "PCB_PLACER_START_PARTS",
@@ -665,7 +665,7 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_PLACER_CROSSINGS_PROFILE",
         Kind::Diagnostic,
-        "with `PCB_PLACER_DEBUG`: per placer phase a `placer crossings` line, the wall time inside the ratsnest-crossings count against the work it booked and the rest of the phase's (the booking's calibration); `ops` times each of its operations too (docs/placer.md, \"The crossings' work booking\").",
+        "with `PCB_PLACER_DEBUG`: per placer phase a `placer crossings` line, the wall time inside the ratsnest-crossings count against the work it booked and the rest of the phase's (the booking's calibration); `ops` times each of its operations too (docs/placer.md, \"Work, budgets and determinism\").",
     ),
     (
         "PCB_PLACER_CHECK_OVERLAP",
@@ -1348,7 +1348,7 @@ fn tables(root: &Path) -> Result<Vec<Table>, String> {
         Table {
             title: "Layout settings: silkscreen",
             prefix: "silkscreen.",
-            intro: "The `silkscreen` object of the layout settings: the footprints' Reference and Value fields, placed after routing where KiCad's silkscreen checks find nothing (docs/placer.md, \"The fields on the silkscreen\").",
+            intro: "The `silkscreen` object of the layout settings: the footprints' Reference and Value fields, placed after routing where KiCad's silkscreen checks find nothing (docs/agents.md, \"Read the verdict\").",
             file: layout_file,
             name: "KiCadSilkscreenConfig",
             fields: parse(layout_file, "KiCadSilkscreenConfig")?,
@@ -1358,7 +1358,7 @@ fn tables(root: &Path) -> Result<Vec<Table>, String> {
         Table {
             title: "Layout settings: race_probe",
             prefix: "race_probe.",
-            intro: "The `race_probe` object of the layout settings (off when absent, `{}` for the defaults): the race probes its best-ranked placements for a share of the layout's budget each, every probe charged to the work clock, and routes on with the fewest open terminals after the probe (docs/placer.md, \"The race's route probe (2026-10-25)\").",
+            intro: "The `race_probe` object of the layout settings (off when absent, `{}` for the defaults): the race probes its best-ranked placements for a share of the layout's budget each, every probe charged to the work clock, and routes on with the fewest open terminals after the probe (docs/placer.md, \"The race's route probe\").",
             file: layout_file,
             name: "KiCadRaceProbe",
             fields: parse(layout_file, "KiCadRaceProbe")?,
@@ -1368,7 +1368,7 @@ fn tables(root: &Path) -> Result<Vec<Table>, String> {
         Table {
             title: "Layout settings: move_descent",
             prefix: "move_descent.",
-            intro: "The `move_descent` object of the layout settings (an experiment, off when absent): single parts nudged, turned or swapped after the first route where the incremental global route and a local reroute say fewer terminals stay open (docs/experiments/move-descent.md).",
+            intro: "The `move_descent` object of the layout settings (an experiment, off when absent): single parts nudged, turned or swapped after the first route where the incremental global route and a local reroute say fewer terminals stay open (docs/architecture.md, \"Off by default, still in the code\").",
             file: "crates/pcb-kicad/src/move_descent.rs",
             name: "KiCadMoveDescent",
             fields: parse("crates/pcb-kicad/src/move_descent.rs", "KiCadMoveDescent")?,

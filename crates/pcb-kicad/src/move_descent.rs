@@ -2,9 +2,10 @@
 // Use of this source code is governed by an MIT-style license that can be
 // found in the LICENSE file.
 
-//! The move descent (docs/experiments/move-descent.md): after the first
-//! route, single parts are moved a little at a time where a move helps,
-//! with trials cheap enough to run on boards far from complete.
+//! The move descent (docs/architecture.md, "Off by default, still in the
+//! code"): after the first route, single parts are moved a little at a time
+//! where a move helps, with trials cheap enough to run on boards far from
+//! complete.
 //!
 //! - **Candidates**: the parts with unconnected terminals of their own,
 //!   then those whose nets are open, then those whose nets cross the

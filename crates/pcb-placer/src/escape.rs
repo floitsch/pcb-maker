@@ -2,9 +2,9 @@
 // Use of this source code is governed by an MIT-style license that can be
 // found in the LICENSE file.
 
-//! Escape demand (`Problem::escape`, an experiment, docs/placer.md "Escape
-//! demand (2026-10-23)"): where a part's tracks leave its body, and
-//! whether the channel between two parts can carry them.
+//! Escape demand (`Problem::escape`, on by default, docs/placer.md "Escape
+//! demand"): where a part's tracks leave its body, and whether the channel
+//! between two parts can carry them.
 //!
 //! A pad's net leaves the body through the side on the cheapest way to the
 //! net's nearest pad on another part (under the body costs twice), so a
@@ -37,7 +37,7 @@ pub type MeasuredSession = Box<dyn FnMut(&[Pose]) -> Option<(Vec<f64>, u64)> + S
 /// Opens a measuring session (each keeps its own incremental route).
 pub type MeasuredFactory = dyn Fn() -> MeasuredSession + Send + Sync;
 
-/// The lowering's escape fact and the experiment's settings.
+/// The lowering's escape fact and its settings.
 #[derive(Clone)]
 pub struct Escape {
     /// Track pitch (width plus clearance), mm.

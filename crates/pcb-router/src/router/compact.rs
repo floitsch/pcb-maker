@@ -5,7 +5,7 @@
 //! Compaction: straight runs slid beside their neighbours.
 //!
 //! A designer lays a bus as a bundle; our tracks spread over the free
-//! board (docs/router.md, "What the routes look like (2026-11-05)"). A
+//! board (docs/router.md, "What the routes look like"). A
 //! run's segment S between two segments of one direction D (a Z: D, S, D)
 //! can slide along D: the segment before grows by what the one after
 //! loses, so the length, the bends and the ends stay as they were. This

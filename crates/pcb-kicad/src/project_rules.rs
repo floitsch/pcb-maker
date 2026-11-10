@@ -79,7 +79,7 @@ pub struct KiCadProjectRulesReport {
     /// The spans of the board's own blind, buried and micro vias (or the
     /// `--reference` board's): the designer's sign that the fab builds
     /// them, which allows those spans to the router (`blind_vias`;
-    /// docs/router.md, "Blind, buried and micro vias (2026-11-05)").
+    /// docs/router.md, "Blind, buried and micro vias").
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub via_spans_designer: Vec<crate::board_router::KiCadViaSpanEntry>,
     /// A KiCad 6 or 7 project's via switches (`allow_blind_buried_vias`,
@@ -2552,8 +2552,7 @@ mod tests {
         (directory, project, pcb)
     }
 
-    /// The remapper trial's narrow-four control (docs/reviews/
-    /// 2026-10-18-remapper-agent-diagnostic-trial.md): 0.15 mm classes
+    /// The remapper trial's narrow-four control: 0.15 mm classes
     /// under the board's 0.2 mm minimum are refused before any work,
     /// naming the value, the minimum and its source, unless the file
     /// allows them; then they are kept and reported.
