@@ -7,7 +7,7 @@
 //! Footprints whose copper reaches the board edge keep their distance to
 //! that edge, so connectors stay flush.
 
-use super::*;
+use crate::*;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct KiCadShrinkReport {

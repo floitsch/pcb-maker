@@ -10,8 +10,8 @@
 //! stub out of each of their pads, or the global route's use of the tiles
 //! by them as a cost. Deterministic: the budget is work.
 
-use super::*;
-use crate::global_route::lower_placed;
+use super::global_route::lower_placed;
+use crate::*;
 use pcb_router as core;
 
 /// Where the other nets' copper is assumed.
@@ -330,7 +330,7 @@ pub fn probe_trouble_placement(
         .map_err(|error| format!("failed to read {}: {error}", board_path.display()))?;
     let pcb = crate::canonical_order::parse_board(&text)?;
     let board = lower_placed(&pcb, router_config)?;
-    let mut core_config = crate::congestion_samples::race_core_config(router_config);
+    let mut core_config = crate::board_layout::race_core_config(router_config);
     core_config.verbose = false;
     let budget = config
         .work_seconds

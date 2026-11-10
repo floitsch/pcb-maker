@@ -2,7 +2,7 @@
 
 //! Schematic footprint links rewritten to the board's footprint libraries.
 
-use super::*;
+use crate::*;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct KiCadFootprintLinkUpdate {

@@ -7,9 +7,9 @@
 //! race's RUDY score of the same lowering and, on request, the race's
 //! router probe, so the three measures can be compared on one placement.
 
-use super::*;
 use crate::board_layout::without_copper_texts;
 use crate::board_router::{KiCadPourMode, LayerTable, add_pour_zones, lower, planned_pours, pours};
+use crate::*;
 use pcb_router as core;
 
 #[derive(Clone, Debug, Serialize)]
@@ -23,7 +23,7 @@ pub struct KiCadGlobalRouteReport {
     pub terminals: usize,
     pub score: pcb_global::Score,
     /// The placement race's RUDY score of the same board
-    /// (`pcb_congestion::rudy_overflow` at 0.25).
+    /// (`congestion_rank::rudy_overflow` at 0.25).
     pub rudy: f64,
     pub lower_seconds: f64,
     pub capacity_seconds: f64,
@@ -85,11 +85,10 @@ pub fn global_route_kicad_board(
     let board = lower_placed(&pcb, router_config)?;
     let lower_seconds = lowered_at.elapsed().as_secs_f64();
     let route = pcb_global::route(&board, config);
-    let core_config = crate::congestion_samples::race_core_config(router_config);
+    let core_config = crate::board_layout::race_core_config(router_config);
     let rudy_at = Instant::now();
     let frame = core::router::congestion::tile_frame(&board, &core_config);
-    let rudy =
-        pcb_congestion::rudy_overflow(&pcb_congestion::rasterize(&board, &frame), 0.25) as f64;
+    let rudy = crate::congestion_rank::rudy_overflow(&board, &frame, 0.25) as f64;
     let rudy_seconds = rudy_at.elapsed().as_secs_f64();
     let probe = probe_seconds.map(|work_seconds| {
         let started = Instant::now();

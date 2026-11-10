@@ -23,7 +23,6 @@
 //! escape looks like (demand per side, the part it faces and the channel
 //! between them, the board edge, its connections' distance).
 
-use super::*;
 use crate::board_layout::footprint_items;
 use crate::board_placer::{
     KiCadBoardPlacerConfig, attribution, courtyards_may_overlap, holes_in_courtyards_error,
@@ -31,6 +30,7 @@ use crate::board_placer::{
     write_footprint_pose,
 };
 use crate::placement_constraints::{KiCadConstraintsSource, resolve_constraints};
+use crate::*;
 use pcb_placer as placer;
 use pcb_placer::escape;
 
@@ -662,7 +662,7 @@ fn signals(
     let mut global = None;
     let mut global_parts = None;
     if let Some(pcb) = pcb {
-        let board = crate::global_route::lower_placed(pcb, router_config)?;
+        let board = super::global_route::lower_placed(pcb, router_config)?;
         let route = pcb_global::route(&board, &pcb_global::GlobalConfig::default());
         let index = reference_index(references);
         let (parts, tiles) = attribution(&board, &route, &index, references.len(), threshold);

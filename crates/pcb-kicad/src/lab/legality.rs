@@ -5,7 +5,8 @@
 //! each illegal part with what it meets and why, beside what KiCad's DRC
 //! report of the same board says of the same parts.
 
-use super::*;
+use crate::board_placer::*;
+use crate::*;
 use pcb_placer as core;
 use serde::Serialize;
 
@@ -640,67 +641,6 @@ fn body_quad(component: &core::Component, pose: core::Pose) -> [[f64; 2]; 4] {
         ],
         pose,
     )
-}
-
-/// Moves every footprint of `pcb` to the pose of its footprint in `from`:
-/// the one with its uuid, else the one with its reference (the n-th of
-/// a repeated reference to the n-th). Footprints `from` lacks stay.
-pub(super) fn take_poses(pcb: &mut Expr, from: &Expr) -> Result<usize, String> {
-    let mut by_uuid: BTreeMap<String, Vec<[f64; 3]>> = BTreeMap::new();
-    let mut by_reference: BTreeMap<String, Vec<[f64; 3]>> = BTreeMap::new();
-    for footprint in from
-        .children()
-        .iter()
-        .filter(|item| item.head() == Some("footprint"))
-    {
-        let at = form_at(footprint)?;
-        if let Some(uuid) = crate::kicad_nets::footprint_uuid(footprint) {
-            by_uuid.entry(uuid).or_default().push(at);
-        }
-        by_reference
-            .entry(footprint_reference(footprint).unwrap_or_default())
-            .or_default()
-            .push(at);
-    }
-    let Expr::List(items) = pcb else {
-        return Err("PCB root is not a list".into());
-    };
-    // A uuid the copies of a panel share goes to its n-th footprint.
-    let mut seen: BTreeMap<String, usize> = BTreeMap::new();
-    let mut seen_uuid: BTreeMap<String, usize> = BTreeMap::new();
-    let mut moved = 0;
-    for footprint in items
-        .iter_mut()
-        .filter(|item| item.head() == Some("footprint"))
-    {
-        let reference = footprint_reference(footprint).unwrap_or_default();
-        let nth = seen.entry(reference.clone()).or_default();
-        let at = crate::kicad_nets::footprint_uuid(footprint)
-            .and_then(|uuid| {
-                let nth = seen_uuid.entry(uuid.clone()).or_default();
-                *nth += 1;
-                by_uuid
-                    .get(&uuid)
-                    .and_then(|ats| ats.get(*nth - 1).copied())
-            })
-            .or_else(|| {
-                by_reference
-                    .get(&reference)
-                    .and_then(|ats| ats.get(*nth).copied())
-            });
-        *nth += 1;
-        if let Some(at) = at {
-            write_footprint_pose(
-                footprint,
-                core::Pose {
-                    position: [at[0], at[1]],
-                    angle: at[2],
-                },
-            )?;
-            moved += 1;
-        }
-    }
-    Ok(moved)
 }
 
 /// Judges the board's own placement (or, with `poses_from`, the poses of

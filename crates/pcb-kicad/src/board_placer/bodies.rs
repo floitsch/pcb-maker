@@ -23,7 +23,7 @@ pub(crate) fn local_body(footprint: &Expr) -> Result<([f64; 2], [f64; 2], bool),
 /// The box ([min x, min y, max x, max y], own frame) of a footprint
 /// graphic (line, rectangle, arc, circle or polygon) with its stroke;
 /// `None` for anything else.
-pub(super) fn graphic_box(child: &Expr) -> Result<Option<[f64; 4]>, String> {
+pub(crate) fn graphic_box(child: &Expr) -> Result<Option<[f64; 4]>, String> {
     if !matches!(
         child.head(),
         Some("fp_line" | "fp_rect" | "fp_arc" | "fp_circle" | "fp_poly")

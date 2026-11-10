@@ -7,7 +7,6 @@ description = "Deterministic KiCad project materialization for pcb-maker experim
 publish = false
 
 [dependencies]
-pcb-congestion = { path = "../pcb-congestion" }
 pcb-global = { path = "../pcb-global" }
 pcb-placer = { path = "../pcb-placer" }
 pcb-router = { path = "../pcb-router" }

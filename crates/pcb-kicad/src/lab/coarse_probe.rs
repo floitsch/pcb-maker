@@ -9,8 +9,8 @@
 //! budget that is a share of the task budget. Its open terminals rank the
 //! placement. Deterministic: the budget is work.
 
-use super::*;
-use crate::global_route::lower_placed;
+use super::global_route::lower_placed;
+use crate::*;
 use pcb_router as core;
 
 #[derive(Clone, Debug)]
@@ -118,7 +118,7 @@ pub fn probe_coarse_placement(
     let board = lower_placed(&pcb, router_config)?;
     // The race's and the first route's settings (`race_core_config`), at
     // the reduced fidelity.
-    let mut core_config = crate::congestion_samples::race_core_config(router_config);
+    let mut core_config = crate::board_layout::race_core_config(router_config);
     core_config.verbose = false;
     core_config.pitches = core_config
         .pitches

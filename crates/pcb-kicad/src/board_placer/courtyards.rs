@@ -65,7 +65,7 @@ pub(super) fn pads_in_pin_rows(centers: &[[f64; 2]]) -> bool {
 /// the corners' heights, each as wide as the courtyard there (slanted
 /// sides counted at their wider end); strips alike stacked into one.
 /// Empty when the courtyard is not closed or has too many corners (arcs).
-pub(super) fn courtyard_slabs(
+pub(crate) fn courtyard_slabs(
     footprint: &Expr,
     skip: Option<&str>,
 ) -> Result<Vec<[f64; 4]>, String> {
