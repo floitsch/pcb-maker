@@ -17,6 +17,8 @@ mod draw;
 mod drc;
 mod land;
 mod pieces;
+#[cfg(test)]
+mod tests;
 
 use draw::Drawn;
 use drc::{DrcInputs, KeptPieces};
