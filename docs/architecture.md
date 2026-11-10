@@ -1,244 +1,258 @@
 # Architecture
 
-> **Historical (marked 2026-10-16).** The architecture as planned in
-> September 2026, around crates (`pcb-engine`, `pcb-coordinator`,
-> `pcb-pipeline`, ...) that are earlier approaches scheduled for removal.
-> The flow today is in [handover.md](handover.md#the-flow-in-one-paragraph),
-> [router.md](router.md) and [placer.md](placer.md).
+A map of the code as it is: the crates and what each owns, the stages of
+`layout-kicad-board` and `route-kicad-board` in the order they run, the
+data each stage hands to the next, and the file that owns each stage.
+Paths are relative to the repository root. How each stage decides what it
+does is in [router.md](router.md) and [placer.md](placer.md); the settings
+are in [config-reference.md](config-reference.md); the state and the open
+problems in [handover.md](handover.md).
 
-The product is an autonomous constrained PCB placer and router. Placement,
-routing, repair selection, and acceptance must run in the program without an
-agent choosing individual board edits at runtime.
+## The crates
 
-Agents are part of the development feedback loop: when the program stalls or
-produces poor layouts, inspect the retained board and evidence, diagnose the
-limitation, implement an algorithmic improvement, and rerun the case. The layout
-analysis experiments guide that diagnosis and implementation. Their inspection
-tools are development infrastructure, not a separate product objective.
+| Crate | Owns | Depends on |
+| --- | --- | --- |
+| `src/` (the `pcb-maker` binary) | The command line. `agent_cli.rs` is the agent contract: `AGENT_COMMANDS`, the input checks, the exit codes, `verdict.json`; `agent_cli/free_dimension.rs` runs a layout at several sizes of one edge as child processes. `main.rs` dispatches, prints the help (`ENVIRONMENT_HELP`) and runs the research commands (`RESEARCH_USAGE`). | pcb-kicad, pcb-global |
+| `crates/pcb-kicad` | Everything on the KiCad side: reading and writing boards and projects, lowering them to the placer's and the router's types, the layout and route flows, the features that need KiCad's view of a board, KiCad's own checks and the verdict. | all crates below |
+| `crates/pcb-router` | A format-free, in-memory whole-board router: `Board` (nets, terminals, obstacles, planes, rules, via spans) in, `RoutingResult` out. The lattice and its static maps, the pour model, the search, PathFinder negotiation, the repairs, the polish and an exact copper verifier (`verify`). `Router` keeps its state between calls (`new`, `run`, `probe`, `resume`, `update`, `reroute`, `finish_as_is`), which the layout's race and moves use. | none |
+| `crates/pcb-placer` | A format-free placer: `Problem` (components, pins, nets, constraints) in, `Placement` (poses, legality, the constraints' status) out, through `place`. | none |
+| `crates/pcb-global` | A coarse tile-graph global router (capacities per tile boundary, PathFinder on tiles, corridors per net). Not on the default path: the move descent, the placer's global guidance and research commands use it. | pcb-router |
+| `crates/pcb-topo` | A TopoR-style topological router (a constrained Delaunay mesh, crossings resolved topologically, taut geometry) and `tighten`, which pulls any router's copper taut. Only with the router settings `engine: "topological"` or `tighten: true`. | pcb-router |
+| `tools/config-reference` | Generates [config-reference.md](config-reference.md) and the environment index at the end of [handover.md](handover.md) from the settings structs and every `PCB_*` name in the sources; `tests/config_reference.rs` fails while either is stale. | pcb-kicad, pcb-placer, pcb-router |
 
-The compiler and experiment harness below support comparing and improving the
-program's strategies. A change should be judged by the resulting
-placement/routing capability, quality, and cost on retained cases.
+pcb-router and pcb-placer know nothing of KiCad or of each other; only
+pcb-kicad joins them.
 
-Every new board experiment should retain a rendering with its evidence. Native
-verification does this automatically: `preview.svg` overlays front/back copper,
-footprint drawings and labels, and the outline, viewed from above.
-`preview.json` records the source PCB hash, native result, and render status.
-The hook covers full verification, cached verification, zone-refill verification,
-and route-only admission, including rejected attempts. Sequential routing copies
-the selected preview into its result directory. Preview failures are reported
-without changing admission and remove any previous image. These quick native
-SVG exports depict stored geometry; they do not overlay DRC findings or refill
-zones. Existing high-quality rendering remains available separately.
+## pcb-kicad by module group
 
-Retain experiment directories when recording progress. The dual cold-prefix and
-via-keepout integration tests support `PCB_MAKER_KEEP_TEST_ARTIFACTS=1`; use it
-for development runs whose boards should remain available after the test.
-Pure unit tests without a board do not need a fabricated board rendering.
+`crates/pcb-kicad/src/lib.rs` lists the modules. They fall into groups
+that a later split into crates is expected to follow.
 
-```text
-semantic board + fabrication rules
-              |
-              v
-representation compiler <---- experiment configuration
-              |
-              v
-discrete candidate: connectivity, topology, layers, vias, order
-              |
-              v
-continuous world: particles, primitives, constraint batches, fields
-              |
-              v
-independent exact verifier
-              |
-              +---- typed residuals and pressure ----> coordinator
-```
+- **Input and output.** `kicad_sexpr` (the S-expression tree, parser and
+  writer), `canonical_order` (footprints by reference, their items
+  sorted, so two saves of one design lay out alike), `kicad_nets`,
+  `copper_emit` (tracks, vias and pad vias written back), `geometry`,
+  `copper_geometry`, `roundrect_pad`, `outline` (Edge.Cuts loops and
+  cutouts), `project_rules` and `project_rules/dru.rs` (`.kicad_pro` and
+  `.kicad_dru` rules lowered to router rules), `net_classes`,
+  `connection_rules`, `local_clearance`, `electrical_terminals`, `flip`,
+  `kicad_config` (a library-free KiCad configuration for kicad-cli),
+  `fs_util`.
+- **Lowering.** `board_placer/lower.rs` (a board to a
+  `pcb_placer::Problem`, with `bodies.rs`, `courtyards.rs`, `rules.rs`)
+  and `board_router/lower.rs` (a board to a `pcb_router::Board`, with
+  `geometry.rs`, `pour_plan.rs`, `kept.rs`, `config.rs`). `sub_boards` is
+  called from both.
+- **The flow.** `board_layout` (`layout_kicad_board`), `board_placer/place.rs`
+  (`place_kicad_board`) and `seed_race.rs`, `board_router/route.rs`
+  (`route_kicad_board`), `ladder.rs`, `attempt.rs`, `budget.rs`,
+  `memory.rs`; `work_rate` (budgets in work, the rate calibration),
+  `check_work` (the work a KiCad check is charged), `ledger` (the
+  machine-wide memory ledger), `free_dimension`.
+- **Features.** Under `board_router/`: `diff_pairs`, `lengths` and
+  `meander` (length and skew rules, tuning patterns), `layer_preference`,
+  `bga_fanout`, `via_in_pad`, `via_spans`. Under `board_placer/`: `panel`
+  (panels of copies), `skeleton`, `decoupling`, `edges`, `pair_rows`,
+  `marks`. Elsewhere: `sub_boards` (panels of different boards),
+  `placement_constraints` (constraints.json), `placement_room`,
+  `constraints_template`, `key_matrix`, `netlist_import`,
+  `board_footprints`, `pin_swap`, `necks` (connection-width findings and
+  their repair), `labels`, `silk_fields`, `silkscreen`, `check_repairs`,
+  `fab_export`, `fab_release`, `cost`.
+- **Reporting and verification.** `verification` (ERC, DRC with
+  schematic parity), `native_report` (running kicad-cli and reading its
+  reports), `drc_cache`, `verification_preview`, `verdict` (the verdict,
+  `judge`, `route_facts`, the next actions, the exit codes), `quality`
+  and `aesthetics` (`score-kicad-board`), `describe`, `class_view`,
+  `board_stats`, `run_diagnosis` (`inspect-routing-run`),
+  `corridors_fact`, and the result files `board_router/result.rs`,
+  `board_router/pour_quality.rs`, `board_placer/result.rs`.
+- **Measurement only**, reached from research commands and not from
+  the agent commands: `congestion_samples`, `coarse_probe`,
+  `trouble_probe`, `global_route`, `placement_ablation`, `shrink`,
+  `layer_render`, `footprint_links`, `board_placer/legality.rs`,
+  `board_placer/trace.rs`, `board_router/tools.rs` (but for the track
+  strip that `strip-kicad-tracks` uses). `congestion_rank` holds the
+  race's RUDY pre-ranking, which is on the default path.
 
-## Ownership boundaries
+## `layout-kicad-board`
 
-The semantic model describes electrical and manufacturing meaning. A resistor
-is a two-terminal part with dimensions and placement freedoms; it does not say
-whether an engine should use an analytic rigid body, two particles, four
-particles, or a shape-matching cluster.
+`agent_cli::layout` (src/agent_cli.rs) checks the project, the output
+directory, the router config (a file, or `auto` for the project's rules),
+the constraints and kicad-cli, calibrates the work rate, reserves memory
+in the ledger, and calls `layout_kicad_board` (crates/pcb-kicad/src/board_layout.rs).
+With `free_dimension` it goes to `agent_cli/free_dimension.rs` instead.
+Every improving step below first asks the layout's work clock and
+wall-clock guard (`WallStop`) whether it may run; a step past the
+deadline is skipped and reported as cut.
 
-A representation compiler chooses the continuous degrees of freedom. The
-first available compiler is an experiment, not a selected architecture:
+| # | Stage | Function, file | Hands on |
+| ---: | --- | --- | --- |
+| 1 | Outline sizing (only with an automatic outline) | `size_outline`, board_layout.rs | the outline in the placer config |
+| 2 | Placement | `place_kicad_board`, board_placer/place.rs (below) | `placed/<id>.kicad_pcb`, `board-placer.json`, `KiCadBoardPlacerResult`: the kept poses and the other legal seeds' poses |
+| 3 | Pin swaps (with `pin_swaps` or `swappable`) | `swap_kicad_pins_in_place`, pin_swap.rs | the placed board, nets permuted |
+| 4 | Pours and classes added, the placed board lowered again | `add_pour_zones` (board_router/pour_plan.rs), `lower_placement` (board_placer/lower.rs) | the board as an `Expr`, a `pcb_placer::Problem` for the moves' legality |
+| 5 | Lowering for the router | `core_config` (board_router/route.rs), `lower_for_route` (board_router/diff_pairs.rs, around `lower`) | a `pcb_router::Config` and `pcb_router::Board` |
+| 6 | Pre-ranking of the placements | `rank_placements`, congestion_rank.rs | the candidates in RUDY order (sixteen placements, three probed) |
+| 7 | The race | inline in board_layout.rs: `Router::new` and `Router::probe` per candidate, side by side as the ledger allows; `race_pick`; `race_lines_probe` | one `Router` (the winner's, resumed), its `RoutingResult`, `KiCadRaceReport` |
+| 8 | First route (without a race) | `route_once`, board_layout.rs | a `Router` and its `RoutingResult` |
+| 9 | Move descent (off unless `move_descent`) | `descend`, move_descent.rs | moved poses, the router updated |
+| 10 | Footprint moves where nets fought | inline in board_layout.rs: `Router::update` and `reroute` per candidate pose | the best board and router, or the old ones restored |
+| 11 | Resume and polish | `Router::resume_polished`, `Router::polish` | the router's routes, cleaned up, fewer vias |
+| 12 | Pairs, labels, lengths | `finish_pairs` (diff_pairs.rs), `place_labels` (labels.rs), `finish_lengths` (lengths.rs) | pair copper, label poses, tuning patterns |
+| 13 | Write and check | `emit_routes` (board_router/attempt.rs, with copper_emit.rs), `finish_routed_board` (board_router/route.rs): the copper verifier, the board written to `result/`, KiCad's check | `result/<id>.kicad_pcb`, `drc.json`, `board-router.json`, a `KiCadBoardRouterResult` |
+| 14 | Final ladder (while connections or starved thermals stay and at least 240 s of work are left) | `route_kicad_board` on `placed/` rewritten with the final poses and no copper (the route flow below); kept when better | `result-ladder/` renamed to `result/` |
+| 15 | Starved thermals made solid | `solidify_starved_thermals`, board_router/route.rs | the board, kept where KiCad finds it better |
+| 16 | Neck repair | `repair_necks` (route.rs), `repair_connection_width` (necks.rs) | the board, rechecked by KiCad |
+| 17 | Report | board_layout.rs | `board-layout.json`, `KiCadBoardLayoutResult` |
+| 18 | Verdict | `route_facts` and `judge` (verdict.rs), `write_verdict` (agent_cli.rs) | `verdict.json`, the exit code |
 
-- a two-terminal passive may explicitly opt into two particles plus one
-  distance constraint; the default refuses to choose a representation;
-- the same passive may instead opt into one analytic body pose plus two
-  body-local terminal attachments; translation and rotation mobility are
-  independent semantic controls;
-- a rectangular rigid part becomes four corner particles plus edge and diagonal
-  distance constraints;
-- a trace is a particle chain with one-sided maximum-spacing constraints;
-- a route endpoint initially reuses its terminal particle.
+`stop_after_first_route` ends the layout after stage 8 (labels, the
+check and the report still run). A four-layer board with pours that is
+far from complete after the first route skips stages 10 and 11 and goes
+to the final ladder's narrow-signal attempt.
 
-Particle count is not physical mass. The compiler assigns a separate field
-weight and normalizes it per semantic object, so increasing samples does not
-silently increase field pressure. This v0 weight is deliberately normalized,
-not yet a physical copper/keepout area model. Future pad, segment, via, and
-footprint rasterizers belong behind the same field-scatter boundary.
+## `route-kicad-board`
 
-These are experiments, not a claim that either representation is optimal. The
-endpoint and analytic-body controls are compared on identical semantic inputs;
-a shape-matching particle cluster can be added behind the same boundary.
-Solver kernels branch on constraint family, never on component names or part
-classes.
+`agent_cli::route` handles `--strip` and turns differential pairs on by
+need, then calls `route_kicad_board` (crates/pcb-kicad/src/board_router/route.rs).
 
-The discrete coordinator owns decisions that continuous motion cannot safely
-invent without recording: electrical connectivity, pin binding, graph
-topology, homotopy or corridor family, layer, via count, lane order, and
-transaction rollback. A router or continuous backend may originate a proposal
-that changes any of those and may move components as part of that proposal.
-The proposal is a candidate transaction: its invalidations are explicit, it is
-recertified and exactly validated, and only then is it committed. This lets the
-tracer act on placement without making unreviewable mutations.
+| # | Stage | Function, file | Hands on |
+| ---: | --- | --- | --- |
+| 1 | A prepared copy (planned pours, net classes, `--strip`) | `strip_tracks`, `add_pour_zones`, `write_net_classes` | `<out>.poured/` |
+| 2 | Pin swaps (with `pin_swaps`) | `swap_kicad_pins`, pin_swap.rs | `<out>.swapped/` |
+| 3 | Parse and plan | `parse_board` (canonical_order.rs), `plan_vias_in_pads` (via_in_pad.rs), `MemoryLimits` (memory.rs) | the `Expr`, layer table, pour nets, memory limits |
+| 4 | The attempt ladder | `Ladder::new` and `Ladder::run`, board_router/ladder.rs, over `KiCadRunner` (route.rs). Rungs are pour modes (`ladder_rungs`), pitches the regular one then 0.075 and 0.05 mm (`ladder_pitches`). In order: probe every rung (75 s each, three rungs or more) and continue the leader; the leader's variants first, then other rungs, finer pitches and seed rounds; last the narrow-signal and minimum-clearance steps while connections stay open. Each attempt runs isolated (a panic is recorded, not fatal); KiCad checks are gated (`CheckGate`, budget.rs). | the best attempt's directory, a `KiCadBoardRouterResult` |
+| 5 | Starved thermals, neck repair | `solidify_starved_thermals`, `repair_necks` | the board, rechecked |
+| 6 | Report | route.rs | `board-router.json`; `<out>.partial` renamed to `<out>` |
+| 7 | Verdict | `route_facts`, `judge`, `write_verdict` | `verdict.json`, the exit code |
 
-The verifier is independent of both. Approximate field energy, low particle
-motion, or an attractive animation is never evidence of PCB legality.
+One attempt (board_router/attempt.rs, `route_kicad_board_once`, or the
+runner's `lower`, `probe`, `resume` and `write`):
 
-The native KiCad connection transaction applies this rule to declaration
-deltas. It snapshots the exact parent before any external tool runs, verifies
-a disposable copy, derives only the next schematic/pad connectivity, and
-hydrates that delta onto the parent's existing geometry. Local producers and
-future coupled producers all start from that same hydrated artifact. KiCad
-ERC, DRC, schematic parity, and selected-net connectivity are the admission
-gate. A canonical historical rung may be evaluated as a feasibility control,
-but it cannot be selected because it is not guaranteed to preserve the exact
-parent. If no parent-derived child passes, the byte-identical snapshot is the
-only durable result.
+1. **Lowering.** `lower` (board_router/lower.rs) makes a `Lowered`
+   (`pcb_router::Board` and the expressions to write back);
+   `keep_existing_copper` (kept.rs) and `plan_pairs` (diff_pairs.rs) add
+   kept copper and planned pairs.
+2. **The router.** `Router::new` (crates/pcb-router/src/router/build.rs)
+   builds the lattice and the static maps (shared between routers of one
+   board). `run`, `probe` and `resume` (router/driver.rs) prepare
+   (`routing_order` in global.rs; escapes, plane skeletons and stubs in
+   escapes.rs and fixed.rs; corridors in corridors.rs) and negotiate
+   (negotiate.rs, batching.rs, give_up.rs).
+3. **The finish** (router/finish.rs), in order: the hard repair
+   (resolve.rs), the trouble-makers' repair (trouble.rs: an open net
+   routed through others at a price, the displaced nets routed again,
+   kept when fewer terminals stay open), clean-up (cleanup.rs), the
+   length repair, via reduction (vias.rs), the bend round (bends.rs),
+   freed thermal spokes (guards.rs), straightening (straighten.rs),
+   compaction (compact.rs), per pour net the skeleton's trim, the pour
+   analysis and island stitching (stitch.rs), manual spokes
+   (manual_spokes.rs), and the routes made concrete (output.rs) into a
+   `RoutingResult`.
+4. **Writing.** `write_attempt` (attempt.rs): pair copper, meanders
+   (lengths.rs), `emit_routes` with copper_emit.rs, then
+   `finish_routed_board`.
+5. **KiCad's check.** `verify_materialized_rung` (verification.rs) runs
+   `kicad-cli sch erc` and `kicad-cli pcb drc --schematic-parity`
+   through `run_kicad_report` (native_report.rs), cached on disk by
+   drc_cache.rs, and writes `erc.json`, `drc.json` and
+   `verification.json`.
 
-Generated-parent progression never rematerializes a historical board as its
-next state. Its local portfolio may contain different algorithms or raster
-resolutions; each starts from the same hydrated parent, and selection uses
-native completeness followed by physical copper plus via penalty. Native
-admission is itself configurable. The exhaustive control gates every generated
-candidate. Score-ordered admission retains and ranks every candidate, then
-gates until the first complete child; lower-ranked routes remain explicitly
-unevaluated and cannot be selected. Resolution refinement precedes topology
-escalation because a conservative coarse raster can report a false no-path.
-An optional ordered-refinement scheduler can stop a coarse-to-fine portfolio
-from live prefix scores after an explicit minimum number of entries. This
-changes which candidates are generated, so evidence separately records the
-declared portfolio size, evaluated entries, generated routes, and native
-gates. A stop never removes recovery capability: if every prefix candidate
-fails native admission, all skipped entries are generated and admitted before
-any topology-changing fallback.
+The pour model (pour.rs, router/pour_analysis.rs, fill.rs, spokes.rs,
+sever.rs, reclaim.rs) follows KiCad 10's fill and thermal spokes, so the
+router knows which pads a pour joins.
 
-The KiCad grid adapter keeps multi-terminal topology selectable. `rooted_star`
-is the deterministic independent-branch control. `shared_copper_tree` routes
-one root branch, then attaches each later terminal to ranked points in already
-owned copper. Each trial is trimmed through its last tree contact before
-quality comparison, and only the selected trial reserves copper and vias.
-Configuration bounds the number of attachment searches, their optional
-same-layer physical spacing, and the length/via/router-cost objective. Durable
-evidence distinguishes the ranked `searched_source` from the actual trimmed
-`source`, and accounts all attempted expansions rather than only the selected
-branches. This keeps nearest-only, diverse, and wider portfolios as explicit
-experiments instead of embedding one policy in the adapter.
+## The placement
 
-On a fixed-copper failure it may then run a
-bounded yielding diagnosis: foreign tracks/vias disappear counterfactually
-while pads remain obstacles. A diagnosis is never admissible by itself. The
-first topology repair applies the new target route, proves that only one
-explicitly yielded old connection is missing, reroutes that old connection
-around the target, then repeats the whole native gate. This producer is
-optional configuration beside the local portfolio; future two-net,
-opposite-order, component-motion, and field-based producers fit the same
-attempt boundary.
+`place_kicad_board` (crates/pcb-kicad/src/board_placer/place.rs):
+`prepare_board` parses the board, resolves the constraints
+(placement_constraints.rs) and the project rules, applies the outline,
+keepouts and sides, and lowers it (`lower_placement`) to a
+`LoweredPlacement` holding a `pcb_placer::Problem`. Panels of copies
+(`panel::detect`) and sub-boards (`sub_boards::detect_for_placer`) are
+found. `race_seeds` (board_placer/seed_race.rs) runs the seeds in a
+pool, each by `panel::place_copies`, `sub_boards::place_sub_boards`,
+`pcb_placer::skeleton::place_skeleton` (the race over skeletons) or
+`pcb_placer::place`. The placements are sorted (illegal parts, closed
+pads, relaxation, missed constraints, wirelength), and the kept one is
+written with `placement.html` and `board-placer.json`.
 
-Continuous engines publish a representation-independent semantic solution
-before entering the durable candidate boundary. The current bridge carries
-component poses and ordered connection polylines; an adapter rebuilds terminal
-nodes and route graphs—including deterministic terminal-MST branches for
-multi-terminal nets—and then invokes the same independent exact gates used by
-discrete routers. Solver handles never leak into the candidate. Long semantic
-edges are normally subdivided to the configured particle spacing; preserving
-raw seed vertices is an explicit recovery-test policy.
+Inside `pcb_placer::place` (crates/pcb-placer/src/lib.rs), in order:
 
-The dual-board cold-feedback bridge deliberately narrows that handoff further.
-It prunes the original semantic input to the requested connection prefix,
-regenerates base placement, and lets a bounded router-pressure transaction
-select new component poses. Pressure source, component ordering, proposal
-direction, relational/collision propagation, beam width, neutral-state
-retention, and optional selective rip-up are separate experiment axes. Beam
-states are deduplicated by semantic pose rather than route search history, and
-each retained parent and child remains in the evidence. Placement proposals
-must pass a pad-extended exclusion gate before routing; copper-bearing pairs
-receive board-rule clearance, and push propagation uses the same envelopes.
-The selected semantic routes are then discarded. A zero-copper KiCad rung 0
-is materialized at the selected poses and every requested connection is routed
-again through native progression. Its evidence keeps base placement, all
-pressure/topology attempts, selected poses and demand, native routing, and
-final verification separate; no smaller-prefix layout or provisional route
-can silently become a parent. Native completion is also the placement commit
-boundary. If a feedback-selected pose stops before the requested rung, the
-cold bridge retains that entire trial, independently regenerates the original
-base placement and every route from zero copper, and selects the base only if
-it reaches at least as far. It never continues from the feedback trial's last
-valid partial board. This fail-closed portfolio currently pays for both native
-runs; future-connection reachability and exact-result caching may reduce that
-work but cannot weaken the final gate.
+1. `fit_halos`; `orient::canonical_start` (orient.rs) with the
+   orientation search; `groups::BusGroups::detect` (groups.rs).
+2. `global::global_place` (global.rs): the electrostatic descent
+   (ePlace), from `initial::quadratic_start` (initial.rs, a
+   bound-to-bound wirelength solve of the netlist); stacks.rs glues banks
+   on a wide bus into one body for the descent; rotations chosen.
+3. Per relaxation level (halos, spacing, fine grid, tight bodies):
+   `anneal::anneal` (anneal.rs, with the ratsnest crossings of
+   crossings.rs in its cost), `facing::turn_to_face`, `legal::legalize`
+   (legal.rs), parts seated on board marks.
+4. The refinement (`finish` in lib.rs): `legal::refine_with`, edge
+   copper centred, `repair_relations`, `align_orientations`,
+   `facing::face`.
+5. `exits::repair` (exits.rs, only with `pad_exits`), then the legality
+   and constraints report into the `Placement`.
 
-The first discrete-to-continuous repair handoff resolves selected route-family
-clearance obligations into semantic copper-polyline pairs. The engine compiles
-these to flat segment-clearance rows, without importing family IDs or route
-schemas into its projection loop. Semantic rectangular routing-keepout bodies
-in the selected neighborhood compile to a separate flat segment/body row. Its
-same effective-mass projection can move either trace particles or the oriented
-body's permitted translation/rotation degrees of freedom. Endpoint-owner
-bodies are exempt exactly as they are in the independent validator.
-Fixed-context copper has zero mobility.
-Selected endpoints stay fixed unless they have a body-local attachment; then
-projection can transfer force into the component's independent
-translation/rotation degrees of freedom. Combined segment/segment and
-segment/body expansion has a hard ceiling. The adapter rematerializes
-exact semantic endpoints and route-graph nodes after f32 projection and commits
-only an exact-complete or Pareto-improved proposal; otherwise it returns the
-original candidate and keeps the failed attempt as evidence.
+`skeleton.rs` places the active parts first and the passives around the
+held skeleton; `constraints.rs` holds the hard and soft constraints;
+`buckets.rs` the neighbour grid; `view.rs` the HTML playback.
 
-## Experiment interface
+## Other commands
 
-`pcb-pipeline` carries the versioned contract ported from `layout-trace`. Every
-pass declares prior-pass dependencies, required and established certified
-invariants, invalidations, and debts introduced or discharged. The contract is
-independent of whether a pass is an in-process Rust implementation, a GPU
-dispatch, or a standalone experiment.
+- `place-kicad-board`: `agent_cli::place` builds the layout's placer
+  config (`placement_check_config`, board_layout.rs) and calls
+  `place_kicad_board`; KiCad checks the placed board.
+- `import-kicad-netlist`: `import_kicad_netlist_options`
+  (netlist_import.rs) exports the netlist with kicad-cli, finds the
+  footprints (or takes them from a board, board_footprints.rs), and
+  writes the board, `constraints.json` (key_matrix.rs and
+  constraints_template.rs for the starters) and `layout.json`.
+- `describe-kicad-board` (describe.rs), `fab-kicad-board`
+  (fab_release.rs), `drc-kicad-board` (verdict.rs, native_report.rs),
+  `inspect-routing-run` (run_diagnosis.rs), `score-kicad-board`
+  (quality.rs), `strip-kicad-tracks` and `strip-kicad-copper`
+  (board_router/tools.rs, copper_emit.rs).
+- The research commands (`RESEARCH_USAGE` in src/main.rs) call the
+  measurement-only modules above.
 
-The small runtime `Stage<Candidate>` interface still needs transactional
-candidate commit and hard budgets before it should coordinate full-board runs.
-The same fixture must eventually be runnable with:
+## Off by default, still in the code
 
-- no continuous relaxation;
-- particle constraints only;
-- particle constraints plus an Eulerian density/congestion field;
-- alternative representation compilers;
-- CPU and GPU backends;
-- different discrete coordinators.
+- **The move descent** (`move_descent`, move_descent.rs): after the first
+  route, single parts nudged, turned or swapped where pcb-global's
+  incremental global route and then a local reroute say fewer terminals
+  stay open.
+- **Bus bundles** (`bus_bundles`, pcb-router router/bundles.rs): buses of
+  four or more nets joining the same footprints routed first, side by
+  side, in one corridor.
+- **The topological engine** (`engine: "topological"`, pcb-topo) and
+  `tighten`.
+- **Global guidance** (`global_guidance`, board_placer/guidance.rs and
+  pcb-placer guidance.rs): the global route's overflow in the anneal and
+  in the layout's moves.
+- **Pad exits** (`pad_exits`, pcb-placer exits.rs, board_placer/exits.rs,
+  pcb-router router/pad_exits.rs), **pair rows** (`pair_rows`,
+  board_placer/pair_rows.rs, pcb-placer facing.rs), **length minima**
+  (`length_minima`), **the length reroute** (`length_reroute`), **blind
+  vias** (`blind_vias`, board_router/via_spans.rs).
 
-Every comparison records exact findings first, then completion, width achieved,
-vias, length, displacement, residuals, deterministic work, time, and memory.
-Algorithm and representation IDs, complete configuration, seed, input hash,
-work budget, and output hash are part of an experiment record. Wall time alone
-is never a fair budget across CPU, GPU, and historical implementations.
+## Where things happen
 
-## Field hierarchy
-
-The grid is advice and a coarse continuous objective, not geometry authority.
-Each copper layer may have several resolutions and channels for occupancy,
-routing demand, capacity, congestion pressure, and gradients. Objects scatter
-into cells; stencil or multigrid passes solve the field; objects gather forces.
-
-Large boards use overlapping tiles with halos and a coarse board-wide level.
-Independent hard tiles are rejected because long nets and component motion
-cross their boundaries. The intended decomposition is a global coarse solve,
-overlapping local solves, and exact geometric reconciliation.
-
-## Evidence and viewer
-
-Every backend publishes the same frame contract: stable particle/body IDs,
-explicit body poses, attachment and constraint residuals, field pressure,
-correction vectors, active record/scalar-row work counts, and phase timings.
-The viewer only renders this evidence. It does not recompute health or run a
-second JavaScript solver.
+| What | Where |
+| --- | --- |
+| Work budgets, the rate calibration, determinism | work_rate.rs; pcb-router `set_expansions_per_second`; pcb-placer `work()` |
+| The wall-clock guard | pcb-router router/wall.rs; `WallStop` in board_layout.rs |
+| Memory reservations | ledger.rs; board_router/memory.rs; pcb-router mem_profile.rs |
+| The project's rules and custom rules | project_rules.rs, project_rules/dru.rs; the verdict's `custom_rules` in verdict.rs |
+| Exit codes, next actions, `verdict.json` | verdict.rs (`EXIT_*`, `judge`), src/agent_cli.rs |
+| The input checks before a run | src/agent_cli.rs (`check_project`, `check_constraints`, `check_pours`, `check_kicad`) |
+| Panels | board_placer/panel.rs (copies), sub_boards.rs (different boards) |
+| Differential pairs | board_router/diff_pairs.rs; pcb-router give_up.rs |
+| Length and skew rules | board_router/lengths.rs, meander.rs, layer_preference.rs |
+| BGA fan-outs, vias in pads, via spans | board_router/bga_fanout.rs, via_in_pad.rs, via_spans.rs |
+| Lattice lines at pin rows | pcb-router pin_lines.rs; `race_lines_probe` in board_layout.rs; the ladder's probes in ladder.rs |
+| Silkscreen and labels | labels.rs, silk_fields.rs, silkscreen.rs |
+| The fab release | fab_release.rs, fab_export.rs, cost.rs |
+| Environment variables | grep the `PCB_*` name; the index in [handover.md](handover.md#switches) |

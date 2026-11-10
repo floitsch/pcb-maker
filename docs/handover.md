@@ -1,326 +1,70 @@
 # Hand-over (state as of 2026-11-10; measured by layout sweep v37, the nightly of 2026-11-10 on main 8bfeb31)
 
-What the tool does today, which benchmarks count, what is known to be
-wrong, where everything is and how to work on it. What each round of work
-measured and changed is in [changelog.md](changelog.md), newest first
-(the dated "Committed on ...", triage, sweep and measurement sections that
-used to be here; code comments and docs that cite `docs/handover.md,
-"Committed on ..."` mean those sections). Longer-lived ideas are in
-[todo.md](todo.md); the commits themselves in git.
+Read this first. It says what the tool does today, which benchmarks
+count, what is known to be wrong, how to work on the code and what still
+bites. [architecture.md](architecture.md) maps the code: the crates, the
+stages of a layout and a route, and the file that owns each.
+[config-reference.md](config-reference.md) lists every setting with its
+default (generated from the code). The history of each change is in git
+(`git log`, `git log -S <name>`); this file keeps only the current state.
 
-## State on 2026-11-05
+## What the tool does today
 
-- **A layout's rows decided by its probe's open pads (branch
-  pin-lines-layout, 2026-11-08).** A layout (the sweep's flow) had lines
-  at the pin rows only with `"pin_lines": true` (trial 8). Now, where the
-  race's probe of the placement it keeps leaves pads unfinished at rows
-  the regular lattice misses, the first route starts over with the lines
-  and every route after it has them; else the final ladder decides at its
-  probes as route mode does. The probe's count does not judge the lines in
-  a layout (RP2040_base: 82 nets unfinished with them against 75, yet its
-  first route 11 open against 40). On the 28 sweep boards whose placement
-  misses an exit row: 13 -> 14 strict (ATAT1800), none lost, 362 -> 296
-  unconnected; the short tier unchanged. `PCB_LAYOUT_LINES_PROBE=0` for
-  A/B. Open problems 2 and 8.
+pcb-maker places and routes KiCad 10 boards for agents. The agent
+commands (`pcb-maker --help`; the contract in [agents.md](agents.md)) are
+`import-kicad-netlist` (a board from a schematic, with starter
+constraints), `describe-kicad-board`, `layout-kicad-board` (place and
+route), `place-kicad-board` (the layout's placement alone),
+`route-kicad-board` (route a placed board), `inspect-routing-run`,
+`drc-kicad-board`, `fab-kicad-board` (a release gated by KiCad's checks)
+and a few tools around them. Every run ends with KiCad's own ERC, DRC
+and connectivity, a `verdict.json` and an exit code (0 complete, 1
+incomplete, 2 input error, 3 cut by the wall clock, 4 internal error,
+the memory ledger's abort included). KiCad decides pass or fail, not the router's own count.
 
-- **The rows decided at the probes (branch pin-lines-probes,
-  2026-11-08).** The ladder no longer waits for its leader's run to see
-  the rows: where the leader's probe leaves pads unfinished at rows the
-  regular lattice misses, its rung is probed once more with the lines
-  (the same work, at most a third of what is left under the bound) and
-  leads at a tenth fewer unfinished nets; the trigger after the leader's
-  run stays for the rest. Designer tier 77 strict, none gained or lost,
-  2683 -> 2668 unconnected (RP2040_base 20 -> 5); expansion tier 25 -> 26
-  (backplane); fingerprints and short tier unchanged. Open problem 2.
+Budgets are counted in work (search expansions and placement units at
+rates measured at the start, or pinned with `PCB_WORK_RATE`), not in
+wall time, so a run is deterministic for its input, binary and rates
+whatever the thread count, unless the wall-clock guard (`wall_guard`,
+twice the budget) cuts it. A layout's default budget is 1500 s of work:
+the placement race gets up to 40 %, the moves up to 65 % of the total,
+the final ladder what is left.
 
-- **Banks on a wide bus glued (branch bus-stacks, 2026-11-08).** The
-  netlist's stacks of three parts or more that share nine tenths of their
-  nets and 24 at least (memories on one parallel bus) move as one bank
-  through the global placement's descent, by default (`Stacks::BANKS`).
-  SNSP-CPU-01's loss under the multi-net rule was a redraw: its two SRAMs
-  end as neighbours with and without the glue, and a glued pair only
-  reseeds the board; pairs are therefore left out. Census: video and
-  mackerel-08 of 155 boards (none of the short tier or the expansion
-  intake). Stage 2 on both: video 92 -> 0 KiCad unconnected by the median,
-  better on five of five seeds, three strict passes gained; mackerel-08
-  complete and strict on all five in both arms. Open problem 4.
+What a layout does by default ([architecture.md](architecture.md) has
+each stage with its file): it places up to sixteen seeds (a quadratic
+start from the netlist, an electrostatic global placement in which banks
+on a wide bus move as one body, an anneal with the ratsnest crossings in
+its cost, legalisation and refinement; with 500 s of placement work or
+more, the race over skeletons seats the active parts before the
+passives), ranks them by RUDY congestion, probes the best three with a
+short route and keeps the one with the fewest open terminals after the
+rip-up. It then routes with the lattice router (PathFinder negotiation,
+pours as KiCad 10 fills them with thermal spokes, dog-bones for grid
+arrays, corridor stubs for pocketed pads, lattice lines at fine-pitch
+rows where a probe leaves them open), tries footprint moves where nets
+fought, and runs route mode's attempt ladder while connections stay
+open. KiCad's connection-width findings are then repaired with KiCad's
+own fill, starved thermals get a solid connection where KiCad finds the
+board better, and `length` and `skew` rules are kept by meanders.
 
-- **The netlist's stacks (branch netlist-stacks, 2026-11-08; not
-  taken).** The netlist start's stacks (parts on the same nets on one
-  spot) are lost in the global placement's descent, not at the start: a
-  bank at the start is undone wherever no wire holds the parts. Glued
-  through the descent, video's memory modules seat in their skeletons:
-  KiCad unconnected 92 -> 0 by the median, better on five of five seeds,
-  three strict passes. Stage 2 over the 19 sweep boards the multi-net rule
-  acts on (census of 155 boards): SNSP-CPU-01, katia and RP2040_base worse
-  beyond their seed spread, vaio_re's one strict pass lost; by the rule the
-  switch and the glue code are gone (in the branch's history). Open
-  problem 4.
-
-- **The passives' stall and the netlist's stacks (branch passives-descent,
-  2026-11-08).** The passives' stall around a held skeleton costs nothing
-  (the anneal seats every passive left in a held body); without its stall
-  stop stage 1 gave -2.2 % first-route open (p 0.174): too small for stage
-  2, the switch removed. The 4in1-mini's courtyard level is its
-  bulk-capacitor bank; video's skeletons fall back at its stacked memory
-  modules. The trace gains each placement's level walk and the skeleton's
-  left-out parts; stages.py's variants no longer start from the designer's
-  poses by mistake. Open problem 4.
-
-- **Lattice lines where the rows are open (branch pin-lines-default,
-  2026-11-08).** The lines' losses of 2026-11-07 were routes moved on
-  boards near their limit, not the lines' geometry; the route-mode ladder
-  now turns them on itself after its leader's run, when KiCad's open pads
-  are in parts whose rows the regular lattice misses (`pin_lines` unset;
-  true and false as before). Designer tier against the knockout fix
-  alone: 75 -> 77 strict (OpenAirScope, koeg-board), none lost, 2707 ->
-  2682 unconnected. The knockout fix (a knockout plate's margin and a
-  face's line layout as KiCad draws them: Quanta75's via at the '0bsilab'
-  plate) loses Quanta75_BareRP2040 (76 -> 75; 1 open at its RP2040 row).
-  Open problem 2.
-
-- **Lattice lines at pin rows (branch row-lattice, 2026-11-07).** Design 3
-  of the router's ceiling: the lattice's lines are per-axis tables, and a
-  fine-pitch part's rows get the lattice at their own phase (a band) or
-  single lines. RP2040_base 36 -> 5 open, vaio_re 11 -> 3; the designer
-  tier 76 -> 77 strict (+3 -2), 2709 -> 2679 unconnected; the expansion
-  tier 25 -> 28 strict. Off by default by the rule (two passes lost); the
-  router setting `pin_lines` for boards whose open items are such rows.
-  Open problem 2.
-
-- **Pad access (branch pad-access, 2026-11-07).** Dead pads now carry
-  `wall`, which says what walls them. A dru clearance on `A.isPlated()`
-  now holds for plated pads and vias only, as in KiCad. With that the
-  laptop power board passes on the designer tier (75 -> 76 strict), and
-  the motherboard goes 15 -> 2 open (its WLCSP middle balls are the
-  input's). Open problem 18.
-
-- **main 1318b334 (x1911).** The numbers are the nightly of 2026-11-04
-  (main 688b59c, x1887), the newest that has finished: it ran before
-  nearly all of 2026-11-04's work (the prepared BGA fan-outs, the room
-  around grid arrays, the courtless rule, the fourth router round, the
-  second memory round, the switch removal). The nightly of 2026-11-05
-  runs on x1909 (main 93162bd9: all of that, `skeleton_race` off) and is
-  the first to measure it; it had not finished when this was written (it
-  runs from 02:00 to about 15:00). By 2026-11-04's: sweep v31 **61 of
-  109 strict** (61 per type; 62 on every night from v25 to v30), 2514
-  unconnected; the matched designer tier 68 strict (71 per type); over
-  the 100 target boards our layouts leave 1297 open connections where
-  the designer's placement, routed by the same binary at the layout's
-  routing budget, leaves 351: **placement 73 %** (+946; ours worse on 29
-  boards, the same on 65, better on 6), routing 27 % (76 % / 24 % the
-  night before); the expansion tier 24 of 46 strict (558 unconnected),
-  the short tier 7 of 12 strict (22; MIDAS-MK1.1-revA lost its pass, in
-  the sweep too), the fingerprints identical.
-- **Corridor stubs (branch lattice-corridors, 2026-11-05).** OpenFC's
-  U10.5, the one connection behind every lost OpenFC pass, connects
-  phase-free: a pad whose escape nodes the lattice pockets leaves by a
-  stub off the lattice (`corridor_escapes`, on; open problem 4). With
-  it OpenFC strict over ten seeds: plain 10 of 10, the skeleton race 7
-  of 10 (pour islands) at the short tier's budget, 10 of 10 at the task
-  budget; the tiers unchanged.
-- **The race over skeletons on by default (branch skeleton-race-4,
-  2026-11-05)**, where a seed's placement work is at least 500 s (the
-  task budget's 600: on; the short tier's 200: plain, byte for byte):
-  OpenFC's lost pass was the short budget's skip to the tight levels
-  (open problem 4; placer.md "The skeleton's budget").
-- **Placement since 2026-11-03.** Two measurements say where the gap is.
-  Pinning the designer's non-passive parts (a median 28 % of the movable
-  parts) recovers a median 0.92 of the designer's first-route advantage
-  on seven boards, the connectors alone -0.16, with the three largest
-  ICs 0.15, and our objective accepts that arrangement (docs/placer.md,
-  "Which placement decisions matter (2026-11-04)"). Stage by stage, the
-  global placement loses the coarse arrangement (the active parts a
-  shuffle's distance from the designer's, the seeds as far from each
-  other; it decides video and SNSP-CPU-01), and on the dense boards the
-  anneal loses the fine one while it lowers our objective (the 4in1 and
-  Glasgow without it: 142 against 174 and 95 against 149 first-route
-  open terminals; "Where the arrangement is lost (2026-11-04)"). The
-  race over skeletons (`skeleton_race`) passes the full protocol on
-  the dense boards (stage 2 KiCad unconnected -12.1 %, p 0.002; video
-  -33 %, protoesp -40 %) and is **on by default since 2026-11-05** where
-  a seed's placement work reaches 500 s: OpenFC's lost strict pass was the
-  short tier's budget (at the task budget 10 of 10 strict in both arms;
-  "The skeleton's budget (2026-11-05)"). Also on by default since: the room
-  around dog-boned grid arrays (`bga_room`: Glasgow 343 to 262
-  unconnected over three seeds; "Room around grid arrays") and the
-  courtless rule (two footprints without a courtyard keep the boxes of
-  their pads and outlines apart; its stage-1 screen +1.7 %, null, where
-  the off side shipped 292 overlapping pairs; "Footprints without a
-  courtyard, and their slots"). Off: `pad_exits` (stage 1 on its four
-  boards -3.0 %, p 0.228: a survivor, pending the full protocol),
-  `pair_rows`, `length_minima`. Failed stage 1 and removed: the net
-  weightings (`rail` +5.6 %, `flat` +4.0 %), rows of repeated parts
-  (`align_rows`, +4.2 %).
-- **Routing since 2026-11-03.** The prepared fan-outs for BGAs are on
-  (`bga_fanout`: Glasgow's U30 on the designer's placement 55 to 15
-  open, layouts 372 to 343 over three seeds; no other task board takes a
-  plan; docs/router.md, "Prepared fan-outs for BGAs (2026-11-04)"). With
-  the router's `diff_pairs` on, every routed stage of a layout plans the
-  pairs, not only the final ladder (docs/router.md, "The layout's own
-  routes (2026-11-04)"), at a price in connections on dense boards
-  (jetson 23 and 44 unconnected where 0 and 9; open problem 15). The
-  length reroute is off (`length_reroute`: no length finding went;
-  open problem 16). The crossing dive was null on the five boards it was
-  built for and was removed with the fan-out step, the last
-  connections' ejection chains, the capacitated corridors, the island
-  stubs and the final route from the router's state ("Removed
-  experiments (2026-11-04)"). Blind, buried and micro vias landed off on
-  2026-11-05 (x1911, `blind_vias`: no task board allows a span; route
-  mode on the intake's HDI boards fpga_large 360 to 275 KiCad
-  unconnected, OpenAIO-Whoop 135 to 117; one layout seed lost one; open
-  problem 14).
-- **Agent flow since 2026-11-03.** Three fresh-agent trials on
-  2026-11-04 (docs/reviews/2026-11-04-fresh-agent-trial-4.md, -5.md,
-  -6.md: Goga64's ULK keyboard panel from its netlist, Quanta75, oro's
-  link; ducktop2 right_io's 21 pairs, jetson, the SmartSpin2k panel;
-  eurorack-pmod from its schematic, the firestarter's DVP length rule,
-  the laptop's power on an outline of its own) and their leftovers:
-  describe-kicad-board's `outline.cutouts`, a footprint's own slots
-  moving with it, the pairs' next action, a row whose pads would short
-  refused before the run, the input's observations folded, libraries
-  found where a table names another machine's folder
-  (`relocated_libraries`), `strip-kicad-tracks --keep-nets`, the rate's
-  action first where the first route took the budget, protectors pulled
-  to their IC, the missing list folded by footprint, an RF module's
-  antenna in the starter. The settings no longer accept the removed
-  switches' keys (the structs deny unknown fields): a layout.json or
-  router.json that names one is refused.
-- **Speed and memory since 2026-11-03.** The same placements and routes,
-  cheaper: the fourth placer round 1.4 % less placement CPU, the fourth
-  router round 11.9 % less router CPU, the second memory round the
-  layout's peaks -48.8 % (geometric mean over the ten largest-peak
-  boards, the largest 5160 to 3156 MB; the short tier -27 %; CPU -1.5 %
-  in pinned pairs; the nightly's estimates follow once three nights
-  carry the binary). The switch removal took 6989 lines of Rust out, the
-  default path byte for byte (docs/profiling.md; changelog, 2026-11-04
-  and 2026-11-05).
-- **The direction, decided on 2026-11-04.** Placement is 73 % of what
-  stays open, and the day said which part of it: the active parts'
-  arrangement as a whole, lost coarse by the global placement and fine
-  by the anneal's objective. So: **one placement bet at a time**, judged
-  by stage 1 (the first route, five seed pairs on the eleven dense
-  boards; the skeleton race's took 23.7 CPU hours for both arms) and
-  then by the full protocol (benchmarks.md, "Measurement discipline:
-  placer defaults", "The ladder of placer measurements"). The current
-  bet was the skeleton race: BETTER by the full protocol on the dense
-  boards, blocked by OpenFC's lost strict pass (a skeleton that seats only
-  at a tight level packs a small board tighter than the plain placement); the next question is the anneal's
-  judge (the stage-1 screen without the anneal, `PCB_PLACER_SKIP_ANNEAL`,
-  is running). **No more single-term levers**: the day's (the net
-  weightings, rows of repeated parts, length minima, pair rows) moved
-  the term they aimed at and not the routes. A lever that loses or is
-  null under its measurement is removed, not kept as an off switch
-  ("Removed experiments (2026-11-04)"). A fresh-agent trial every few
-  days (trials 4 to 6 on 2026-11-04).
-- **The global placement starts from the netlist (2026-11-07, branch
-  global-start; placer.md "The global placement's start (2026-11-07)").**
-  The parts began at one point with a noise of 5 % of the board, and the
-  active parts' arrangement was that noise's. Now a quadratic
-  (bound-to-bound) wirelength solve with the fixed pins as anchors places
-  them before the descent, a tenth of the noise breaking ties; panel
-  copies keep their own starts. Stage 0: nearer the designer's on all
-  four diagnosis boards, the race's seeds agreeing 0.48 to 0.85 (were 0.23
-  to 0.77), the objective 0.44 to 0.96 of ours except video (1.07, 1.10).
-  Stage 1: **-7.9 %** first-route open terminals, sign-flip p 0.014
-  (MegaDrive -47 %, SNSP-CPU-01 -41 %, the 4in1 -26 %; the 4in1-mini
-  +5 %); as landed, with the panel copies' starts kept (SmartSpin2k
-  equal to off), -8.9 %, p 0.007. **Stage 2: BETTER**, KiCad unconnected
-  -6.8 %, sign-flip p 0.020, sum of medians 558 to 458, every pair sum
-  falls (MegaDrive -54 %, SNSP-CPU-01 -50 %, DSP-ADAU1452 -51 %, the 4in1
-  -17 %; the 4in1-mini +17 %, video +8 %); strict passes dense 5 to 6,
-  short tier 7 to 9, none lost; CPU +2 %. One new KiCad error type on the
-  short tier: WLED_Matrix's GND pour necks (`connection_width`, 9 on the
-  tier's seed), which off has too at other seeds (two of five seeds in
-  each arm). On by default, no switch, pending the merge.
-- **In flight**: "Working on it" below.
-
-## The flow in one paragraph
-
-`layout-kicad-board` reads the board in a canonical order (footprints by
-reference, their pads and graphics sorted, so two saves of one design lay
-out alike), places the free footprints (ePlace-style global placement from
-a canonical orientation, annealing with the ratsnest crossings in its cost
-since 2026-10-28, legalisation and refinement, with the escape demand of
-each part's sides in the density, the rotations, the legaliser and the
-refinement since 2026-10-24; a panel of copies places one copy and
-replicates it (`panel_copies`), a panel of different boards places each
-board in its own piece with its nets split and no part on a tab or a
-frame (`sub_boards`: the outline cut at necks, mouse-bite rows and V-cuts);
-up to 16 placer seeds run in a pool of the search threads and are judged
-in seed order; the race ranks them by RUDY and their crossings and probes
-the best three with a 75 s route, judged since 2026-11-03 by the open
-terminals after ripping the conflicted branches, docs/placer.md "The race
-ranks its probes by the ripped count"), routes the board with the lattice
-router (PathFinder negotiation; pours as fill the pads join through
-thermal spokes modelled on KiCad 10's filler and DRC, stranded pads routed
-as tracks, islands stitched, manual spokes where the model finds a pad
-short), tries footprint moves (the pin-row gaps follow a moved part since
-2026-11-03), resumes the first route briefly, polishes (clean-up and via
-reduction) without renegotiating, and - when connections stay open - runs
-the attempt ladder (probe every pour mode, continue the best; then the
-regular rungs, finer pitches and seeds; with work kept in reserve, a last
-attempt with signals at the project's narrowest predefined width). A
-four-layer board with pours that is far from complete after the first
-route takes that narrow attempt directly, then, with 240 s of work left,
-the same attempt in the other pour mode. KiCad's connection-width findings
-(necks and gaps) are repaired afterwards with KiCad's own fill. The
-project's custom rules are kept where the router can (the verdict's
-`custom_rules` says which and how), `length` and `skew` rules by meanders
-and a length repair on the layout's own routes too, and a footprint whose
-small pads the designer's board holds vias in gets a filled and capped
-via in each pad no track can leave (`via_in_pad`); a grid array's inner
-balls whose class's via does not fit a diagonal gap get a dog-bone before
-routing (`bga_fanout`, since 2026-11-04). Every budget is in work
-(search expansions and placement units at rates measured at the start,
-the reference's 3.15e6 and 150e6 a second scaled to the machine; pour
-analyses and KiCad checks by a model), so a layout is deterministic for
-its input, binary and rates (`PCB_WORK_RATE` pins them; the tiers pin the
-reference's), whatever the thread count, unless the wall-clock guard
-(`wall_guard`, 2 times the budget) cuts it (`cut` in the verdict). KiCad's
-ERC/DRC/connectivity decide pass or fail (exit codes 0-4 and
-`verdict.json`; without a reference, a footprint's own findings and the
-input's own edge, mask and courtyard findings do not count).
-`place-kicad-board` is the layout's placement alone (its budget share,
-seeds and router rules, at the reference's rates by default: at the same
-rates the layout's placement byte for byte). `route-kicad-board` is the
-layout without placement; `import-kicad-netlist` starts an agent's board
-from a schematic (`--footprints-from` a designer's board; starter
-constraints for key matrices). See [router.md](router.md),
-[placer.md](placer.md), [constraints.md](constraints.md),
-[agents.md](agents.md).
+Off by default, each a setting: blind, buried and micro vias
+(`blind_vias`), differential pairs in a layout (`diff_pairs`; route mode
+turns them on where the project's rules ask for pairs), `pad_exits`,
+`pair_rows`, `length_minima`, `length_reroute`, the move descent
+(`move_descent`), bus bundles (`bus_bundles`), the topological engine
+(`engine: "topological"`). [config-reference.md](config-reference.md)
+has each setting with its doc comment.
 
 ## Benchmarks that count
 
-Only the current references; older sweeps and tiers are in
-[changelog.md](changelog.md) and [benchmarks.md](benchmarks.md).
-
-The newest nightly measurement of main (scripts/nightly.sh; the table of
-the last 14 nights is in [benchmarks.md](benchmarks.md#nightly)):
+The nightly (`scripts/nightly.sh`, a systemd user timer at 02:00) runs
+every stage on main's head and writes `build/nightly/<date>/summary.md`.
+The line below and the next paragraph are rewritten by the nightly;
+[benchmarks.md](benchmarks.md) has the table of the last 14 nights.
 
 <!-- nightly-state:begin -->
 **Nightly** 2026-11-10 (main 8bfeb313afbf, `build/nightly/2026-11-10/summary.md`): fingerprints identical; expansion 26/46 (strict 26), 556 open; short 9/12 (strict 9), 16 open; sweep 69/109 (strict 70), 1552 open; designer 75/109 (strict 76), 2672 open at 0.613; gap placement 67%, routing 33%.
 <!-- nightly-state:end -->
-
-What main does now, by the nightly of 2026-11-04 (main 688b59c, x1887;
-it ran before the prepared BGA fan-outs, the room around grid arrays,
-the courtless rule and the switch removal: the nightly of 2026-11-05, on
-x1909, is the first to measure them):
-
-| Stage | Boards | Result | Unconnected |
-| --- | ---: | --- | ---: |
-| Layout sweep (v31; stacked parts and constraints, 1500 s of work) | 109 | **61 strict** (61 per type), 2 without a result; 62 on every night from v25 (2026-10-29) to v30, 61 on v24, 59 on v23, 57 on v22 | 2514 |
-| Matched designer tier (the designer's placement at the layout's routing budget, scale 0.675) | 109 | **68 strict** (71 per type) | 2759 |
-| The gap over the 100 target boards (`compare.py --gap`) | 100 | placement **73 %** (+946), routing **27 %** (351) of the layout's 1297 open | - |
-| Expansion tier (route mode, 8 x 1) | 46 | **24 strict** | 558 |
-| Short tier (12 flip-prone boards, a third of the budget, 3 x 2) | 12 | **7 strict** | 22 |
-| Fingerprints (Castor, k30-SBC, jetson, Sisu; route mode, a quarter budget) | 4 | identical night to night | 42 |
-
-The night's losses: MIDAS-MK1.1-revA's strict pass (0 to 2 open) in the
-short tier and the sweep, and OpenAirScope's (0 to 1) in the sweep
-([benchmarks.md](benchmarks.md#layout-sweep-v31-2026-11-04)). The day's
-packages measured their own changes on the short tier, the fingerprints
-and place checks (changelog, 2026-11-04 and 2026-11-05).
 
 **Layout sweep v37** (the nightly of 2026-11-10, main 8bfeb31, written
 by the nightly): **70 of 109 pass the strict rule** (69 the per-type
@@ -336,970 +80,414 @@ binary (budget scale 0.613): 76 strict passes (75 per type); over the
 and the losers in
 [benchmarks.md](benchmarks.md#layout-sweep-v37-2026-11-10).
 
-The sweeps before (v16 to v21 by hand, v22 to v29 written by the
-nightly), their tables, gap splits and triage are in
-[benchmarks.md](benchmarks.md) and [changelog.md](changelog.md).
+The stages, all on the committed task list `benchmarks/agent-tasks/tasks/v7`:
 
-**Not run by the nightly.** The quick tier (30 boards, full budget; last
-reference `build/quick30-x1152.log`, tasks v6: 24 of 30, predating order
-independence, so not a base) and the schematic tier (12 boards from the
-designer's schematic, a third of the budget; last `build/sch-x1161.log`
-of 2026-10-16: 10 of 12). Run them when a change touches their path.
+| Stage | Boards | What it measures |
+| --- | ---: | --- |
+| Layout sweep | 109 | Full layouts from stacked parts and constraints, 1500 s of work each, 10 jobs x 2 threads. The headline: strict passes (0 unconnected, no copper error beyond the designer's own at the same place). |
+| Matched designer tier | 109 | The same binary routing the designer's placement at the layout's routing budget (the previous sweep's median final-ladder share). |
+| The gap split | 100 | `compare.py --gap --targets` over the sweep and the designer tier: how much of what stays open is placement and how much routing. |
+| Expansion tier | 46 | Route mode on the designer's placement, 8 x 1. |
+| Short tier | 12 | Boards that flip, a third of the budget, 3 x 2. A package's iteration tier. |
+| Fingerprints | 4 | Castor, k30-SBC, jetson, Sisu in route mode at a quarter budget with `PCB_ROUTER_FINGERPRINT=1`: identical night to night unless the routing changed. |
 
-**Against other routers** (complete; Florian 2026-10-23: the head-to-heads
-stand and are not rerun): Freerouting 2.2.4 and KiCadRoutingTools on the
-v17 placements (x1367, 2026-10-21 to 23) and Freerouting against our cold
-route (x738, 2026-10-15): README.md, "Status", and
-[benchmarks.md](benchmarks.md#freerouting-against-x1367-2026-10-21).
+Not run by the nightly: the quick tier (30 boards at the full budget)
+and the schematic tier (12 boards from the designer's schematic). Run
+them when a change touches their path. The head-to-heads against
+Freerouting and KiCadRoutingTools are complete and are not rerun
+(README.md, "Status").
 
-**PCBench / PCBWorld D3** (2026-09-29): 110 of the 114 D3 agent tasks
-laid out clean ([the tasks README](../benchmarks/agent-tasks/README.md#2026-09-29-the-114-d3-test-boards)).
-
-How to run them (side by side: run.py admits each board against the
-machine's memory ledger, which every binary reserves in too; `--lock`
-takes build/quick-tier.lock for one tier at a time; load under 40; the
-tiers default to 2 search threads a board and physical cores / 2 boards,
-8 x 2 on the 5950X; every tier on tasks v7; the nightly's own arguments
-are in scripts/nightly.sh):
+How to run a tier (each board is admitted against the machine's memory
+ledger; keep the load under 40; the nightly's own arguments are in
+`scripts/nightly.sh`):
 
 ```sh
-B=build/bin/pcb-maker-x1911
-benchmarks/agent-tasks/run.py build/short-x1911 --tier short --jobs 3 --threads 2 --binary $B > build/short-x1911.log
-benchmarks/agent-tasks/run.py build/exp-x1911 --tier expansion --jobs 8 --threads 1 --binary $B > build/exp-x1911.log
-benchmarks/agent-tasks/compare.py build/nightly/2026-11-04/short.log build/short-x1911.log
+B=build/bin/pcb-maker-x<n>
+benchmarks/agent-tasks/run.py build/short-x<n> --tier short --jobs 3 --threads 2 --binary $B > build/short-x<n>.log
+benchmarks/agent-tasks/run.py build/exp-x<n> --tier expansion --jobs 8 --threads 1 --binary $B > build/exp-x<n>.log
+benchmarks/agent-tasks/compare.py build/nightly/<date>/short.log build/short-x<n>.log
 ```
 
-The full sweep: `benchmarks/agent-tasks/run.py build/layout-x1911
---tasks benchmarks/agent-tasks/tasks/v7/tasks.json --binary $B --jobs 10 --threads 2 --quality --order peak-desc`
-admitted by the same ledger (the nightly runs it; a package does not).
-Router questions go to route mode on fixed placements (`--route-from
-<earlier output dir>`), CPU claims to pinned simultaneous pairs; the
-discipline is in the tasks README, "How to measure"; placer defaults
-under "Working on it" below.
+Router questions are measured in route mode on fixed placements
+(`--route-from <earlier output dir>`), CPU claims in pinned simultaneous
+pairs. The discipline is in benchmarks/agent-tasks/README.md, "How to
+measure".
 
 ## Not targets
 
-- `thpoll83__PolyKybd__poly_kb_molecule_*` (5 tasks): tile panels with
-  duplicated references (SW1 sixteen times, 576 footprints on 29 nets); the
-  designer's own board has 266 unconnected. Kept in the runner, ignored.
-- The OpenESC 4in1 panel, OpenRX panel, krishveercard, SUMEC (48 pads no
-  track of their class can enter): the board's rules, not the flow.
-- `bitshiftcrazy__d20_pcb`: 39 parts, a back-side keepout that allows
-  footprints yet KiCad flags 27 of our pads inside it; 6 of 14 nets have no
-  path. Not understood.
-- SmartSpin2k (a 585-connection panel whose first route alone needs about
-  1000 s) and panels or boards without a schematic of their own (in the
-  schematic tier).
+compare.py's `NOT_TARGETS` leaves nine boards out of the gap split: the
+five PolyKybd molecule panels (tile panels with duplicated references:
+SW1 sixteen times), the OpenESC 4in1 panel and the OpenRX panel, and
+krishveercard and SUMEC, whose own rules leave pads no track of their
+class can enter. They stay in the sweep and are not worked on.
 
 ## Open problems, ranked
 
-The numbers are kept from earlier hand-overs (other docs cite "open
-problem 2", "4", "5", "8"); done items are gone, their sections are in the
-changelog (on 2026-11-04 and 2026-11-05: the prepared BGA fan-outs and
-the room around grid arrays, on; the fan-out step, the crossing dive and
-the last connections, removed; the designer as teacher, the partial copy,
-the skeleton race's stage 1 and the pipeline's stages, measured). **The
-rank by the evidence of 2026-11-05**: 4 (placement, 73 % of what stays
-open: (a) the coarse arrangement, lost by the global placement; (b) the
-fine one, lost by the anneal's objective), 13 (deciding a placer
-default), 17 (pad exits, a stage-1 survivor), 12 (the near misses), 2
-(crossings at fine-pitch rows), 15 (the pairs' cost in a layout), 16
-(length minima without room), 1 (fill fidelity), 3 (the ladder's judge),
-5, 14 (blind vias: their chains, and no task board that allows a span),
-then the rest. For the router alone, 18 (the router's ceiling, 2026-11-06)
-ranks what keeps the designer tier's 41 failing boards open.
+The direction (Florian, 2026-11-04): placement is most of what stays
+open, so one placement bet at a time, each judged by the placer-default
+protocol (below); a lever that loses or is null is removed, not kept as
+an off switch; a fresh-agent trial every few days.
 
-1. **Fill fidelity, what is left.** The starved-thermal census (44 boards,
-   `experiments/pour-fidelity/census.py`) stands at 162 predicted, 7
-   missed, 26 false alarms, 2 not modelled (x1054). Left: spoke landing and
-   piece fidelity against KiCad's kept outlines (our map is in far more
-   pieces: lattice sampling of necks), island-rule and track-rule edge
-   cases, custom spoke templates, hatched fill over thermal pads without
-   relief, per-zone fill settings and islands a zone seam alone makes,
-   fine-pitch clearance within a few microns. KiCad's teardrops and its
-   hatched iterative refill are not modelled; connection-width necks are
-   repaired after the fact with KiCad's fill, gaps too since 2026-10-27
-   (bridges over every slot that can be one, pruned by KiCad's checks:
-   docs/router.md, "KiCad's connection width (necks)").
-2. **Crossings at fine-pitch rows** (re-scoped 2026-10-28; it was "one-spoke
-   pads on fine-pitch rows", k30's U10 pad 8). On the near misses'
-   fine-pitch rows (Quanta75's RP2040 and USB-C, OpenAirScope's UDFN)
-   every pad has a straight way out on the statics; what closes a pad is
-   a neighbour's via just beyond its tip or a neighbour's track turning
-   across it, where the two nets' targets cross (one needs a via, which
-   in a 0.4 mm row fits only beyond the neighbours' tips). Two repairs
-   were built, measured and removed on 2026-11-04 ("Removed experiments
-   (2026-11-04)"): the fan-out step before the negotiation (`fanout`: it
-   traded which pad stays open, OpenAirScope's CMD for DAT3) and the
-   crossing dive in the trouble repair (`crossing_dive`: on Quanta75's
-   RP2040 row every dive closed the crossing and opened a third net, its
-   via landing on the key matrix's rows on the other layer). The crossing
-   census stays (`PCB_ROUTER_TROUBLE_WHY`: 3 of the five boards' 9 open
-   items are crossing pairs, all on Quanta75's RP2040 row). Left: the
-   via's landing chosen with the other layer's routes (a site priced by
-   what it displaces there, or the displaced net's own dive), and
-   OpenAirScope's UDFN and the keyboard's aQFN pads, which have no
-   straight way out at all. k30's U10 pad 8 is a pour net's
-   (`free_thermal_spokes` moves 2 of 10 nets there). Grid arrays are done
-   for the case the census found (docs/router.md, "Prepared fan-outs for
-   BGAs (2026-11-04)"): where the class's via does not fit a diagonal gap
-   (Glasgow's U30) the inner balls get a dog-bone before routing
-   (`bga_fanout`, on); what stays on Glasgow is its outer rings' surface
-   escapes, ringed by our passives (open problem 4, `bga_room`).
-   A third repair, prepared fan-outs for the rows (design 2 of the
-   router's ceiling: exits fixed as copper at exact geometry, fanned
-   0.4 mm rows, divers of crossing pairs through a via with a checked
-   landing), was built, measured and taken out on 2026-11-07 (router.md,
-   "Prepared fan-outs for fine-pitch rows (2026-11-07)"): it closes the
-   rows' own items (the census's closed-row items 113 -> 61 on the
-   fifteen row boards) but against x1930 loses five strict passes on the
-   sixteen planned boards routed both ways and gains none (video and
-   DSP-ADAU1452, which it passes, x1930 passes already). Fixed copper
-   before the negotiation, like the reserved corridors before it, costs
-   the boards more room than it gives the rows; what is left is the
-   crossing decided inside the negotiation.
-   A fourth, the lattice's geometry rather than a plan (design 3, router.md
-   "Lattice lines at pin rows (2026-11-07)"), lands as a setting, off by
-   default (`pin_lines`): a part's exact-fit rows get the lattice at their
-   own phase. It closes the rows the regular lattice's phase held
-   (RP2040_base 36 -> 5, the census's no-straight-way pads 78 -> 44 on
-   the row boards); over the designer tier +3 strict -2. Since 2026-11-08
-   the ladder turns it on by itself after its leader's run where KiCad's
-   open pads are at rows the regular lattice misses (router.md, "Lattice
-   lines where the rows are open (2026-11-08)": +2 strict, none lost;
-   RP2040_base 36 -> 20 that way), and since the same day it decides at
-   the probes where the leader's probe leaves pads at such rows: the
-   leader's rung probed once more with the lines, taken at a tenth fewer
-   unfinished nets ("The rows decided at the probes (2026-11-08)":
-   RP2040_base 20 -> 5, the expansion tier's backplane passes; jetson's
-   241 -> 240 at the fingerprints' budget is why the margin). A layout
-   decides them too since the same day, at the race's probe of the
-   placement it keeps, by the pads it left at missed rows rather than by
-   a probe's count ("A layout's rows decided by its probe's open pads
-   (2026-11-08)": 13 -> 14 strict on the 28 sweep boards it can change,
-   RP2040_base 38 -> 11; Sisu 1 -> 4 the one worse). Left of the
-   rows: the crossing pairs and the closed ways (unchanged by it), the
-   no-way pads that ask for no line (OpenRX's U201/U301, DSP-ADAU1452),
-   and a tight two-track channel (the keyboard's F23, which the channels'
-   lines connect; left out, the board fails on the input's RESET).
-3. **The ladder's judge.** On 21 boards with every rung continued to its
-   final (2026-10-13), today's judge (unfinished nets after the probe)
-   picks the best rung 16 times; no other count does better, and a class
-   of boards (Hub, DSP-ADAU1452, koeg-board, zpn_devboard) probes tracks
-   far ahead while a fresh connect attempt ends far better: the 75 s probe
-   is too short there. If anything, a 30 s continuation per probed rung is
-   the judge to try. On the designer tier's 27 boards with open items of
-   ours the kept attempt uses a median 15 % of the ladder's work and 28 %
-   goes to rungs that end far worse (router-ceiling.md, design 1). The
-   ladder stops at the first complete rung whatever its starved thermals
-   (Castor: 20 starved kept against tracks' 12); rank by (open, starved)
-   before vias, and let a complete-but-starved rung be rivalled. Since
-   2026-11-07 route mode runs the leader's variants first and the rungs
-   of other pour modes only where their probe left at most twice the
-   leader's unfinished nets (router.md, "The leader first"; designer
-   tier 68 -> 71 strict): the probe's misjudgment now also decides which
-   rungs run at all (module: connect kept out at 161 against tracks' 33,
-   1 -> 3 unconnected), so a better judge matters more. Work spent
-   inside the first attempt is taken from the rungs the judge would
-   compare: the residue in a window (removed 2026-11-07) lost Quanta75's
-   BareRP2040 that way (314 s of windows that closed nothing, the tracks
-   rung never ran). Details
-   in [congestion-model.md](congestion-model.md) and the changelog's
-   2026-10-13 sections.
-4. **Placement: 73 % of what stays open.** The matched designer tier of
-   2026-11-04 routes the designer's placement of the 100 target boards to
-   351 open connections where our layouts leave 1297: placement +946
-   (worse on 29 boards, the same on 65, better on 6), routing 351. The
-   costliest: video +201 (202 / 1), Batch_1 +137 (140 / 3),
-   SmartSpin2k_Panelized +105 (105 / 0), the OpenESC 4in1 +73 (88 / 15),
-   Glasgow +72 (127 / 55), SNSP-CPU-01 +62 (97 / 35). The share was 52 to
-   57 % up to the nightly of 2026-10-28 and 73 to 76 % since. What
-   carries it (docs/placer.md, "Which placement decisions matter
-   (2026-11-04)"): the designer's non-passive parts pinned recover a
-   median 0.92 of the designer's first-route advantage on seven boards
-   with 28 % of the parts; the connectors alone -0.16, with the three
-   largest ICs 0.15, the tenth we misplace most 0.22; with the
-   designer's non-passives our wire is lower or within 2 % of our own on
-   six of seven boards, so our objective accepts the arrangement and our
-   search does not reach it. Where it is lost ("Where the arrangement is
-   lost (2026-11-04)"), two losses and no single stage:
-   - **(a) The coarse arrangement: the global placement.** From our
-     start it leaves the active parts a shuffle's distance from the
-     designer's (displacement share 0.77 to 1.14, pairwise correlation
-     0.03 to 0.36) and the seeds disagree with each other as much; the
-     anneal, the legaliser and the refinement keep what they are given.
-     It decides video and SNSP-CPU-01: the global placement started from
-     the designer's poses leaves 69 first-route open terminals on video
-     against our 304, and 22 on SNSP against the designer's 23. The bet
-     on it is the race over skeletons (`skeleton_race`, off; placer.md,
-     "A race over skeletons (2026-11-04)" and "The fixes, and stage 1
-     again (2026-11-05)"). Fixed on 2026-11-05: the fallback is the plain
-     seed at its full work; the skeleton starts at the first level where
-     the whole board fits; held and fixed parts are judged at the smaller
-     halos; under the switch the global placement stops where its
-     overflow stalls and never turns a part longer than the board (video's
-     global never met its stop: SIM72 modules turned upright, ten parts
-     turning back and forth every 15 iterations; the stall stop alone, as
-     a default, NOT BETTER on its three boards, +2.7 %, p 0.62). Stage 1
-     against main: -8.9 %, p 0.007, no seed refused (video -28.9 %).
-     **Stage 2: BETTER**, KiCad unconnected -12.1 % (p 0.002, the noise
-     file's 0.000), every pair sum falls, 765 to 615 summed medians; video
-     189 to 106, protoesp 61 to 31, DSP-ADAU1452 complete on four seeds,
-     the 4in1 -16 %, Glasgow -12.5 %; SNSP-CPU-01 +34 % (weight 11);
-     no dense strict pass lost. **Not a default**: the short tier's OpenFC
-     passes strictly on five of five seeds off and one of five on (its
-     skeleton seats only at level 7, the placement much tighter).
-     **The level guard (2026-11-05, placer.md "The level guard"), not
-     taken**: OpenFC's level 7 is the skip to the tight levels
-     (`skip_to_tight`) that the skeleton's half of the work triggers at
-     the short tier's budget, and protoesp's winning skeletons skip the
-     same way (to the fine grid). Bounding the phases by a plain probe's
-     level (a `level_guard`, `skips` or `walk`, built and removed) keeps OpenFC's strict pass
-     on 7 of 10 seeds against off's 9 of 10, the mixed race on 2 of 5,
-     and `skips` gives back protoesp's gain (-2.5 % against -38.9 %).
-     Every OpenFC failure, off's seed 801 too, is one connection: U10's
-     +3.3V pad 5 (X2SON-6 on B.Cu). **Not the spot under U2**
-     (2026-11-05, placer.md "A far-side pad under fine pitch, and what it
-     was"): on 3 of the 15 failing rows U10 sits under U2's pins, on 8 it
-     is 0.7 to 10.6 mm from U2's field; U10's pads have no legal lattice
-     node of their own and pad 5 leaves its pocket only through a 0.3 mm
-     corridor between U10's corner pads, which the 0.09 mm class passes
-     within about 15 um of its centre, and the lattice chooser does not
-     steer to it (`tight_channels` counts enclosed pads only). Moving
-     U10 by 0.02 to 0.05 mm onto the router's lattice connects it on four
-     of five failing placements (two under U2's pins); the fifth sits
-     under two large F.Cu test pads. `pad_exits` never tested the pad
-     (+3.3V has a connected pour). The via-room census of the night (106
-     boards): pads the other side boxes in are open 2.5 times as often
-     (78 of 539) but lie on four boards (the OpenRX panel, the two
-     OpenESCs, the PolyKybd molecules); no placement rule was built.
-     **Corridor stubs (2026-11-05, router.md "Corridors of pocketed
-     pads")**: where a pad's escape nodes lie in a pocket the lattice
-     closes, a path off the lattice (5 um raster, exact clearances,
-     straightened) leads from the pad through the corridor to a legal
-     node beyond (`corridor_escapes`, on). The chooser counting the
-     corridors was built and not taken (the pocket meets the corridor
-     through a diagonal squeeze the other axis decides). The census of
-     the night's 109 placements: 923 escape pads on 37 boards, one pocket
-     the lattice closes with a way out (U10.5): one footprint, not a
-     class; the tiers and fingerprints route identically, CPU within
-     noise. OpenFC's ten seeds with the stubs: plain **10 of 10** strict,
-     the race **7 of 10**, U10.5 connected on all 20; the race's three
-     losses are pour islands (+5V on In3.Cu, GND on B.Cu, GND F.Cu and
-     In1.Cu not joined). The short tier with the race keeps its 7 strict
-     passes (unconnected 21 to 24 on three failing boards).
-     **On by default since 2026-11-05 with a budget rule** (placer.md
-     "The skeleton's budget (2026-11-05)"): OpenFC's loss is the budget's.
-     At the task budget (600 s of placement work) OpenFC passes strictly
-     on ten of ten seeds in both arms, its skeletons walking to levels 2
-     to 4; at the short tier's 200 s the skeleton's 100 s make
-     `skip_to_tight` jump to level 7 on a quarter of the seeds and the
-     race keeps those. Of 21 probed board budgets the skip fires on two:
-     OpenFC at 200 s (the loss) and protoesp at 600 s (its gain), so the
-     rule is a budget, not "the skeleton walks": the race runs where a
-     seed's placement work is at least `min_work_seconds` 500 (OpenFC
-     walks from 474 s), else every seed places plain
-     (`skeleton_race.budget_ok` false). Every stage-2 row ran at 600 s, so
-     stage 2 stands; the short tier is the plain placement's.
-     **The passives' first level (2026-11-06, branch skeleton-race-5,
-     placer.md "The passives' first level")**: the first night's losses
-     (vaio_re 34, jetson 17) were passives that started at the
-     skeleton's full halos, found no room and skipped to the tight
-     level. The fix starts them no looser than level 2
-     (`PASSIVES_FIRST_LEVEL`) and keeps a skeleton's later level
-     (protoesp unchanged). It brings vaio_re to 3 and jetson to 1 (both
-     inside the plain spread over three seeds), SNSP-CPU-01 to 61
-     (plain 97), and MokyaLora and zpn_devboard back to strict passes.
-     Stage 1 against the race as it is: -0.5 %, not worse. Stage 2's
-     composite against off: BETTER, -12.7 %, p 0.001, no dense strict
-     pass lost against off. SNSP-CPU-01 is now a gainer (-13.5 %), but
-     DSP-ADAU1452 loses the race's gain (0 to 7 open, all five seeds,
-     and its one strict pass). Also fixed: an outline in pieces no
-     longer turns the race off (zpn_devboard: its lowering's piece
-     regions counted as user constraints). A variant (branch
-     skeleton-race-5-skip) keeps the passives' start and only sends their
-     skip to level 2 instead of the tight level. It keeps DSP-ADAU1452
-     and its strict pass and stays BETTER (-12.3 %, p 0.002), and jetson
-     recovers. But vaio_re only reaches 7 to 10 (plain 1 to 4: the
-     level-0 attempt eats a third of the seed's work and half the race's
-     seeds), and MokyaLora stays at 1. A second variant, a start level
-     by area with halos, never says more than level 0: `fit_halos` keeps
-     halos under 0.6 of the free area, and vaio_re's passives lack room
-     where it is, not in total. **Decided 2026-11-06: the fix**. DSP-ADAU1452's
-     loss is the known residual: its passives fitted at level 0. Taking it
-     back needs a test of where the passives' room lies.
-     **The passives' level per board (2026-11-07, placer.md "The
-     passives' level per board (2026-11-07): no rule found")**: on one
-     binary the flips between the 11-06 and 11-07 nightlies that are the
-     level's are DSP-ADAU1452 (level 0: 0 open and a strict pass; level 2:
-     7) against MokyaLora and jetson (level 2: a pass and 1 open; level 0:
-     1 and 17). USB_Cable_Tester and zpn_devboard pass at both levels
-     (their 11-06 losses were the router's and the region bug), and
-     capybully and Quanta75 pass at neither (level 0 1 and 1 open, level
-     2 2 and 3). Three per-board rules were measured and none is taken;
-     `PASSIVES_FIRST_LEVEL` stays 2. (1) The placer's objective prefers
-     level 2 on every seed of every board where level 0 routes better
-     (the full halos double the decoupling relations' term), and the tight
-     seat on jetson. (2) "Level 0 where every passive seats there" gets the
-     seven right, but SNSP-CPU-01's passives seat at level 0 on all nine
-     seeds and route worse there. Its proxy from skel5's rows: stage 1
-     +0.4 % (p 0.64), stage 2 +1.5 % (p 0.56): DSP -60 %, SNSP +47.5 %.
-     (3) The passives' twin (branch passives-twin, not for merge): the
-     race probes the first-ranked placement's passives placed again at
-     its skeleton's level. Stage 1 on the five dense boards it can change:
-     +0.1 %, p 0.94, kept on 2 of 25 rows, +6.3 % CPU; on the seven boards
-     DSP-ADAU1452 7 to 4, nothing else moves. Open: a judge that tells
-     DSP-ADAU1452 from SNSP-CPU-01. Whole first routes of both levels
-     would, on skel5's rows, at the cost of a second first route.
-     Measured and not taken: `join_pins` 0 (fixes
-     SNSP-CPU-01 and split72_left, loses the 4in1-mini: +3.0 % against
-     the race).
-   - **(b) The fine arrangement: the anneal's objective.** On the 4in1
-     and Glasgow the anneal lowers our objective while it costs routes:
-     without it our pipeline leaves 142 against 174 and 95 against 149
-     first-route open terminals, at objectives 1.70 and 1.31 of ours;
-     from the designer's poses the anneal takes the 4in1 from 61 to 149.
-     The decoupling relations are 88 % of the 4in1's objective. Our
-     legality costs 28 and 34 terminals there (the designer's poses
-     seated at our levels), and Glasgow's refinement 40 more (its
-     relation repair moves 153 parts more than 0.5 mm: a suspect, not
-     established). **Stage 1 without the anneal fails** (2026-11-05,
-     "The anneal skipped: stage 1"): weighted +1.4 %, p 0.653, seven of
-     eleven boards worse (MegaDrive +29 %, split72_left +29 %, video
-     +20 %); seed 1 was the only pair to improve, Glasgow's gain did not
-     hold (-1.5 %). It holds on the 4in1 (-16.4 %) and DSP-ADAU1452
-     (-29.7 %), where the anneal packs passives against the ICs under
-     the decoupling relations (weight 50). Not a rebuild of the
-     objective; the narrow lever left is the relations' weight
-     (`constraint_weight`, stage 1 at 10, nothing to build).
+1. **Placement: two thirds of what stays open.** On the 100 target
+   boards our layouts leave 706 connections open where the same binary
+   routing the designer's placement leaves 233 (nightly of 2026-11-10).
+   The costliest: Batch_1 (142 against 2), protoesp (87 / 1), Glasgow
+   (85 / 17), the OpenESC 4in1 (79 / 12), the 4in1-mini (88 / 37),
+   SmartSpin2k (51 / 0). Pinning the designer's non-passive parts (about
+   a quarter of the movable parts) recovers most of the designer's
+   first-route advantage, and our objective accepts that arrangement: the
+   search does not reach it. Two losses:
+   - *The coarse arrangement* is decided by the global placement. Its
+     quadratic start from the netlist, the race over skeletons and the
+     glued bus banks each moved it nearer the designer's. Open: the
+     4in1-mini's skeletons, which only seat at the courtyard level (its
+     22 bulk capacitors); the anneal taking a glued capacitor bank apart;
+     a judge that tells boards whose passives route better at the full
+     halos (DSP-ADAU1452) from those that route worse (SNSP-CPU-01): the
+     passives start at level 2 (`PASSIVES_FIRST_LEVEL`) for all.
+   - *The fine arrangement* is lost by the anneal's objective on the
+     densest boards: on the 4in1 and Glasgow the anneal lowers our
+     objective while the routes get worse, and the decoupling relations
+     are most of that objective. Skipping the anneal is worse on most
+     boards. The lever left is the relations' weight
+     (`constraint_weight`).
+   - `pad_exits` (off) passed the first-route screen on its four boards
+     (-3.0 %, p 0.228) but the routes do not connect most pads it opens.
+     It waits for the full protocol.
+2. **Deciding a placer default costs a day.** The full protocol is about
+   110 layouts per lever (88 CPU hours, 18 hours of wall beside the
+   nightly); the first-route screen costs about half of it. Open: a
+   stage that keeps the placement's budget and cuts only the routing.
+3. **The router's ceiling.** The matched designer tier fails 33 boards
+   under the strict rule. The last census of its failures
+   ([router-ceiling.md](router-ceiling.md)) found about a third the
+   input's or the budget's, and of ours congestion first (a residue that
+   single-net exchanges only trade), then pad access and fine-pitch rows,
+   plus a few plain bugs: the solid-thermal step runs once (k30-SBC,
+   ghoul), copper texts lowered from their render cache (Quanta75), large
+   enclosed SMD pads without a via (Sisu), a custom pad's anchor inside
+   a neighbour's clearance (Hub).
+4. **Crossings at fine-pitch rows.** Lattice lines at pin rows close the
+   pads the regular lattice's phase held; route mode and a layout turn
+   them on by themselves where probes leave pads open at missed rows.
+   Left: crossing pairs on a row (a pad closed by a neighbour's via just
+   beyond its tip; Quanta75's RP2040), pads with no straight way out at
+   all (OpenAirScope's UDFN, OpenRX's U201/U301, DSP-ADAU1452), and a
+   tight two-track channel (the keyboard's F23). Fixed copper before the
+   negotiation costs more room than it gives (see "Tried and not taken");
+   the crossing has to be decided inside the negotiation, for example by
+   pricing a via's landing by what it displaces on the other layer.
+5. **The ladder's judge.** The judge (unfinished nets after a 75 s probe)
+   picks the best rung about three times in four; on some boards (Hub,
+   DSP-ADAU1452, koeg-board, zpn_devboard) the probe is too short to
+   tell. Since the leader runs first, a misjudged probe also decides
+   which rungs run at all. The ladder stops at the first complete rung
+   whatever its starved thermals: rank by (open, starved) before vias.
+   A 30 s continuation per probed rung is the judge to try.
+6. **Differential pairs cost connections in a layout.** With
+   `diff_pairs` on, every routed stage of a layout plans the pairs, and
+   on dense boards that costs connections (jetson 23 and 44 unconnected
+   at two seeds where it had 0 and 9). Giving up a link that keeps
+   conflicting (`PCB_ROUTER_DIFF_PAIRS_GIVE_UP`, off) halves that on
+   jetson but loses coupled pairs on ducktop2. Until this is solved,
+   `diff_pairs` stays off in a layout.
+7. **Length minima without room.** Meanders meet a `length` minimum
+   where the route has room beside it, not inside a dense bus (the
+   firestarter's DVP bus: about half its nets within the rule). Open: a
+   placer floor that keeps the connections, and room for meanders inside
+   a bus on a fixed placement. An agent keeps a designer's bus with
+   `strip-kicad-tracks --keep-nets`.
+8. **Blind, buried and micro vias** (`blind_vias`, off). No task board
+   allows a via span, so it is measured on the expansion intake's HDI
+   boards, where route mode gains. Open: stacked and staggered chains at
+   one cell, spans for pour nets, the micro via's own size in the maps,
+   the `.kicad_dru`'s via-type rules.
+9. **Fill fidelity.** Our pour map is in far more pieces than KiCad's
+   fill (lattice sampling of necks). Not modelled: KiCad's teardrops,
+   hatched iterative refill, custom spoke templates, per-zone fill
+   settings. Necks and gaps are repaired after the route with KiCad's
+   own fill. Starved thermals are the only failure on a few complete
+   boards; `solid_starved_thermals` (on) connects such a pad solid where
+   KiCad finds the board better for it, in one round only.
+10. **The near misses.** Of the 39 boards the sweep fails, 18 are within
+    five connections and five errors of clean. The list changes nightly;
+    a diagnosis takes the night's list (`summary.md`, `diff-sweep.txt`).
+11. **The agent flow's gaps.** A crowded side (90 to 99 %) that no exact
+    test calls hopeless still runs the placer's levels to the budget; the
+    placer does not choose sides by itself. Starters are missing for LED
+    bars and other arrays, thumb clusters and column stagger. No tabs or
+    mouse bites between outline pieces, and no automatic size for a
+    polygon outline. A netlist board gets no router starter config (a
+    power class for rails, a GND pour on two layers). Rows cannot turn
+    every other line by half a turn (a bank whose facing pads share a
+    net). A template's row without a `place` leaves parts without a
+    place. `describe-kicad-board` does not say when a class holds no net
+    while nets of its name sit in Default.
+12. **The schematic import's friction.** Libraries outside the project
+    found nowhere get a `missing` line without candidates further up;
+    legacy `.mod` libraries are not read (convert them with `kicad-cli fp
+    upgrade`); a board KiCad cannot load gives no message of its own.
+13. **Wall-clock slack under load.** A work second is a wall second on
+    an idle core, so the guard's margin is thin on a busy machine; KiCad
+    checks are charged by a model (3.6 s plus 1.7 s per thousand hatch
+    holes) that misses complex outlines (18 to 33 s a check on ULK,
+    koeg, ghoul).
+14. **Smaller threads.** The search is 70 to 80 % of route mode (the
+    negotiation's stamp counts are the next speed target); the narrow
+    step stalls at the price cap on DSP-ADAU1452; OpenESC gets hundreds
+    of connection-width warnings from our own 0.09 mm tracks; the
+    router's own open count differs from KiCad's (per net against per
+    missing pair), which is why only KiCad's counts for passing.
+15. **Stretch goal: Allegro-class constraints** (Florian, 2026-10-09).
+    Differential pairs, length and skew rules, per-class widths and layer
+    preferences exist; return-path awareness over plane splits does not.
 
-   Judged by the protocol and on: crossings in the anneal (-10.8 %,
-   2026-10-28), the race's ripped count (-5.6 % at nine pairs,
-   2026-11-03). On by their own measurement: the room around dog-boned
-   grid arrays (`bga_room`; Glasgow 343 to 262 unconnected over seeds 1,
-   101 and 301, its first route better on all five protocol seeds; MIDAS's
-   U106 and vd-rd's U200 left out; "Room around grid arrays
-   (2026-11-04)"), the far side under a BGA's vias in pads
-   (`via_in_pad_far_side`), length maxima (`length_maxima`), panels of
-   copies kept off their frames and tabs (2026-11-03: the 0xCB pcb-panel
-   62 to 0, a strict pass in v31), the courtless rule (stage 1 +1.7 %,
-   null; it ends 292 shipped overlaps). Off and open: pad exits (open
-   problem 17), pair rows (15), length minima (16), `decoupling_near`.
-   Failed and removed (the list and the numbers in "Removed experiments
-   (2026-11-04)"): the net weightings, rows of repeated parts,
-   `legality: "kicad"`, `routing_demand`, `routing_room`, `shared_halos`,
-   `anneal_far_side_gaps`, `ratsnest_crossings.global`; bus-group moves
-   (the objective falls, routing does not); removed on 2026-10-16:
-   `replicate_channels`, `supply_via_room`, `bus_rows`. More seeds do not
-   close it (no seed holds the arrangement for the race to pick).
-   Untested: seeded orientation starts in the race.
-   **The netlist's start (2026-11-07, placer.md "The global placement's
-   start (2026-11-07)")**: loss (a)'s cause was the global placement's
-   start, every part at one point with a noise of 5 % of the board. A
-   quadratic bound-to-bound solve of the movable parts with the fixed
-   pins as anchors (RePlAce's initial placement, `initial.rs`) now places
-   them first, in the plain seeds, the skeleton and the passives around
-   it. Stage 0 on the four boards at seeds 1 and 101: the active parts at
-   the end 0.46 to 0.65 / 0.38 to 0.67 (share / pairwise) against 0.64 to
-   0.87 / 0.20 to 0.45, the seeds agreeing 0.48 to 0.85, the objective
-   0.44 to 0.96 of ours on the 4in1, Glasgow and SNSP-CPU-01, 1.07 and
-   1.10 on video; the descent's schedule keeps the wire term at about half
-   of the gradient while the parts spread (not the loss), video's overflow
-   at the stop 0.040 and 0.060 (the bins not needed). Stage 1: -7.9 %,
-   sign-flip p 0.014, every pair sum falls; SmartSpin2k's +92 % was the
-   panel copies' own starts, fixed before landing (equal to off on all
-   five seeds; as landed -8.9 %, p 0.007). Stage 2 (full layouts against
-   x1933): KiCad unconnected -6.8 %, sign-flip p 0.020, no strict pass
-   lost (dense 5 to 6, short tier 7 to 9), the 4in1-mini +17 % and video
-   +8 % the losers; WLED_Matrix's GND pour-neck `connection_width`
-   errors on the short tier's seed are the board's (two of five seeds in
-   each arm). **On, no switch.** Left: the passives' global placement around a held
-   skeleton stalls at overflow 0.62 to 0.65 on the 4in1 (their netlist
-   spots lie inside the ICs they serve), video's skeleton no longer fits
-   at full halos (the plain fallback is kept), the 4in1-mini +5 %.
-   **The passives' stall and the netlist's stacks (2026-11-08, placer.md
-   "The passives' stall costs nothing; the netlist's stacks and the bulk
-   capacitors do")**: the passives' stall around a held skeleton is the
-   4in1's alone (68 and 57 passives in held bodies at overflow 0.65 and
-   0.62; elsewhere one or two), and the anneal seats every one (none inside
-   after the legaliser), moving them 3.1 and 4.5 mm against the free
-   passives' 7.2 and 5.7. Without the stall stop (the cheaper candidate)
-   they leave the bodies in the descent and the objective at the end moves
-   -1 % and -10 % on the 4in1, at most ±5 % elsewhere (protoesp +19 % on
-   one seed). The 4in1-mini: with the netlist's start none of its fifteen
-   race seeds seats without touching courtyards (x1933: 5 of 16), plain or
-   by skeleton; 2 to 5 of its 22 1206 bulk capacitors (one spot at the
-   start, the designer's rows at 1.9 mm pitch) need the courtyard level;
-   the race keeps the best first route of its three on seeds 1, 301 and
-   401. Video: the netlist's start stacks its eight memory modules within
-   1 mm; 7 of 16 skeletons leave one to three modules (or X1) without room
-   after level 0's 137 to 235 s, and the race keeps the plain fallback on
-   four of five rows; 0.9 of the work seats one of two. Stage 1
-   without the passives' stall stop: first-route open -2.2 % weighted,
-   sign-flip p 0.174 (the stage-1 rule's pass; the 4in1-mini -5.6 %, video
-   -4.2 %), no stage 2 (it cannot reach p <= 0.03, five boards unchanged),
-   the switch removed. Next candidates then: the 4in1-mini's bulk-capacitor
-   bank and for video a stack's spread that does not reach the 4in1's
-   MOSFET pairs and passives.
-   **The netlist's stacks (2026-11-08, placer.md "The netlist's stacks
-   are lost in the descent, not at the start (2026-11-08)"; not taken)**:
-   a stack is movable parts on one side whose nets have nine tenths in
-   common and whose solved bodies overlap. Stage 0: stacks are on every
-   dense board, the same-net ones capacitors on a rail and ground; a bank
-   at the start is undone by the descent where no wire holds the parts
-   (the 4in1-mini's 22 CL as spread after the descent from one spot as
-   from the bank, and as x1933's), and "interchangeable parts only" changed
-   nothing because it ran in the skeleton's phase, where the capacitors are
-   absent. Glued (a bank moves as one body in the descent), video keeps a
-   skeleton on five of five seeds and its active parts lie near the
-   designer's (0.22 to 0.33 / 0.68 to 0.93). Stage 1 of `glue`: -1.2 %, p
-   0.347 (capacitor banks: other draws). Stage 2 of `glue-multi` (parts
-   with three nets or more) on the 19 sweep boards it acts on: video 92
-   -> 0 unconnected (five of five, three strict passes), but SNSP-CPU-01
-   (9.8 -> 16.4), katia and RP2040_base worse beyond their spread and
-   vaio_re's strict pass lost: removed by the rule.
-   **Banks on a wide bus (2026-11-08, placer.md "Banks on a wide bus glued
-   through the descent (2026-11-08)"; on, no switch)**: glued only where
-   three parts or more share nine tenths of their nets and 24 at least
-   (the census's gap lies between 21 and 27 shared nets: below it
-   connectors and repeated parts, above it memories). SNSP-CPU-01's U15
-   and U16 (27 nets) end as a row in both arms; the plain descent leaves
-   the pair about a body apart on all 48 race seeds, objective and skeletons
-   alike, and the glued pair's layouts lie as far from off's as two off
-   seeds: a redraw (first routes 30 -> 31 by the median, p 0.656), not a
-   mechanism. Pairs are left out by the members' count; video and
-   mackerel-08 qualify. Stage 2: video 79/115/92/78/120 -> 0/0/12/0/3
-   (three strict passes), mackerel-08 0 on every row in both arms.
-   **Open**: the 4in1-mini's skeletons that need the
-   courtyards (with the glue its plain placements seat level 7 on about
-   half their seeds, its skeletons never; a probe keeping the
-   22-capacitor bank in the skeleton made every seed fall back); the
-   anneal that takes a glued capacitor bank apart.
-5. **Starved thermals as the only failure** on complete boards (rosco,
-   Castor, mackerel-30, k30, mackerel-08, Hub, PixelWave, BAGEL; counts
-   fell to 0-5 since the spoke model). Since 2026-10-21
-   `solid_starved_thermals` is on by default (a starved pad, or one whose
-   spokes reach only an island, gets a solid zone connection, kept when
-   KiCad finds the board better): mackerel-30 and Castor pass; k30-SBC's
-   solid pads cost an unconnected neighbour and are undone (docs/changelog.md,
-   "net ties, same-number pads, starved thermals"). Left: pads where solid
-   does not help, and the step's one round: on the designer tier a pad
-   starved only after it fails k30-SBC and ghoul alone (router-ceiling.md,
-   "Plain bugs").
-6. **Our open count against KiCad's.** The router counts connections per
-   net, KiCad per missing pair; and the pour model's optimism adds. The
-   pass rule trusts KiCad; the router's own count is for steering only.
-7. d20's keepout pads (`bitshiftcrazy__d20_pcb`, "Not targets"); the
-   0xCB pcb-panel's zone refill, which kicad-cli does not finish in 900 s
-   (`PCB_KICAD_TIMEOUT`). jiran-ble-lite passes since 2026-10-28: its
-   halves are sub-boards by their mouse bites and its GND across them is
-   the designer's own, not counted.
-8. **The agent flow's gaps** (the 2026-10-15 walkthrough; done: the fast
-   no, room as numbers, what is kept, starter constraints for key
-   matrices, outline polygons, the schematic tier). Left:
-   - item 1: a crowded side (90-99 %) that no exact test calls hopeless
-     still runs the placer's levels up to the budget;
-   - item 4: starters for LED bars and other arrays, thumb cluster angles,
-     column stagger, the controller's and USB connector's edge, keys wired
-     to their own pins (no matrix);
-   - item 5: tabs or mouse bites between outline pieces, an automatic size
-     for a polygon, `room` suggesting a scale for a polygon;
-   - item 6, *a router starter config*: a board from a netlist has the
-     project's net classes or the default 0.2 mm for every net. The import
-     could write `router.json` beside `layout.json` with a power class for
-     rails (by name and by `power_in` pin type) and, on two layers,
-     `add_pours` GND on B.Cu, listed in the report for the agent to keep or
-     drop. Small to medium: a day with the from-schematic benchmark.
-   - trial 8 (docs/reviews/2026-11-08-fresh-agent-trial-8.md, "Left
-     open"; done: designer widths, per-layer minimums, the row refusal,
-     the bank comment, pin lines in the report and the layout's action,
-     the blind-vias action, heavy copper, dead pads' layer names; pin
-     lines in a layout by default, 2026-11-08: the race decides them by
-     its kept probe's open pads, RP2040_base's sweep layout 38 -> 11, the
-     action for a fine-row hot spot only where the layout routed without
-     them); *a row whose lines turn by
-     half turns* (`"alternate": true`, so a bank's facing pads share a net
-     at the designer's pitch, 4.03 mm on the mini where a row now needs
-     4.26); *the bank's place* (the template's row without one leaves 3
-     of the mini's parts without a place); *a dead pad at the board's edge*
-     (the Whoop's AE2.3: the wall names the edge, no lever; the designer
-     has vias in AE2's pads); *a class that names no net* in the
-     description (the rp2040's VMOT and GND classes, 0 nets, nets of their
-     names in Default).
-9. **The schematic tier's friction** (done: footprints from the board,
-   library drift, board-only parts, orientation and order independence).
-   Left:
-   - item 3: libraries outside the project or named by absolute paths (22
-     boards): the import said "no library X". Since 2026-11-04 (trial 6) a
-     table entry naming another machine's folder is found by its last
-     folders under the schematic's folder or its three parents and
-     reported (`relocated_libraries`; eurorack-pmod 132 footprints to
-     141), and a library found nowhere is named with the table's folder.
-     Left: a `missing` line naming candidates further up (a folder
-     `<library>.pretty`, or one holding the footprint's file, under the
-     project's ancestors up to the repository root); the 22 boards are not
-     measured again. Small.
-   - item 5: a legacy `.mod` library (hackrf's 395 footprints) is unread;
-     convert a `Legacy` table entry with `kicad-cli fp upgrade` into a
-     temporary `.pretty`. Small.
-   - item 6: a board KiCad cannot load says nothing (kicad-cli exit 3 with
-     Debug lines only): say "KiCad could not load the board" and name the
-     first item out of KiCad 10's order or form. Small.
-   - item 9: the tier's two failures are the layout tier's (slab-pcb-left
-     passes at the full budget; USB_Keypad's decoupling capacitor at -1.9,
-     12.7 leaves its GND pad off the hatched pour).
-10. **Wall-clock slack under load.** Since the 3.15e6 calibration a work
-    second is a wall second on an idle core, so the guard's 10 % has little
-    room: a sweep at five jobs of four threads beside other agents (v16:
-    load 16-35) would cut rows the old constant's slack hid. Keep tiers at
-    the default parallelism and under the lock. Open: a harness timeout and
-    wall guard that follow the measured load. KiCad checks are charged by a
-    model (3.6 s plus 1.7 s per thousand hatch holes) that does not see
-    complex outlines (ULK, koeg, ghoul: 18-33 s a check); the first route,
-    moves and polish do not reserve the kept board's check.
-11. **Smaller threads left by recent rounds** (each in its changelog
-    section): the search proper is 70-80 % of route mode, and the
-    negotiation's stamp counts (a ripped branch's stamps out, the new
-    route's in, two thirds changing each call) are the next speed target;
-    the cold route's walled-in pads could be joined among themselves; the
-    narrow step stalls at the price cap on DSP-ADAU1452 (try the other pour
-    mode or the runner-up attempt); OpenESC's 700-1000 connection-width
-    warnings from our own 0.09 mm tracks; the neck repair's Keypad
-    unconnected item; a pad's own mask expansion in the placer's
-    opening rule; the molecule panels' back connectors need the designer's
-    0.03 mm gaps; the board's top-level graphics, zones and tracks still
-    follow the file's order; the import's netlist export, preview SVG and
-    fab exports still run kicad-cli on the user's library configuration.
-12. **The near misses.** Of the 48 boards the sweep v31 fails, 18 are
-    within five connections and five errors of clean (README.md's
-    headline; the list changes with every night); v31 lost
-    MIDAS-MK1.1-revA (0 to 2 open) and OpenAirScope (0 to 1). The last
-    diagnosis, 2026-10-27 (12 boards, 34 open items; docs/router.md, "The
-    last connections"): 10 the input's (the designer's board has them),
-    5 a rule, 10 placement, 1 the lattice at the class's width, 8
-    routing; no routing item was a budget that ran out (the trouble
-    repair refused every exchange as a pure trade). Closed since: the
-    panel tabs and frames (ULK 4 to 0, ULK_sl_PG1316s 5 to 0, jiran 1 to
-    0, all strict passes; woagboard 4 to 1, its designer's own GND
-    island), vias in BGA pads (MIDAS-MK1.1 5 to 0, a pass), two faults of
-    the trouble repair. The ejection chains (`last_connections`) closed
-    none and were removed on 2026-11-04. Left: the fine-pitch rows
-    (problem 2), the keyboard's RESET (open on the designer's placement
-    too), MIDAS-MK1's B2 (its via refused: our placement put an 0603
-    under it on the back). The next diagnosis takes the night's list, not
-    2026-10-27's.
-13. **Deciding a placer default costs a day.** The placer-default
-    protocol (benchmarks.md, "Measurement discipline: placer defaults")
-    is 110 full layouts a lever, about 88 CPU hours and 18 hours of wall
-    beside the nightly (the 2026-10-28 calibration); five seed pairs
-    resolve a weighted change of about 8.5 %, nine about 6.5 %. The
-    ladder (benchmarks.md, "The ladder of placer measurements"): stage 0
-    the placement's own metrics (a sanity check, not a filter), stage 1
-    the first route alone (`stop_after_first_route`; 0.55 to 0.57 of the
-    full stage's cost in the calibration, 0.67 of the CPU beside full
-    layouts of one binary; the full verdict on both calibrated
-    experiments), stage 2 the full protocol. Since 2026-11-04 every
-    placement lever takes stage 1 first (`experiments/placement-gap/screen.py`):
-    the net weightings, rows of repeated parts, the courtless rule, pad
-    exits and the skeleton race, whose stage 1 took 23.7 CPU hours for
-    both arms on a shared machine (19:39 to 00:40). Rejected: the quarter
-    budget (2026-11-03: two boards find no legal placement, the rows do
-    not rank the full rows), condensed boards, coarse whole first routes
-    as the race's probe. run.py `--reuse` saves the rows a lever leaves
-    alone when both sides run on one binary with the lever as an option.
-    Open: a stage that keeps the placement's budget and cuts only the
-    routing (a layout option not built; placer.md, "The quarter budget
-    (2026-11-03)").
-14. **Blind, buried and micro vias** (opened 2026-11-05; `blind_vias`, off; docs/router.md,
-    "Blind, buried and micro vias (2026-11-05)"). The router routes a
-    via as the shortest span the board allows and KiCad accepts them,
-    but no task board allows a span (every via of the 109 designers'
-    boards is a through via, Glasgow's too), so the
-    measure is on the expansion intake's HDI boards: route mode gains
-    where they are hard (fpga_large 360 to 275 KiCad unconnected,
-    OpenAIO-Whoop 135 to 117), one layout seed loses one (kvm-carrier_r9
-    27 to 28). Open: stacked and staggered chains at one cell, spans for
-    pour nets (a 1+6+1 board disallows through vias), the micro via's own
-    size in the maps, the `.kicad_dru`'s via-type rules, the CPU of the
-    via step.
-15. **The differential pairs' cost in a layout** (opened 2026-11-05).
-    Since 2026-11-05 a layout with the router's `diff_pairs` on plans the
-    pairs in every routed stage (the first route, the race's probes, the
-    moves; docs/router.md, "The layout's own routes (2026-11-04)"), so
-    the pairs are coupled whichever stage keeps the board; and the
-    planning costs connections where the board is dense: jetson 23 and
-    44 unconnected at seeds 1 and 101 where it had 0 and 9 (5 to 8 pairs
-    coupled where none were), route mode's price of the pairs, now in
-    every stage. The pair rows (`pair_rows`, off: a pair's two series
-    parts as a row of two at the pair's pitch, facing its ends) couple
-    more (right_io 1 to 4 and 0 to 6 pairs) but, made to follow
-    `diff_pairs`, raised unconnected beyond the seeds' spread on four of
-    six runs (jetson +33, +20; docs/placer.md, "Following diff_pairs").
-    `diff_pairs` stays off in a layout by default (route mode turns it on
-    where the project's rules ask for pairs). In flight: a link that
-    costs connections given up in the negotiation ("Working on it").
-16. **Length minima without room** (opened 2026-11-04 by trial 6). A
-    `length` rule's minimum is met by meanders where the route has room
-    beside it (a bump adds 2.2 mm a millimetre of straight track); inside
-    a dense bus it is not: the firestarter's DVP bus (25 to 27 mm on ten
-    nets) has 5 and 4 of 10 nets within the rule in our layouts at seeds
-    1 and 101, and route mode on the designer's placement 3. Two levers
-    were built and left off (docs/placer.md, "Length minima
-    (2026-11-04)"; docs/router.md, "Length minima: the placer's share and
-    the reroute (2026-11-04)"): the placer's floor (`length_minima`: a
-    two-part net's pins at least half the minimum apart; the lengths
-    gained, `length_out_of_range` 17 to 9 summed over three layouts, oro's
-    link's connections too, but the firestarter lost 22 connections over
-    two seeds) and the length reroute (`length_reroute`: the bus's inner
-    nets find no route with room; with the floor on it met one net more).
-    Open: a floor that keeps the connections, and room for the meanders
-    inside a bus on a fixed placement (the bus spread as a whole, or the
-    inner layer the designer used and our pours keep). An agent keeps a
-    designer's bus with `strip-kicad-tracks --keep-nets` (docs/agents.md).
-    Of the task boards only oro's link carries a minimum (the sweep v31: 4
-    `length_out_of_range`).
-17. **Pad exits, a stage-1 survivor** (opened 2026-11-04). `pad_exits`
-    (placer, off; docs/placer.md, "Pads without a way out (2026-11-04)")
-    tests every pad's way out on the statics after each seed and moves or
-    turns the parts that close one. Its first-route stage on the four
-    boards with closed pads (the 4in1, the 4in1-mini, split72_left,
-    Glasgow; five seed pairs): -3.0 % weighted, p 0.228, which passes
-    stage 1 (the tool's verdict EXTEND); the eleven dense boards' full
-    layouts at seed 1 964 to 958 unconnected, eight rows the same. But the
-    routes do not connect most of the pads it opens (the 4in1: five of
-    seven stay unconnected), and the race may keep another seed's
-    placement with pads still closed (it does not rank by them). Left: the
-    full protocol, after the current bet (one placement bet at a time).
-18. **The router's ceiling** (opened 2026-11-06;
-    [router-ceiling.md](router-ceiling.md)). The matched designer tier's
-    41 failures, per open item and finding: 10 are the input's (the
-    designer's own board leaves the same item), 5 the budget's (they
-    pass at two or three times the tier's work); of ours congestion
-    decides 13 (the stalled residue that single-net exchanges only
-    trade), pad access 5, fine-pitch rows 4 (and the second class of 11
-    more), and four plain bugs: the solid step runs once (k30-SBC and
-    ghoul pass with one and three more rounds, checked on the night's
-    boards), copper texts lowered from their render cache (both
-    Quanta75), large enclosed SMD pads without a via (Sisu), a custom
-    pad's anchor inside a neighbour's clearance (Hub). Designs: the
-    ladder's work to the leader with the residue renegotiated in a
-    window, and prepared fan-outs for fine-pitch rows (the BGA method).
-    Problems 1, 2, 3, 5 and 6 above are the parts of it that were open
-    before. Design 1 measured on 2026-11-07: the leader first on by
-    default (+3 strict: video, BAGEL-MK1.1-Avocado, DSP-ADAU1452, none
-    lost); the residue in a window measured twice and removed (the
-    second time judged by KiCad before its polish, so split72_left is no
-    longer lost: on the 54 multi-attempt boards 20 -> 20 strict, the
-    corne gained, Quanta75's BareRP2040 lost, 19 % of the ladder's work;
-    its windows stall at the price cap where the board-wide negotiation
-    did, also with the price started at a tenth; router.md, "The residue
-    in a window (2026-11-07: built, measured, removed)"). Design 2 (prepared
-    fan-outs for fine-pitch rows) was measured and taken out; design 3
-    (lattice lines at pin rows) landed off by default as the setting
-    `pin_lines` (designer tier +3 -2 strict; open problem 2) and on
-    2026-11-08 became the ladder's own choice where the rows are open
-    (+2 strict, none lost, against the knockout fix of bug 2's second
-    half, which costs Quanta75_BareRP2040's pass). Pad access was diagnosed again on
-    2026-11-07 (router.md, "What walls a pad"; router-ceiling.md, "Status
-    of pad access"). Of the census's eight boards, three are the input's
-    by their walled pads (Hub, osprey, the keyboard's RESET), and katia
-    and the motherboard are the input's by another item. Two changes
-    went in:
-    - dead pads say what walls them (`dead_pads[].wall`);
-    - plated pads are apart from SMD pads in the rules (KiCad's
-      `isPlated()`): the designer tier 75 -> **76 strict** (the laptop
-      power board), the motherboard 15 -> 2.
+## Tried and not taken
 
-    A plain pad leaving from the free part of its copper (WLED's LDO1)
-    was measured and not taken: the tier stays at 75 strict, and WLED
-    still fails on a pour neck (branch pad-access-starts).
+One line each, so that nobody builds them again without a new reason.
+The code and the measurements are in git history (`git log -S <name>`).
+
+- Net weightings (`rail`, `flat`): the first-route screen +5.6 % and
+  +4.0 % (worse).
+- Rows of repeated parts in the anneal (`align_rows`): +4.2 %.
+- KiCad's legality at every placer level (`legality: "kicad"`): two of
+  three seed pairs worse.
+- Halos rescaled by RUDY, wire area as charge, shared halos, the
+  legality gaps in the anneal: within the seed noise or worse.
+- Reordering large parts after the global placement by crossings: the
+  placed board came out the same.
+- Skipping the anneal: +1.4 %, seven of eleven dense boards worse.
+- A level guard on the race over skeletons: gave back the race's gains.
+- Gluing every netlist stack (pairs, parts with three nets or more):
+  SNSP-CPU-01, katia and RP2040_base worse; only banks on a wide bus
+  are glued.
+- Without the passives' stall stop: -2.2 %, p 0.17 (null).
+- A per-board first level for the passives: no rule found.
+- Pair rows that follow `diff_pairs`: more pairs coupled, more
+  connections open.
+- The placer's floor for length minima: lengths gained, connections
+  lost; the length reroute: no length finding went.
+- More placer seeds: no seed holds the designer's arrangement.
+- The neural congestion predictor: ranks placements no better than RUDY.
+- An exact pairwise overlap force, or a minimum-displacement relaxation
+  in place of the anneal: not better than the seed spread.
+- Fixed copper before the negotiation: the fan-out step, prepared
+  fan-outs for fine-pitch rows, reserved corridors. Each traded which
+  pad stays open or lost strict passes.
+- The crossing dive in the trouble repair: closed the crossing and
+  opened a third net.
+- Ejection chains for the last connections (`last_connections`): closed
+  none.
+- Capacitated corridors from the global route: worse on every tier.
+- Island stubs: changed no connection, only silenced KiCad's
+  isolated-island finding.
+- The final route started from the router's state: worse on the dense
+  boards.
+- The residue renegotiated in a window: stalls at the price cap where
+  the board-wide negotiation does.
+- Necking a blocked net down everywhere: replaced by the ladder's
+  narrow-signal step.
+- A plain pad leaving from the free part of its copper: no tier changed.
+- As cheaper placer screens: a quarter budget (boards find no legal
+  placement), condensed boards, coarse whole first routes.
+
+## Working on it
+
+Work is done in packages: one agent, one branch, one worktree, one
+question. A coordinator merges the branches into main through a gate.
+
+### A worktree per package
+
+`bash scripts/worktree.sh <name> <branch>` creates `../pcb-maker-<name>`
+on a new branch from main and links the main checkout's
+`benchmarks/real/external`, `build` and `artifacts` into it, so run.py,
+the tiers and `build/bin` work there as in the main checkout. Snapshot
+binaries are `build/bin/pcb-maker-x<n>` and numbers are never reused:
+the four-digit ones are main's, made by the gate; a package takes a free
+range of ten five-digit numbers above the highest in use (or names its
+builds by the package, `build/bin/pcb-maker-<name>-a`) and names its
+range in its hand-off. `bash scripts/snapshot.sh <n>` builds and copies
+one and refuses a number that is taken.
+
+### The gate's rules
+
+A package works in its worktree only. It never checks out, commits to,
+merges, rebases onto or pushes main; the coordinator says when main
+moved (rebase then). Stage paths by name (`git add docs/handover.md`),
+never `git add -A` or `git commit -a`, and never commit anything under
+`artifacts/`, `build/` or `benchmarks/real/external`: they are links into
+the main checkout, and a committed link once wiped the harvested boards
+on a merge (`tests/tracked_paths.rs` guards it). The gate runs `cargo
+fmt --check` (the repository is rustfmt-clean), workspace clippy and
+`bash scripts/check.sh`. A docs change must add no broken link among the
+repository's own files (`python3 -I scripts/check_links.py`).
+
+### Before a commit
+
+`bash scripts/check.sh` runs the test set and builds the release binary
+last (a cargo test of the library crates alone leaves
+`target/release/pcb-maker` stale): every crate's tests, the root
+binary's unit tests, the CLI tests, the fixture tests, the Python tests,
+workspace clippy (`--all-targets`, warnings as errors) and the slow
+tests that depend on the load (the agent walkthrough, the placer's
+placement tests). `bash scripts/check.sh --fast` is the gate CI runs on
+every push: the same without the slow tests, about 30 s once built. CI
+runs the full set every night with KiCad 10 installed. Without kicad-cli
+the KiCad tests skip and the script says so first; with it, run the
+script under the machine's KiCad lock. Expect about five minutes in a
+fresh worktree, half of it compiling.
+
+### The fixture boards
+
+`tests/fixtures/f1` is a small two-layer board in KiCad 10's format,
+written by hand to hold what the tiers found the router and the lowering
+getting wrong (a QFN with thermal vias, a net tie, stacked pads of one
+number, an unplated slot, a padstack, a net named "14", a hatched zone,
+net classes by regular expression, a `.kicad_dru` with a pair rule, and
+more); `tests/fixtures/f2/layout.json` lays it out with a free edge.
+`tests/fixtures.rs` routes and lays them out through the binary against
+golden files in `tests/fixtures/golden` (fingerprints at 1 and 4
+threads, the rules end to end, KiCad's connectivity);
+`crates/pcb-kicad/src/tests/fixtures.rs` checks the lowering against a
+golden table. A behaviour change shows as a golden diff:
+`PCB_UPDATE_GOLDEN=1 cargo test --release -p pcb-maker --test fixtures`
+(and `-p pcb-kicad fixture_tests`) rewrites them, to commit with the
+change; the KiCad goldens need kicad-cli 10.0.7.
+
+### What a package measures
+
+A router package runs the fingerprints (route mode from
+`build/github-layout-v16`, 1 x 4, budget scale 0.25,
+`PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1`; the exact command
+is the `stage fingerprints` line of `scripts/nightly.sh`) and the
+expansion tier, each against the newest nightly's log. A placer or
+layout package adds the short tier and, for identity, the eleven dense
+boards at seed 1. No package runs the full sweep or the designer tier:
+the nightly does, and the first nightly after a merge checks a
+package's claim about the sweep.
+
+### Deciding a placer default
+
+The protocol (benchmarks.md, "Measurement discipline: placer defaults"):
+the eleven dense boards in layout mode at the task budgets (tasks v7,
+pinned rates, 3 x 2, through the ledger), five seed pairs at placer seeds
+1, 101, 201, 301, 401 (the race places seeds N to N + 15), judged by
+`benchmarks/agent-tasks/placer_ab.py compare --off ... --on ...`: the
+weighted relative change against the noise file
+`benchmarks/agent-tasks/dense-noise.json`. BETTER at p <= 0.03; at 0.03 <
+p <= 0.25 run seeds 501 to 801 and judge the nine pairs at p <= 0.03;
+otherwise not better. The short tier must lose no strict pass and gain
+no DRC error; a strict pass the short tier loses at its seed is checked
+on that board alone at the five seed pairs, and holds when the on side
+passes as often as the off side.
+
+Screen first: the same five pairs with `--layout
+'{"stop_after_first_route": true}'`, judged by `--metric first_open`
+(`experiments/placement-gap/screen.py`); a lever that fails the screen
+costs about half the full protocol. With the lever as an option on one
+binary, run.py `--reuse <dir>` takes every row whose placement digest a
+stored row has (benchmarks/agent-tasks/README.md, "Reused layouts"). When
+main changes a dense board's layouts, its off rows and its noise-file
+rows need running again.
+
+### The memory ledger's rules
+
+Routes, layouts and KiCad's checks reserve their memory in the machine's
+ledger (`$XDG_RUNTIME_DIR/pcb-maker-ledger.json`; `pcb-maker ledger`
+lists it) before they allocate, and wait for room. run.py declares each
+board's expected peak from `benchmarks/agent-tasks/estimates.json`
+(`--dry-run` prints each declaration and its source). An `--expected-gb`
+given by hand overrides every board's: give it only from a measured peak,
+never a round placeholder, and a harness of your own reserves what it
+measured too. A reservation is held whether used or not, so a
+placeholder far above use makes every other run and the nightly wait.
+CPU pairs reserve for both sides at once and start both inside it
+(`PCB_MAKER_LEDGER_INSIDE`); a pair whose one side waited is void.
 
 ## Where things are
 
 | What | Where |
 | --- | --- |
-| Current state, open problems | this file |
-| What each round measured and changed | [changelog.md](changelog.md), newest first |
-| Design notes | [router.md](router.md), [placer.md](placer.md), [constraints.md](constraints.md), [agents.md](agents.md), [congestion-model.md](congestion-model.md), [coupling.md](coupling.md), [global-route.md](global-route.md) |
-| Results tables | [benchmarks.md](benchmarks.md), [benchmarks/agent-tasks/README.md](../benchmarks/agent-tasks/README.md) (tiers), [benchmarks/github/README.md](../benchmarks/github/README.md) (harvest, Freerouting) |
-| Sweep logs | the nightly's `build/nightly/<date>/` (`sweep/`, `designer/`, `short/`, `expansion/`, `fingerprints/`, `summary.md`, `gap.txt`); the hand-run sweeps `build/github-layout-v16*` to `-v21*`; `build/github-freerouting-x738*.log` |
-| Tier references | the newest nightly's `short.log`, `expansion.log` and `fingerprints.log`; not in the nightly: `build/quick30-x1152.log`, `build/sch-x1161.log`; the placer protocol's noise file `benchmarks/agent-tasks/dense-noise.json` |
-| Snapshot binaries | `build/bin/pcb-maker-xNNNN` (four digits: main's, made by the gate; x1911 = main 1318b334), a package's own as `x<five digits>` from its range or by its name (`pcb-maker-fan1-a`); `scripts/snapshot.sh <n>` builds and copies one, never over an existing number; the nightly's `pcb-maker-nightly-<date>-<sha>` |
-| Release | the rolling `snapshot` pre-release on GitHub, remade by `.github/workflows/release.yml` on every push to `main` that passes `scripts/check.sh --fast` (linux-x86_64, macos-aarch64 when its build succeeds, `VERSION`, `SHA256SUMS`); `scripts/release.sh` does it by hand (`--dry-run` packages into `dist/` only); `pcb-maker --version` and the verdict's `environment.pcb_maker_version` name the commit and build date |
-| Tasks | committed in `benchmarks/agent-tasks/tasks/v7/` (every tier since 2026-10-21) and `tasks/v6/` (the quick and short tiers before; v7 is v6 plus uuids on six panels, none in those tiers), copies of `build/github-tasks-v6/` and `-v7/`, from `benchmarks/agent-tasks/from_pcbench.py --corpus benchmarks/github/boards.json`; tier lists in `benchmarks/agent-tasks/{quick,short,schematic}.json` |
-| Harvested boards | `benchmarks/real/external/github/` (not in git; `benchmarks/github/manifest.json` has origin and licence); their schematics in `benchmarks/real/external/github-sch/` (`benchmarks/github/schematics.json`) |
-| Code | `crates/pcb-router`, `pcb-placer`, `pcb-kicad`, `pcb-congestion`, `pcb-global` (the coarse global route), `pcb-topo`; the command line in `src/` (agent commands in `agent_cli.rs`, the rest in `main.rs`); `pcb-kicad/src/lib.rs` lists its modules (the file layer `kicad_sexpr`, `kicad_nets`, `copper_emit`; `geometry`, `copper_geometry`; `board_placer/`, `board_router/`, `board_layout`; `verification`, `native_report`, `drc_cache`, `verdict`; [README](../README.md#repository)) |
-| The removed research stack | git history up to be4b012: the crates layout-trace-routing, pcb-routing, pcb-coordinator, pcb-placement, pcb-validate, pcb-viewer, pcb-benchmark and pcb-pipeline, 54 research commands (check, validate, place, route-grid, the semantic ladder, the route candidates, benchmark-route-*, ...), their tests and fixtures; list in [changelog.md](changelog.md#committed-on-2026-10-20-quality-research-stack-removed); pcb-kicad's research modules (the semantic ladder, the sequential and adaptive routers, the grid router and its inspections, via actions, route relaxation), the crates pcb-engine, pcb-grid-router, layout-trace-model and pcb-core and nine more commands in git history up to b306347 ([changelog.md](changelog.md#committed-on-2026-10-21-quality-pcb-kicad-research-removed-librs-split)) |
-| Worktrees | one per package of work, `../pcb-maker-<name>`, made by `scripts/worktree.sh` |
+| Current state, open problems, how to work | this file |
+| The code's map: crates, stages, files | [architecture.md](architecture.md) |
+| Every setting with its default | [config-reference.md](config-reference.md) (generated: `cargo run -p config-reference`) |
+| The agent contract | [agents.md](agents.md), [constraints.md](constraints.md), [skills/pcb-maker/SKILL.md](../skills/pcb-maker/SKILL.md) |
+| Design notes | [router.md](router.md), [placer.md](placer.md), [router-ceiling.md](router-ceiling.md), [coupling.md](coupling.md), [global-route.md](global-route.md), [topological.md](topological.md) |
+| Results | [benchmarks.md](benchmarks.md); the tiers and the measurement discipline in [benchmarks/agent-tasks/README.md](../benchmarks/agent-tasks/README.md); the harvest in [benchmarks/github/README.md](../benchmarks/github/README.md) |
+| Nightly logs | `build/nightly/<date>/` (`summary.md`, `gap.txt`, `diff-*.txt`, one directory and log per stage); the newest 14 nights keep their board directories |
+| Tasks | `benchmarks/agent-tasks/tasks/v7/` (every tier); tier lists in `benchmarks/agent-tasks/{quick,short,schematic}.json` |
+| Harvested boards | `benchmarks/real/external/github/` (not in git; `benchmarks/github/manifest.json` has origin and licence), their schematics in `benchmarks/real/external/github-sch/` |
+| Release | the rolling `snapshot` pre-release on GitHub, remade by `.github/workflows/release.yml` on every push to main that passes `scripts/check.sh --fast`; `scripts/release.sh` does it by hand |
 | Agent memory | `~/.claude/projects/-home-flo-programming-pcb-maker/memory/` |
-| Untracked in the main checkout | `pcb_pr_agent_brief.md`, `target-bisect/` (not from these sessions), `benchmarks/github/boards-guided.json`, `experiments/congestion/{audit_labels,reconstruct_finals,test_audit_labels}.py`: Florian decides |
 
-## Working on it
+## Gotchas
 
-**In flight on 2026-11-05** (two packages, each in its own worktree;
-what each decides):
-
-- **Pair links given up** (branch pair-links-give-up,
-  `../pcb-maker-pairs4`; open problem 15). A pair's link that costs
-  connections is given up in the negotiation, the pairs are checked at
-  the first route, and the released links are tried again after the hard
-  repair. Decides whether a layout with `diff_pairs` keeps its
-  connections (jetson 23 and 44 unconnected where 0 and 9), the
-  condition for coupling pairs in a layout by default.
-- **This refresh** (branch handover-2026-11-05, `../pcb-maker-hand1`):
-  the state, the open problems' rank, the switches and README.md's
-  claims against the nightly of 2026-11-04 and the code after the switch
-  removal. Decides nothing; the nightly of 2026-11-05 (x1909) is the
-  first to measure the day's defaults, and the next refresh takes its
-  numbers.
-
-**A worktree per package.** `bash scripts/worktree.sh <name> <branch>`
-creates `../pcb-maker-<name>` on a new branch from main and links the main
-checkout's `benchmarks/real/external`, `build` and `artifacts` into it, so
-run.py, the tiers and `build/bin` work there as in the main checkout. It
-prints the snapshot rule: snapshots are `build/bin/pcb-maker-x<n>`, never
-reused; list `build/bin`, take a free range of ten above the highest in
-use and name it in the hand-off. The four-digit numbers (`x1882`) are
-main's, made by the gate when it merges: a package never names a build
-`pcb-maker-xNNNN`; it takes a five-digit range (`x15210`-`x15219`) or
-names its builds by the package (`build/bin/pcb-maker-fan1-a`). Commit
-on the branch; main is merged by the coordinator.
-
-**The gate's rules.** A package works in its worktree only: it never
-checks out, commits to, merges, rebases onto or pushes main (the
-coordinator merges through a gate and says when main moved: rebase
-then). Stage paths by name (`git add docs/handover.md`), never `git add
--A` or `git commit -a`, and never commit anything under `artifacts/`,
-`build/` or `benchmarks/real/external` (links into the main checkout:
-a committed link once wiped the harvested boards on a merge). The gate
-runs `cargo fmt --check` (the repository is rustfmt-clean), workspace
-clippy and `bash scripts/check.sh`; a docs-only package must add no
-broken link among the repository's own files (`python3 -I
-scripts/check_links.py`; the links into node_modules are old noise).
-
-**Before a commit:** `bash scripts/check.sh` runs the test set and builds
-the release binary last (a cargo test of the library crates alone leaves
-`target/release/pcb-maker` stale): the tests of every crate of the
-workspace and the root binary's unit tests, the CLI tests, the fixture
-tests, the Python tests, workspace clippy (`--all-targets`, warnings as
-errors) and the slow tests that depend on the load (the agent
-walkthrough, the placer's placement.rs). `bash scripts/check.sh --fast`
-is the gate CI runs on every push: the same without the walkthrough and
-placement.rs, about 30 s of tests once built. `--full` (the default)
-runs on CI every night with KiCad 10 installed. Without kicad-cli the
-KiCad tests skip and the script says so first; with it, run the script
-under the machine's KiCad lock. Measured on 2026-10-16 in a fresh
-worktree at a load of 20-27 on the 5950X: about five minutes in all,
-half of it compiling.
-
-| Step | Time |
-| --- | --- |
-| `cargo test --release -p pcb-router -p pcb-kicad -p pcb-placer` | 165 s with the first build; the tests themselves about 15 s (455 tests) |
-| `cargo test --release -p pcb-maker --test cli_exit_codes --test agent_walkthrough --test native_verification` (needs kicad-cli) | 125 s: a minute building the root package, 64 s for agent_walkthrough's three layouts, a second for the others |
-| `python3 -m pytest -q benchmarks/agent-tasks` | 1 s |
-| `cargo build --release` | seconds after the tests, which built the binary already |
-
-**The fixture boards** (`tests/fixtures`; review 2026-10-21's proposed
-fixture tests). F1 is a 30 x 25 mm two-layer board of 13 parts in KiCad
-10's format, written by hand to hold what the tiers found the router and
-the lowering getting wrong: a QFN with an exposed pad and thermal vias,
-a SOT-223, an LED with 0.7 mm pads, a GND test pad alone on F.Cu, a net
-tie, a stacked front and back pad of one number, a jumper group, a pad
-with zone_connect none, an arc track the route keeps, a Margin
-rectangle, an unplated slot, a plated hole listing only `*.Mask`, a text
-box and a dimension on copper, a padstack, a net named "14", GND and +5V
-zones of equal priority, a hatched zone, net classes (one by a regular
-expression) and a JLCPCB-style .kicad_dru with a pair rule. F2
-(`tests/fixtures/f2/layout.json`) lays F1 out with a free bottom edge.
-`tests/fixtures.rs` routes and lays them out through the binary (no via
-in an SMD pad and no hop within hole_to_hole, the rules end to end,
-golden fingerprints at 1 and 4 threads, KiCad's connectivity and pours
-on the routed board, the free dimension's clean path with a fake
-kicad-cli, a plane pour and a keepout over a fixed part);
-crates/pcb-kicad/src/tests/fixtures.rs checks the static maps' cache
-key, the lowering against a golden table and the order test without its
-race. Every route pins `PCB_WORK_RATE`, the memory and the wall guard.
-The golden files are `tests/fixtures/golden`; a behaviour change shows
-as a golden diff, and `PCB_UPDATE_GOLDEN=1 cargo test --release -p
-pcb-maker --test fixtures` (and `-p pcb-kicad fixture_tests`) rewrites
-them, to commit with the change. The KiCad goldens (`f1-drc.txt`,
-`f1-routed-connectivity.txt`) need kicad-cli 10.0.7 to rewrite.
-
-Then `bash scripts/snapshot.sh <n>` for a binary to benchmark and the
-short tier for iterating; the quick tier is no longer the merge gate
-(what a package measures is below).
-
-**What a package measures, and what the nightly does** (since
-2026-10-23: validating every package with every tier slowed the project).
-A router package runs the fingerprints (Castor, k30-SBC, jetson, Sisu in
-route mode from v16, 1 x 4, budget scale 0.25, `PCB_ROUTER_FINGERPRINT=1
-PCB_ROUTER_NO_WALL_GUARD=1`) and the route-mode expansion tier (8 x 1),
-each against main's; a placer or layout package adds the short tier
-(3 x 2) and, for identity, the eleven dense boards at seed 1 (layout,
-3 x 2). No package runs a full sweep or the designer tier: `scripts/nightly.sh`
-runs them on main every night at 02:00 (a systemd user timer), after the
-fingerprints, the expansion tier and the short tier of main's head,
-through the memory ledger beside the day's work, and writes
-`build/nightly/<date>/summary.md` (pass and strict counts, the medians
-against the designer, the gap split, the cut and killed rows, the diff
-against the previous night). A package's claim about the sweep is
-checked by the first nightly after its merge; the line under "Benchmarks
-that count" and benchmarks.md's "Nightly" table say what main does now
-(benchmarks/agent-tasks/README.md, "Nightly").
-`python3 scripts/check_links.py` checks the Markdown links (`--into
-handover.md changelog.md` for the links into these two files).
-
-**Deciding a placer default** (benchmarks.md, "Measurement discipline:
-placer defaults"; the 5-pair rule). On the eleven dense boards in layout
-mode at the task budgets (tasks v7, pinned rates, 3 x 2, through the
-ledger): five seed pairs, placer seeds 1, 101, 201, 301, 401 (16 apart:
-the race places seeds N to N + 15), judged by `placer_ab.py compare
---off ... --on ...` (the weighted relative change against the noise
-file `dense-noise.json`). BETTER at p <= 0.03; at 0.03 < p <= 0.25 run
-seeds 501 to 801 and judge the nine pairs at p <= 0.03; otherwise not
-better. The other conditions stay: the short tier loses no strict pass
-and gains no DRC error; **a strict pass the short tier loses at its
-seed** is checked on that board alone at the five seed pairs, and the
-condition holds when the on side passes as often as the off side
-(framework_mobo_lefthalf under crossings in the anneal: 4 of 5 on, 3 of
-5 off). Climb the ladder first (benchmarks.md, "The ladder of placer
-measurements"): stage 1 is the same five pairs with `--layout
-'{"stop_after_first_route": true}'` judged by `--metric first_open`; a
-lever that fails it costs about half the full stage. With the lever as
-an option on one binary, run.py `--reuse build/layout-reuse` takes every
-row whose placement digest (`layout: placement digest` on stderr,
-`placement_digest` in board-layout.json) a stored row has
-(benchmarks/agent-tasks/README.md, "Reused layouts"); a switch that lands
-in the lowered problem, or two binaries, never hit. When main changes a
-dense board's layouts, its off rows and its noise-file rows need running
-again.
-
-**The memory ledger's rules** (benchmarks.md, "Memory ledger"). run.py
-declares each board's expected peak from `estimates.json` (the measured
-rows of its kind; `--dry-run` prints each declaration and its source).
-An `--expected-gb` given by hand overrides every board's: give it only
-from a measured peak (estimates.json, an earlier row's `peak_rss_mb`),
-never a round placeholder, and a harness of your own reserves what it
-measured too: placeholders far above use hold room other agents and the
-nightly wait for (2026-10-28: one agent's pairs held most of the
-ledger's capacity while using a few per cent of it). CPU pairs reserve
-for both sides at once and start both inside it
-(`PCB_MAKER_LEDGER_INSIDE`): a pair whose one side waited is void.
+- The repository is rustfmt-clean and clippy-clean: format Rust changes
+  before committing.
+- A cargo test of the library crates leaves `target/release/pcb-maker`
+  stale: build before copying a snapshot (`scripts/snapshot.sh` does).
+- `pgrep -f` and `pkill -f` match their own shell: a waiter on `pgrep`
+  never ends, `pkill` kills the session. Wait on a PID (`tail
+  --pid=<pid> -f /dev/null`) or a done-file; kill by PID, children by
+  `pgrep -P <parent>`.
+- Never edit a bash script while an instance of it runs: bash reads the
+  file as it executes, and the edit lands in the middle of the run
+  (`nightly.sh` included). Copy it to a new name, or wait.
+- No backticks in `git commit -m`.
+- A layout's verdict has no reference by default: every KiCad finding
+  counts except a footprint's own (`footprint_findings`) and the input's
+  own edge clearances, mask bridges and courtyards of kept parts
+  (`input_findings`). run.py's strict rule subtracts the designer's
+  findings at the same place, so a verdict's exit 1 and a strict pass can
+  both be right. `drc-kicad-board --input <project-dir>` judges as the
+  layout did.
+- The nightly rewrites parts of README.md, this file and
+  docs/benchmarks.md and commits them on main
+  (`scripts/nightly-report.py --docs`): README's "Boards harvested from
+  GitHub" bullet from "pcb-maker places and routes" on and the table's
+  rows that name a nightly; this file's title line, the `nightly-state`
+  block and the paragraph that begins `**Layout sweep v` and says
+  "written by the nightly". Edit around them.
+- The environment index at the end of this file is generated
+  (`cargo run -p config-reference`); `cargo test --test
+  config_reference` fails while it is stale or a `PCB_*` name in the
+  code lacks its line.
+- skills/pcb-maker/SKILL.md is tested (tests/cli_exit_codes.rs): every
+  `<verb>-kicad-<noun>` or `inspect-...` word in it must be an agent
+  command named in docs/agents.md, and every agent command must be in
+  it. The binary prints agents.md's section names in its next actions:
+  do not rename them.
+- One task list per comparison: every tier defaults to
+  `benchmarks/agent-tasks/tasks/v7`. compare.py's first line says TASK
+  LISTS DIFFER when two logs ran on different lists; rows on other
+  inputs are marked INPUT.
+- Benchmarks use a copied binary from `build/bin`. Above a load of about
+  45 the wall guard cuts rows (CUT is no evidence). Pin CPU experiments
+  with `taskset` on symmetric halves (logical CPUs n and n+16 share a
+  core).
+- The machine (Ryzen 9 5950X, 16 cores, 32 threads, 62 GB) is shared
+  with Florian and the nightly (20 CPUs from 02:00 to about 07:00):
+  leave him 4 cores and 4 GB. A run that grows past its reservation with
+  no room left ends with exit 4 (not the OOM killer); run.py retries such
+  a row once.
+- KiCad 10: pinfunction is `NAME_NUMBER`; pad and text angles are
+  absolute; copper items reference nets by name, and an unknown name
+  becomes a new net unless a touching pad supplies one; DRC caps a
+  violation type at 499 (199 for some); its DRC is not byte-deterministic
+  (finding order, which pair names a missing connection).
+- KiCad check cost: a DRC with the user's global library tables costs
+  seconds and gigabytes per call on any board, so the checks run with a
+  library-free configuration (`kicad_config.rs`;
+  `PCB_MAKER_KICAD_USER_LIBS` turns that off).
+- Freerouting's jar opens its GUI without `-de`/`-do` (`--help` too):
+  always `-Djava.awt.headless=true -de ... -do ...`, or use
+  `benchmarks/github/freerouting.py`.
 
 ## Switches
 
 Environment variables the binary reads, one line each. Defaults are what
-an agent gets; none is needed for normal use. The index is generated from
-the code (tools/config-reference: every `PCB_*` name in the crates'
-sources needs its line there, and `cargo test --test config_reference`
-fails until the index is regenerated); the config keys are in
-[config-reference.md](config-reference.md).
-
-**Settings whose defaults changed or were decided since 2026-10-27**
-(config keys; [config-reference.md](config-reference.md) has each with
-its doc comment; checked against the settings structs after the switch
-removal of 2026-11-04, whose keys the settings no longer accept: "Removed
-experiments (2026-11-04)" below):
-
-- `ratsnest_crossings.anneal` (placer): **on** since 2026-10-28 (x15201;
-  the placer-default protocol: -10.8 %, p 0.002).
-- `race_count` (layout): **`"ripped"`** since 2026-11-03 (x1881; nine
-  pairs: -5.6 %, p 0.014): the race ranks its probes by the open
-  terminals after the rip-up of the conflicted branches, with a 2 %
-  margin over the first-ranked placement; `"unfinished"` is the race
-  before.
-- `blind_vias` (router): **off** (2026-11-05; `PCB_ROUTER_BLIND_VIAS`;
-  docs/router.md, "Blind, buried and micro vias"): where the board allows
-  spans (`via_spans`, the designer's own blind/buried/micro vias, a KiCad
-  6/7 project's switches), a via pierces only the shortest allowed span;
-  route mode gains on the HDI boards, a layout seed lost one connection.
-- `bga_fanout` (router): **on** since 2026-11-04 (`PCB_ROUTER_BGA_FANOUT`;
-  docs/router.md, "Prepared fan-outs for BGAs"): the inner balls of a
-  grid array whose net's via does not fit a diagonal gap get a dog-bone
-  (stub and via of the project's sizes) before routing, written where the
-  route uses it; the placer keeps the far side free under those vias.
-  Only Glasgow's U30 among the task boards takes a plan.
-- `bga_room` (placer): **on** since 2026-11-04 (docs/placer.md, "Room
-  around grid arrays"): around a grid array whose inner balls take the
-  fan-out's dog-bones (Glasgow's U30, the only one among the task
-  boards), a band on its side for the outer rings' surface escapes and
-  only its own decoupling under it on the far side. Glasgow 343 -> 262
-  unconnected over three seeds, its first route -20 % over five; nothing
-  else moves. `"bga_room": false` turns it off.
-- `skeleton_race` (placer): **on** since 2026-11-05 where a seed's
-  placement work is at least `min_work_seconds` (500 s; docs/placer.md,
-  "A race over skeletons (2026-11-04)", "The fixes, and stage 1 again
-  (2026-11-05)" and "The skeleton's budget (2026-11-05)"; defaults `room`
-  1, `work_share` 0.5, `join_pins` 8, `plain_share` 0; `null` turns it
-  off): each seed places every part but the free passives first, then
-  the passives around the held skeleton; under it the global placement's
-  stall stop and turns that fit the board. Stage 2 BETTER (-12.1 %, p
-  0.002, no dense strict pass lost); OpenFC at the task budget 10 of 10
-  strict in both arms. Below 500 s (the short tier's 200 s) every seed
-  places plain, byte for byte the switch off's (`board-placer.json`'s
-  `skeleton_race.budget_ok`). A level guard (placer.md "The level guard
-  (2026-11-05)") was built, measured and removed. On branch
-  skeleton-race-5 (2026-11-06, merged): the passives start no looser
-  than level 2 (`PASSIVES_FIRST_LEVEL`; a per-board level measured on
-  2026-11-07 and not found, placer.md "The passives' level per board"), and the regions the lowering
-  gives an outline's pieces (`Constraints::automatic_regions`) do not
-  keep passives in the skeleton (placer.md "The passives' first level";
-  the known residual: DSP-ADAU1452's level-0 seat and its gain).
-- `pad_exits` (placer): **off** (2026-11-04; `PCB_PLACER_PAD_EXITS`;
-  docs/placer.md, "Pads without a way out (2026-11-04)"): after each
-  seed the router's test of every pad's way out, and the parts that close
-  one moved or turned. Stage 1 on its four boards -3.0 %, p 0.228 (open
-  problem 17); the full protocol decides.
-- `pair_rows` (placer): **off** unless set (2026-11-04, and on 2026-11-05
-  not made to follow `diff_pairs`; docs/placer.md, "Pair rows
-  (2026-11-04)", "Following diff_pairs"): a pair's two series parts as a
-  row of two at the pair's pitch, facing its ends; more pairs coupled,
-  unconnected beyond the seeds' spread on four of six runs (open problem
-  15).
-- `length_minima` (placer): **off** (2026-11-04; docs/placer.md, "Length
-  minima (2026-11-04)"): a two-part net's pins at least half its rule's
-  minimum apart; the lengths gained, the firestarter lost 22 connections
-  over two seeds (open problem 16).
-- `length_reroute` (router): **off** (2026-11-04;
-  `PCB_ROUTER_LENGTH_REROUTE`; docs/router.md, "Length minima: the
-  placer's share and the reroute (2026-11-04)"): a net still short of its
-  minimum after the meanders routed again with room for them; no length
-  finding went (open problem 16).
-- `diff_pairs` (router): unset, **off in a layout**, on in route mode
-  where the project's custom rules ask for pairs; since 2026-11-05 a
-  layout with it on plans the pairs in every routed stage
-  (docs/router.md, "The layout's own routes (2026-11-04)"), at a price in
-  connections on dense boards (open problem 15).
-- `via_in_pad_far_side` and `length_maxima` (placer): **on** (landed
-  2026-11-03; docs/placer.md, "Length maxima and the far side of vias in
-  pads (2026-10-28)"): the far side kept free under a BGA's vias in pads
-  (MIDAS-MK1 and MK1.1: unconnected 5 -> 1 and 6 -> 3 over three seeds),
-  a net's pins kept within 0.8 of its `length` maximum (oro's link:
-  `length_out_of_range` 12 -> 5 and 6 -> 4).
-- `via_in_pad` (router): **unset, the evidence rule** since 2026-10-28: a
-  filled and capped via goes only into the enclosed pads (no track at
-  the neck width leaves between the neighbours) of a footprint whose
-  small SMD pads the designer's board holds vias in (the input board's
-  own vias before `--strip`, or the `--reference` board's); a list
-  (`["U106"]`) opts footprints in, `true` and `false` as before. run.py
-  passes the designer's vias in pads as entries (`--designer-via-in-pad
-  off` turns that off).
-- `sub_boards` (placer) and `sub_board_nets` (router): **on**; since
-  2026-10-28 rows of mouse-bite holes and V-cut lines are tabs too, and
-  no part is placed on a frame (a piece without parts) or within 1.5 mm
-  of a tab.
-- `panel_copies` (placer): **on**; since 2026-11-03 the copies keep off
-  their frames and tabs as the sub-boards do, connectors and the
-  designer's overhangs reaching over them (the 0xCB pcb-panel 62 -> 0, a
-  strict pass in v31; docs/placer.md, "Frames on panels of copies, and
-  what may reach over them (2026-10-28)").
-- `length_matching` (router): on, and since 2026-10-28 on a layout's own
-  routes too (meanders, the length repair).
-- `stop_after_first_route` (layout): **off**; the ladder's stage 1 (the
-  layout ends with its first route's board, KiCad's check and the report,
-  `stopped_after_first_route`).
-- run.py `--reuse DIR`: off unless given; the placement digest's cache
-  of layouts (benchmarks/agent-tasks/README.md, "Reused layouts").
+an agent gets; none is needed for normal use. The settings files' keys
+are in [config-reference.md](config-reference.md).
 
 <!-- The environment index is generated: cargo run -p config-reference. -->
 
@@ -1451,259 +639,3 @@ Tests and research commands:
 - `PCB_MAKER_TEST_DROP_DRC`: the route's drc.json removed before the verdict reads it (tests/cli_exit_codes.rs).
 
 <!-- End of the generated environment index. -->
-
-The old-path A/B switches (each restored the code before a change) were
-removed on 2026-10-16: the router's (`PCB_ROUTER_OLD_*`,
-`PCB_ROUTER_NO_*` but `NO_WALL_GUARD`, `NO_SPOKELESS_TRACKS` and
-`NO_LOST_SPOKES`, `PCB_ROUTER_REROUTE_FRACTION`, the speculation
-switches, `PCB_ROUTER_CLEANUP_WINDOW`; changelog.md, "quality:
-pcb-router") and the layout's, ladder's and placer's
-(`PCB_KICAD_OLD_ZONE_ARCS`, `PCB_LADDER_OLD_RESERVE`,
-`PCB_LADDER_FORCE_RUNG`, `PCB_LADDER_SHORT_RESUME`,
-`PCB_LAYOUT_OLD_FIRST_ROUTE_BUDGET`, `PCB_LAYOUT_NARROW_CONTINUATION` and
-`_FLOOR`, `PCB_PLACER_CHANNEL_SELF`, `PCB_JACOBI_BATCH`; changelog.md,
-"quality: pcb-kicad"). `PCB_ROUTER_NO_ISLAND_STUBS` became
-`PCB_ROUTER_ISLAND_STUBS` when the island stubs went off on 2026-10-21,
-and went on 2026-11-04 ("Removed experiments (2026-11-04)" below).
-
-## Removed experiments (2026-11-04)
-
-Switches of levers that lost or were null under their measurement and
-that nothing in the agent flow used, removed on 2026-11-04 (Florian: they
-cost agents and maintainers and buy nothing; branch prune-switches, one
-commit each). The default path is byte for byte as before (the
-fingerprints, the short tier, the place checks; changelog.md, "the
-failed-experiment switches removed"). What each measured, and where the
-details are:
-
-- `crossing_dive` (router, `PCB_ROUTER_CROSSING_DIVE`; off): in the trouble
-  repair, one net of a crossing pair at a fine-pitch row took a via
-  beyond the row. Route mode on the five near-miss boards: the same KiCad
-  counts (Quanta75's dives traded the crossing for a key-matrix row on
-  the other layer); the expansion tier 558 to 556 unconnected, strict
-  passes 24 to 25; layout mode on the five boards the same open items;
-  the eleven dense boards 876 to 878 (SNSP-CPU-01 97 to 90, MegaDrive
-  118 to 125). Changelog 2026-11-04, "the crossing dive in the trouble
-  repair, off"; docs/router.md, "Crossings decided in the repair
-  (2026-11-03)". The crossing census (`PCB_ROUTER_TROUBLE_WHY`) stays.
-- `fanout` (router, `PCB_ROUTER_FANOUT`, with `fanout_cost`,
-  `fanout_depth` and the experiment knobs `PCB_ROUTER_FANOUT_COST`,
-  `_DEPTH`, `_FREE`, `_VIAS` and its report `PCB_ROUTER_FANOUT_WHY`;
-  off): before the negotiation,
-  every pad of a dense row got one way out chosen jointly with its
-  neighbours, reserved against other nets by a cost. Route mode on the
-  five near-miss boards 8 and 8 unconnected (Quanta75's three top-row
-  pads connect, another pad and the ground pour lose; OpenAirScope trades
-  CMD for DAT3); layout mode 8 and 8, a pass each way; the expansion tier
-  558 to 510 unconnected but strict passes 24 to 23; the eleven dense
-  boards 931 to 966. Changelog 2026-10-28, "the fan-out step before
-  negotiation: diagnosed, built, off"; docs/router.md, "Fan-out before
-  negotiation (2026-10-28)". The plan's dense pads and straight ways out
-  stay for the census (`fanout_plan`, axes only, no costs or via sites).
-- `last_connections` (router, `PCB_ROUTER_LAST_CONNECTIONS`; 0, off): once
-  the trouble repair's rounds left at most that many open terminals, a
-  last pass with ejection chains three deep, board-wide victims and pour
-  nets taking part. At 8 it closed no connection on the 12 near-miss
-  boards (layout mode, 34 to 34 KiCad unconnected); the expansion tier
-  558 to 555 unconnected with one router-check violation more
-  (nervous-ecg, by the ladder's timing). Changelog 2026-10-27, "the last
-  connections: why the near-misses stay open"; docs/router.md, "The last
-  connections (2026-10-27)". The two trouble-repair fixes of that package
-  stay on; the ejection chain itself stays reachable through
-  `PCB_ROUTER_TROUBLE_DEPTH`.
-- `capacitated_corridors` (router, `PCB_ROUTER_CAPACITATED_CORRIDORS`,
-  with `capacitated_retries`, `capacitated_stuck` /
-  `PCB_ROUTER_CAPACITATED_STUCK` and `capacitated_growth` /
-  `PCB_ROUTER_CAPACITATED_GROWTH`; off): the negotiation's corridors from
-  pcb-global's route with hard capacities, a miss lowering the boundary
-  it failed at and re-planning the nets through it. The expansion tier's
-  best variant (`g6`) 616 unconnected against 588 off, one pass more; as
-  designed 667, the misses' learning alone 689; the fingerprints 46
-  against 43; the dense boards 1267 against 1010. The negotiation's
-  corridors seldom miss (0.7 % off, 0.16 % capacitated), so the learning
-  had little to learn from. Changelog 2026-10-24, "capacitated corridors,
-  experiment"; docs/router.md, "Capacitated corridors (2026-10-24)". The
-  search counters stay (the verdict's `corridors`, without its `band`
-  and learning fields).
-- `island_stubs` (router, `PCB_ROUTER_ISLAND_STUBS`; off since
-  2026-10-21): a pad whose spokes reach only a fill island got its own
-  straight track into it, which changes no connection and only silences
-  KiCad's isolated-island finding (Florian, 2026-10-21). k30's tracks
-  rung 14 starved thermals to 1, mackerel-30's 19 to 3 when it was on.
-  Changelog 2026-10-21, "starved thermals at scale"; docs/router.md,
-  "Thermal spokes as KiCad counts them" (the island vias stay on). The verdict's
-  `repairs.island_stubs`, board-router.json's `island_stubs` and the
-  environment echo go with it; compare.py prints the count only for rows
-  of older binaries.
-- `align_rows` (placer; off): rows of repeated parts, parts of one kind
-  paying in the anneal for standing out of line with the nearest of
-  their kind and lined up after the refinement where it cost at most
-  0.5 mm of wire. Stage 1 of the placer protocol (five seed pairs on the
-  dense boards, the first route's open terminals): **+4.2 %** (p on
-  better 0.79 / 0.82), fails; Glasgow better (-8.6 %), the 4in1-mini
-  (+12 %), protoesp (+23 %) and video worse; the rows bought with wire
-  (up on 8 of 11) and crossings. Changelog 2026-11-04, "the designer as
-  teacher"; docs/placer.md, "The designer as teacher (2026-11-04)".
-  `legal::align_orientations` (on) stays. experiments/placement-gap's
-  scripts that pass `{"align_rows": {}}` need a binary before the
-  removal.
-- `routing_demand` (placer, a factor; 0, off): every net's estimated wire
-  area (half perimeter times the track pitch, over its signal layers)
-  as charge over its box in the global placement. Measured when it was
-  built (2026-10-07, commit 8e133a08): the ESC mini's wirelength 433 at
-  1.0, 446 at 3.0, 446 without; no win within the seed noise there
-  (docs/todo.md, "Crowded boards"), and it did not move the dense boards
-  (docs/benchmarks.md, the placement gap). The global placement's
-  `routing_layers` and `track_pitch`, read only by it, go too.
-- `routing_room` (placer, with `routing_room_share`, `_floor`, `_most`,
-  `_all_parts`; off): after a seed's placement each part's halo rescaled
-  by the RUDY demand around it within the same halo area, then annealed
-  again. Measured 2026-10-14: it never fired on video, the OpenESC 4in1
-  and hackrf; on the five boards where it fired, passes over 15 runs off
-  11, share 1.0 9, all parts 11, share 0.75 9, share 0.5 9; the quick
-  tier 22 to 24 passes, unconnected 22 both, vias -3.7 %: within the
-  seed noise. docs/placer.md, "Routing room from congestion (measured
-  2026-10-14, off)"; changelog 2026-10-14, "the routing-room agent";
-  scripts experiments/routing-room/. The race's `routing_room_failed`
-  rank goes with it; the per-part halos (`Relaxation::halos`) stay, the
-  skeleton race sets them.
-- `shared_halos` (placer; off): neighbours kept the larger of their two
-  halos between them, not the sum. Measured 2026-10-14: six gap boards'
-  median final wirelength -6 %; the quick tier (with the annealer's
-  gaps, x700) passes 19 to 20, unconnected 30 to 24, starved thermals 17
-  to 9, vias -5 %, but zpn_devboard lost its pass (a mask bridge, vias
-  299 to 348) and hackrf's vias went 429 to 673. docs/placer.md, "Where
-  the wirelength goes (measured 2026-10-14)"; changelog 2026-10-14, "the
-  legaliser agent, x701 / x711". `Problem::shared_halos` and its branches
-  in the anneal, the global placement, the halo budget and the legality
-  test go.
-- `anneal_far_side_gaps` (placer, `AnnealConfig::legal_far_side`; off):
-  the annealer kept the legality test's gaps across the board (holes the
-  full spacing from bodies, far-side copper the clearance from pads).
-  Measured 2026-10-14: it halved the parts legalisation moves on Castor
-  but won no wirelength; layout flat on the quick tier (x700 against
-  x651: 19 passes both, unconnected 29 to 30, starved thermals 12 to 17,
-  vias -4 %), worse on video (240 to 315 unconnected) and the OpenESC
-  4in1 (120 to 132), SNSP-CPU-01 239 to 224. docs/placer.md, "Where the
-  wirelength goes (measured 2026-10-14)"; changelog 2026-10-14, "the
-  legaliser agent, x701 / x711". `State::far_overlap` goes;
-  `anneal::overlaps` takes no configuration.
-- `ratsnest_crossings.global` (placer; off; the other parts of
-  `ratsnest_crossings` stay, `anneal` on since 2026-10-28): after the
-  global placement the parts of 16 pins or more traded places and
-  turned where wire plus crossings fell (`crossings::reorder`). On
-  MegaDrive it traded in two of three seeds' global placements, but the
-  placed board came out the same (seed 1: 8135 crossings with and
-  without); on Glasgow it found nothing; not measured in layouts.
-  Changelog 2026-10-25, "ratsnest crossings in the anneal";
-  docs/placer.md, "Where the order is decided: the anneal and the global
-  placement (2026-10-25)". The anneal's large-part peers keep its pin
-  thresholds (`REORDER_PINS`, `REORDER_PIN_SHARE`).
-- `net_weight` (placer; `"steep"`, the default and now the only
-  weighting, `board_placer::net_weight`): `sqrt`, `flat` (every net 1)
-  and `rail` (1 for nets of nine pins or more and those named as a
-  supply or ground). Stage 0 shortened the large nets (the 9+ pin nets'
-  excess over the designer's 24 % steep, 18 % sqrt, 16 % flat, 14 %
-  rail); stage 1 (five seed pairs on the dense boards, the first route's
-  open terminals): `rail` **+5.6 %** (p on better 0.953), `flat`
-  **+4.0 %** (0.883): both fail. Changelog 2026-11-04, "net weights: the
-  rails and buses counted more, a switch; stage 1 fails"; docs/placer.md,
-  "Net weights (2026-11-04)". The `net_weight` key goes from the placer
-  settings; experiments/placement-gap's `place.py` variants that set it
-  need a binary before the removal.
-- `legality` (placer; `"model"`): `"kicad"` (KiCad's legality at every
-  level whose spacing is the rules' least) and `"strict"` (the model
-  before 2026-10-27, bodies the copper's inset apart at the last level
-  too). `"kicad"` judged on 2026-10-26: the dense sum of medians 967 to
-  934, but two of three seed pairs rose (seed 1 +37, seed 101 +89), so it
-  failed the flip's conditions; the short tier 7 to 7 strict passes,
-  unconnected 22 to 24. Changelog 2026-10-26, "the placer's legality
-  against KiCad's"; docs/placer.md, "The legality model against KiCad
-  (2026-10-26)". The last level keeps KiCad's legality
-  (`core::Config::kicad_last_level`, always on from the KiCad layer);
-  `legality_census.py --legality` and `legality-kicad-board --placer
-  '{"legality": ...}'` go.
-- `final_route_from_state` (layout, `PCB_LAYOUT_FINAL_FROM_STATE`; off):
-  the final route started from the router's state after the first route
-  and the moves, its legal nets kept as the board's own copper, the
-  ladder on the rest within 0.3 of the work left, from scratch when its
-  first attempt left more open than the first route. Measured (x1741):
-  the eleven dense boards 973 to 979 KiCad unconnected with the descent
-  off (better 0, worse 3), 988 to 998 with it on; the short tier the
-  same (22 / 22, passes 6 / 6). Changelog 2026-10-23, "routes survive
-  moves; the narrow step's bound"; docs/placer.md, "Routes survive moves
-  (2026-10-23)". The ladder's `fresh_open` give-up, used only by it,
-  goes too; route mode's kept routes of a designer (`kept.rs`) stay.
-
-## Gotchas
-
-- The repository is rustfmt-clean since 54eff39 and stays so: format Rust
-  changes before committing (the old "never run cargo fmt" rule is gone).
-- A cargo test of the library crates leaves `target/release/pcb-maker`
-  stale: build before copying a snapshot (`scripts/snapshot.sh` does).
-- `pgrep -f` and `pkill -f` match their own shell: a waiter on `pgrep`
-  (`until ! pgrep -f <name>`) never ends, `pkill` kills the session, and
-  a `for p in $(pgrep -f ...)` kill chain in one command kills its own
-  shell. Wait on a PID (`tail --pid=<pid> -f /dev/null`) or a done-file;
-  kill by PID, children by `pgrep -P <parent>`.
-- Never edit a bash script while an instance of it runs: bash reads the
-  file as it executes, and an edit lands in the middle of the run (a
-  gate died with a syntax error after its check had passed, 2026-10-28;
-  nightly.sh alike). Copy it to a new name, or wait.
-- Memory ledger placeholders starve the machine: a reservation is held
-  whether it is used or not, so a harness or an `--expected-gb` that
-  reserves a round guess far above the measured peak makes every other
-  run wait (the ledger's rules under "Working on it").
-- A layout's verdict has no reference by default: every KiCad finding
-  counts but a footprint's own (`footprint_findings`) and, since
-  2026-10-27, the input's own edge clearances, mask bridges and
-  courtyards of parts the run kept where the input has them
-  (`input_findings`). Clearances, hole clearances and shorts between
-  fixed parts still fail it (framework_mobo_lefthalf's R31 and R32 at
-  J1: exit 1), while run.py's strict rule subtracts the designer's
-  findings at the same place: a verdict's exit 1 and a strict pass can
-  both be right. `drc-kicad-board` and `fab-kicad-board` on a board alone
-  take every part as the input's (a moved part's mask bridges excused:
-  vaio_re); `--input <project-dir>` judges as the layout did.
-- The nightly rewrites parts of README.md, docs/handover.md,
-  docs/benchmarks.md and docs/changelog.md and commits them on main
-  (scripts/nightly-report.py, `--docs`): README's "Boards harvested from
-  GitHub" bullet from "pcb-maker places and routes" on and the table's
-  rows that name a nightly; the hand-over's title, the
-  `nightly-state` line and the paragraph that begins
-  `**Layout sweep v` and says "written by the nightly". Edit around them.
-- skills/pcb-maker/SKILL.md is tested (tests/cli_exit_codes.rs): every
-  word of the form `<verb>-kicad-<noun>` or `inspect-...` in it must be
-  an agent command named in docs/agents.md, and every agent command must
-  be in it.
-- No backticks in `git commit -m`.
-- One task list per benchmark comparison: every tier defaults to the
-  committed benchmarks/agent-tasks/tasks/v7 (the quick and short tiers to
-  github-tasks-v6 before 2026-10-21; their boards are the same in both); a
-  log against another list compares inputs, not binaries. compare.py's
-  first line names both lists and says TASK LISTS DIFFER; rows on other
-  prepared constraints, task entries or designer boards are marked INPUT.
-- Benchmarks use a copied binary (`build/bin`); runs go side by side and
-  the memory ledger keeps them apart (`pcb-maker ledger` lists who holds
-  what; the tier lock only with `--lock`), load under 40; above a load
-  of about 45 the wall guard cuts rows (CUT is no evidence). Pin CPU
-  experiments with `taskset` on symmetric halves (logical CPUs n and n+16
-  share a core).
-- The machine (Ryzen 9 5950X, 16 cores, 32 threads, 62 GB, 32 GB swap):
-  routes, layouts and KiCad's checks reserve their memory in the ledger
-  ($XDG_RUNTIME_DIR/pcb-maker-ledger.json) before they allocate and wait
-  for room (MemTotal less 6 GB for all reservations together); run.py
-  admits a board when the ledger has room for its expected peak, with
-  `--min-free-gb` a floor on MemAvailable beside it; a run that grows
-  past its reservation with no room left waits in the ledger for the
-  room and ends with exit 4 (not the OOM killer) only when the memory
-  available falls below 2 GB, or after 600 s when the others' growth
-  would take it there; run.py retries such a row once (since 2026-10-27).
-- KiCad 10: pinfunction is `NAME_NUMBER`; pad and text angles are absolute;
-  copper items reference nets by name, and an unknown name becomes a new net
-  unless a touching pad supplies one; DRC caps a violation type at 499 (199
-  for some); its silkscreen DRC sometimes names the wrong pad; its DRC is
-  not byte-deterministic (finding order, which pair names a missing
-  connection).
-- Freerouting's jar opens its GUI without `-de`/`-do` (`--help` too): always
-  `-Djava.awt.headless=true -de ... -do ...`, or use `freerouting.py`.
