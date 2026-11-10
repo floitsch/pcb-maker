@@ -119,7 +119,10 @@ machine (`wall_stretch`) instead of cutting rows (docs/router.md).
   over the designer's, unconnected items over the board's connections, the
   ground pours' cut and the aesthetics (docs/quality.md) less the
   designer's. The last two need the result scored: `run.py --quality`, or
-  `compare.py --score <binary>` for older runs.
+  `compare.py --score <binary>` for older runs. run.py gives
+  score-kicad-board `SCORE_TIMEOUT_SECONDS` a board (on the designer's
+  board for its vias in pads, and for `--quality`); past it the score is
+  missing and the row's `score_missing` says which side and why.
 - **The strict rule** (`pass_strict`, `new_findings_strict`; run.py's
   `strict_findings`, docs/agents.md): a KiCad finding of ours counts
   unless the designer's board with its tracks, vias and small zones
