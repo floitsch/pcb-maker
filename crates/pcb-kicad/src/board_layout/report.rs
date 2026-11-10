@@ -58,7 +58,6 @@ pub(super) struct ReportParts<'a> {
     pub race: RaceOutcome,
     pub first_route: FirstRoute,
     pub moves: Vec<KiCadBoardLayoutMove>,
-    pub move_descent: Option<crate::move_descent::KiCadMoveDescentReport>,
     pub labels: crate::labels::KiCadLabelReport,
     /// The work up to the final ladder.
     pub layout_work: f64,
@@ -83,7 +82,6 @@ pub(super) fn finish_report(
         race,
         first_route,
         moves,
-        move_descent,
         labels,
         layout_work,
         final_ladder_budget_seconds,
@@ -117,7 +115,6 @@ pub(super) fn finish_report(
         final_ladder_budget_seconds,
         pin_lines: race.lines_why,
         moves,
-        move_descent,
         outline_sizing,
         placement_race: race.placement_race,
         congestion: race.congestion,

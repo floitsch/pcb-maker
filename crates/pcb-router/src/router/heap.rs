@@ -26,7 +26,7 @@ pub(super) const NO_KEY: u64 = u64::MAX;
 /// sift finds the least of them without branches (since 2026-10-15; the
 /// branches mispredicted; with the four-way layout 9-13 % less CPU per
 /// routed board, k30-SBC and Sisu, identical routes). The tile planner's
-/// and the bundles' searches use it; the router's search uses
+/// searches use it; the router's search uses
 /// `SearchHeap`, the same heap with a decrease-key (since 2026-10-27).
 /// Keys order totally (a key holds its state; equal keys are the same
 /// entry twice), so the pops are those of any other min-heap.

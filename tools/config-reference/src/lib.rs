@@ -193,11 +193,6 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "overrides the router's `blind_vias` (`0` off, anything else on; off by default): where the board allows via spans short of the stack (`via_spans`, the designer's blind, buried and micro vias, a KiCad 6 or 7 project's switches), a via takes the shortest allowed span holding the two layers it joins, copper and a hole only there, written as KiCad's blind, buried or micro via; a BGA's dog-bone takes the shortest span to a routable layer (docs/router.md, \"Blind, buried and micro vias\").",
     ),
     (
-        "PCB_LAYOUT_MOVE_DESCENT",
-        Kind::Switch,
-        "overrides the layout's `move_descent` (`0` off, anything else on with layout.json's settings or the defaults): the move descent after the first route (docs/architecture.md, \"Off by default, still in the code\").",
-    ),
-    (
         "PCB_ROUTER_TROUBLE_PRESENT",
         Kind::Switch,
         "the trouble-makers' repair: the price of sharing a node in the trouble-maker's search (default 20).",
@@ -296,31 +291,6 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "PCB_ROUTER_DIFF_PAIRS_DEBUG",
         Kind::Diagnostic,
         "differential pairs: prints each launch, each link's path, the copper refused with the reason, each stub straightened or not, and the fallback's work.",
-    ),
-    (
-        "PCB_ROUTER_BUS_BUNDLES",
-        Kind::Switch,
-        "sets the router's `bus_bundles` (an experiment, off): buses of four or more nets joining the same footprints route first, in pad order, inside one corridor, side by side (docs/architecture.md, \"Off by default, still in the code\").",
-    ),
-    (
-        "PCB_ROUTER_BUS_LANE",
-        Kind::Switch,
-        "the router's `bus_lane_cost`: the factor on a bus member's step off the lane beside its neighbours (default 1.5).",
-    ),
-    (
-        "PCB_ROUTER_BUS_MARGIN",
-        Kind::Switch,
-        "bus bundles: tiles a bus's corridor is grown by beyond half its width (default 4).",
-    ),
-    (
-        "PCB_ROUTER_BUS_PATIENCE",
-        Kind::Switch,
-        "bus bundles: the reroutes after which a member leaves its bundle and negotiates as any other net (default 8).",
-    ),
-    (
-        "PCB_ROUTER_BUS_WHY",
-        Kind::Diagnostic,
-        "bus bundles: prints every bus found and every member broken out of its bundle.",
     ),
     (
         "PCB_ROUTER_SEED",
@@ -1183,16 +1153,6 @@ fn tables(root: &Path) -> Result<Vec<Table>, String> {
             name: "KiCadRaceProbe",
             fields: parse(layout_file, "KiCadRaceProbe")?,
             defaults: json_defaults::<pcb_kicad::KiCadRaceProbe>()?,
-            role: Role::File,
-        },
-        Table {
-            title: "Layout settings: move_descent",
-            prefix: "move_descent.",
-            intro: "The `move_descent` object of the layout settings (an experiment, off when absent): single parts nudged, turned or swapped after the first route where the incremental global route and a local reroute say fewer terminals stay open (docs/architecture.md, \"Off by default, still in the code\").",
-            file: "crates/pcb-kicad/src/move_descent.rs",
-            name: "KiCadMoveDescent",
-            fields: parse("crates/pcb-kicad/src/move_descent.rs", "KiCadMoveDescent")?,
-            defaults: json_defaults::<pcb_kicad::KiCadMoveDescent>()?,
             role: Role::File,
         },
         Table {

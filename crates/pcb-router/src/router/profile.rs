@@ -15,7 +15,6 @@ pub(super) struct Profile {
     pub(super) negotiation: f64,
     pub(super) conflicts: f64,
     pub(super) refresh_pour: f64,
-    pub(super) replan: f64,
     pub(super) resolve: f64,
     pub(super) cleanup: f64,
     pub(super) via_reduction: f64,
@@ -119,8 +118,8 @@ pub fn build_totals() -> (u64, f64) {
 /// Over the process (every router, every thread; routers side by side
 /// add up): per phase (`PHASES`), its wall nanoseconds, its search work and
 /// its pour analyses' work (nanoseconds of an idle machine), and the
-/// preparation's wall nanoseconds (escapes, skeletons, plane stubs, the
-/// global plan): `process_accounting`.
+/// preparation's wall nanoseconds (skeletons, plane stubs):
+/// `process_accounting`.
 static PROCESS_PHASES: [[std::sync::atomic::AtomicU64; 3]; PHASES.len()] =
     [const { [const { std::sync::atomic::AtomicU64::new(0) }; 3] }; PHASES.len()];
 static PROCESS_PREPARE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -143,8 +142,8 @@ pub struct ProcessAccounting {
     pub build_seconds: f64,
     /// Their work as modelled (`RoutingResult::build_work`).
     pub build_work_seconds: f64,
-    /// The preparation before the negotiation (escapes, skeletons, plane
-    /// stubs, the global plan), in seconds.
+    /// The preparation before the negotiation (skeletons, plane stubs), in
+    /// seconds.
     pub prepare_seconds: f64,
     /// Per phase (`PHASES`): its name, wall seconds, search work and pour
     /// work (seconds of an idle machine).
@@ -254,14 +253,13 @@ impl Profile {
             .load(std::sync::atomic::Ordering::Relaxed) as f64
             / 1.0e9;
         format!(
-            "profile: prepare {:.1}s, negotiation {:.1}s (search {:.1}s, stamp {:.1}s, conflicts and history {:.1}s, pour refresh {:.1}s, replan {:.1}s), resolve {:.1}s, clean-up {:.1}s, via reduction {:.1}s, thermal spokes {:.1}s, stitching {:.1}s, emit {:.1}s; pour analysis {:.1}s in {} calls; batches: {} single ({:.1}s), {} parallel with {} nets ({:.1}s wall, {:.1}s of net time)",
+            "profile: prepare {:.1}s, negotiation {:.1}s (search {:.1}s, stamp {:.1}s, conflicts and history {:.1}s, pour refresh {:.1}s), resolve {:.1}s, clean-up {:.1}s, via reduction {:.1}s, thermal spokes {:.1}s, stitching {:.1}s, emit {:.1}s; pour analysis {:.1}s in {} calls; batches: {} single ({:.1}s), {} parallel with {} nets ({:.1}s wall, {:.1}s of net time)",
             self.prepare,
             self.negotiation,
             search,
             stamp,
             self.conflicts,
             self.refresh_pour,
-            self.replan,
             self.resolve,
             self.cleanup,
             self.via_reduction,

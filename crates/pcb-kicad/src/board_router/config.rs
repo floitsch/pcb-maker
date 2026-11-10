@@ -70,9 +70,6 @@ pub struct KiCadBoardRouterConfig {
     /// that must go before negotiation counts it as progress.
     #[serde(default)]
     pub stall_drop: Option<f64>,
-    /// Plan nets on the tile graph first (global routing).
-    #[serde(default)]
-    pub global_routing: Option<bool>,
     /// On a board with four or more copper layers and no copper pours,
     /// ground becomes a plane on the first inner layer and the supply rail
     /// with the most pads one on the last (default true; ignored when
@@ -432,10 +429,6 @@ pub struct KiCadBoardRouterConfig {
     /// first"; default on).
     #[serde(default)]
     pub leader_first: Option<bool>,
-    /// Fixed escape stubs for fine-pitch pad rows, this long in mm (router
-    /// `escape_stub_mm`; off by default).
-    #[serde(default)]
-    pub escape_stub_mm: Option<f64>,
     /// Escape stubs stamped exactly, straight ones along a lattice line
     /// first (router `exact_escape_stubs`; docs/router.md, "Fine-pitch
     /// escapes"): unset, the router's default (on since 2026-10-26).

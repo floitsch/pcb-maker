@@ -1416,8 +1416,6 @@ pub struct KiCadRunFacts {
     pub silkscreen: Option<crate::silk_fields::KiCadSilkscreenReport>,
     /// How whole the pours stayed (`KiCadBoardRouterResult::pour_quality`).
     pub pours: Vec<crate::board_router::KiCadPourQuality>,
-    /// A layout's move descent, when it ran.
-    pub moves: Option<crate::move_descent::KiCadMovesFact>,
     /// A layout whose first route left too little work for anything after
     /// it (no move, no final ladder, nothing cut): the work up to the end
     /// of the first route and the budget (`first_route_work_seconds`,
@@ -2234,7 +2232,6 @@ impl KiCadRunFacts {
             board_mark_overlaps: Vec::new(),
             silkscreen: None,
             pours: Vec::new(),
-            moves: None,
             first_route_spent: None,
             first_route_only: false,
             corridors: None,
@@ -2479,11 +2476,6 @@ pub struct KiCadVerdict {
     /// status; a pour in many pieces adds a next action.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub pours: Vec<crate::board_router::KiCadPourQuality>,
-    /// A layout's move descent (`move_descent` in layout.json): moves
-    /// scored, moves the router tried, moves kept, the parts moved, the
-    /// open terminals before and after. Absent when it did not run.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub moves: Option<crate::move_descent::KiCadMovesFact>,
     /// Where the run's lattice searches went (corridors, windows, the
     /// board; the negotiation's and the hard searches' apart, with their
     /// work) and the board-wide fallbacks refused, summed over every
@@ -3281,7 +3273,7 @@ pub(crate) fn fold_observations(observations: &[String]) -> Vec<String> {
 /// its own, and the designer's route is of the designer's placement
 /// (trial 4: the Quanta75's and the oro link's advice asked for evidence
 /// that cannot exist for a layout). No run is asked for that the tool
-/// could make: a layout's evidence is its own routes (`moves`).
+/// could make: a layout's evidence is its own routes.
 fn open_evidence(facts: &KiCadRunFacts) -> String {
     if !facts.command.starts_with("layout") {
         return "Where the designer's board routes those nets on this placement under these rules (reference.connected), density is not shown to be the reason and more room, layers or narrower classes are not called for; without that evidence they are hypotheses to test (classes never below the board's minimum)".into();
@@ -3292,15 +3284,8 @@ fn open_evidence(facts: &KiCadRunFacts) -> String {
         ),
         _ => String::new(),
     };
-    let own = match &facts.moves {
-        Some(moves) if moves.confirmed > 0 => format!(
-            ": its move descent routed {} moves of its parts and kept {}, from {} open terminals to {} (verdict.moves)",
-            moves.confirmed, moves.kept, moves.open_before, moves.open_after
-        ),
-        _ => String::new(),
-    };
     format!(
-        "This placement is the layout's, not the designer's: reference.connected is the designer's route on the designer's placement{designer}, which shows that the nets route under these rules there, not on this placement, and no route of the designer's on this placement exists; the evidence for this placement is the layout's own routes{own}. More room, layers or narrower classes are hypotheses to test (classes never below the board's minimum){}",
+        "This placement is the layout's, not the designer's: reference.connected is the designer's route on the designer's placement{designer}, which shows that the nets route under these rules there, not on this placement, and no route of the designer's on this placement exists; the evidence for this placement is the layout's own routes. More room, layers or narrower classes are hypotheses to test (classes never below the board's minimum){}",
         if facts.hot_spot.as_ref().is_some_and(|note| {
             note.parts
                 .first()
@@ -4705,7 +4690,6 @@ pub(crate) fn judge_at(
         pin_lines: facts.pin_lines.clone(),
         environment: result_environment(),
         pours: facts.pours.clone(),
-        moves: facts.moves.clone(),
         corridors: facts.corridors.clone(),
         race: facts.race.clone(),
         skeleton_race: facts
@@ -7785,14 +7769,6 @@ mod tests {
         // "on this placement", which cannot exist (the layout placed U1
         // and its capacitors anew).
         let mut facts = open_layout();
-        facts.moves = Some(crate::KiCadMovesFact {
-            trials: 40,
-            confirmed: 10,
-            kept: 1,
-            parts_moved: vec!["C25".into()],
-            open_before: 71,
-            open_after: 8,
-        });
         facts.reference = KiCadReference::Findings {
             from: "designer".into(),
             errors: BTreeMap::new(),
@@ -7807,10 +7783,6 @@ mod tests {
             .unwrap();
         assert!(
             action.contains("This placement is the layout's, not the designer's: reference.connected is the designer's route on the designer's placement (KiCad finds 0 unconnected items on the designer's board, the --reference)"),
-            "{action}"
-        );
-        assert!(
-            action.contains("its move descent routed 10 moves of its parts and kept 1, from 71 open terminals to 8 (verdict.moves)"),
             "{action}"
         );
         assert!(

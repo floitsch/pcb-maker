@@ -49,14 +49,11 @@ pub use silkscreen::repair_kicad_silkscreen;
 mod board_layout;
 mod congestion_rank;
 pub mod lab;
-mod move_descent;
+mod part_motion;
 pub use board_layout::{
     KiCadBoardLayoutConfig, KiCadBoardLayoutMove, KiCadBoardLayoutResult, KiCadOutlineTrial,
     KiCadRaceProbe, KiCadRaceProbeScore, KiCadRaceReport, KiCadSilkscreenConfig, KiCadSwappable,
     layout_kicad_board, placement_check_config,
-};
-pub use move_descent::{
-    KiCadDescentMove, KiCadMoveDescent, KiCadMoveDescentReport, KiCadMovesFact,
 };
 mod board_placer;
 mod canonical_order;

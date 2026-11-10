@@ -307,16 +307,6 @@ impl Router {
             }
         }
         let pitch = self.grid.pitch as f32;
-        // A bus member in a bundle (`bundles`; never with the switch off):
-        // its lane beside its neighbours' copper, for the searches inside
-        // the bus's corridor.
-        let bundle = self.bundled(net, net_state, hard);
-        let mut lane_active = false;
-        if bundle.is_some() {
-            self.set_lane(scratch, net);
-            lane_active = scratch.lane.active;
-            scratch.lane.active = false;
-        }
         loop {
             let mut targets: Vec<(Node, u16)> = Vec::new();
             let mut points: Vec<(i32, i32, f32)> = Vec::new();
@@ -355,80 +345,8 @@ impl Router {
             // The trouble repair's second pass over its victims searched
             // their corridors already.
             let skip_corridors = hard && self.hard_scope == HardScope::Window;
-            let mut just_broken = false;
-            // The bundle first: inside the bus's corridor, on the lane;
-            // a member that finds no path there is broken out of it.
-            if let Some(bus) = bundle.filter(|_| !net_state.bus_broken) {
-                scratch.corridor = Some(self.buses[bus].corridor.clone());
-                scratch.lane.active = lane_active;
-                planned = self.search(
-                    scratch,
-                    net,
-                    net_state,
-                    &tree,
-                    &targets,
-                    points.as_deref(),
-                    false,
-                    present,
-                    hard,
-                    full,
-                );
-                scratch.lane.active = false;
-                scratch.corridor = None;
-                if planned.is_none() {
-                    net_state.bus_broken = true;
-                    just_broken = true;
-                    if std::env::var_os("PCB_ROUTER_BUS_WHY").is_some() {
-                        let corridor = &self.buses[bus].corridor;
-                        let nx = self.grid.nx;
-                        let outside = |node: &Node| {
-                            let cell = node.cell as usize;
-                            !corridor[(cell / nx / TILE) * self.tiles_x + (cell % nx) / TILE]
-                        };
-                        eprintln!(
-                            "bus: {} broken out (no path in the corridor; {} of {} sources, {} of {} targets outside, reroutes {}, present {present})",
-                            self.board.nets[net as usize].name,
-                            tree.iter().filter(|node| outside(node)).count(),
-                            tree.len(),
-                            targets.iter().filter(|(node, _)| outside(node)).count(),
-                            targets.len(),
-                            net_state.reroutes,
-                        );
-                    }
-                }
-            }
             let reroutes = net_state.reroutes;
-            scratch.lane.active = false;
-            let global = self.global.as_ref().filter(|_| !self.cleanup && !hard);
-            if planned.is_none()
-                && let Some(plan) = global
-            {
-                // The global plan's corridor, wider for stubborn nets.
-                let margin = 1 + reroutes / 4;
-                for margin in [margin, margin + 2] {
-                    let Some(corridor) = plan.corridor(net as usize, margin) else {
-                        break;
-                    };
-                    scratch.corridor = Some(corridor);
-                    planned = self.counted_search(
-                        SearchKind::Corridor,
-                        scratch,
-                        net,
-                        net_state,
-                        &tree,
-                        &targets,
-                        points.as_deref(),
-                        present,
-                        hard,
-                        full,
-                    );
-                    scratch.corridor = None;
-                    if planned.is_some() {
-                        break;
-                    }
-                }
-            } else if planned.is_none() && self.config.corridors && !self.cleanup && !skip_corridors
-            {
+            if self.config.corridors && !self.cleanup && !skip_corridors {
                 // One tile more every six reroutes. Widened every three,
                 // the corridors of the nets the negotiation kept rerouting
                 // gave their searches room the paths never used (Sisu and
@@ -477,9 +395,7 @@ impl Router {
             }
             // Board-wide fallbacks, unless they keep failing where a
             // corridor was searched first.
-            scratch.lane.active = false;
-            let corridor_tried =
-                global.is_some() || (self.config.corridors && !self.cleanup && !skip_corridors);
+            let corridor_tried = self.config.corridors && !self.cleanup && !skip_corridors;
             // The trouble repair's victims (`hard_scope`): corridors only.
             let fallback = if hard && self.hard_scope == HardScope::Corridors && corridor_tried {
                 false
@@ -524,27 +440,6 @@ impl Router {
                     })
                     .flatten()
             });
-            if let Some(bus) = bundle
-                && just_broken
-                && std::env::var_os("PCB_ROUTER_BUS_WHY").is_some()
-            {
-                let corridor = &self.buses[bus].corridor;
-                let nx = self.grid.nx;
-                let outside = path.as_ref().map(|path| {
-                    path.iter()
-                        .filter(|node| {
-                            let cell = node.cell as usize;
-                            !corridor[(cell / nx / TILE) * self.tiles_x + (cell % nx) / TILE]
-                        })
-                        .count()
-                });
-                eprintln!(
-                    "bus: {} ordinary search: {:?} of {:?} nodes outside the corridor",
-                    self.board.nets[net as usize].name,
-                    outside,
-                    path.as_ref().map(Vec::len)
-                );
-            }
             let Some(path) = path else {
                 if fallback && !hard {
                     net_state.hopeless_searches = net_state.hopeless_searches.saturating_add(1);
@@ -612,9 +507,6 @@ impl Router {
                     NO_TERMINAL
                 },
             });
-        }
-        if bundle.is_some() {
-            self.clear_lane(scratch);
         }
         let apart = self.route_apart(
             scratch,

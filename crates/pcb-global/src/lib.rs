@@ -28,7 +28,7 @@ pub mod incremental;
 mod negotiate;
 
 pub use capacity::{Capacity, Frame, reference_class};
-pub use incremental::{Incremental, Measure};
+pub use incremental::Incremental;
 pub use negotiate::{ACE_SHARES, GlobalRoute, NetRoute, SOFT_ALPHAS, Score};
 
 use pcb_router::Board;

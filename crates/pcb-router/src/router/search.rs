@@ -210,8 +210,6 @@ impl Router {
 
         // The scratch's heap, its capacity kept from search to search.
         let mut heap = std::mem::take(&mut scratch.heap);
-        // A bus member's lane (`bundles`; inactive otherwise).
-        let lane = std::mem::take(&mut scratch.lane);
         heap.clear();
         for node in sources {
             // A hard route may not even start inside another net's zone.
@@ -546,11 +544,6 @@ impl Router {
                             }
                         }
                         step *= layer_factor;
-                        if lane.active
-                            && lane.bits[target_state >> 6] & (1 << (target_state & 63)) == 0
-                        {
-                            step *= lane.off;
-                        }
                         step += pin_row;
                         if (arrived as usize) < 8 {
                             let turn = (direction as i32 - arrived as i32).rem_euclid(8);
@@ -827,7 +820,6 @@ impl Router {
         }
 
         scratch.heap = heap;
-        scratch.lane = lane;
         scratch.neck_mask = neck_mask;
         if let Some(started) = timed {
             use std::sync::atomic::Ordering::Relaxed;

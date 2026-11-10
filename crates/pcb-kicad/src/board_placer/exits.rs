@@ -143,7 +143,7 @@ fn layer_names(pcb: &Expr) -> Vec<String> {
 /// The placer's test (`core::exits::ExitFactory`): each session lowers
 /// the first placement it is asked about as the layout routes it (pours
 /// added, copper texts as the layout keeps them) and carries the parts
-/// that move since into that board rigidly (`move_descent::apply`).
+/// that move since into that board rigidly (`part_motion::apply`).
 pub(super) fn exit_factory(
     pcb: &Expr,
     references: &[String],
@@ -168,7 +168,7 @@ pub(super) fn exit_factory(
         let (router_config, core_config) = (router_config.clone(), core_config.clone());
         let mut state: Option<(
             router::router::ExitProbe,
-            Vec<crate::move_descent::PartCopper>,
+            Vec<crate::part_motion::PartCopper>,
             Vec<core::Pose>,
         )> = None;
         Box::new(move |poses: &[core::Pose], parts: &[usize]| {
@@ -179,7 +179,7 @@ pub(super) fn exit_factory(
                     work += lowering;
                     let probe = router::router::ExitProbe::new(&board, &core_config);
                     let copper =
-                        crate::move_descent::part_copper(probe.board(), &index, references.len());
+                        crate::part_motion::part_copper(probe.board(), &index, references.len());
                     state = Some((probe, copper, poses.to_vec()));
                 }
                 Some((probe, copper, last)) => {
@@ -190,7 +190,7 @@ pub(super) fn exit_factory(
                         .filter(|part| last[*part] != poses[*part])
                         .collect();
                     if !moved.is_empty() {
-                        crate::move_descent::apply(probe.board_mut(), copper, last, poses, &moved);
+                        crate::part_motion::apply(probe.board_mut(), copper, last, poses, &moved);
                         last.copy_from_slice(poses);
                     }
                 }

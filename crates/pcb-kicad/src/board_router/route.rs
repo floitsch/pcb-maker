@@ -853,9 +853,6 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
         router_config.negotiation_expansions = core::router::negotiation_expansions(seconds);
         router_config.negotiation_seconds = seconds * core::router::guard();
     }
-    if let Some(length) = config.escape_stub_mm {
-        router_config.escape_stub_mm = length;
-    }
     // The nets a `length` rule bounds from above are shortened where they
     // come out over it (`Config::length_bounded`; docs/router.md, "Length
     // and skew rules"): the meanders lengthen a net, this shortens one.
@@ -884,9 +881,6 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     }
     if let Some(cost) = config.thermal_guard_cost {
         router_config.thermal_guard_cost = cost;
-    }
-    if let Some(global) = config.global_routing {
-        router_config.global_routing = global;
     }
     if let Some(present) = config.via_reduction_present {
         router_config.via_reduction_present = present;
