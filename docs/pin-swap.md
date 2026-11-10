@@ -15,12 +15,16 @@ pcb-maker swap-kicad-pins <source-directory> <board-id> <output-directory> <pin-
 
 - In **route mode**, `{"pin_swaps": "pin-swaps.json"}` in the router config
   swaps before routing.
-- In **place + route mode**, the same key in the layout config swaps after
-  placement.
+- In **place + route mode**, the same key (or `swappable`, below) in the
+  layout config swaps after placement. A layout with pin swaps does not
+  pre-rank or race the placer's seeds.
 - Paths are relative to the source directory. The chosen assignment is
   recorded in `board-router.json` / `board-layout.json` under `pin_swaps`.
 
-Code: `crates/pcb-kicad/src/pin_swap.rs`.
+Code: `crates/pcb-kicad/src/pin_swap.rs`. Pin swapping is opt-in: on the
+breadboard fence boards it cut the ratsnest's crossings by 15 to 30 % but
+did not finish more nets, because which nets stall at the MCU's escape ring
+changes with any input and a straight-line estimate cannot see it.
 
 ## The short way: `swappable` in the layout config
 
@@ -34,9 +38,7 @@ Per part, the pins whose nets may be permuted: glob patterns over pad
 functions (`pinfunction` in the board, from a KiCad 6+ schematic) or pad
 numbers; `except` leaves some out (strapping pins, a bootloader's UART).
 Each matching pad is a unit of one group. It is used when `pin_swaps` is
-not given. On the ESP32-C3 test board, 19 of U1's pads made the ratsnest
-5 % shorter with 15 % fewer crossings, and the board routed with 17 vias
-instead of 21.
+not given.
 
 ## Input: `pin-swaps.json`
 
@@ -54,7 +56,8 @@ This is the format the breadboard fence generator writes
 
 - **Group.** The nets on its units may be permuted freely.
 - **Unit.** A unit's pins move together. The unit keeps its orientation:
-  the net on the first pin stays on the first pin.
+  the net on the first pin stays on the first pin. (A resistor element
+  that works either way round cannot be marked reversible.)
 - **`restrictions`.** Limits a net (named without its sheet path) to units
   that contain one of the listed pins.
 - **`cross_component`.** The group's units belong to several footprints,
@@ -63,7 +66,9 @@ This is the format the breadboard fence generator writes
 ## How the assignment is chosen
 
 The assignment is chosen by simulated annealing, finished with a steepest
-descent over all exchanges, on a ratsnest estimate of the board:
+descent over all exchanges, on a ratsnest estimate of the board. The
+settings are the `pin_swap` object of the router or layout config (or the
+`config.json` of `swap-kicad-pins`):
 
 - **Nets and pads.** Each net is a minimum spanning tree over its pads.
   Nets with more than `maximum_net_pads` pads (default 12) are left out:
@@ -79,9 +84,9 @@ descent over all exchanges, on a ratsnest estimate of the board:
   - Plus `body_crossing_cost_mm` (default 10) for every tree edge that runs
     through a pad field.
 
-The random generator is seeded (`seed`), so a run is repeatable.
-`moves_per_unit` (default 2000) sets the annealing length. The two fence
-boards (135 and 147 units) take 8-10 s.
+The random generator is seeded (`seed`, default 0), so a run is
+repeatable. `moves_per_unit` (default 2000) sets the annealing length; a
+board of about 140 units takes 8 to 10 s.
 
 ## Output: board and schematic
 
@@ -106,52 +111,5 @@ boards (135 and 147 units) take 8-10 s.
     change with the schematic.
   - Pins in hierarchical sub-sheets.
 
-On both fence boards, KiCad reports no schematic-parity issue and no ERC
-finding after the swap.
-
-## Results on the fence boards (2026-09-25)
-
-On the 2-layer v4 fence boards (`benchmarks/fence/v4-2layer`), the hand-made
-assignment and the swapped ones were routed side by side, under the same
-machine load, with `route-kicad-board ... auto`:
-
-| Board | Assignment | Ratsnest estimate (length, crossings, lines through pad fields) | Routed | Unconnected pads | Vias | Copper |
-| --- | --- | --- | --- | --- | --- | --- |
-| fence | hand-made (generator) | 2436 mm, 897, 82 | **91/101** | 14 | 218 | 3066 mm |
-| fence | swapped, plain ratsnest | 2263 mm, 635 (plain estimate; hand-made: 2288 mm, 717) | 87/101 | 24 | 223 | 2873 mm |
-| fence | swapped, escape-aware | 2410 mm, 746, 62 | 85/101 | 23 | 176 | 2719 mm |
-| fence-esp32 | hand-made | 2533 mm, 909, 114 | 82/108 | 58 | 162 | 2323 mm |
-| fence-esp32 | swapped, plain ratsnest | 2351 mm, 603 (plain estimate; hand-made: 2366 mm, 704) | 81/108 | 60 | 190 | 2423 mm |
-| fence-esp32 | swapped, escape-aware | 2530 mm, 751, 92 | 82/108 | **44** | 215 | 2566 mm |
-
-Pour nets as tracks only, fence, one attempt each:
-- hand-made: 91/101, 218 vias;
-- U1's GPIOs left alone: 86/101, 197 vias;
-- crossings at 10 mm and pad fields at 30 mm: 88/101, 209 vias.
-
-**Reading.** The swaps do what the estimate asks for: 15-30 % fewer
-crossings, and fewer vias or less copper in most runs. But they do not
-finish more nets than the hand-made assignment. Two reasons:
-- The generator's assignment was already chosen to be crossing-free
-  between the MCU and the networks (0 crossings among the `MCU_ROW`
-  nets).
-- On these boards the router's result is set by the negotiation stall at
-  U1's escape ring (negotiation stalls in saturated escape regions).
-  Which nets end up stuck there changes with any change of the input, and
-  a straight-line estimate cannot see it.
-
-The feature therefore stays opt-in. Its value on boards like these depends
-on F4, or on judging assignments by the router (next steps).
-
-## Next steps
-
-- **A better judge than the ratsnest.** The estimate decides by straight
-  lines. The router's tile graph (corridor planning with capacities) could
-  score an assignment by congestion instead, which is what actually fails
-  on these boards (the saturated escape regions again).
-- **Swapping in the loop.** Swapping in the coupled layout loop:
-  re-assign after router-driven moves, or let the router propose exchanges
-  of pins whose nets conflict.
-- **Reversible units.** A resistor element works either way round; the
-  format could say so.
-- **Hierarchical schematics.**
+After a swap of the fence boards, KiCad reports no schematic-parity issue
+and no ERC finding.
