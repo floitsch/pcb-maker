@@ -613,7 +613,7 @@ pub fn override_outcomes(
                                 part["description"]
                                     .as_str()
                                     .and_then(described_net)
-                                    .is_some_and(|net| names_net(&item.nets, net))
+                                    .is_some_and(|net| names_net(&item.nets, &net))
                             })
                     })
                     .count()
@@ -903,11 +903,12 @@ fn copper_item_layer(description: &str, layers: &LayerTable) -> Option<Option<us
 }
 
 /// The net named in a DRC item's description (`Pad 52 [QSPI_SCLK] of
-/// U3 on F.Cu`).
-fn described_net(description: &str) -> Option<&str> {
+/// U3 on F.Cu`), as the board spells it (KiCad writes the text: `A"B`
+/// for the board's `A\"B`, `escape`).
+fn described_net(description: &str) -> Option<std::borrow::Cow<'_, str>> {
     let start = description.find('[')?;
     let end = description[start..].find(']')? + start;
-    Some(&description[start + 1..end])
+    Some(escape(&description[start + 1..end]))
 }
 
 /// The net's rules on the run's project with their sources.
@@ -1195,7 +1196,7 @@ pub fn inspect_routing_run(inspection: &KiCadRunInspection) -> Result<KiCadRunDi
                 .find_map(|item| described_net(&item.description))
             {
                 Some(net) => native_by_net
-                    .entry(result.names.normalize(net).to_string())
+                    .entry(result.names.normalize(&net).to_string())
                     .or_default()
                     .push(KiCadNativePair {
                         items,

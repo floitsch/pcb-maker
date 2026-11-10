@@ -1669,11 +1669,14 @@ pub(crate) fn board_split_nets(pcb: &Expr, pieces: &Pieces) -> BTreeMap<String, 
 /// 4in1 panel).
 const ZONE_REACH_MM: f64 = 25.0;
 
-/// A net's name as KiCad's reports write it: the board file escapes `/`
-/// as `{slash}` and so on (KiCad's EscapeString), the DRC report does not.
+/// A net's name as KiCad's reports write it: the board file's string
+/// escapes a quote and a backslash (`unescape`), and its text escapes `/`
+/// as `{slash}` and so on (KiCad's EscapeString); the DRC report does
+/// neither.
 fn unescaped(name: &str) -> String {
+    let name = unescape(name);
     if !name.contains('{') {
-        return name.to_string();
+        return name.into_owned();
     }
     [
         ("{slash}", "/"),

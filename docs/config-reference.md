@@ -209,7 +209,7 @@ One entry of `net_classes`. Source: `KiCadNetClassRequest` in [crates/pcb-kicad/
 | Key | Type | Default | Docs | Description |
 |---|---|---|---|---|
 | `net_classes[].name` | `String` | required | - | The class's name in the `.kicad_pro` (not empty, not `Default`). |
-| `net_classes[].nets` | `Vec<String>` | required | router.md | Net names or KiCad wildcard patterns (`*`, `?`), with or without the sheet path's leading `/`. |
+| `net_classes[].nets` | `Vec<String>` | required | router.md | Net names or KiCad wildcard patterns (`*`, `?`), with or without the sheet path's leading `/`, as KiCad shows the names or as the board spells them (a quote or a backslash escaped: `A\"B`). |
 | `net_classes[].track_width_mm` | `Option<f64>` | optional | - | Track width of the class's nets (unset: what each net had). |
 | `net_classes[].clearance_mm` | `Option<f64>` | optional | - | Clearance of the class's nets (unset: what each net had). |
 | `net_classes[].via_diameter_mm` | `Option<f64>` | optional | - | Via diameter of the class's nets (unset: what each net had). |

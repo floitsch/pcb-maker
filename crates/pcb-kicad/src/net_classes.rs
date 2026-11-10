@@ -14,7 +14,8 @@ pub struct KiCadNetClassRequest {
     /// The class's name in the `.kicad_pro` (not empty, not `Default`).
     pub name: String,
     /// Net names or KiCad wildcard patterns (`*`, `?`), with or without the
-    /// sheet path's leading `/`.
+    /// sheet path's leading `/`, as KiCad shows the names or as the board
+    /// spells them (a quote or a backslash escaped: `A\"B`).
     pub nets: Vec<String>,
     /// Track width of the class's nets (unset: what each net had).
     #[serde(default)]
@@ -31,7 +32,8 @@ pub struct KiCadNetClassRequest {
 }
 
 /// The board's nets (raw names) each class takes; a net goes to the first
-/// class naming it. A pattern that matches no net is an error.
+/// class naming it, by its spelling in the board or its text (`unescape`).
+/// A pattern that matches no net is an error.
 fn assign(pcb: &Expr, classes: &[KiCadNetClassRequest]) -> Result<Vec<Vec<String>>, String> {
     let names = NetNames::of(pcb);
     let mut nets = BTreeSet::new();
@@ -77,7 +79,10 @@ fn assign(pcb: &Expr, classes: &[KiCadNetClassRequest]) -> Result<Vec<Vec<String
             let matched: Vec<&String> = nets
                 .iter()
                 .filter(|net| {
-                    wildcard_match(pattern, net) || wildcard_match(pattern, names.normalize(net))
+                    let key = names.normalize(net);
+                    [net.as_str(), key].into_iter().any(|name| {
+                        wildcard_match(pattern, name) || wildcard_match(pattern, &unescape(name))
+                    })
                 })
                 .collect();
             if matched.is_empty() {
@@ -215,7 +220,8 @@ pub(super) fn write_net_classes(
     let mut ours = Vec::new();
     for (class, members) in classes.iter().zip(assigned) {
         for net in members {
-            ours.push(serde_json::json!({"netclass": class.name, "pattern": net}));
+            // KiCad matches the patterns with the nets' text.
+            ours.push(serde_json::json!({"netclass": class.name, "pattern": unescape(&net)}));
         }
     }
     ours.extend(patterns);
@@ -329,5 +335,48 @@ mod tests {
             serde_json::json!({"netclass": "Power", "pattern": "GND"})
         );
         assert_eq!(patterns[2]["netclass"], "Old");
+    }
+
+    #[test]
+    fn a_class_takes_a_net_by_its_text_or_its_spelling_and_writes_the_text() {
+        // `A\"B` in the board is `A"B` as KiCad shows it and matches
+        // `.kicad_pro` patterns.
+        let pcb = parse(
+            r#"(kicad_pcb (footprint "J" (layer "F.Cu") (at 0 0)
+            (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "A\"B"))
+            (pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu") (net "/C\\D"))))"#,
+        )
+        .unwrap();
+        for nets in [r#"["A\"B", "C\\D"]"#, r#"["A\\\"B", "/C\\\\D"]"#] {
+            let request = format!(r#"[{{"name": "Q", "nets": {nets}, "track_width_mm": 0.5}}]"#);
+            let assigned = assign(&pcb, &classes(&request)).unwrap();
+            assert_eq!(
+                assigned,
+                [vec![r#"A\"B"#.to_string(), r"/C\\D".to_string()]]
+            );
+        }
+        let directory = std::env::temp_dir().join(format!(
+            "pcb-maker-net-classes-escapes-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        write_net_classes(
+            &directory,
+            "board",
+            &pcb,
+            &classes(r#"[{"name": "Q", "nets": ["*"], "track_width_mm": 0.5}]"#),
+        )
+        .unwrap();
+        let project: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(directory.join("board.kicad_pro")).unwrap())
+                .unwrap();
+        fs::remove_dir_all(&directory).unwrap();
+        let patterns: Vec<&str> = project["net_settings"]["netclass_patterns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|entry| entry["pattern"].as_str())
+            .collect();
+        assert_eq!(patterns, [r"/C\D", r#"A"B"#]);
     }
 }

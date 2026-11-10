@@ -6721,7 +6721,8 @@ pub(crate) fn measure_uncoupled(report: &mut KiCadDiffPairs, pcb: &Expr) {
         let Some(net) = node_net(item) else {
             continue;
         };
-        let net = crate::kicad_nets::normalize_net(&unescape(net)).to_string();
+        // The board's spelling, as the pairs name their nets.
+        let net = crate::kicad_nets::normalize_net(net).to_string();
         if kind == Some("via") {
             if let Ok(at) = form_xy(item, "at") {
                 copper.entry(net).or_default().1.push(at);

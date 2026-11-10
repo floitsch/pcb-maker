@@ -47,7 +47,8 @@ pub(super) fn add_parts(
                 .filter(|item| item.head() == Some("pad"))
                 .filter_map(|pad| form_atom(pad, "net", 1))
         })
-        .map(str::to_owned)
+        // As `add` names them (`quote` spells them in the board).
+        .map(|net| unescape(net).into_owned())
         .collect();
     let mut lines = Vec::new();
     for addition in additions {
