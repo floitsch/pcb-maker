@@ -167,7 +167,7 @@ router knows which pads a pour joins.
 
 `place_kicad_board` (crates/pcb-kicad/src/board_placer/place.rs):
 `prepare_board` parses the board, resolves the constraints
-(placement_constraints.rs) and the project rules, applies the outline,
+(placement_constraints/) and the project rules, applies the outline,
 keepouts and sides, and lowers it (`lower_placement`) to a
 `LoweredPlacement` holding a `pcb_placer::Problem`. Panels of copies
 (`panel::detect`) and sub-boards (`sub_boards::detect_for_placer`) are

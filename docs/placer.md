@@ -233,7 +233,7 @@ improved on both measured boards, but one lost connections.
 
 Constraints come from `constraints.json` (see
 [constraints.md](constraints.md)); `apply_constraints` in
-`placement_constraints.rs` lowers them into `pcb_placer::constraints`:
+`placement_constraints/` lowers them into `pcb_placer::constraints`:
 
 - **Hard** constraints (edge, region, overhang, rotation, rows as
   followers of a leader) are part of legality: the global placement's
