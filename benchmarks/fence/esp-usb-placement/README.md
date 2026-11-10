@@ -32,16 +32,22 @@ The designer's v2 solution (generated with these parts fixed). Its positions, re
 
 The current board (`../v4-4layer/fence-esp32/`) has since moved on: the board is 31 mm tall, J4 sits as low as the row header allows (centre y 22.9) with RN1 moved right of it, and the CC network RN9 fills the gap between C5/C6 and J4. This benchmark keeps the v2 input.
 
-## What makes it hard for pcb-maker (2026-09-25)
+## How it runs
 
-- **No edge, relative or proximity constraints** (`docs/placer.md`: "No constraint language yet"). Nothing tells the placer that U3 belongs on an edge, J4 below it, or U2 between them. Wire length alone pulls them towards the middle.
-- **Overhang:** a footprint whose body leaves the outline is treated as fixed by default (`on_edge` in `board_placer/lower.rs`). A placer that may put a part *partly outside* the board has to reason about which part of the footprint may overhang (here: exactly the antenna keepout).
-- **Keepouts:** keepout zones inside footprints are not honoured by the router (issue 1 in `../README.md`).
+`layout.json` fixes the rest of the board and names `constraints.json`,
+which states the intent: `edge` with `overhang` for the module, `relative`
+for "J4 below U3", and `near` limits for the regulator and the decoupling
+capacitors ([docs/constraints.md](../../../docs/constraints.md)).
 
-`constraints.json` sketches how the intent could be stated:
-- edge constraints with overhang;
-- "J4 below U3";
-- "near" limits for the regulator and the decoupling capacitors.
+```sh
+b=benchmarks/fence/esp-usb-placement
+target/release/pcb-maker layout-kicad-board $b fence-esp32 build/fence-esp-usb auto $b/layout.json
+```
+
+The distance limits of C5 and C6 to U3 pin 3 cannot be met: the pin lies
+inside the module's courtyard. The agent task `esp-usb-corner`
+([../../agent-tasks/README.md](../../agent-tasks/README.md)) poses the same
+corner with those two limits listed as expected misses.
 
 ## Passing
 

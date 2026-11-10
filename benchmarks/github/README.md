@@ -1,7 +1,7 @@
 # Boards harvested from GitHub
 
-The other benchmark sets are old or small: PCBench is KiCad-5 era and has no
-schematics, the corpus is 23 boards. This set is modern (KiCad 7+) open-source
+PCBench is KiCad-5 era and has no schematics, the KiCad-demo corpus is
+small. This set is modern (KiCad 7+) open-source
 boards found on GitHub, chosen for what makes routing hard: inner layers,
 BGAs, QFNs and LGAs, fine pads, many footprints.
 
@@ -33,8 +33,7 @@ manifest records each repository's licence.
 
 ## Licences
 
-Since 2026-10-21 `fetch` gates on the licence as `harvest_schematics.py`
-does (both use `licences.py`): a board is taken only when its repository's
+`fetch` gates on the licence as `harvest_schematics.py` does (both use `licences.py`): a board is taken only when its repository's
 licence lets the files be copied: GitHub's SPDX identifier where it names
 one, else the licence files at the repository's root and along the
 board's folder at the commit (CERN OHL, GPL, Creative Commons, ... texts
@@ -64,18 +63,13 @@ so training data is permissive only: `fetch --training` takes permissive
 boards only, `benchmarks/expansion/harvest.py`'s `nn_license_eligible`
 (and triage's copy of it) is permissive only, and the expansion tier's
 benchmark selection keeps its wider `USABLE_LICENSES`. No trained model is
-in the repository (the congestion model's weights live under `build/`).
-The congestion model's training manifest (training-manifest.json, 700
-boards, fetched before the gate) holds by its SPDX identifiers 205
-permissive boards, 326 without one (none or NOASSERTION, licence files not
-read) and 169 copyleft or weakly reciprocal ones (141 and 28): a model
-meant to ship must be trained on the permissive subset.
+in the repository.
 
 `harvest.py licences [--markdown]` writes the records of boards fetched
 before the gate into manifest.json and boards.json (from schematics.json's
 reading of their licence files at the commit) and prints the report. The
-corpus on 2026-10-21 (109 boards; GitHub names no licence for 42, of
-which 24 have a licence file with a grant):
+109-board corpus (GitHub names no licence for 42, of which 24 have a
+licence file with a grant):
 
 | Class | Boards |
 | --- | ---: |
@@ -121,16 +115,12 @@ detection decides where it names one; otherwise the licence files at the
 root and along the board's folder are read (CERN OHL, GPL, Creative
 Commons, Hippocratic, ... texts GitHub calls `NOASSERTION`).
 
-2026-10-15: 79 of the 109 boards have a usable schematic (241 sheets,
-1171 files, 95 MB). Skipped: 17 without a licence file (the six ISS-PCB
-boards, seven of hackclub's OnBoard, MegaDrive, Neotron-Pico, SUMEC, ATAT1800,
-vd-rd's module), 10 without a schematic of the board's name (the PolyKybd
-molecules and the OpenESC, OpenRX and 0xCB panels, krishveercard), 2 with a
-sheet missing at the commit (the Hub, poly_corne_split42_right), 1 KiCad 5
-schematic (Qfwfq). Of the 79, 50 have every named footprint in KiCad's
-libraries or the repository; 22 needed `library_fixes`; 19 use submodules.
-The schematic tier (benchmarks/agent-tasks/README.md, "The schematic tier")
-runs the agent's flow on 12 of them.
+79 of the 109 boards have a usable schematic. Skipped: 17 without a
+licence file, 10 without a schematic of the board's name (panels,
+krishveercard), 2 with a sheet missing at the commit, 1 KiCad 5 schematic
+(Qfwfq). Of the 79, 22 need `library_fixes` and 19 use submodules. The
+schematic tier ([../agent-tasks/README.md](../agent-tasks/README.md), "The
+schematic tier") runs the agent's flow on 12 of them.
 
 ## Running
 
@@ -144,16 +134,14 @@ Layout mode as agent tasks (parts unplaced, connectors the designer put at an
 edge constrained to that edge, overhanging and shield-like parts fixed):
 
 ```sh
-benchmarks/agent-tasks/from_pcbench.py build/github-tasks-v7 --corpus benchmarks/github/boards.json
-flock build/quick-tier.lock benchmarks/agent-tasks/run.py build/github-layout-v17 \
-  --tasks build/github-tasks-v7/tasks.json --binary build/bin/pcb-maker-xNNN --jobs 8 --threads 2
+benchmarks/agent-tasks/run.py build/github-layout-vNN --tasks benchmarks/agent-tasks/tasks/v7/tasks.json \
+  --binary build/bin/pcb-maker-xNNNN --quality --order peak-desc
 ```
 
-The current task list is v7 (`build/github-tasks-v7`: v6 with uuids on
-the entries of repeated references, six panels); the quick and short
-tiers still default to v6, and a comparison needs one list on both
-sides. One benchmark at a time on the machine, under the lock
-(benchmarks/agent-tasks/README.md, "How to measure").
+The task list is committed as `benchmarks/agent-tasks/tasks/v7`
+(`from_pcbench.py <out> --corpus benchmarks/github/boards.json` writes a
+new one); every tier defaults to it. The nightly runs this sweep on main
+([../agent-tasks/README.md](../agent-tasks/README.md), "Nightly").
 
 Freerouting against our cold route, headless (never start the jar without
 `-de`/`-do`: it opens its GUI):
@@ -162,9 +150,8 @@ Freerouting against our cold route, headless (never start the jar without
 benchmarks/github/freerouting.py build/freerouting --ours
 ```
 
-Results go to [docs/benchmarks.md](../../docs/benchmarks.md); the
-current ones are summarised in
-[docs/handover.md](../../docs/handover.md#benchmarks-that-count).
+Results are in [docs/benchmarks.md](../../docs/benchmarks.md); the
+current ones are summarised in [docs/handover.md](../../docs/handover.md).
 
 ## KiCadRoutingTools (`kicadroutingtools.py`)
 
@@ -183,9 +170,9 @@ python3 -m venv build/krt/venv && build/krt/venv/bin/pip install 'numpy>=1.22' s
 (cd build/krt && PYO3_PYTHON=$PWD/venv/bin/python PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 \
   CARGO_TARGET_DIR=$PWD/target cargo build --release --manifest-path src/rust_router/Cargo.toml)
 cp build/krt/target/release/libgrid_router.so build/krt/src/rust_router/grid_router.so
-benchmarks/github/kicadroutingtools.py build/krt-route-x1367 --ours build/fr2-route-final.log \
-  --route-from build/github-layout-v17 --binary build/bin/pcb-maker-x1367 --jobs 8
-benchmarks/github/kicadroutingtools_compare.py build/krt-route-x1367 --ours build/fr2-route-final.log
+benchmarks/github/kicadroutingtools.py build/krt-route-xNNNN --ours build/route-xNNNN.log \
+  --route-from build/github-layout-vNN --binary build/bin/pcb-maker-xNNNN --jobs 8
+benchmarks/github/kicadroutingtools_compare.py build/krt-route-xNNNN --ours build/route-xNNNN.log
 ```
 
 (`build_router.py` would download a prebuilt module; building it from
@@ -206,5 +193,4 @@ our wall (`within_wall`, `pass_in_wall`). For a cut row the comparison
 reads how far the log got. On a shared machine, `--lock
 build/quick-tier.lock` holds the tier lock around KiCad's checks of each
 board, not the router, and `--krt-jobs 2 --jobs 8` keeps two routers
-running while the other boards in flight wait to be judged. Results:
-[docs/benchmarks.md](../../docs/benchmarks.md#kicadroutingtools-against-x1367-2026-10-21).
+running while the other boards in flight wait to be judged. Results are in [docs/benchmarks.md](../../docs/benchmarks.md).

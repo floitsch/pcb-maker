@@ -25,15 +25,13 @@
 #      of those. When the newest nightly measured the same commit with
 #      every stage planned tonight, it stops there (--force runs anyway).
 #   2. Runs, one after the other, each through the memory ledger (no
-#      lock) with run.py's measured floor of available memory (since
-#      2026-10-27; 10 GB until then, and without headroom samples) and
-#      --ledger-priority nightly, from the nightly checkout. The priority puts the nightly's boards first
+#      lock) with run.py's measured floor of available memory (10 GB
+#      without headroom samples) and --ledger-priority nightly, from the
+#      nightly checkout. The priority puts the nightly's boards first
 #      among the ledger's waiters and has the ledger drain for them at
 #      once: a newer request (another agent's route, a sweep's board) goes
 #      only while it leaves the waiting board its room, so the night ends
-#      within the night (docs/benchmarks.md, "Memory ledger"; until
-#      2026-10-25 the designer tier's large boards waited from 11:00 to
-#      past 20:00 behind other agents' 1-8 GB routes):
+#      within the night (docs/benchmarks.md, "Memory ledger"):
 #        fingerprints  Castor, k30-SBC, jetson, Sisu in route mode from
 #                      build/github-layout-v16, 1 x 4, budget scale 0.25,
 #                      PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1
@@ -50,11 +48,9 @@
 #      committed benchmarks/agent-tasks/estimates.json (run.py --estimates;
 #      README.md, "How to measure").
 #      The designer tier runs before the sweep and its largest boards
-#      first (since 2026-10-26): it is the stage with the large boards
-#      (up to 6.5 GB measured) and the shorter one (about 46 000 s of
-#      boards against the sweep's 91 000), so it runs while the machine is
-#      quiet; after the sweep it began at 06:27-10:29 and its large boards
-#      waited into the agents' day (on 2026-10-25 past midnight).
+#      first: it is the stage with the large boards (up to 6.5 GB
+#      measured) and the shorter one (about 46 000 s of boards against the
+#      sweep's 91 000), so it runs while the machine is quiet.
 #      The sweep and the designer tier run on the days of --sweep-days
 #      (PCB_NIGHTLY_SWEEP_DAYS; default all; else ISO weekdays 1-7 or
 #      mon..sun, comma separated); --no-sweep, --no-designer and --quick
@@ -74,11 +70,11 @@
 #      that the estimates follow the binary; build/nightly/<date>/
 #      estimates.log says what changed. The committed sidecar changes only
 #      by hand (tier_estimates.py --refresh after a sweep, committed).
-#   5. Publishes the night (since 2026-10-27 by default; --no-commit-report
-#      or PCB_NIGHTLY_COMMIT_REPORT=0 turns it off): scripts/nightly-report.py
-#      --commit writes the night into the main checkout's docs, as the
-#      hand-written sweep write-ups v19 to v21 did, and commits them on
-#      main ("nightly <date>: layout sweep vN, ...") and pushes main:
+#   5. Publishes the night (by default; --no-commit-report or
+#      PCB_NIGHTLY_COMMIT_REPORT=0 turns it off): scripts/nightly-report.py
+#      --commit writes the night into the main checkout's docs, commits
+#      them on main ("nightly <date>: layout sweep vN, ...", the night's
+#      numbers; git history is the changelog) and pushes main:
 #        docs/benchmarks.md  a section "Layout sweep vN (<date>)" (vN one
 #                            more than the newest numbered sweep): the
 #                            totals against the previous night and the
@@ -86,13 +82,13 @@
 #                            gained and lost with their findings, the
 #                            designer tier's gap split, the costliest
 #                            placements, the losers beyond the seed
-#                            noise; and the night's row of "Nightly"
+#                            noise; the night's row of "Nightly"; the
+#                            sweep sections older than the previous one
+#                            removed
 #        README.md           the headline's measured part and the two
 #                            newest rows of the table
 #        docs/handover.md    the title's state, the nightly state line,
 #                            the night note
-#        docs/changelog.md   "Measured on <date> (nightly: layout sweep
-#                            vN, matched designer tier)"
 #      The guard: only a night on which every stage ran, no row of any
 #      stage was cut by the wall clock or killed, and the sweep has at
 #      least 100 rows with a result is published; otherwise the night is
@@ -100,7 +96,7 @@
 #      The race with the supervisor's merges in the main checkout: the
 #      report commits only when the main checkout is on main, its working
 #      tree has no change to a tracked file and `git pull --ff-only origin
-#      main` succeeds, and then commits the four files alone; otherwise it
+#      main` succeeds, and then commits the three files alone; otherwise it
 #      writes nothing, says so in nightly.log, and the next night publishes
 #      this night with its own (every guarded night after the newest one
 #      docs/benchmarks.md has, at most three).

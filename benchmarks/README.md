@@ -1,27 +1,24 @@
 # Benchmarks
 
-**The benchmarks that count today** are the harvested GitHub boards as
-agent tasks ([agent-tasks](agent-tasks/README.md): the 109-board layout
-sweep and its quick, short and schematic tiers), the Freerouting
-comparison on the same boards ([github](github/README.md)) and PCBench
-([pcbench](pcbench/README.md)); their current numbers are in
-[docs/handover.md](../docs/handover.md#benchmarks-that-count).
+**The benchmarks that count** are the harvested GitHub boards as agent
+tasks ([agent-tasks](agent-tasks/README.md): the 109-board layout sweep,
+its quick, short, schematic and designer tiers, and the route-mode
+expansion tier), measured every night on main. Their current numbers are in
+[docs/benchmarks.md](../docs/benchmarks.md) and
+[docs/handover.md](../docs/handover.md).
 
 | Directory | What it is |
 | --- | --- |
-| [`agent-tasks`](agent-tasks/README.md) | layout tasks as an agent poses them: the runner, the tiers, compare.py |
-| [`github`](github/README.md) | the harvested open-source boards: harvest, manifest, Freerouting comparison |
+| [`agent-tasks`](agent-tasks/README.md) | layout tasks as an agent poses them: the runner, the tiers, compare.py, the nightly |
+| [`github`](github/README.md) | the harvested open-source boards: harvest, manifest, licences, schematics, the Freerouting and KiCadRoutingTools comparison scripts |
+| [`expansion`](expansion/README.md) | a wider intake of GitHub boards; the expansion tier's source |
 | [`pcbench`](pcbench/README.md) | PCBench through PCBWorld's D3 preparation: fetch, manifest, runner, triage |
 | [`from-schematic`](from-schematic/README.md) | schematic to board, with only the starter files `import-kicad-netlist` writes |
 | [`fence`](fence/README.md) | boards from the breadboard fence project, with an issue log and feature targets |
 | `corpus` | the KiCad-demo corpus runner (route and layout) |
-| [`real`](real/README.md) | frozen real-board sources; `real/external` (not in git) holds the harvested boards |
+| [`real`](real/README.md) | pinned upstream KiCad demo projects; `real/external` (not in git) holds every fetched or harvested board |
 | `tscircuit` | the tscircuit autorouter on DSN exports, for comparison |
 
-The September 2026 research ladders (the declaration-to-KiCad ESP32
-ladders, the exact-routing rungs and mechanism controls in `small`,
-`smoke`, `analysis-lab`, `competitive`, `esp32-pad-gaps` and `imported`)
-were removed with the research stack on 2026-10-20 (git history up to
-commit be4b012); the last four `imported` layout-trace fixtures went with
-`pcb-kicad`'s semantic template on 2026-10-21 (history up to b306347). See
-[docs/changelog.md](../docs/changelog.md).
+`harness_common.py` holds what the runners share (the memory ledger's
+admission among it); `ledger_headroom.py` prints the measured memory floor
+run.py uses.

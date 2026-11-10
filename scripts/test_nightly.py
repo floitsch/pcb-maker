@@ -310,6 +310,14 @@ DOCS = {
         {report.TABLE_BEGIN}
         {report.TABLE_END}
 
+        ## Layout sweep v20 (2026-10-20)
+
+        Older, by hand.
+
+        ### Placement or routing of v20
+
+        Older too.
+
         ## Layout sweep v21 (2026-10-21)
 
         Written by hand.
@@ -348,21 +356,6 @@ DOCS = {
         **Layout sweep v21** (x1): 1 of 3 pass, by hand.
 
         **Quick tier** (30 boards): unrelated.
-        """),
-    "docs/changelog.md": textwrap.dedent("""\
-        # Changelog
-
-        ## Committed on 2026-10-25 (later work)
-
-        Text.
-
-        ## Committed on 2026-10-23 (earlier work)
-
-        Text.
-
-        ## Measured on 2026-10-21 (layout sweep v21)
-
-        Text.
         """),
 }
 
@@ -457,6 +450,20 @@ def test_sweep_numbers():
         "## Layout sweep v21 (x)\n\na\n\n### Sub\n\nb\n\n## Layout sweep v22 (n)\n\n## Other\n"
 
 
+def test_only_the_two_newest_sweep_sections_stay():
+    text = ("# B\n\n## Nightly\n\ntable\n\n## Layout sweep v35 (2026-11-08)\n\na\n\n### Sub 35\n\nb\n\n"
+            "## Layout sweep v36 (2026-11-09)\n\nc\n\n## Between\n\nd\n\n## Layout sweep v37 (2026-11-10)\n\ne\n\n"
+            "### Sub 37\n\nf\n\n## Layout sweep v38 (2026-11-11)\n\ng\n")
+    pruned = report.prune_sweeps(text)
+    assert pruned == ("# B\n\n## Nightly\n\ntable\n\n## Between\n\nd\n\n## Layout sweep v37 (2026-11-10)\n\ne\n\n"
+                      "### Sub 37\n\nf\n\n## Layout sweep v38 (2026-11-11)\n\ng\n")
+    # Already pruned: unchanged; the numbers count on from the newest.
+    assert report.prune_sweeps(pruned) == pruned
+    assert report.sweep_number(pruned, "2026-11-12") == 39
+    assert report.previous_sweep(pruned, 39) == (38, None, "build/github-layout-v38.log", None)
+    assert report.prune_sweeps("# B\n\nno sweep\n") == "# B\n\nno sweep\n"
+
+
 def test_pending_nights(published, capsys):
     tmp_path, main = published
     nights = tmp_path / "build/nightly"
@@ -489,6 +496,10 @@ def test_the_nightly_publishes_its_night(published):
     # After v21 and its subsection, before the next section.
     assert benchmarks.index("By hand too.") < benchmarks.index("## Layout sweep v22 (2026-10-24)") \
         < benchmarks.index("## Other")
+    # Only the new section and the one before it stay (v21, which the next
+    # night's section reads); v20 and its subsection are gone, the rest kept.
+    assert "Layout sweep v20" not in benchmarks and "Older too." not in benchmarks
+    assert "## Layout sweep v21 (2026-10-21)" in benchmarks and "## Other\n\nUnrelated.\n" in benchmarks
     section = section_of(benchmarks, "## Layout sweep v22 (2026-10-24)")
     assert "<!-- nightly-sweep night=2026-10-24 sweep=build/nightly/2026-10-24/sweep.log main=" + "3" * 40 in section
     # Gamma's project files changed: named and left out of both comparisons.
@@ -522,11 +533,9 @@ def test_the_nightly_publishes_its_night(published):
     assert "**Nightly** 2026-10-24 (main 333333333333" in handover
     assert handover.index("**Layout sweep v21** (x1)") < handover.index("**Layout sweep v22** (the nightly of") \
         < handover.index("**Quick tier**")
-    changelog = (main / "docs/changelog.md").read_text()
-    assert changelog.index("## Committed on 2026-10-25") \
-        < changelog.index("## Measured on 2026-10-24 (nightly: layout sweep v22, matched designer tier)") \
-        < changelog.index("## Committed on 2026-10-23")
-    for text in (benchmarks, readme, handover, changelog):
+    # No changelog: the commit message carries the night's numbers.
+    assert not (main / "docs/changelog.md").exists()
+    for text in (benchmarks, readme, handover):
         # No wrapped line begins like a list item or a heading by accident.
         assert not any(line.startswith(("  - ", "  + ", "  # ")) for line in text.splitlines())
 

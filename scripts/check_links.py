@@ -8,12 +8,12 @@ anchors as GitHub makes them (or an explicit `id`/`name` anchor). Links to
 other sites are not fetched.
 
     python3 scripts/check_links.py                    # README.md, docs/, benchmarks/
-    python3 scripts/check_links.py --into handover.md changelog.md
+    python3 scripts/check_links.py --into handover.md benchmarks.md
     python3 scripts/check_links.py docs/todo.md       # only these files
 
 `--into NAME...` judges only links whose target file has one of these
-names (the gate of the hand-over split); the other broken links are still
-counted on the last line. Exit 1 when a judged link is broken.
+names (the gate of a split or a cut of those files); the other broken
+links are still counted on the last line. Exit 1 when a judged link is broken.
 """
 
 import argparse
