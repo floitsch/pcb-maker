@@ -34,8 +34,6 @@ mod merge;
 mod pad;
 mod pin_rows;
 mod planes;
-#[cfg(test)]
-mod tests;
 mod tracks;
 mod warnings;
 
@@ -348,3 +346,6 @@ fn split_sub_board_nets(ctx: &Context, board: &mut core::Board) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
