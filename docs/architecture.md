@@ -92,13 +92,13 @@ deadline is skipped and reported as cut.
 | 2 | Placement | `place_kicad_board`, board_placer/place/ (below) | `placed/<id>.kicad_pcb`, `board-placer.json`, `KiCadBoardPlacerResult`: the kept poses and the other legal seeds' poses |
 | 3 | Pin swaps (with `pin_swaps` or `swappable`) | `swap_kicad_pins_in_place`, pin_swap.rs | the placed board, nets permuted |
 | 4 | Pours and classes added, the placed board lowered again | `add_pour_zones` (board_router/pour_plan.rs), `lower_placement` (board_placer/lower/) | the board as an `Expr`, a `pcb_placer::Problem` for the moves' legality |
-| 5 | Lowering for the router | `core_config` (board_router/route.rs), `lower_for_route` (board_router/diff_pairs.rs, around `lower`) | a `pcb_router::Config` and `pcb_router::Board` |
+| 5 | Lowering for the router | `core_config` (board_router/route.rs), `lower_for_route` (board_router/diff_pairs/plan.rs, around `lower`) | a `pcb_router::Config` and `pcb_router::Board` |
 | 6 | Pre-ranking of the placements | `rank_placements`, congestion_rank.rs | the candidates in RUDY order (sixteen placements, three probed) |
 | 7 | The race | `run_race`, `probe_placements` and `pick_placement` (board_layout/race.rs): `Router::new` and `Router::probe` per candidate, side by side as the ledger allows; `race_pick`; `race_lines_probe` | one `Router` (the winner's, resumed), its `RoutingResult`, `KiCadRaceReport` |
 | 8 | First route (without a race) | `route_once`, board_layout/race.rs | a `Router` and its `RoutingResult` |
 | 9 | Footprint moves where nets fought | `try_moves` and `try_pose` (board_layout/moves.rs): `Router::update` and `reroute` per candidate pose | the best board and router, or the old ones restored |
 | 10 | Resume and polish | `Router::resume_polished`, `Router::polish` | the router's routes, cleaned up, fewer vias |
-| 11 | Pairs, labels, lengths | `finish_pairs` (diff_pairs.rs), `place_labels` (labels.rs), `finish_lengths` (lengths.rs) | pair copper, label poses, tuning patterns |
+| 11 | Pairs, labels, lengths | `finish_pairs` (diff_pairs/finish.rs), `place_labels` (labels.rs), `finish_lengths` (lengths.rs) | pair copper, label poses, tuning patterns |
 | 12 | Write and check | `emit_routes` (board_router/attempt.rs, with copper_emit.rs), `finish_routed_board` (board_router/route.rs): the copper verifier, the board written to `result/`, KiCad's check | `result/<id>.kicad_pcb`, `drc.json`, `board-router.json`, a `KiCadBoardRouterResult` |
 | 13 | Final ladder (while connections or starved thermals stay and at least 240 s of work are left) | `route_kicad_board` on `placed/` rewritten with the final poses and no copper (the route flow below); kept when better | `result-ladder/` renamed to `result/` |
 | 14 | Starved thermals made solid | `solidify_starved_thermals`, board_router/route.rs | the board, kept where KiCad finds it better |
@@ -131,7 +131,7 @@ runner's `lower`, `probe`, `resume` and `write`):
 
 1. **Lowering.** `lower` (board_router/lower/) makes a `Lowered`
    (`pcb_router::Board` and the expressions to write back);
-   `keep_existing_copper` (kept.rs) and `plan_pairs` (diff_pairs.rs) add
+   `keep_existing_copper` (kept.rs) and `plan_pairs` (diff_pairs/plan.rs) add
    kept copper and planned pairs.
 2. **The router.** `Router::new` (crates/pcb-router/src/router/build.rs)
    builds the lattice and the static maps (shared between routers of one
@@ -247,7 +247,7 @@ git history has the code.
 | Exit codes, next actions, `verdict.json` | verdict.rs (`EXIT_*`, `judge`), src/agent_cli.rs |
 | The input checks before a run | src/agent_cli.rs (`check_project`, `check_constraints`, `check_pours`, `check_kicad`) |
 | Panels | board_placer/panel.rs (copies), sub_boards.rs (different boards) |
-| Differential pairs | board_router/diff_pairs.rs; pcb-router give_up.rs |
+| Differential pairs | board_router/diff_pairs/; pcb-router give_up.rs |
 | Length and skew rules | board_router/lengths.rs, meander.rs, layer_preference.rs |
 | BGA fan-outs, vias in pads, via spans | board_router/bga_fanout.rs, via_in_pad.rs, via_spans.rs |
 | Lattice lines at pin rows | pcb-router pin_lines.rs; `race_lines_probe` in board_layout.rs; the ladder's probes in ladder.rs |

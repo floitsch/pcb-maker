@@ -1897,7 +1897,7 @@ mod budget_tests {
         );
     }
 
-    /// A USB pair from J1 to U2 (diff_pairs.rs's test board without U1).
+    /// A USB pair from J1 to U2 (diff_pairs/tests.rs's test board without U1).
     const PAIR_BOARD: &str = r#"(kicad_pcb (version 20241229) (generator "pcbnew")
   (general (thickness 1.6)) (paper "A4")
   (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))

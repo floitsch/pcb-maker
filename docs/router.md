@@ -657,7 +657,7 @@ too big.
 
 ## Differential pairs
 
-`board_router/diff_pairs.rs`. `diff_pairs` (or `PCB_ROUTER_DIFF_PAIRS`)
+`board_router/diff_pairs/`. `diff_pairs` (or `PCB_ROUTER_DIFF_PAIRS`)
 turns pairs on or off; unset, route mode turns them on where a custom rule
 with `diff_pair_gap` or `diff_pair_uncoupled` surely holds for a pair
 (`diff_pairs_choice`), and a layout keeps them off. The class's pair width
