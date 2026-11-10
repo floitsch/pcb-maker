@@ -305,29 +305,6 @@ fn polygon_aabb(points: &[[f64; 2]]) -> GeometryAabb {
     GeometryAabb { minimum, maximum }
 }
 
-pub(crate) fn rule_area_layer_mask(zone: &Expr) -> Result<[bool; 2], String> {
-    let mut mask = [false; 2];
-    if let Some(layer) = form_atom(zone, "layer", 1) {
-        let index = copper_layer_index(layer)
-            .ok_or_else(|| format!("unsupported rule-area layer {layer:?}"))?;
-        mask[index] = true;
-    } else if let Some(layers) = zone.child("layers") {
-        for layer in layers.children().iter().skip(1).filter_map(Expr::atom) {
-            match layer {
-                "F&B.Cu" | "*.Cu" => mask = [true, true],
-                "F.Cu" => mask[0] = true,
-                "B.Cu" => mask[1] = true,
-                _ => return Err(format!("unsupported rule-area layer {layer:?}")),
-            }
-        }
-    }
-    if mask == [false, false] {
-        Err("rule area has no supported copper layer".into())
-    } else {
-        Ok(mask)
-    }
-}
-
 /// A rule area's outline as one simple polygon. KiCad writes the zone's
 /// outline as its first `polygon` and every hole as a further `polygon`
 /// (Glasgow keeps tracks off a 1.7 mm rim this way: a board-sized outline

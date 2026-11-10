@@ -7,6 +7,7 @@
 //! result back (board_placer, board_router, board_layout), KiCad's own
 //! checks (verification, native_report, drc_cache, verdict) and the agent
 //! commands' other tools (netlist import, fab export, pin swaps, ...).
+//! `lab` holds the measurement tools the research commands run.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -46,38 +47,24 @@ pub use native_report::{
 use native_report::{ReportKind, remove_if_present, run_kicad_report, validate_report};
 pub use silkscreen::repair_kicad_silkscreen;
 mod board_layout;
-mod coarse_probe;
 mod congestion_rank;
-mod congestion_samples;
-mod global_route;
+pub mod lab;
 mod move_descent;
-mod trouble_probe;
 pub use board_layout::{
     KiCadBoardLayoutConfig, KiCadBoardLayoutMove, KiCadBoardLayoutResult, KiCadOutlineTrial,
     KiCadRaceProbe, KiCadRaceProbeScore, KiCadRaceReport, KiCadSilkscreenConfig, KiCadSwappable,
     layout_kicad_board, placement_check_config,
 };
-pub use coarse_probe::{KiCadCoarseProbeConfig, KiCadCoarseProbeReport, probe_coarse_placement};
-pub use congestion_rank::{KiCadCongestionScore, score_congestion_sample, score_kicad_congestion};
-pub use congestion_samples::{
-    KiCadCongestionJob, KiCadCongestionSampleReport, KiCadCongestionVariant, KiCadPerturbation,
-    export_congestion_samples,
-};
-pub use global_route::{KiCadGlobalRouteReport, KiCadProbeReport, global_route_kicad_board};
 pub use move_descent::{
     KiCadDescentMove, KiCadMoveDescent, KiCadMoveDescentReport, KiCadMovesFact,
-};
-pub use trouble_probe::{
-    KiCadTroubleBackground, KiCadTroubleNet, KiCadTroubleProbeConfig, KiCadTroubleProbeReport,
-    KiCadTroubleSource, probe_trouble_placement,
 };
 mod board_placer;
 mod canonical_order;
 pub use board_placer::{
-    KiCadBoardPlacerConfig, KiCadBoardPlacerResult, KiCadClosedPad, KiCadExitMove,
-    KiCadLegalityReport, KiCadPadExits, KiCadPadExitsCensus, KiCadPadExitsReport,
-    KiCadPanelCellClass, KiCadPanelCopiesReport, KiCadPanelCopy, KiCadPlacedFootprint,
-    legality_kicad_board, pad_exits_kicad_board, pad_exits_override, place_kicad_board,
+    KiCadBoardPlacerConfig, KiCadBoardPlacerResult, KiCadClosedPad, KiCadExitMove, KiCadPadExits,
+    KiCadPadExitsCensus, KiCadPadExitsReport, KiCadPanelCellClass, KiCadPanelCopiesReport,
+    KiCadPanelCopy, KiCadPlacedFootprint, pad_exits_kicad_board, pad_exits_override,
+    place_kicad_board,
 };
 mod board_router;
 mod verdict;
@@ -132,12 +119,7 @@ pub use netlist_import::{
     KiCadNetlistImport, import_kicad_netlist, import_kicad_netlist_from,
     import_kicad_netlist_options, import_kicad_netlist_with,
 };
-mod placement_ablation;
 mod placement_constraints;
-pub use placement_ablation::{
-    KiCadAblationConfig, KiCadAblationGroup, KiCadAblationReport, KiCadAblationVariant,
-    ablate_kicad_placement,
-};
 mod placement_room;
 pub use placement_constraints::{
     KiCadConstraintStatus, KiCadConstraintsSource, KiCadPlacementConstraints, keepout_warnings,
@@ -156,9 +138,7 @@ pub use pin_swap::{
     KiCadPinChange, KiCadPinSwapConfig, KiCadPinSwapEstimate, KiCadPinSwapResult, KiCadPinSwapSpec,
     read_pin_swap_spec, swap_kicad_pins, swap_kicad_pins_in_place,
 };
-mod shrink;
 mod sub_boards;
-pub use shrink::{KiCadShrinkReport, shrink_kicad_board};
 pub use sub_boards::describe_sub_boards;
 mod project_rules;
 mod run_diagnosis;
@@ -168,7 +148,7 @@ pub use board_router::{
     KiCadKeepWhole, KiCadKeptCopper, KiCadNetLength, KiCadPourMode, KiCadPourQuality,
     KiCadViaInPad, KiCadViaInPadEntry, KiCadViaInPadFootprint, KiCadViaInPadReport,
     KiCadViaSpanEntry, admit_length_rule_layers, admit_reference_via_spans,
-    admit_reference_vias_in_pads, bench_kicad_search, blind_vias_override, dump_kicad_pour_map,
+    admit_reference_vias_in_pads, blind_vias_override, dump_kicad_pour_map,
     keep_whole_input_warnings, measure_pours, route_kicad_board, write_kicad_board_without_tracks,
     write_kicad_board_without_tracks_except,
 };
@@ -223,13 +203,6 @@ pub use verification::{
 mod fs_util;
 pub use fs_util::check_board_id;
 use fs_util::*;
-mod layer_render;
-pub use layer_render::{KiCadLayerRenderConfig, KiCadLayerRenderReport, render_board_layers};
-mod footprint_links;
-pub use footprint_links::{
-    KiCadFootprintLinkNormalizationReport, KiCadFootprintLinkUpdate,
-    KiCadSchematicLinkNormalization, normalize_kicad_footprint_links,
-};
 
 // The fixture tests on tests/fixtures/f1 that need the crate's insides
 // (under tests/, as test sources: tools/config-reference's index of

@@ -15,7 +15,6 @@ mod decoupling;
 mod edges;
 mod exits;
 mod guidance;
-mod legality;
 mod lower;
 mod marks;
 mod pair_rows;
@@ -29,6 +28,7 @@ mod skeleton;
 mod tests;
 mod trace;
 
+pub(crate) use self::courtyards::courtyard_slabs;
 #[cfg(test)]
 pub(crate) use self::exits::closed_pad_reason;
 pub(crate) use self::exits::pad_exits_settings;
@@ -43,7 +43,6 @@ pub use self::{
         pad_exits_kicad_board, pad_exits_override,
     },
     guidance::KiCadGlobalGuidance,
-    legality::*,
     panel::{KiCadPanelCellClass, KiCadPanelCopiesReport, KiCadPanelCopy},
     place::*,
     result::*,

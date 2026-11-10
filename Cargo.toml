@@ -11,7 +11,6 @@ members = [
     "crates/pcb-kicad",
     "crates/pcb-placer",
     "crates/pcb-router",
-    "crates/pcb-congestion",
     "crates/pcb-global",
     "crates/pcb-topo",
     "tools/config-reference",

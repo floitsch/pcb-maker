@@ -67,11 +67,11 @@ that a later split into crates is expected to follow.
   `board_stats`, `run_diagnosis` (`inspect-routing-run`),
   `corridors_fact`, and the result files `board_router/result.rs`,
   `board_router/pour_quality.rs`, `board_placer/result.rs`.
-- **Measurement only**, reached from research commands and not from
-  the agent commands: `congestion_samples`, `coarse_probe`,
-  `trouble_probe`, `global_route`, `placement_ablation`, `shrink`,
-  `layer_render`, `footprint_links`, `board_placer/legality.rs`,
-  `board_placer/trace.rs`, `board_router/tools.rs` (but for the track
+- **Measurement only** (`lab/`), reached from research commands and
+  not from the agent commands: `coarse_probe`, `trouble_probe`,
+  `global_route`, `placement_ablation`, `shrink`, `footprint_links`,
+  `legality`. Outside `lab/` but also measurement only:
+  `board_placer/trace.rs` and `board_router/tools.rs` (but for the track
   strip that `strip-kicad-tracks` uses). `congestion_rank` holds the
   race's RUDY pre-ranking, which is on the default path.
 

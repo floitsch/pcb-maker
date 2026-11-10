@@ -108,10 +108,6 @@ def main():
     parser.add_argument("--only", nargs="*")
     parser.add_argument("--skip-layout", action="store_true")
     parser.add_argument("--timeout", type=int, default=1800)
-    parser.add_argument("--tscircuit", action="store_true",
-                        help="also route the cold board with tscircuit's capacity autorouter (needs --freerouting for the DSN)")
-    parser.add_argument("--freerouting", type=Path,
-                        help="external.json for route-kicad-board-freerouting; adds a matched comparison on the cold board")
     parser.add_argument("--shrink", type=float, nargs="*",
                         help="strength: also place and route the board shrunk to these factors of its size "
                              "(default 0.9 0.8 0.7 0.6 0.5 when given without values), stopping at the first "
@@ -205,100 +201,6 @@ def main():
         else:
             row["route"] = {"error": (work / "route.log").read_text()[-400:], "exit": code, "peak_rss_mb": last_peak_mb, "own_rss_mb": last_own_mb}
 
-        if arguments.freerouting:
-            # Matched comparison: both routers on the cold board (no pours),
-            # which is the only input the external adapter accepts.
-            cold = work / "cold-source"
-            shutil.copytree(source, cold)
-            shutil.copy(work / "cold.kicad_pcb", cold / f"{board_id}.kicad_pcb")
-            code, seconds = run(arguments.binary, ["route-kicad-board", cold, board_id, work / "cold-routed", "auto"],
-                                work / "cold-route.log", arguments.timeout)
-            report = work / "cold-routed/board-router.json"
-            if report.exists():
-                result = json.loads(report.read_text())
-                row["cold_route"] = {
-                    "routed": result["routed_connections"], "connections": result["routable_connections"],
-                    "unconnected_terminals": result["unconnected_terminals"],
-                    "vias": result["vias"], "length_mm": round(result["length_mm"], 1),
-                    "routing_seconds": round(result["routing_seconds"], 2),
-                    "peak_rss_mb": last_peak_mb, "own_rss_mb": last_own_mb, "cpu_seconds": last_cpu_seconds,
-                    "internal_violations": len(result["internal_violations"]),
-                    "native": drc_summary(work / "cold-routed", baseline, reference),
-                }
-            else:
-                row["cold_route"] = {"error": (work / "cold-route.log").read_text()[-300:], "exit": code}
-            code, seconds = run(arguments.binary, ["route-kicad-board-freerouting", cold, board_id,
-                                                   work / "freerouting", arguments.freerouting.resolve()],
-                                work / "freerouting.log", arguments.timeout + 300)
-            report = work / "freerouting/routing/report.json"
-            if report.exists():
-                result = json.loads(report.read_text())
-                native = result.get("native") or {}
-                statistics = result.get("statistics") or {}
-                physical = statistics.get("physical_copper") or {}
-                row["freerouting"] = {
-                    "status": result.get("status"),
-                    "complete": bool(result.get("routing_complete")) and native.get("selected_net_unconnected_items") == 0,
-                    "unconnected": native.get("selected_net_unconnected_items"),
-                    "vias": statistics.get("vias"),
-                    "length_mm": round(physical["physical_centerline_length_mm"], 1) if physical.get("physical_centerline_length_mm") else None,
-                    "router_seconds": round(result["router_seconds"], 1) if result.get("router_seconds") else None,
-                    "peak_rss_mb": last_peak_mb, "own_rss_mb": last_own_mb, "cpu_seconds": last_cpu_seconds,
-                    "native_findings": drc_summary(work / "freerouting/routing/result", baseline, reference),
-                }
-            else:
-                row["freerouting"] = {"error": (work / "freerouting.log").read_text()[-300:], "exit": code}
-
-        if arguments.freerouting and arguments.tscircuit and (work / "freerouting/routing/input.dsn").exists():
-            code, seconds = run(sys.executable, [ROOT / "benchmarks/tscircuit/run_board.py", work / "freerouting", board_id,
-                                                 work / "tscircuit", arguments.timeout],
-                                work / "tscircuit.log", arguments.timeout + 600)
-            report = work / "tscircuit/report.json"
-            if report.exists():
-                result = json.loads(report.read_text())
-                native = result.get("native") or {}
-                row["tscircuit"] = {
-                    "status": result.get("status"),
-                    "complete": result.get("status") == "finished" and native.get("selected_net_unconnected_items") == 0,
-                    "unconnected": native.get("selected_net_unconnected_items"),
-                    "vias": result.get("vias"),
-                    "length_mm": round(result["length_mm"], 1) if result.get("length_mm") else None,
-                    "router_seconds": round(result["seconds"], 1) if result.get("seconds") else None,
-                    "native_findings": drc_summary(work / "tscircuit/result", baseline, reference),
-                }
-            else:
-                row["tscircuit"] = {"error": (work / "tscircuit.log").read_text()[-300:], "exit": code}
-
-        # Per-board layout constraints (fixed parts and the like) live in the
-        # corpus: the placement task includes the designer's rough intent.
-        layout_arguments = ["auto"]
-        if board.get("layout"):
-            (work / "layout-config.json").write_text(json.dumps(board["layout"]))
-            layout_arguments.append(work / "layout-config.json")
-
-        if not arguments.skip_layout:
-            code, seconds = run(arguments.binary, ["layout-kicad-board", source, board_id, work / "layout"] + layout_arguments,
-                                work / "layout.log", arguments.timeout)
-            report = work / "layout/board-layout.json"
-            if report.exists():
-                result = json.loads(report.read_text())
-                routed = result["routed"]
-                row["layout"] = {
-                    "moves": len(result.get("moves", [])),
-                    "kept_moves": sum(1 for m in result.get("moves", []) if m.get("kept")),
-                    "first_open": result.get("first_unconnected_terminals"),
-                    "routed": routed["routed_connections"], "connections": routed["routable_connections"],
-                    "unconnected_terminals": routed["unconnected_terminals"],
-                    "vias": routed["vias"], "length_mm": round(routed["length_mm"], 1),
-                    "pours": routed.get("pours", "none"),
-                    "seconds": round(seconds, 1),
-                    "peak_rss_mb": last_peak_mb, "own_rss_mb": last_own_mb, "cpu_seconds": last_cpu_seconds,
-                    "internal_violations": len(routed["internal_violations"]),
-                    "native": drc_summary(work / "layout/result", baseline, reference),
-                }
-            else:
-                row["layout"] = {"error": (work / "layout.log").read_text()[-400:], "exit": code, "peak_rss_mb": last_peak_mb, "own_rss_mb": last_own_mb}
-
         if arguments.shrink:
             # Strength: the same design on a smaller board, placed and routed
             # from scratch. Only the designer's own findings are forgiven;
@@ -344,12 +246,8 @@ def main():
         print(json.dumps(row), flush=True)
 
     (arguments.output / "results.json").write_text(json.dumps(rows, indent=1))
-    with_external = any("freerouting" in row for row in rows)
-    with_tscircuit = any("tscircuit" in row for row in rows)
-    lines = (["| Board | Reference copper | Route (designer placement) | Place + route (automatic) | pcb-maker, cold board | Freerouting, cold board |" + (" tscircuit, cold board |" if with_tscircuit else ""),
-              "| --- | --- | --- | --- | --- | --- |" + (" --- |" if with_tscircuit else "")] if with_external else
-             ["| Board | Reference copper | Route (designer placement) | Place + route (automatic) |",
-              "| --- | --- | --- | --- |"])
+    lines = ["| Board | Reference copper | Route (designer placement) | Place + route (automatic) |",
+             "| --- | --- | --- | --- |"]
 
     def cell(entry):
         if entry is None:
@@ -369,20 +267,6 @@ def main():
         return (f"{entry['routed']}/{entry['connections']}, {entry['vias']} vias, "
                 f"{entry['length_mm']:.0f} mm, {seconds} s, pours {entry.get('pours', 'none')} — {verdict}")
 
-    def external_cell(entry):
-        if entry is None:
-            return "—"
-        if "error" in entry:
-            return "**failed**: " + entry["error"].strip().splitlines()[-1][:80]
-        findings = entry.get("native_findings") or {}
-        problems = []
-        if entry.get("unconnected"):
-            problems.append(f"{entry['unconnected']} unconnected")
-        if findings.get("errors"):
-            problems.append(", ".join(f"{k}×{v}" for k, v in findings["errors"].items()))
-        verdict = "clean" if entry.get("complete") and not problems else ("; ".join(problems) or entry.get("status", "?"))
-        return f"{entry.get('vias')} vias, {entry.get('length_mm')} mm, {entry.get('router_seconds')} s — {verdict}"
-
     with_shrink = any("shrink" in row for row in rows)
     if with_shrink:
         lines[0] += " Smallest clean board |"
@@ -401,10 +285,6 @@ def main():
         reference = row.get("reference", {})
         line = (f"| {row['name']} | {reference.get('segments')} tracks, {reference.get('vias')} vias, "
                 f"{reference.get('zones')} zones | {cell(row.get('route')) if 'error' not in row else row['error'][:80]} | {cell(row.get('layout'))} |")
-        if with_external:
-            line += f" {cell(row.get('cold_route'))} | {external_cell(row.get('freerouting'))} |"
-            if with_tscircuit:
-                line += f" {external_cell(row.get('tscircuit'))} |"
         if with_shrink:
             line += f" {shrink_cell(row.get('shrink'))} |"
         lines.append(line)

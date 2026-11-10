@@ -726,7 +726,7 @@ stage against the designer's), `partialcopy.py`, `screen.py` (stage 1).
 ### Placement ablation
 
 `pcb-maker ablate-kicad-placement <designer.kicad_pcb> <placed-dir>
-<board-id> <out-dir>` (`placement_ablation.rs`, see
+<board-id> <out-dir>` (`lab/placement_ablation.rs`, see
 [agents.md](agents.md)) writes hybrids of the designer's placement and
 ours, one group of parts swapped at a time, and the signals of each
 (crossings, objective, wirelength, blocked exits, overflows), so that the

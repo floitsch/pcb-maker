@@ -15,11 +15,72 @@ pub(crate) struct PreparedBoard {
     pub edges_chosen: BTreeMap<String, String>,
 }
 
+/// Moves every footprint of `pcb` to the pose of its footprint in `from`:
+/// the one with its uuid, else the one with its reference (the n-th of
+/// a repeated reference to the n-th). Footprints `from` lacks stay.
+fn take_poses(pcb: &mut Expr, from: &Expr) -> Result<usize, String> {
+    let mut by_uuid: BTreeMap<String, Vec<[f64; 3]>> = BTreeMap::new();
+    let mut by_reference: BTreeMap<String, Vec<[f64; 3]>> = BTreeMap::new();
+    for footprint in from
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+    {
+        let at = form_at(footprint)?;
+        if let Some(uuid) = crate::kicad_nets::footprint_uuid(footprint) {
+            by_uuid.entry(uuid).or_default().push(at);
+        }
+        by_reference
+            .entry(footprint_reference(footprint).unwrap_or_default())
+            .or_default()
+            .push(at);
+    }
+    let Expr::List(items) = pcb else {
+        return Err("PCB root is not a list".into());
+    };
+    // A uuid the copies of a panel share goes to its n-th footprint.
+    let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+    let mut seen_uuid: BTreeMap<String, usize> = BTreeMap::new();
+    let mut moved = 0;
+    for footprint in items
+        .iter_mut()
+        .filter(|item| item.head() == Some("footprint"))
+    {
+        let reference = footprint_reference(footprint).unwrap_or_default();
+        let nth = seen.entry(reference.clone()).or_default();
+        let at = crate::kicad_nets::footprint_uuid(footprint)
+            .and_then(|uuid| {
+                let nth = seen_uuid.entry(uuid.clone()).or_default();
+                *nth += 1;
+                by_uuid
+                    .get(&uuid)
+                    .and_then(|ats| ats.get(*nth - 1).copied())
+            })
+            .or_else(|| {
+                by_reference
+                    .get(&reference)
+                    .and_then(|ats| ats.get(*nth).copied())
+            });
+        *nth += 1;
+        if let Some(at) = at {
+            write_footprint_pose(
+                footprint,
+                core::Pose {
+                    position: [at[0], at[1]],
+                    angle: at[2],
+                },
+            )?;
+            moved += 1;
+        }
+    }
+    Ok(moved)
+}
+
 /// Reads `<board_id>.kicad_pcb` from `source_directory`, resolves the
 /// constraints and the project's rules into `config`, applies the outline,
 /// keepout and side constraints, and lowers the board: everything
 /// `place_kicad_board` does before it places (also the legality census,
-/// `legality_kicad_board`).
+/// `lab::legality_kicad_board`, which takes the poses of `poses_from`).
 pub(crate) fn prepare_board(
     source_directory: &Path,
     board_id: &str,

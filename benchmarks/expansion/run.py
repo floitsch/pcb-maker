@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Toit contributors.
-"""Unattended acquisition, quick triage, deeper routing and placement data.
+"""Unattended acquisition, quick triage and deeper routing.
 
 A small quick-triage pool keeps up with downloads while the remaining CPU
-slots perform deeper routing and generate placement data. Every stage resumes.
+slots perform deeper routing. Every stage resumes.
 Send SIGTERM to this supervisor, or create data/STOP, to stop its children.
 """
 
@@ -79,11 +79,10 @@ def main():
     parser.add_argument('--batch-size', type=int, default=128)
     parser.add_argument('--reserve-gib', type=float, default=10)
     parser.add_argument('--deep-seconds', type=float, default=300)
-    parser.add_argument('--variants', type=int, default=4)
     args = parser.parse_args()
     if min(args.workers, args.quick_workers, args.download_workers, args.hours, args.batch_size,
-           args.deep_seconds, args.variants) <= 0:
-        parser.error('worker counts, hours, batch size, budgets and variants must be positive')
+           args.deep_seconds) <= 0:
+        parser.error('worker counts, hours, batch size and budgets must be positive')
     if args.quick_workers >= args.workers:
         parser.error('quick workers must leave at least one worker for follow-up jobs')
     data = args.data.resolve()
@@ -187,32 +186,16 @@ def main():
                 execute('deep', route_command(deep_manifest, data / 'runs/deep', args.deep_seconds))
             if stopping():
                 break
-            # Export features for diverse eligible boards, preserving exact
-            # saved placements; full routing supplies their eventual labels.
-            samples = data / 'samples'
-            execute('features', [sys.executable, HERE / 'samples.py', '--triage-output', quick,
-                                 '--output', samples, '--binary', binary,
-                                 '--workers', min(args.workers, 16), '--variants', args.variants,
-                                 '--limit', args.batch_size, '--reserve-gib', args.reserve_gib,
-                                 '--memory-gate', data / 'memory-gate.json'])
-            if stopping():
-                break
-            manifest = triage.read_json(samples / 'manifest.json')
-            if manifest and manifest['boards']:
-                execute('placement-labels', route_command(samples / 'manifest.json',
-                                                         data / 'runs/placement-labels', args.deep_seconds))
-            if stopping():
-                break
             converted = triage.read_json(data / 'converted-manifest.json')
             if converted and converted['boards']:
                 execute('experimental', route_command(data / 'converted-manifest.json',
                                                        data / 'runs/experimental', 30, workers=2,
                                                        memory=4, rss=6))
             summaries = {name: triage.read_json(data / 'runs' / name / 'status.json')
-                         for name in ('quick', 'high-memory', 'experimental', 'deep', 'placement-labels')}
+                         for name in ('quick', 'high-memory', 'experimental', 'deep')}
             triage.atomic_json(data / 'status.json', {
                 'cycle': cycle, 'updated_at': time.time(), 'pid': os.getpid(),
-                'stages': summaries, 'samples': triage.read_json(samples / 'status.json'),
+                'stages': summaries,
                 'harvester_pid': harvest.pid, 'deadline_at': deadline})
             STOP.wait(15)
     finally:

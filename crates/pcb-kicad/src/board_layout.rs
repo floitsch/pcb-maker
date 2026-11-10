@@ -64,31 +64,24 @@ pub struct KiCadBoardLayoutConfig {
     pub swappable: Vec<KiCadSwappable>,
     /// The pin-swap estimate's settings, for `pin_swaps` and `swappable`.
     pub pin_swap: KiCadPinSwapConfig,
-    /// The placement race's pre-ranking (`docs/congestion-model.md`): the
-    /// placer makes `congestion_candidates` placements (seeds), they are
-    /// ranked by `congestion_score`, and the race probes only the best
-    /// `congestion_probes`. `congestion_score`:
-    /// - `rudy` (default): RUDY routing demand above the tiles' free
-    ///   capacity; no model needed (quick tier: KiCad unconnected 98 -> 64
-    ///   against the plain race of three seeds);
-    /// - `none`: the plain race (the placer's `placement_seeds`, all
-    ///   probed);
-    /// - `global`: the coarse global route's usage above half the tile
-    ///   boundaries' capacity (`pcb-global`, docs/global-route.md; an
-    ///   experiment);
-    /// - with `congestion_model` (an ONNX file, an experiment): `open`
-    ///   (its predicted unfinished nets), `overflow` (its predicted
-    ///   overflow summed over the board), or `open+rudy` (the sum of a
-    ///   placement's ranks by `open` and by RUDY).
-    pub congestion_model: Option<PathBuf>,
     /// With a pre-ranking score, the placer makes at least this many
     /// placements to rank (its `placement_seeds` when that is more).
     pub congestion_candidates: usize,
     /// With a pre-ranking score, how many of the best-ranked placements
     /// the race routes (at least one).
     pub congestion_probes: usize,
-    /// How the race ranks the placements before probing them (the values
-    /// above, at `congestion_model`).
+    /// The placement race's pre-ranking (`docs/congestion-model.md`): the
+    /// placer makes `congestion_candidates` placements (seeds), they are
+    /// ranked by this score, and the race probes only the best
+    /// `congestion_probes`:
+    /// - `rudy` (default): RUDY routing demand above the tiles' free
+    ///   capacity (quick tier: KiCad unconnected 98 -> 64 against the
+    ///   plain race of three seeds);
+    /// - `none`: the plain race (the placer's `placement_seeds`, all
+    ///   probed);
+    /// - `global`: the coarse global route's usage above half the tile
+    ///   boundaries' capacity (`pcb-global`, docs/global-route.md; an
+    ///   experiment).
     pub congestion_score: String,
     /// One edge of a rectangular outline the layout may move, to find the
     /// smallest board that comes out clean (docs/constraints.md, "A free
@@ -473,7 +466,6 @@ impl Default for KiCadBoardLayoutConfig {
             pin_swaps: None,
             swappable: Vec::new(),
             pin_swap: KiCadPinSwapConfig::default(),
-            congestion_model: None,
             congestion_candidates: 16,
             congestion_probes: 3,
             congestion_score: "rudy".into(),
@@ -1257,14 +1249,34 @@ pub fn layout_placer_config(
     Ok(placer_config)
 }
 
-/// Whether the layout's race pre-ranks the placer's seeds (by RUDY, the
-/// global route or a congestion model): only with one router seed and no
-/// pin swaps.
+/// The router's settings for the race, the move trials and the first
+/// route (`core_config` with a shorter patience): the in-place router
+/// compares placements, so it stops negotiating once conflicts no longer
+/// really fall (a move on OpenAirScope negotiated 64 iterations at 15
+/// conflicted nets, 200-350 s a move). The final ladder routes the kept
+/// placement with the full patience.
+pub(crate) fn race_core_config(router_config: &KiCadBoardRouterConfig) -> core::Config {
+    let mut core_config = core_config(router_config);
+    if router_config.stall_drop.is_none() {
+        core_config.stall_drop = 0.1;
+    }
+    if router_config.stall_at_cap.is_none() {
+        core_config.stall_at_cap = core_config.stall_at_cap.min(10);
+    }
+    if router_config.present_growth.is_none() {
+        core_config.present_growth = core_config.present_growth.max(2.0);
+    }
+    // A trial only ranks placements: below the price cap, eight
+    // iterations without fewer conflicted nets end it (OpenAirScope's
+    // moves negotiated ~34 iterations, 126-229 s each).
+    core_config.stall_patience = core_config.stall_patience.min(8);
+    core_config
+}
+
+/// Whether the layout's race pre-ranks the placer's seeds (by RUDY or the
+/// global route): only with one router seed and no pin swaps.
 fn pre_ranks(config: &KiCadBoardLayoutConfig, router_config: &KiCadBoardRouterConfig) -> bool {
-    config.congestion_score != "none"
-        && (config.congestion_score == "rudy"
-            || config.congestion_score == "global"
-            || config.congestion_model.is_some())
+    (config.congestion_score == "rudy" || config.congestion_score == "global")
         && router_config.seeds.unwrap_or(1) <= 1
         && config.pin_swaps.is_none()
         && config.swappable.is_empty()
@@ -1568,26 +1580,15 @@ pub fn layout_kicad_board(
     // What sizing the outline left of the placement budget (a little at
     // least: without any, placement would not anneal at all).
     placer_config.work_seconds = Some((placement_budget - work).max(0.1 * placement_budget));
-    // A congestion model ranks more of the placer's seeds than the race
-    // could probe.
-    let congestion_model = match &config.congestion_model {
-        Some(path) => {
-            Some(pcb_congestion::CongestionModel::load(path).map_err(crate::verdict::input_error)?)
-        }
-        None => None,
-    };
-    // Only where the race runs: one router seed, no pin swaps.
-    // (the model loaded: `congestion_model` is set exactly when the
-    // config names one)
+    // The pre-ranking ranks more of the placer's seeds than the race
+    // could probe, only where the race runs: one router seed, no pin
+    // swaps.
     let pre_ranking = pre_ranks(config, router_config);
-    if config.congestion_score != "none"
-        && config.congestion_score != "rudy"
-        && config.congestion_score != "global"
-        && congestion_model.is_none()
-    {
+    if !crate::congestion_rank::SCORES.contains(&config.congestion_score.as_str()) {
         return Err(crate::verdict::input_error(format!(
-            "congestion_score {:?} needs a congestion_model",
-            config.congestion_score
+            "congestion_score {:?} is not one of {}",
+            config.congestion_score,
+            crate::congestion_rank::SCORES.join(", ")
         )));
     }
     if pre_ranking {
@@ -1730,26 +1731,9 @@ pub fn layout_kicad_board(
         on_marks: placement.on_marks.clone(),
     };
     first_relaxation.apply(&mut problem.problem);
-    // The in-place router compares placements: it stops negotiating once
-    // conflicts no longer really fall (a move on OpenAirScope negotiated
-    // 64 iterations at 15 conflicted nets, 200-350 s a move). The final
-    // ladder routes with the full patience.
-    let mut core_config = core_config(router_config);
-    if router_config.stall_drop.is_none() {
-        core_config.stall_drop = 0.1;
-    }
-    if router_config.stall_at_cap.is_none() {
-        core_config.stall_at_cap = core_config.stall_at_cap.min(10);
-    }
-    if router_config.present_growth.is_none() {
-        core_config.present_growth = core_config.present_growth.max(2.0);
-    }
-    // A trial only ranks placements, and the final ladder routes the kept
-    // one with the full patience: below the price cap, eight iterations
-    // without fewer conflicted nets end it (OpenAirScope's moves
-    // negotiated ~34 iterations, 126-229 s each).
-    core_config.stall_patience = core_config.stall_patience.min(8);
-
+    // The in-place router compares placements (`race_core_config`); the
+    // final ladder routes with the full patience.
+    let mut core_config = race_core_config(router_config);
     let first_started = std::time::Instant::now();
     // (With the pairs, their plan's work is the first route's.)
     let (mut board, plan_work) = lower_for_route(
@@ -1826,7 +1810,7 @@ pub fn layout_kicad_board(
                     && ((a.angle - b.angle).rem_euclid(360.0) + 1.0e-3) % 360.0 < 2.0e-3
             })
     };
-    // The placements a congestion model scores (the kept one first).
+    // The placements the pre-ranking scores (the kept one first).
     let mut pool: Vec<(Vec<placer::Pose>, placer::Relaxation)> = Vec::new();
     let mut others: Vec<(&Vec<placer::Pose>, &placer::Relaxation)> = Vec::new();
     // Per placement of the pool (the kept one, then `others` in their
@@ -1857,8 +1841,8 @@ pub fn layout_kicad_board(
         pool_excess,
     );
     eprintln!("layout: placement digest {placement_digest}");
-    // The seeds' placements are ranked by predicted routability (RUDY, or
-    // the model), and only the best few are probed (a probe is a real
+    // The seeds' placements are ranked by predicted routability (RUDY),
+    // and only the best few are probed (a probe is a real
     // route of up to `probe_seconds`; a score takes milliseconds). The
     // race below then judges those as before, in the ranking's order.
     // Scores and their order depend only on the placements, which the
@@ -1886,7 +1870,6 @@ pub fn layout_kicad_board(
         let ranked = crate::congestion_rank::rank_placements(
             &without_copper_texts(&pcb, config.placer.keep_board_marks),
             &pool,
-            congestion_model.as_ref(),
             router_config,
             &core_config,
             connect,
@@ -1943,13 +1926,12 @@ pub fn layout_kicad_board(
         });
         let keep: Vec<usize> = order.iter().copied().take(probes).collect();
         eprintln!(
-            "placement pre-ranking ({}): {} placements scored in {:.2} s (lowering {:.2} s, features {:.2} s, inference {:.2} s); probing {:?} (scores {:?})",
+            "placement pre-ranking ({}): {} placements scored in {:.2} s (lowering {:.2} s, scoring {:.2} s); probing {:?} (scores {:?})",
             config.congestion_score,
             pool.len(),
             ranked.seconds,
             ranked.lower_seconds,
-            ranked.feature_seconds,
-            ranked.inference_seconds,
+            ranked.score_seconds,
             keep,
             keep.iter()
                 .map(|index| (ranked.scores[*index] * 100.0).round() / 100.0)
