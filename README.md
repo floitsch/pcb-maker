@@ -313,7 +313,7 @@ the main corpus ([docs/benchmarks.md](docs/benchmarks.md)):
 
 | Sweep | Boards | pcb-maker | Freerouting |
 | --- | --- | --- | --- |
-| Layout from stacked parts and constraints, 1500 s of work (v37, nightly 2026-11-10, main 8bfeb31) | 109 | 70 clean (strict rule 4; 69 per type), 1552 connections open in all (1552 on the 106 boards with a result in v36 too, which left 1552 there), no row cut or killed | - |
+| Layout from stacked parts and constraints, 1500 s of work (v37, nightly 2026-11-10, main 8bfeb31) | 109 | 70 clean (strict rule 4; 69 per type), 1552 connections open in all (1552 on the 106 boards with a result in nightly 2026-11-09 too, which left 1552 there), no row cut or killed | - |
 | Routing the designer's placement at the layout's routing budget, 919.5 s of work (matched designer tier, nightly 2026-11-10) | 109 | 76 clean (strict rule 4; 75 per type), 233 open on the 100 target boards, against 706 of the v37 layout there | - |
 | Layout from stacked parts and constraints, 1500 s of work (v21, x1832, 2026-10-26) | 109 | 56 clean (strict rule 4; 56 per type), 2444 connections open in all (1672 on the 100 boards with a result in the nightly of 2026-10-25 too, which left 1788 there), no row cut or killed | - |
 | Routing the designer's placement at the layout's routing budget, 1143 s of work (matched designer tier x1832, 2026-10-26) | 109 | 62 clean (strict rule 4; 66 per type), 742 open on the 100 target boards, against 1740 of the v21 layout there | - |

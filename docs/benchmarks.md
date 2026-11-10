@@ -418,20 +418,20 @@ pass is analysed in [router.md](router.md).
 <!-- nightly-sweep night=2026-11-10 sweep=build/nightly/2026-11-10/sweep.log main=8bfeb313afbf25b11d2e2594353470e0d5f01066 -->
 
 Written by the nightly (`scripts/nightly-report.py --docs`) from
-`build/nightly/2026-11-10/`: main 8bfeb31 (1 commit after v36's main
-80c0507; 1 commit after the nightly of 2026-11-09's main 80c0507),
-binary `pcb-maker-nightly-2026-11-10-8bfeb313afbf` (sha256
-5fad98b37cfc), tasks v7 (sha256 c8f95caf5089), `--quality`, at the
-pinned work rates (the measured router rate had a median of 2.6e6, work
-over wall 1.08), 10 jobs x 2 threads, `--order peak-desc`, through the
-memory ledger with `--ledger-priority nightly`: 8423 s wall, largest
-peak 3.2 GB, no row cut or killed in any stage. Per board:
+`build/nightly/2026-11-10/`: main 8bfeb31 (1 commit after the nightly of
+2026-11-09's main 80c0507), binary
+`pcb-maker-nightly-2026-11-10-8bfeb313afbf` (sha256 5fad98b37cfc), tasks
+v7 (sha256 c8f95caf5089), `--quality`, at the pinned work rates (the
+measured router rate had a median of 2.6e6, work over wall 1.08), 10
+jobs x 2 threads, `--order peak-desc`, through the memory ledger with
+`--ledger-priority nightly`: 8423 s wall, largest peak 3.2 GB, no row
+cut or killed in any stage. Per board:
 `build/nightly/2026-11-10/summary.md`, `diff-sweep.txt` and `gap.txt`.
 
-**Inputs.** Every board in both ran on the same input as in v36 (nightly
-2026-11-09).
+**Inputs.** Every board in both ran on the same input as in nightly
+2026-11-09.
 
-| | v36 (nightly 2026-11-09) | v37 (nightly 2026-11-10, 8bfeb31) |
+| | nightly 2026-11-09 (80c0507) | v37 (nightly 2026-11-10, 8bfeb31) |
 |---|---|---|
 | pass, per-type rule | 69 of 109 | **69 of 109** |
 | pass, strict rule (rule 4) | 70 of 109 | **70 of 109** |
@@ -456,11 +456,11 @@ peak 3.2 GB, no row cut or killed in any stage. Per board:
 | ground pour cut, ours less the designer's (median) | -56.6 mm (99; 1 lost) | -56.6 mm (99; 1 lost) |
 | final ladder's share of the budget (median) | 0.613 (34 rows) | **0.613** (34 rows) |
 
-**Against the nightly of 2026-11-09 (v36)** (compare.py, 109 boards in
-both on the same input): better 0, same 106, worse 0; 106 of the 106
-with a result in both are identical in routed count, unconnected, vias,
-length and strict findings; unconnected there 1552 -> 1552. Strict
-passes 70 -> 70: gained 0; lost 0.
+**Against the nightly of 2026-11-09** (compare.py, 109 boards in both on
+the same input): better 0, same 106, worse 0; 106 of the 106 with a
+result in both are identical in routed count, unconnected, vias, length
+and strict findings; unconnected there 1552 -> 1552. Strict passes 70 ->
+70: gained 0; lost 0.
 
 **Rows without a result, 3** (the nightly of 2026-11-09: 3):
 OpenESC-30x30 4in1-panel (the panel's 2 boards' parts are mixed: 392
