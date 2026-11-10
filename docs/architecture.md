@@ -38,9 +38,9 @@ that a later split into crates is expected to follow.
   `connection_rules`, `local_clearance`, `electrical_terminals`, `flip`,
   `kicad_config` (a library-free KiCad configuration for kicad-cli),
   `fs_util`.
-- **Lowering.** `board_placer/lower.rs` (a board to a
+- **Lowering.** `board_placer/lower/` (a board to a
   `pcb_placer::Problem`, with `bodies.rs`, `courtyards.rs`, `rules.rs`)
-  and `board_router/lower.rs` (a board to a `pcb_router::Board`, with
+  and `board_router/lower/` (a board to a `pcb_router::Board`, with
   `geometry.rs`, `pour_plan.rs`, `kept.rs`, `config.rs`). `sub_boards` is
   called from both.
 - **The flow.** `board_layout` (`layout_kicad_board`), `board_placer/place.rs`
@@ -91,7 +91,7 @@ deadline is skipped and reported as cut.
 | 1 | Outline sizing (only with an automatic outline) | `size_outline`, board_layout.rs | the outline in the placer config |
 | 2 | Placement | `place_kicad_board`, board_placer/place.rs (below) | `placed/<id>.kicad_pcb`, `board-placer.json`, `KiCadBoardPlacerResult`: the kept poses and the other legal seeds' poses |
 | 3 | Pin swaps (with `pin_swaps` or `swappable`) | `swap_kicad_pins_in_place`, pin_swap.rs | the placed board, nets permuted |
-| 4 | Pours and classes added, the placed board lowered again | `add_pour_zones` (board_router/pour_plan.rs), `lower_placement` (board_placer/lower.rs) | the board as an `Expr`, a `pcb_placer::Problem` for the moves' legality |
+| 4 | Pours and classes added, the placed board lowered again | `add_pour_zones` (board_router/pour_plan.rs), `lower_placement` (board_placer/lower/) | the board as an `Expr`, a `pcb_placer::Problem` for the moves' legality |
 | 5 | Lowering for the router | `core_config` (board_router/route.rs), `lower_for_route` (board_router/diff_pairs.rs, around `lower`) | a `pcb_router::Config` and `pcb_router::Board` |
 | 6 | Pre-ranking of the placements | `rank_placements`, congestion_rank.rs | the candidates in RUDY order (sixteen placements, three probed) |
 | 7 | The race | inline in board_layout.rs: `Router::new` and `Router::probe` per candidate, side by side as the ledger allows; `race_pick`; `race_lines_probe` | one `Router` (the winner's, resumed), its `RoutingResult`, `KiCadRaceReport` |
@@ -130,7 +130,7 @@ need, then calls `route_kicad_board` (crates/pcb-kicad/src/board_router/route.rs
 One attempt (board_router/attempt.rs, `route_kicad_board_once`, or the
 runner's `lower`, `probe`, `resume` and `write`):
 
-1. **Lowering.** `lower` (board_router/lower.rs) makes a `Lowered`
+1. **Lowering.** `lower` (board_router/lower/) makes a `Lowered`
    (`pcb_router::Board` and the expressions to write back);
    `keep_existing_copper` (kept.rs) and `plan_pairs` (diff_pairs.rs) add
    kept copper and planned pairs.

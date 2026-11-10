@@ -52,7 +52,7 @@ every negotiation iteration (`docs/images/animate.py routing` makes a GIF).
 
 ## Lowering a KiCad board
 
-`lower()` in `board_router/lower.rs` turns the parsed board, the attempt's
+`lower()` in `board_router/lower/` turns the parsed board, the attempt's
 config and whether pours connect into a `Board`: outline, clearances, rule
 classes, the neck width, obstacles, nets with terminals, planes, the
 via-in-pad lists, pin-row gaps and terminal copper. A board beyond the maps
@@ -427,7 +427,7 @@ pads to the main piece by vias.
 
 ### Thermal spokes as KiCad counts them
 
-`Router::kicad_spokes` (`router/spokes.rs`; `kicad_spokes`, on) reproduces
+`Router::kicad_spokes` (`router/spokes/`; `kicad_spokes`, on) reproduces
 KiCad 10's zone filler and starved-thermal check per pad, layer and zone. A
 spoke runs from the pad centre in the pad's frame at the zone's spoke width
 and counts where its end lies in fill (tested off the lattice by

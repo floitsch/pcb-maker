@@ -52,7 +52,7 @@ Terms used throughout:
 In the order the code runs, for one board:
 
 1. **Prepare and lower** (`prepare_board` in `board_placer/place.rs`,
-   `lower_placement` in `board_placer/lower.rs`): read the board in
+   `lower_placement` in `board_placer/lower/`): read the board in
    canonical order, resolve constraints and the project's rules, build
    bodies, pins, held parts, halos, net weights, obstacles and relations.
 2. **Panels and cost terms** (`place_kicad_board`): detect copies or
@@ -121,7 +121,7 @@ over a part is an error. The layout passes the router's clearances
 instead (`layout_placer_config`). Outline, keepout and side constraints
 change the board before it is lowered.
 
-`lower_placement` (`board_placer/lower.rs`) then builds the
+`lower_placement` (`board_placer/lower/`) then builds the
 `pcb_placer::Problem` (`problem.rs`):
 
 - **Bodies.** A body is the courtyard and pad extent, a box or a disc
