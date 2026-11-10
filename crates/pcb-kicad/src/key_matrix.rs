@@ -219,63 +219,98 @@ struct Terminal<'a> {
     private: BTreeSet<&'a str>,
 }
 
-/// Recognises the key matrix of a netlist. None when no part looks like a
-/// switch; a matrix without groups when switches share no row and column
-/// nets (keys wired directly to pins).
-pub(crate) fn infer_key_matrix<'a>(parts: &'a [MatrixPart]) -> Option<KeyMatrix> {
-    let by_reference: BTreeMap<&str, &MatrixPart> = parts
-        .iter()
-        .map(|part| (part.reference.as_str(), part))
-        .collect();
-    // Nets: their parts (distinct references) and whether a pin on them is
-    // a power pin.
-    let mut members: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
-    let mut powered: BTreeSet<&str> = BTreeSet::new();
-    for part in parts {
-        for (_, net, kind) in &part.pins {
-            members
-                .entry(net.as_str())
-                .or_default()
-                .insert(part.reference.as_str());
-            if matches!(kind.as_deref(), Some("power_in" | "power_out")) {
-                powered.insert(net.as_str());
+/// A switch and its two terminals (a row's and a column's, in no order).
+type Cell<'a> = (&'a str, [Terminal<'a>; 2]);
+
+/// A cell with its terminals told apart: switch, the zero-coloured line's
+/// terminal, the one-coloured line's terminal, the line component.
+type Keyed<'c, 'a> = (&'c str, &'c Terminal<'a>, &'c Terminal<'a>, usize);
+
+/// The netlist as the inference sees it: who is on each net, which nets
+/// carry power, and which parts are named like switches.
+struct Netlist<'a> {
+    parts: &'a [MatrixPart],
+    by_reference: BTreeMap<&'a str, &'a MatrixPart>,
+    /// Nets: their parts (distinct references).
+    members: BTreeMap<&'a str, BTreeSet<&'a str>>,
+    /// Nets a power pin is on.
+    powered: BTreeSet<&'a str>,
+    /// The parts named like switches, in natural reference order.
+    named: Vec<&'a MatrixPart>,
+    named_set: BTreeSet<&'a str>,
+}
+
+impl<'a> Netlist<'a> {
+    /// None when no part looks like a switch.
+    fn new(parts: &'a [MatrixPart]) -> Option<Self> {
+        let by_reference: BTreeMap<&str, &MatrixPart> = parts
+            .iter()
+            .map(|part| (part.reference.as_str(), part))
+            .collect();
+        let mut members: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+        let mut powered: BTreeSet<&str> = BTreeSet::new();
+        for part in parts {
+            for (_, net, kind) in &part.pins {
+                members
+                    .entry(net.as_str())
+                    .or_default()
+                    .insert(part.reference.as_str());
+                if matches!(kind.as_deref(), Some("power_in" | "power_out")) {
+                    powered.insert(net.as_str());
+                }
             }
         }
+        let mut named: Vec<&MatrixPart> = parts.iter().filter(|part| switch_named(part)).collect();
+        if named.is_empty() {
+            return None;
+        }
+        named.sort_by_key(|part| natural(&part.reference));
+        let named_set: BTreeSet<&str> = named.iter().map(|part| part.reference.as_str()).collect();
+        Some(Netlist {
+            parts,
+            by_reference,
+            members,
+            powered,
+            named,
+            named_set,
+        })
     }
-    let power = |net: &str| powered.contains(net) || power_name(net);
-    let connected = |part: &'a MatrixPart| -> BTreeSet<&'a str> {
+
+    fn power(&self, net: &str) -> bool {
+        self.powered.contains(net) || power_name(net)
+    }
+
+    /// The nets a part is really connected to.
+    fn connected(part: &'a MatrixPart) -> BTreeSet<&'a str> {
         part.pins
             .iter()
             .map(|(_, net, _)| net.as_str())
             .filter(|net| !net.is_empty() && !net.starts_with("unconnected-"))
             .collect()
-    };
-    let diode = |reference: &str| -> bool {
-        by_reference.get(reference).is_some_and(|part| {
-            prefix(reference) == "D" && connected(part).len() == 2 && !is_led(part)
-        })
-    };
-    let mut named: Vec<&MatrixPart> = parts.iter().filter(|part| switch_named(part)).collect();
-    if named.is_empty() {
-        return None;
     }
-    named.sort_by_key(|part| natural(&part.reference));
-    let named_set: BTreeSet<&str> = named.iter().map(|part| part.reference.as_str()).collect();
 
-    // A switch's terminals: the lines it reaches, directly or through a
-    // diode whose other pin is on no other switch's line (the key's own
-    // diode, or the column diode several keys share).
-    // A diode net several switches share is followed only where `shared`
-    // names it: their other lines are the same (alternate footprints of
-    // one key), not a column's diode (CyberKeeb's column diodes, five
-    // keys on each).
-    let terminals = |part: &'a MatrixPart, shared: &BTreeSet<&'a str>| -> Vec<Terminal<'a>> {
+    /// A key's kind of diode: a `D` on two nets, not an LED.
+    fn diode(&self, reference: &str) -> bool {
+        self.by_reference.get(reference).is_some_and(|part| {
+            prefix(reference) == "D" && Self::connected(part).len() == 2 && !is_led(part)
+        })
+    }
+
+    /// A switch's terminals: the lines it reaches, directly or through a
+    /// diode whose other pin is on no other switch's line (the key's own
+    /// diode, or the column diode several keys share).
+    /// A diode net several switches share is followed only where `shared`
+    /// names it: their other lines are the same (alternate footprints of
+    /// one key), not a column's diode (CyberKeeb's column diodes, five
+    /// keys on each).
+    fn terminals(&self, part: &'a MatrixPart, shared: &BTreeSet<&'a str>) -> Vec<Terminal<'a>> {
         let mut found: Vec<Terminal> = Vec::new();
-        for net in connected(part) {
-            if power(net) {
+        for net in Self::connected(part) {
+            if self.power(net) {
                 continue;
             }
-            let others: Vec<&str> = members
+            let others: Vec<&str> = self
+                .members
                 .get(net)
                 .map(|set| {
                     set.iter()
@@ -287,23 +322,23 @@ pub(crate) fn infer_key_matrix<'a>(parts: &'a [MatrixPart]) -> Option<KeyMatrix>
             let diodes: Vec<&str> = others
                 .iter()
                 .copied()
-                .filter(|other| diode(other))
+                .filter(|other| self.diode(other))
                 .collect();
             let only_switches = others.iter().all(|other| {
-                *other == diodes.first().copied().unwrap_or("") || named_set.contains(other)
+                *other == diodes.first().copied().unwrap_or("") || self.named_set.contains(other)
             });
             let terminal = if diodes.len() == 1
                 && only_switches
                 && (others.len() == 1 || shared.contains(net))
             {
                 let through = diodes[0];
-                let Some(line) = connected(by_reference[through])
+                let Some(line) = Self::connected(self.by_reference[through])
                     .into_iter()
                     .find(|other| *other != net)
                 else {
                     continue;
                 };
-                if power(line) {
+                if self.power(line) {
                     continue;
                 }
                 let mut private: BTreeSet<&str> = others
@@ -329,21 +364,27 @@ pub(crate) fn infer_key_matrix<'a>(parts: &'a [MatrixPart]) -> Option<KeyMatrix>
             }
         }
         found
-    };
+    }
+}
+
+/// The terminals of every switch-named part. Diode nets that several
+/// switches share are found first (without following them), then followed.
+fn switch_terminals<'a>(net: &Netlist<'a>) -> BTreeMap<&'a str, Vec<Terminal<'a>>> {
     let none = BTreeSet::new();
-    let first: BTreeMap<&str, Vec<Terminal>> = named
+    let first: BTreeMap<&str, Vec<Terminal>> = net
+        .named
         .iter()
-        .map(|part| (part.reference.as_str(), terminals(part, &none)))
+        .map(|part| (part.reference.as_str(), net.terminals(part, &none)))
         .collect();
     let mut shared: BTreeSet<&str> = BTreeSet::new();
-    for (net, on) in &members {
+    for (name, on) in &net.members {
         let switches: Vec<&str> = on
             .iter()
             .copied()
-            .filter(|other| named_set.contains(other))
+            .filter(|other| net.named_set.contains(other))
             .collect();
         if switches.len() < 2
-            || on.iter().filter(|other| diode(other)).count() != 1
+            || on.iter().filter(|other| net.diode(other)).count() != 1
             || switches.len() + 1 != on.len()
         {
             continue;
@@ -352,20 +393,28 @@ pub(crate) fn infer_key_matrix<'a>(parts: &'a [MatrixPart]) -> Option<KeyMatrix>
             first[switch]
                 .iter()
                 .map(|terminal| terminal.line)
-                .filter(|line| line != net)
+                .filter(|line| line != name)
                 .collect()
         };
         if switches
             .iter()
             .all(|switch| rest(switch) == rest(switches[0]))
         {
-            shared.insert(net);
+            shared.insert(name);
         }
     }
-    let mut all_terminals: BTreeMap<&str, Vec<Terminal>> = named
+    net.named
         .iter()
-        .map(|part| (part.reference.as_str(), terminals(part, &shared)))
-        .collect();
+        .map(|part| (part.reference.as_str(), net.terminals(part, &shared)))
+        .collect()
+}
+
+/// The switches with exactly two lines (those two or more switches reach)
+/// as cells; the others are unassigned.
+fn pair_switches<'a>(
+    net: &Netlist<'a>,
+    all_terminals: &BTreeMap<&'a str, Vec<Terminal<'a>>>,
+) -> (Vec<Cell<'a>>, Vec<String>) {
     // Lines: nets two switches or more reach.
     let mut reach: BTreeMap<&str, usize> = BTreeMap::new();
     for found in all_terminals.values() {
@@ -373,9 +422,9 @@ pub(crate) fn infer_key_matrix<'a>(parts: &'a [MatrixPart]) -> Option<KeyMatrix>
             *reach.entry(terminal.line).or_default() += 1;
         }
     }
-    let mut cells: Vec<(&str, [Terminal; 2])> = Vec::new();
+    let mut cells: Vec<Cell> = Vec::new();
     let mut unassigned: Vec<String> = Vec::new();
-    for part in &named {
+    for part in &net.named {
         let lines: Vec<Terminal> = all_terminals[part.reference.as_str()]
             .iter()
             .filter(|terminal| reach[terminal.line] >= 2)
@@ -386,16 +435,33 @@ pub(crate) fn infer_key_matrix<'a>(parts: &'a [MatrixPart]) -> Option<KeyMatrix>
             Err(_) => unassigned.push(part.reference.clone()),
         }
     }
-    // A key alone on its column (or row): a switch with two terminals, one
-    // on a line, the other on a net the controller has too (a part with
-    // pins on two lines or more).
-    let mut line_nets: BTreeSet<&str> = cells
+    (cells, unassigned)
+}
+
+/// The nets the cells' terminals are on.
+fn cell_lines<'a>(cells: &[Cell<'a>]) -> BTreeSet<&'a str> {
+    cells
         .iter()
         .flat_map(|(_, pair)| pair.iter().map(|terminal| terminal.line))
-        .collect();
-    let controllers: BTreeSet<&str> = parts
+        .collect()
+}
+
+/// A key alone on its column (or row): a switch with two terminals, one
+/// on a line, the other on a net the controller has too (a part with
+/// pins on two lines or more). Moves it from `unassigned` to `cells`.
+fn rescue_lone_keys<'a>(
+    net: &Netlist<'a>,
+    all_terminals: &BTreeMap<&'a str, Vec<Terminal<'a>>>,
+    cells: &mut Vec<Cell<'a>>,
+    unassigned: &mut Vec<String>,
+) {
+    let line_nets = cell_lines(cells);
+    let controllers: BTreeSet<&str> = net
+        .parts
         .iter()
-        .filter(|part| !named_set.contains(part.reference.as_str()) && !diode(&part.reference))
+        .filter(|part| {
+            !net.named_set.contains(part.reference.as_str()) && !net.diode(&part.reference)
+        })
         .filter(|part| {
             part.pins
                 .iter()
@@ -406,7 +472,7 @@ pub(crate) fn infer_key_matrix<'a>(parts: &'a [MatrixPart]) -> Option<KeyMatrix>
         .map(|part| part.reference.as_str())
         .collect();
     let mut rescued = Vec::new();
-    for reference in &unassigned {
+    for reference in unassigned.iter() {
         let found = &all_terminals[reference.as_str()];
         if let Ok(pair) = <[Terminal; 2]>::try_from(found.clone()) {
             let on_line = pair
@@ -418,13 +484,14 @@ pub(crate) fn infer_key_matrix<'a>(parts: &'a [MatrixPart]) -> Option<KeyMatrix>
                 .find(|terminal| !line_nets.contains(terminal.line));
             if on_line == 1
                 && let Some(lone) = lone
-                && members
+                && net
+                    .members
                     .get(lone.line)
                     .is_some_and(|on| on.iter().any(|other| controllers.contains(other)))
             {
                 rescued.push(reference.clone());
                 cells.push((
-                    named
+                    net.named
                         .iter()
                         .find(|part| part.reference == *reference)
                         .unwrap()
@@ -436,25 +503,31 @@ pub(crate) fn infer_key_matrix<'a>(parts: &'a [MatrixPart]) -> Option<KeyMatrix>
         }
     }
     unassigned.retain(|reference| !rescued.contains(reference));
-    line_nets.extend(
-        cells
-            .iter()
-            .flat_map(|(_, pair)| pair.iter().map(|terminal| terminal.line)),
-    );
-    // Parts named otherwise with exactly two pins, one on a line of each
-    // kind the named switches use (a capacitive pad, a `B1` button).
-    let mut others: Vec<&MatrixPart> = parts
+}
+
+/// Parts named otherwise with exactly two pins, one on a line of each
+/// kind the named switches use (a capacitive pad, a `B1` button): added to
+/// the cells (and their terminals to `all_terminals`).
+fn add_unnamed_switches<'a>(
+    net: &Netlist<'a>,
+    all_terminals: &mut BTreeMap<&'a str, Vec<Terminal<'a>>>,
+    cells: &mut Vec<Cell<'a>>,
+) {
+    let line_nets = cell_lines(cells);
+    let mut others: Vec<&MatrixPart> = net
+        .parts
         .iter()
         .filter(|part| {
-            !named_set.contains(part.reference.as_str())
+            !net.named_set.contains(part.reference.as_str())
                 && !NOT_SWITCHES.contains(&prefix(&part.reference).as_str())
                 && part.pins.len() == 2
-                && connected(part).len() == 2
+                && Netlist::connected(part).len() == 2
         })
         .collect();
     others.sort_by_key(|part| natural(&part.reference));
+    let none = BTreeSet::new();
     for part in others {
-        let found = terminals(part, &none);
+        let found = net.terminals(part, &none);
         if let Ok(pair) = <[Terminal; 2]>::try_from(found)
             && pair
                 .iter()
@@ -464,13 +537,15 @@ pub(crate) fn infer_key_matrix<'a>(parts: &'a [MatrixPart]) -> Option<KeyMatrix>
             cells.push((part.reference.as_str(), pair));
         }
     }
+}
 
-    // Two-colour the lines (a switch joins a row to a column), component
-    // by component; a switch that would join two lines of one colour is
-    // left out.
+/// Two-colour the lines (a switch joins a row to a column), component by
+/// component: each line's (component, colour), and the number of
+/// components.
+fn two_colour<'a>(cells: &[Cell<'a>]) -> (BTreeMap<&'a str, (usize, u8)>, usize) {
     let mut colour: BTreeMap<&str, (usize, u8)> = BTreeMap::new();
     let mut adjacency: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-    for (_, pair) in &cells {
+    for (_, pair) in cells {
         adjacency
             .entry(pair[0].line)
             .or_default()
@@ -482,7 +557,7 @@ pub(crate) fn infer_key_matrix<'a>(parts: &'a [MatrixPart]) -> Option<KeyMatrix>
     }
     let mut components = 0;
     let mut order: Vec<&str> = Vec::new();
-    for (_, pair) in &cells {
+    for (_, pair) in cells {
         for terminal in pair {
             if !order.contains(&terminal.line) {
                 order.push(terminal.line);
@@ -506,8 +581,18 @@ pub(crate) fn infer_key_matrix<'a>(parts: &'a [MatrixPart]) -> Option<KeyMatrix>
         }
         components += 1;
     }
-    let mut keyed: Vec<(&str, &Terminal, &Terminal, usize)> = Vec::new();
-    for (switch, pair) in &cells {
+    (colour, components)
+}
+
+/// Each cell with its terminals told apart by colour; a switch that would
+/// join two lines of one colour is left out (into `unassigned`).
+fn colour_cells<'c, 'a>(
+    cells: &'c [Cell<'a>],
+    colour: &BTreeMap<&str, (usize, u8)>,
+    unassigned: &mut Vec<String>,
+) -> Vec<Keyed<'c, 'a>> {
+    let mut keyed: Vec<Keyed> = Vec::new();
+    for (switch, pair) in cells {
         let (a, b) = (colour[pair[0].line], colour[pair[1].line]);
         if a.1 == b.1 {
             unassigned.push(switch.to_string());
@@ -520,12 +605,21 @@ pub(crate) fn infer_key_matrix<'a>(parts: &'a [MatrixPart]) -> Option<KeyMatrix>
         };
         keyed.push((switch, zero, one, a.0));
     }
+    keyed
+}
 
-    let mut groups: Vec<(MatrixGroup, Vec<String>)> = Vec::new();
+/// A group per component that is a matrix, with how rows were told from
+/// columns (`names` unless a component needed `fewer nets`). The keys of
+/// the others go to `unassigned`.
+fn matrix_groups(
+    keyed: &[Keyed],
+    components: usize,
+    unassigned: &mut Vec<String>,
+) -> (Vec<MatrixGroup>, &'static str) {
+    let mut groups: Vec<MatrixGroup> = Vec::new();
     let mut rows_by = "names";
     for component in 0..components {
-        let cells: Vec<&(&str, &Terminal, &Terminal, usize)> =
-            keyed.iter().filter(|cell| cell.3 == component).collect();
+        let cells: Vec<&Keyed> = keyed.iter().filter(|cell| cell.3 == component).collect();
         let lines = |side: usize| -> BTreeSet<&str> {
             cells
                 .iter()
@@ -569,10 +663,14 @@ pub(crate) fn infer_key_matrix<'a>(parts: &'a [MatrixPart]) -> Option<KeyMatrix>
                 }
             })
             .collect();
-        groups.push((build_group(&oriented), Vec::new()));
+        groups.push(build_group(&oriented));
     }
-    // Halves: two separate matrices, or one whose columns are named for a
-    // hand.
+    (groups, rows_by)
+}
+
+/// The two halves of a split keyboard's matrix, left first: from two
+/// separate matrices, or from one whose columns are named for a hand.
+fn assign_halves(mut groups: Vec<MatrixGroup>) -> (Vec<MatrixGroup>, Option<&'static str>) {
     let mut halves_by = None;
     if groups.len() == 2 {
         halves_by = Some("separate matrices");
@@ -580,15 +678,15 @@ pub(crate) fn infer_key_matrix<'a>(parts: &'a [MatrixPart]) -> Option<KeyMatrix>
             group.rows.iter().all(|row| right_named(&row.net))
                 || group.columns.iter().all(|net| right_named(net))
         };
-        let (first, second) = (right(&groups[0].0), right(&groups[1].0));
+        let (first, second) = (right(&groups[0]), right(&groups[1]));
         let swap = first && !second;
         if swap {
             groups.swap(0, 1);
         }
-        groups[0].0.half = Some("left");
-        groups[1].0.half = Some("right");
+        groups[0].half = Some("left");
+        groups[1].half = Some("right");
     } else if groups.len() == 1 {
-        let group = &groups[0].0;
+        let group = &groups[0];
         let hands: Vec<Option<&str>> = group
             .columns
             .iter()
@@ -599,46 +697,50 @@ pub(crate) fn infer_key_matrix<'a>(parts: &'a [MatrixPart]) -> Option<KeyMatrix>
             && hands.contains(&Some("right"))
         {
             halves_by = Some("column names");
-            let mut split = Vec::new();
-            for hand in ["left", "right"] {
-                let columns: Vec<String> = group
-                    .columns
-                    .iter()
-                    .zip(&hands)
-                    .filter(|(_, own)| **own == Some(hand))
-                    .map(|(net, _)| net.clone())
-                    .collect();
-                let rows: Vec<MatrixLine> = group
-                    .rows
-                    .iter()
-                    .map(|row| MatrixLine {
-                        net: row.net.clone(),
-                        keys: row
-                            .keys
-                            .iter()
-                            .filter(|key| columns.contains(&key.column))
-                            .cloned()
-                            .collect(),
-                    })
-                    .filter(|row| !row.keys.is_empty())
-                    .collect();
-                split.push((
-                    MatrixGroup {
-                        half: Some(hand),
-                        rows,
-                        columns,
-                        controller: None,
-                    },
-                    Vec::new(),
-                ));
-            }
-            groups = split;
+            groups = ["left", "right"]
+                .into_iter()
+                .map(|hand| half_of(group, &hands, hand))
+                .collect();
         }
     }
-    // Each group's controller: the part (not a switch or diode) with the
-    // most pins on its lines; one shared by both halves is no half's.
-    let switches: BTreeSet<&str> = keyed.iter().map(|cell| cell.0).collect();
-    for (group, _) in groups.iter_mut() {
+    (groups, halves_by)
+}
+
+/// The columns named for one hand of a group, with the rows' keys on them.
+fn half_of(group: &MatrixGroup, hands: &[Option<&str>], hand: &'static str) -> MatrixGroup {
+    let columns: Vec<String> = group
+        .columns
+        .iter()
+        .zip(hands)
+        .filter(|(_, own)| **own == Some(hand))
+        .map(|(net, _)| net.clone())
+        .collect();
+    let rows: Vec<MatrixLine> = group
+        .rows
+        .iter()
+        .map(|row| MatrixLine {
+            net: row.net.clone(),
+            keys: row
+                .keys
+                .iter()
+                .filter(|key| columns.contains(&key.column))
+                .cloned()
+                .collect(),
+        })
+        .filter(|row| !row.keys.is_empty())
+        .collect();
+    MatrixGroup {
+        half: Some(hand),
+        rows,
+        columns,
+        controller: None,
+    }
+}
+
+/// Each group's controller: the part (not a switch or diode) with the most
+/// pins on its lines; one shared by both halves is no half's.
+fn assign_controllers(groups: &mut [MatrixGroup], net: &Netlist, switches: &BTreeSet<&str>) {
+    for group in groups.iter_mut() {
         let lines: BTreeSet<&str> = group
             .rows
             .iter()
@@ -646,10 +748,10 @@ pub(crate) fn infer_key_matrix<'a>(parts: &'a [MatrixPart]) -> Option<KeyMatrix>
             .chain(group.columns.iter().map(String::as_str))
             .collect();
         let mut best: Option<(usize, &str)> = None;
-        for part in parts {
+        for part in net.parts {
             if switches.contains(part.reference.as_str())
-                || named_set.contains(part.reference.as_str())
-                || diode(&part.reference)
+                || net.named_set.contains(part.reference.as_str())
+                || net.diode(&part.reference)
             {
                 continue;
             }
@@ -665,17 +767,34 @@ pub(crate) fn infer_key_matrix<'a>(parts: &'a [MatrixPart]) -> Option<KeyMatrix>
         group.controller = best.map(|(_, reference)| reference.to_string());
     }
     if groups.len() == 2
-        && groups[0].0.controller.is_some()
-        && groups[0].0.controller == groups[1].0.controller
+        && groups[0].controller.is_some()
+        && groups[0].controller == groups[1].controller
     {
-        for (group, _) in groups.iter_mut() {
+        for group in groups.iter_mut() {
             group.controller = None;
         }
     }
+}
+
+/// Recognises the key matrix of a netlist. None when no part looks like a
+/// switch; a matrix without groups when switches share no row and column
+/// nets (keys wired directly to pins).
+pub(crate) fn infer_key_matrix<'a>(parts: &'a [MatrixPart]) -> Option<KeyMatrix> {
+    let net = Netlist::new(parts)?;
+    let mut all_terminals = switch_terminals(&net);
+    let (mut cells, mut unassigned) = pair_switches(&net, &all_terminals);
+    rescue_lone_keys(&net, &all_terminals, &mut cells, &mut unassigned);
+    add_unnamed_switches(&net, &mut all_terminals, &mut cells);
+    let (colour, components) = two_colour(&cells);
+    let keyed = colour_cells(&cells, &colour, &mut unassigned);
+    let (groups, rows_by) = matrix_groups(&keyed, components, &mut unassigned);
+    let (mut groups, halves_by) = assign_halves(groups);
+    let switches: BTreeSet<&str> = keyed.iter().map(|cell| cell.0).collect();
+    assign_controllers(&mut groups, &net, &switches);
     unassigned.sort_by_key(|reference| natural(reference));
     unassigned.dedup();
     Some(KeyMatrix {
-        groups: groups.into_iter().map(|(group, _)| group).collect(),
+        groups,
         rows_by,
         halves_by,
         unassigned,
@@ -822,304 +941,331 @@ fn standard_pitch(footprints: &[&str]) -> [f64; 2] {
 /// switch).
 const DIODE_GAP_MM: f64 = 3.0;
 
-/// The starter constraints for a key matrix: `base` (the import's own
-/// starter: `move_all`, the automatic outline, the plug-in connectors)
-/// with a `row` per matrix row (and half), its keys in column order at the
-/// key pitch, each row below the one before (`relative`), each key's diode
-/// `near` it, and a `region` per half of a split keyboard. `footprints`:
-/// the board's parts, their footprint id and body size (unturned); keys
-/// the board lacks are left out.
-pub(crate) fn starter_constraints(
-    matrix: &KeyMatrix,
-    footprints: &BTreeMap<String, (String, [f64; 2])>,
-    mut base: serde_json::Value,
-) -> (serde_json::Value, KiCadStarterReport) {
+/// The board's parts: their footprint id and body size (unturned).
+type Footprints = BTreeMap<String, (String, [f64; 2])>;
+
+fn round2(value: f64) -> f64 {
+    (value * 100.0).round() / 100.0
+}
+
+/// What the groups add to the constraints, and the totals the comment
+/// reports.
+#[derive(Default)]
+struct Starter {
+    rows: Vec<serde_json::Value>,
+    near: Vec<serde_json::Value>,
+    relative: Vec<serde_json::Value>,
+    regions: Vec<serde_json::Value>,
+    row_nets: BTreeSet<String>,
+    column_nets: BTreeSet<String>,
+    pitches: Vec<[f64; 2]>,
+    thumbs: Vec<String>,
+    grids: usize,
+}
+
+/// A row, or a run of its keys, to place as one line. Runs are made in
+/// runs of keys a unit wide on neighbouring columns (a wide key or a
+/// column without a key here ends a run), first pass; then whole rows over
+/// the same columns, one after the other, become one grid.
+struct Line {
+    members: Vec<String>,
+    columns: Vec<String>,
+    leader: String,
+    height: f64,
+    thumb: bool,
+    /// The row's first run (the others follow it across a wide key).
+    first: bool,
+    /// The row is this one run.
+    whole: bool,
+    /// After a wide key: right of the run before, within this gap.
+    right_of: Option<(String, f64)>,
+}
+
+/// The key pitch of a group: the standard one of its footprints, grown to
+/// the body of keys a unit wide.
+fn group_pitch(keys: &[&MatrixKey], footprints: &Footprints) -> [f64; 2] {
+    let ids: Vec<&str> = keys
+        .iter()
+        .map(|key| footprints[&key.switch].0.as_str())
+        .collect();
+    let standard = standard_pitch(&ids);
+    // Keys a unit wide set the pitch (a body wider than the standard
+    // one, the rows' pitch grows to it); wider keys stay out of the rows.
+    let unit: Vec<[f64; 2]> = keys
+        .iter()
+        .map(|key| footprints[&key.switch].1)
+        .filter(|size| size[0] <= standard[0] * 1.1 && size[1] <= standard[1] * 1.1)
+        .collect();
+    let pitch = [
+        unit.iter().map(|size| size[0]).fold(standard[0], f64::max),
+        unit.iter().map(|size| size[1]).fold(standard[1], f64::max),
+    ];
+    [round2(pitch[0]), round2(pitch[1])]
+}
+
+/// Wider or taller than a unit (1.5u, a vertical 2u, an ISO enter).
+fn is_wide(key: &MatrixKey, footprints: &Footprints, pitch: [f64; 2]) -> bool {
+    let size = footprints[&key.switch].1;
+    size[0] > pitch[0] + 0.01 || size[1] > pitch[1] + 0.01
+}
+
+/// Counts a row's switches and diodes, and keeps each key's diode and
+/// alternate footprints `near` it.
+fn note_diodes_and_alternates(
+    present: &[&MatrixKey],
+    footprints: &Footprints,
+    report: &mut KiCadStarterReport,
+    out: &mut Starter,
+) {
     use serde_json::json;
-    let mut report = KiCadStarterReport {
-        rows_by: matrix.rows_by.to_string(),
-        halves_by: matrix.halves_by.map(String::from),
-        unassigned: matrix.unassigned.clone(),
-        ..Default::default()
-    };
     let on_board = |reference: &str| footprints.contains_key(reference);
-    let (mut rows, mut near, mut relative, mut regions) =
-        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    let mut row_nets = BTreeSet::new();
-    let mut column_nets = BTreeSet::new();
-    let mut pitches = Vec::new();
-    let mut thumbs = Vec::new();
-    let mut grids = 0;
-    for group in &matrix.groups {
-        let keys: Vec<&MatrixKey> = group
-            .rows
+    for key in present {
+        report.switches += 1 + key
+            .alternates
             .iter()
-            .flat_map(|row| row.keys.iter())
-            .filter(|key| on_board(&key.switch))
-            .collect();
-        if keys.is_empty() {
+            .filter(|alternate| on_board(alternate))
+            .count();
+        if let Some(diode) = key.diode.as_deref().filter(|diode| on_board(diode)) {
+            report.diodes += 1;
+            out.near
+                .push(json!({"part": diode, "part_of": key.switch, "max_mm": DIODE_GAP_MM}));
+        }
+        for alternate in key
+            .alternates
+            .iter()
+            .filter(|alternate| on_board(alternate))
+        {
+            report
+                .alternates
+                .push(format!("{alternate} (with {})", key.switch));
+            out.near
+                .push(json!({"part": alternate, "part_of": key.switch, "max_mm": DIODE_GAP_MM}));
+        }
+    }
+}
+
+/// Keeps each wide key of a row `near` its neighbour in the row.
+fn note_wide_keys(
+    present: &[&MatrixKey],
+    footprints: &Footprints,
+    pitch: [f64; 2],
+    report: &mut KiCadStarterReport,
+    out: &mut Starter,
+) {
+    use serde_json::json;
+    let wide = |key: &MatrixKey| is_wide(key, footprints, pitch);
+    for (at, key) in present.iter().enumerate().filter(|(_, key)| wide(key)) {
+        let neighbour = present[..at]
+            .iter()
+            .rev()
+            .chain(present[at + 1..].iter())
+            .find(|other| !wide(other));
+        report.wide.push(key.switch.clone());
+        if let Some(neighbour) = neighbour {
+            out.near
+                .push(json!({"part": key.switch, "part_of": neighbour.switch, "max_mm": 2.0}));
+        }
+    }
+}
+
+/// A row's keys in runs of keys a unit wide on neighbouring columns, each
+/// with the width of the wide keys between it and the run before (when only
+/// wide keys on neighbouring columns are).
+fn runs_of_row<'a>(
+    present: &[&'a MatrixKey],
+    group: &MatrixGroup,
+    footprints: &Footprints,
+    pitch: [f64; 2],
+) -> Vec<(Vec<&'a MatrixKey>, Option<f64>)> {
+    let column_index = |column: &str| {
+        group
+            .columns
+            .iter()
+            .position(|other| other == column)
+            .unwrap_or(0)
+    };
+    let mut runs: Vec<(Vec<&MatrixKey>, Option<f64>)> = Vec::new();
+    let mut current: Vec<&MatrixKey> = Vec::new();
+    let mut current_gap: Option<f64> = None;
+    let mut across: Option<f64> = None;
+    let mut previous_column: Option<usize> = None;
+    for key in present {
+        let column = column_index(&key.column);
+        let adjacent = previous_column.is_none_or(|previous| column == previous + 1);
+        previous_column = Some(column);
+        if !adjacent {
+            if !current.is_empty() {
+                runs.push((std::mem::take(&mut current), current_gap));
+            }
+            across = None;
+        }
+        if is_wide(key, footprints, pitch) {
+            if !current.is_empty() {
+                runs.push((std::mem::take(&mut current), current_gap));
+                across = Some(0.0);
+            }
+            across = across.map(|width| width + footprints[&key.switch].1[0]);
             continue;
         }
-        let ids: Vec<&str> = keys
-            .iter()
-            .map(|key| footprints[&key.switch].0.as_str())
-            .collect();
-        let standard = standard_pitch(&ids);
-        let size = |reference: &str| footprints[reference].1;
-        // Keys a unit wide set the pitch (a body wider than the standard
-        // one, the rows' pitch grows to it); wider keys stay out of the rows.
-        let unit: Vec<[f64; 2]> = keys
-            .iter()
-            .map(|key| size(&key.switch))
-            .filter(|size| size[0] <= standard[0] * 1.1 && size[1] <= standard[1] * 1.1)
-            .collect();
-        let pitch = [
-            unit.iter().map(|size| size[0]).fold(standard[0], f64::max),
-            unit.iter().map(|size| size[1]).fold(standard[1], f64::max),
-        ];
-        let round = |value: f64| (value * 100.0).round() / 100.0;
-        let pitch = [round(pitch[0]), round(pitch[1])];
-        pitches.push(pitch);
-        let longest = group
-            .rows
-            .iter()
-            .map(|row| row.keys.len())
-            .max()
-            .unwrap_or(0);
-        // Each row in runs of keys a unit wide on neighbouring columns (a
-        // wide key or a column without a key here ends a run), first pass;
-        // then whole rows over the same columns, one after the other,
-        // become one grid.
-        struct Line {
-            members: Vec<String>,
-            columns: Vec<String>,
-            leader: String,
-            height: f64,
-            thumb: bool,
-            /// The row's first run (the others follow it across a wide key).
-            first: bool,
-            /// The row is this one run.
-            whole: bool,
-            /// After a wide key: right of the run before, within this gap.
-            right_of: Option<(String, f64)>,
+        if current.is_empty() {
+            current_gap = across.take();
         }
-        let column_index = |column: &str| {
-            group
-                .columns
-                .iter()
-                .position(|other| other == column)
-                .unwrap_or(0)
-        };
-        let mut lines: Vec<Line> = Vec::new();
-        for row in &group.rows {
-            row_nets.insert(row.net.clone());
-            let present: Vec<&MatrixKey> = row
-                .keys
-                .iter()
-                .filter(|key| on_board(&key.switch))
-                .collect();
-            if present.is_empty() {
-                continue;
-            }
-            column_nets.extend(present.iter().map(|key| key.column.clone()));
-            // Wider or taller than a unit (1.5u, a vertical 2u, an ISO enter).
-            let is_wide = |key: &MatrixKey| {
-                size(&key.switch)[0] > pitch[0] + 0.01 || size(&key.switch)[1] > pitch[1] + 0.01
-            };
-            for key in &present {
-                report.switches += 1 + key
-                    .alternates
-                    .iter()
-                    .filter(|alternate| on_board(alternate))
-                    .count();
-                if let Some(diode) = key.diode.as_deref().filter(|diode| on_board(diode)) {
-                    report.diodes += 1;
-                    near.push(
-                        json!({"part": diode, "part_of": key.switch, "max_mm": DIODE_GAP_MM}),
-                    );
-                }
-                for alternate in key
-                    .alternates
-                    .iter()
-                    .filter(|alternate| on_board(alternate))
-                {
-                    report
-                        .alternates
-                        .push(format!("{alternate} (with {})", key.switch));
-                    near.push(
-                        json!({"part": alternate, "part_of": key.switch, "max_mm": DIODE_GAP_MM}),
-                    );
-                }
-            }
-            // A wide key beside its neighbour in the row.
-            for (at, key) in present.iter().enumerate().filter(|(_, key)| is_wide(key)) {
-                let neighbour = present[..at]
-                    .iter()
-                    .rev()
-                    .chain(present[at + 1..].iter())
-                    .find(|other| !is_wide(other));
-                report.wide.push(key.switch.clone());
-                if let Some(neighbour) = neighbour {
-                    near.push(
-                        json!({"part": key.switch, "part_of": neighbour.switch, "max_mm": 2.0}),
-                    );
-                }
-            }
-            // Short rows (half the longest or less) are thumb keys: below
-            // the grid, given room.
-            let thumb = 2 * present.len() <= longest && longest >= 3;
-            if thumb {
-                thumbs.push(format!(
-                    "{} ({})",
-                    row.net,
-                    present
-                        .iter()
-                        .map(|key| key.switch.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
-            }
-            // Runs, each with the width of the wide keys between it and the
-            // run before (when only wide keys on neighbouring columns are).
-            let mut runs: Vec<(Vec<&MatrixKey>, Option<f64>)> = Vec::new();
-            let mut current: Vec<&MatrixKey> = Vec::new();
-            let mut current_gap: Option<f64> = None;
-            let mut across: Option<f64> = None;
-            let mut previous_column: Option<usize> = None;
-            for key in &present {
-                let column = column_index(&key.column);
-                let adjacent = previous_column.is_none_or(|previous| column == previous + 1);
-                previous_column = Some(column);
-                if !adjacent {
-                    if !current.is_empty() {
-                        runs.push((std::mem::take(&mut current), current_gap));
-                    }
-                    across = None;
-                }
-                if is_wide(key) {
-                    if !current.is_empty() {
-                        runs.push((std::mem::take(&mut current), current_gap));
-                        across = Some(0.0);
-                    }
-                    across = across.map(|width| width + size(&key.switch)[0]);
-                    continue;
-                }
-                if current.is_empty() {
-                    current_gap = across.take();
-                }
-                current.push(key);
-            }
-            if !current.is_empty() {
-                runs.push((current, current_gap));
-            }
-            let whole = runs.len() == 1 && !present.iter().any(|key| is_wide(key));
-            let mut previous_leader: Option<String> = None;
-            for (at, (run, gap)) in runs.iter().enumerate() {
-                let leader = run[0].switch.clone();
-                lines.push(Line {
-                    members: run.iter().map(|key| key.switch.clone()).collect(),
-                    columns: run.iter().map(|key| key.column.clone()).collect(),
-                    leader: leader.clone(),
-                    height: present
-                        .iter()
-                        .map(|key| size(&key.switch)[1])
-                        .fold(0.0, f64::max),
-                    thumb,
-                    first: at == 0,
-                    whole,
-                    right_of: gap.and_then(|gap| {
-                        previous_leader
-                            .clone()
-                            .map(|leader| (leader, round(gap + 2.0)))
-                    }),
-                });
-                previous_leader = Some(leader);
-            }
-            if runs.is_empty()
-                && let Some(key) = present.first()
-            {
-                // Only wide keys: the first stands for the row.
-                lines.push(Line {
-                    members: vec![key.switch.clone()],
-                    columns: vec![key.column.clone()],
-                    leader: key.switch.clone(),
-                    height: size(&key.switch)[1],
-                    thumb,
-                    first: true,
-                    whole: false,
-                    right_of: None,
-                });
-            }
-        }
-        let mut leaders: Vec<String> = Vec::new();
-        let mut previous: Option<(String, f64)> = None;
-        let mut at = 0;
-        while at < lines.len() {
-            let first = &lines[at];
-            let mut end = at + 1;
-            while end < lines.len()
-                && first.whole
-                && first.members.len() >= 2
-                && !first.thumb
-                && lines[end].whole
-                && !lines[end].thumb
-                && lines[end].columns == first.columns
-            {
-                end += 1;
-            }
-            let block = &lines[at..end];
-            let height = block.iter().map(|line| line.height).fold(0.0, f64::max);
-            if block.len() >= 2 {
-                grids += 1;
-                rows.push(json!({
-                    "parts": block.iter().flat_map(|line| line.members.iter().cloned()).collect::<Vec<_>>(),
-                    "pitch_mm": pitch[0], "columns": first.members.len(), "row_pitch_mm": pitch[1]}));
-            } else if first.members.len() >= 2 {
-                rows.push(json!({"parts": first.members, "pitch_mm": pitch[0]}));
-            }
-            if first.first {
-                if let Some((above, above_height)) = &previous {
-                    let gap = if first.thumb {
-                        10.0
-                    } else {
-                        round((pitch[1] - height.max(*above_height)).max(0.0) + 2.0)
-                    };
-                    relative.push(json!({"part": first.leader, "below": above, "max_gap_mm": gap}));
-                }
-                previous = Some((first.leader.clone(), height));
-            } else if let Some((left, gap)) = &first.right_of {
-                relative.push(json!({"part": first.leader, "right_of": left, "max_gap_mm": gap}));
-            }
-            leaders.push(first.leader.clone());
-            at = end;
-        }
-        let switches: usize = group
-            .rows
-            .iter()
-            .flat_map(|row| row.keys.iter())
-            .filter(|key| on_board(&key.switch))
-            .count();
-        let half_at = group.half.map(|half| format!("{half}-half"));
-        if let Some(at) = &half_at {
-            let mut parts = leaders.clone();
-            if let Some(controller) = group
-                .controller
-                .as_ref()
-                .filter(|controller| on_board(controller))
-            {
-                parts.push(controller.clone());
-            }
-            regions.push(json!({"parts": parts, "at": at}));
-        }
-        report.halves.push(KiCadStarterHalf {
-            at: half_at,
-            rows: group.rows.iter().map(|row| row.net.clone()).collect(),
-            columns: group.columns.clone(),
-            switches,
-            controller: group.controller.clone(),
-        });
+        current.push(key);
     }
-    report.matrix = [row_nets.len(), column_nets.len()];
-    report.pitch_mm = pitches.first().copied();
+    if !current.is_empty() {
+        runs.push((current, current_gap));
+    }
+    runs
+}
+
+/// A group's rows as lines to place, counting its switches, diodes, wide
+/// keys and thumb rows on the way.
+fn group_lines(
+    group: &MatrixGroup,
+    footprints: &Footprints,
+    pitch: [f64; 2],
+    report: &mut KiCadStarterReport,
+    out: &mut Starter,
+) -> Vec<Line> {
+    let on_board = |reference: &str| footprints.contains_key(reference);
+    let size = |reference: &str| footprints[reference].1;
+    let longest = group
+        .rows
+        .iter()
+        .map(|row| row.keys.len())
+        .max()
+        .unwrap_or(0);
+    let mut lines: Vec<Line> = Vec::new();
+    for row in &group.rows {
+        out.row_nets.insert(row.net.clone());
+        let present: Vec<&MatrixKey> = row
+            .keys
+            .iter()
+            .filter(|key| on_board(&key.switch))
+            .collect();
+        if present.is_empty() {
+            continue;
+        }
+        out.column_nets
+            .extend(present.iter().map(|key| key.column.clone()));
+        note_diodes_and_alternates(&present, footprints, report, out);
+        // A wide key beside its neighbour in the row.
+        note_wide_keys(&present, footprints, pitch, report, out);
+        // Short rows (half the longest or less) are thumb keys: below
+        // the grid, given room.
+        let thumb = 2 * present.len() <= longest && longest >= 3;
+        if thumb {
+            out.thumbs.push(format!(
+                "{} ({})",
+                row.net,
+                present
+                    .iter()
+                    .map(|key| key.switch.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        // Runs, each with the width of the wide keys between it and the
+        // run before.
+        let runs = runs_of_row(&present, group, footprints, pitch);
+        let whole = runs.len() == 1 && !present.iter().any(|key| is_wide(key, footprints, pitch));
+        let mut previous_leader: Option<String> = None;
+        for (at, (run, gap)) in runs.iter().enumerate() {
+            let leader = run[0].switch.clone();
+            lines.push(Line {
+                members: run.iter().map(|key| key.switch.clone()).collect(),
+                columns: run.iter().map(|key| key.column.clone()).collect(),
+                leader: leader.clone(),
+                height: present
+                    .iter()
+                    .map(|key| size(&key.switch)[1])
+                    .fold(0.0, f64::max),
+                thumb,
+                first: at == 0,
+                whole,
+                right_of: gap.and_then(|gap| {
+                    previous_leader
+                        .clone()
+                        .map(|leader| (leader, round2(gap + 2.0)))
+                }),
+            });
+            previous_leader = Some(leader);
+        }
+        if runs.is_empty()
+            && let Some(key) = present.first()
+        {
+            // Only wide keys: the first stands for the row.
+            lines.push(Line {
+                members: vec![key.switch.clone()],
+                columns: vec![key.column.clone()],
+                leader: key.switch.clone(),
+                height: size(&key.switch)[1],
+                thumb,
+                first: true,
+                whole: false,
+                right_of: None,
+            });
+        }
+    }
+    lines
+}
+
+/// The `row` entries (a grid of whole rows over the same columns, or one
+/// row) and `relative` ones (each row below the one before, a run right of
+/// the one before it) for a group's lines; the leaders, one per block.
+fn place_lines(lines: &[Line], pitch: [f64; 2], out: &mut Starter) -> Vec<String> {
+    use serde_json::json;
+    let mut leaders: Vec<String> = Vec::new();
+    let mut previous: Option<(String, f64)> = None;
+    let mut at = 0;
+    while at < lines.len() {
+        let first = &lines[at];
+        let mut end = at + 1;
+        while end < lines.len()
+            && first.whole
+            && first.members.len() >= 2
+            && !first.thumb
+            && lines[end].whole
+            && !lines[end].thumb
+            && lines[end].columns == first.columns
+        {
+            end += 1;
+        }
+        let block = &lines[at..end];
+        let height = block.iter().map(|line| line.height).fold(0.0, f64::max);
+        if block.len() >= 2 {
+            out.grids += 1;
+            out.rows.push(json!({
+                "parts": block.iter().flat_map(|line| line.members.iter().cloned()).collect::<Vec<_>>(),
+                "pitch_mm": pitch[0], "columns": first.members.len(), "row_pitch_mm": pitch[1]}));
+        } else if first.members.len() >= 2 {
+            out.rows
+                .push(json!({"parts": first.members, "pitch_mm": pitch[0]}));
+        }
+        if first.first {
+            if let Some((above, above_height)) = &previous {
+                let gap = if first.thumb {
+                    10.0
+                } else {
+                    round2((pitch[1] - height.max(*above_height)).max(0.0) + 2.0)
+                };
+                out.relative
+                    .push(json!({"part": first.leader, "below": above, "max_gap_mm": gap}));
+            }
+            previous = Some((first.leader.clone(), height));
+        } else if let Some((left, gap)) = &first.right_of {
+            out.relative
+                .push(json!({"part": first.leader, "right_of": left, "max_gap_mm": gap}));
+        }
+        leaders.push(first.leader.clone());
+        at = end;
+    }
+    leaders
+}
+
+/// The comment of the starter file: what was inferred, what the agent has
+/// to decide.
+fn starter_comment(matrix: &KeyMatrix, report: &KiCadStarterReport, out: &Starter) -> Vec<String> {
     let mut comment = vec![format!(
         "Starter constraints import-kicad-netlist inferred from the netlist alone: a key matrix of {} rows x {} columns, {} switches, {} with their own diode{}. Rows are the {} nets ({}).",
         report.matrix[0],
@@ -1145,7 +1291,7 @@ pub(crate) fn starter_constraints(
     comment.push(format!(
         "Each matrix row is a `row` of its keys in column order at {} mm (the key pitch of the switch footprints){}, each row `relative` below the one before, each key's diode `near` it within {DIODE_GAP_MM} mm{}.",
         report.pitch_mm.map_or("19.05".into(), |pitch| format!("{}", pitch[0])),
-        if grids > 0 {
+        if out.grids > 0 {
             format!(
                 "; rows over the same columns one after the other are one grid (`columns`, `row_pitch_mm` {} mm)",
                 report.pitch_mm.map_or("19.05".into(), |pitch| format!("{}", pitch[1]))
@@ -1153,7 +1299,7 @@ pub(crate) fn starter_constraints(
         } else {
             String::new()
         },
-        if regions.is_empty() { String::new() } else { ", and each half's rows and controller in a `region` of its half of the board".into() }
+        if out.regions.is_empty() { String::new() } else { ", and each half's rows and controller in a `region` of its half of the board".into() }
     ));
     let mut decide = vec![
         "the key pitch and the stagger (a `row` is a straight line at one pitch; a column-staggered board needs a `place` or `relative` per column)".to_string(),
@@ -1161,10 +1307,10 @@ pub(crate) fn starter_constraints(
         "the controller's edge and its USB connector".to_string(),
         "the outline (`{}` sizes it from the parts)".to_string(),
     ];
-    if !thumbs.is_empty() {
+    if !out.thumbs.is_empty() {
         decide[1] = format!(
             "the thumb clusters ({}: placed below the rows, up to 10 mm away; turn or fan them as the design wants)",
-            thumbs.join("; ")
+            out.thumbs.join("; ")
         );
     }
     let controllers: Vec<String> = report
@@ -1195,18 +1341,78 @@ pub(crate) fn starter_constraints(
     }
     comment.push(format!("Needs your decision: {}.", decide.join("; ")));
     comment.push("To use it, copy this file to constraints.json (or name it in layout.json's placer) and edit it there: the import rewrites this file, never constraints.json.".into());
-    base["comment"] = json!(comment);
-    if !rows.is_empty() {
-        base["row"] = rows.into();
+    comment
+}
+
+/// The starter constraints for a key matrix: `base` (the import's own
+/// starter: `move_all`, the automatic outline, the plug-in connectors)
+/// with a `row` per matrix row (and half), its keys in column order at the
+/// key pitch, each row below the one before (`relative`), each key's diode
+/// `near` it, and a `region` per half of a split keyboard. `footprints`:
+/// the board's parts, their footprint id and body size (unturned); keys
+/// the board lacks are left out.
+pub(crate) fn starter_constraints(
+    matrix: &KeyMatrix,
+    footprints: &Footprints,
+    mut base: serde_json::Value,
+) -> (serde_json::Value, KiCadStarterReport) {
+    use serde_json::json;
+    let mut report = KiCadStarterReport {
+        rows_by: matrix.rows_by.to_string(),
+        halves_by: matrix.halves_by.map(String::from),
+        unassigned: matrix.unassigned.clone(),
+        ..Default::default()
+    };
+    let on_board = |reference: &str| footprints.contains_key(reference);
+    let mut out = Starter::default();
+    for group in &matrix.groups {
+        let keys: Vec<&MatrixKey> = group
+            .rows
+            .iter()
+            .flat_map(|row| row.keys.iter())
+            .filter(|key| on_board(&key.switch))
+            .collect();
+        if keys.is_empty() {
+            continue;
+        }
+        let pitch = group_pitch(&keys, footprints);
+        out.pitches.push(pitch);
+        let lines = group_lines(group, footprints, pitch, &mut report, &mut out);
+        let leaders = place_lines(&lines, pitch, &mut out);
+        let half_at = group.half.map(|half| format!("{half}-half"));
+        if let Some(at) = &half_at {
+            let mut parts = leaders.clone();
+            if let Some(controller) = group
+                .controller
+                .as_ref()
+                .filter(|controller| on_board(controller))
+            {
+                parts.push(controller.clone());
+            }
+            out.regions.push(json!({"parts": parts, "at": at}));
+        }
+        report.halves.push(KiCadStarterHalf {
+            at: half_at,
+            rows: group.rows.iter().map(|row| row.net.clone()).collect(),
+            columns: group.columns.clone(),
+            switches: keys.len(),
+            controller: group.controller.clone(),
+        });
     }
-    if !near.is_empty() {
-        base["near"] = near.into();
+    report.matrix = [out.row_nets.len(), out.column_nets.len()];
+    report.pitch_mm = out.pitches.first().copied();
+    base["comment"] = json!(starter_comment(matrix, &report, &out));
+    if !out.rows.is_empty() {
+        base["row"] = out.rows.into();
     }
-    if !relative.is_empty() {
-        base["relative"] = relative.into();
+    if !out.near.is_empty() {
+        base["near"] = out.near.into();
     }
-    if !regions.is_empty() {
-        base["region"] = regions.into();
+    if !out.relative.is_empty() {
+        base["relative"] = out.relative.into();
+    }
+    if !out.regions.is_empty() {
+        base["region"] = out.regions.into();
     }
     (base, report)
 }
@@ -1316,6 +1522,66 @@ mod tests {
 
     fn switches(line: &MatrixLine) -> Vec<&str> {
         line.keys.iter().map(|key| key.switch.as_str()).collect()
+    }
+
+    fn terminal(line: &str) -> Terminal<'_> {
+        Terminal {
+            line,
+            diode: None,
+            private: BTreeSet::new(),
+        }
+    }
+
+    #[test]
+    fn a_switch_joining_two_lines_of_one_colour_is_left_out() {
+        // a-b and a-c colour b and c alike; a switch between them cannot be
+        // a key.
+        let cells: Vec<Cell> = vec![
+            ("SW1", [terminal("a"), terminal("b")]),
+            ("SW2", [terminal("b"), terminal("c")]),
+            ("SW3", [terminal("a"), terminal("c")]),
+        ];
+        let (colour, components) = two_colour(&cells);
+        assert_eq!(components, 1);
+        assert_eq!(colour["a"], (0, 0));
+        assert_eq!(colour["b"], (0, 1));
+        assert_eq!(colour["c"], (0, 1));
+        let mut unassigned = Vec::new();
+        let keyed = colour_cells(&cells, &colour, &mut unassigned);
+        assert_eq!(unassigned, vec!["SW2".to_string()]);
+        assert_eq!(keyed.len(), 2);
+        // The zero-coloured line's terminal comes first.
+        assert_eq!(
+            (keyed[0].0, keyed[0].1.line, keyed[0].2.line),
+            ("SW1", "a", "b")
+        );
+        assert_eq!(
+            (keyed[1].0, keyed[1].1.line, keyed[1].2.line),
+            ("SW3", "a", "c")
+        );
+    }
+
+    #[test]
+    fn a_controller_both_halves_use_is_no_half_s() {
+        let parts = keyboard(&["ROW0"], &["COL0", "COL1"], 1, "U1");
+        let net = Netlist::new(&parts).unwrap();
+        let group = |column: &str| MatrixGroup {
+            half: None,
+            rows: vec![MatrixLine {
+                net: "ROW0".into(),
+                keys: Vec::new(),
+            }],
+            columns: vec![column.into()],
+            controller: None,
+        };
+        let mut groups = vec![group("COL0"), group("COL1")];
+        assign_controllers(&mut groups, &net, &BTreeSet::new());
+        assert_eq!(groups[0].controller, None);
+        assert_eq!(groups[1].controller, None);
+        // One group alone has it.
+        let mut groups = vec![group("COL0")];
+        assign_controllers(&mut groups, &net, &BTreeSet::new());
+        assert_eq!(groups[0].controller.as_deref(), Some("U1"));
     }
 
     #[test]
