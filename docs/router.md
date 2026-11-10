@@ -218,8 +218,7 @@ straight or bent stub from the pad centre, checked exactly
 line stamps as lattice nodes and others stamp their measured footprint;
 straight stubs are preferred. Discs grown by the snapping error made
 adjacent 0.4 mm stubs conflict for ever: exact stubs took hid-remapper 33
-to 0 unconnected and the expansion tier 589 to 557. `escape_stub_mm` (0,
-off) fixes stubs before negotiation; it gained nothing.
+to 0 unconnected and the expansion tier 589 to 557.
 
 ### Corridors of pocketed pads
 
@@ -280,11 +279,6 @@ and took SNSP-CPU-01 171 to 98 unconnected; a fixed cap left it
 unconverged. Window and board fallbacks are 0.5 to 10 % of the work, so
 wider searches are not the bottleneck. The verdict's `corridors` counts the
 searches per mode (`pcb_router::search_counts`).
-
-`global_routing` (off) instead negotiates every net's plan over
-tile-boundary capacities first (`Router::plan_globally`, `router/global.rs`)
-and confines the negotiation's searches to it. Nothing sets it, and no
-measurement on record shows a gain over the tile corridors.
 
 ### Pads no path reaches
 
@@ -836,9 +830,7 @@ gate: its unconnected items count in every open figure.
 A router lives across placement changes (`router/update.rs`).
 `Router::update(board)` takes a board with the same nets and classes, keeps
 every net whose pads did not move and whose copper is still legal (with
-occupancy and history), and `reroute(polish)` negotiates the rest.
-`update_nets` and `local_reroute` keep a moved net's legal branches and join
-them against the rest as walls (the move descent). See
+occupancy and history), and `reroute(polish)` negotiates the rest. See
 [placer.md](placer.md) for the moves.
 
 ## The topological engine (off)

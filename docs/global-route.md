@@ -44,9 +44,8 @@ one line per negotiation iteration.
   score, RUDY and optionally a router probe.
 - Layout `congestion_score: "global"` ranks the placement race by it
   instead of RUDY (default `rudy`).
-- The move descent (layout `move_descent`, off) scores moves with
-  `Incremental`; `probe-trouble-placement --background global` and
-  `ablate-kicad-placement` use it too.
+- `probe-trouble-placement --background global` and
+  `ablate-kicad-placement` use `Incremental` to score moves.
 
 Why it is not the race's ranking: the soft overflow orders our placement
 against the designer's of the same board correctly on 0.79 of 43 pairs
@@ -77,7 +76,7 @@ the eleven dense boards.
 counts: 3000 units per obstacle lowered, 5 per weighted distance test of
 the capacities, 30 per state the negotiation pops, at the reference's
 150e6 units a second (fitted on 4in1-mini, DSP-ADAU1452 and video, about
-1.3 times the wall time). Escape demand, the move descent and the trouble
+1.3 times the wall time). Escape demand and the trouble
 probe use the same constants.
 
 **Verdict: no-go as a default.** On the eleven dense boards the summed

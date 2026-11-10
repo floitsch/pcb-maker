@@ -50,8 +50,7 @@ board better, and `length` and `skew` rules are kept by meanders.
 Off by default, each a setting: blind, buried and micro vias
 (`blind_vias`), differential pairs in a layout (`diff_pairs`; route mode
 turns them on where the project's rules ask for pairs), `pad_exits`,
-`pair_rows`, `length_minima`, `length_reroute`, the move descent
-(`move_descent`), bus bundles (`bus_bundles`), the topological engine
+`pair_rows`, `length_minima`, `length_reroute`, the topological engine
 (`engine: "topological"`). [config-reference.md](config-reference.md)
 has each setting with its doc comment.
 

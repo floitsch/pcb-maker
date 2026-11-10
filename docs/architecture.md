@@ -12,11 +12,11 @@ problems in [handover.md](handover.md).
 
 | Crate | Owns | Depends on |
 | --- | --- | --- |
-| `src/` (the `pcb-maker` binary) | The command line. `agent_cli.rs` is the agent contract: `AGENT_COMMANDS`, the input checks, the exit codes, `verdict.json`; `agent_cli/free_dimension.rs` runs a layout at several sizes of one edge as child processes. `main.rs` dispatches, prints the help (`ENVIRONMENT_HELP`) and runs the research commands (`RESEARCH_USAGE`). | pcb-kicad, pcb-global |
+| `src/` (the `pcb-maker` binary) | The command line. `agent_cli.rs` is the agent contract: `AGENT_COMMANDS`, the input checks, the exit codes, `verdict.json`; `agent_cli/free_dimension.rs` runs a layout at several sizes of one edge as child processes. `main.rs` dispatches through its `COMMANDS` table and prints the help (`ENVIRONMENT_HELP`); `kicad_commands.rs` and `lab_commands.rs` hold the research and utility commands it runs. | pcb-kicad, pcb-global |
 | `crates/pcb-kicad` | Everything on the KiCad side: reading and writing boards and projects, lowering them to the placer's and the router's types, the layout and route flows, the features that need KiCad's view of a board, KiCad's own checks and the verdict. | all crates below |
-| `crates/pcb-router` | A format-free, in-memory whole-board router: `Board` (nets, terminals, obstacles, planes, rules, via spans) in, `RoutingResult` out. The lattice and its static maps, the pour model, the search, PathFinder negotiation, the repairs, the polish and an exact copper verifier (`verify`). `Router` keeps its state between calls (`new`, `run`, `probe`, `resume`, `update`, `reroute`, `finish_as_is`), which the layout's race and moves use. | none |
+| `crates/pcb-router` | A format-free, in-memory whole-board router: `Board` (nets, terminals, obstacles, planes, rules, via spans) in, `RoutingResult` out. The lattice and its static maps, the pour model, the search, PathFinder negotiation, the repairs, the polish and an exact copper verifier (`verify`). `Router` keeps its state between calls (`new`, `run`, `probe`, `resume`, `update`, `reroute`), which the layout's race and moves use. | none |
 | `crates/pcb-placer` | A format-free placer: `Problem` (components, pins, nets, constraints) in, `Placement` (poses, legality, the constraints' status) out, through `place`. | none |
-| `crates/pcb-global` | A coarse tile-graph global router (capacities per tile boundary, PathFinder on tiles, corridors per net). Not on the default path: the move descent, the placer's global guidance and research commands use it. | pcb-router |
+| `crates/pcb-global` | A coarse tile-graph global router (capacities per tile boundary, PathFinder on tiles, corridors per net). Not on the default path: the placer's global guidance and research commands use it. | pcb-router |
 | `crates/pcb-topo` | A TopoR-style topological router (a constrained Delaunay mesh, crossings resolved topologically, taut geometry) and `tighten`, which pulls any router's copper taut. Only with the router settings `engine: "topological"` or `tighten: true`. | pcb-router |
 | `tools/config-reference` | Generates [config-reference.md](config-reference.md) and the environment index at the end of [handover.md](handover.md) from the settings structs and every `PCB_*` name in the sources; `tests/config_reference.rs` fails while either is stale. | pcb-kicad, pcb-placer, pcb-router |
 
@@ -96,20 +96,19 @@ deadline is skipped and reported as cut.
 | 6 | Pre-ranking of the placements | `rank_placements`, congestion_rank.rs | the candidates in RUDY order (sixteen placements, three probed) |
 | 7 | The race | `run_race`, `probe_placements` and `pick_placement` (board_layout/race.rs): `Router::new` and `Router::probe` per candidate, side by side as the ledger allows; `race_pick`; `race_lines_probe` | one `Router` (the winner's, resumed), its `RoutingResult`, `KiCadRaceReport` |
 | 8 | First route (without a race) | `route_once`, board_layout/race.rs | a `Router` and its `RoutingResult` |
-| 9 | Move descent (off unless `move_descent`) | `descend`, move_descent.rs | moved poses, the router updated |
-| 10 | Footprint moves where nets fought | `try_moves` and `try_pose` (board_layout/moves.rs): `Router::update` and `reroute` per candidate pose | the best board and router, or the old ones restored |
-| 11 | Resume and polish | `Router::resume_polished`, `Router::polish` | the router's routes, cleaned up, fewer vias |
-| 12 | Pairs, labels, lengths | `finish_pairs` (diff_pairs.rs), `place_labels` (labels.rs), `finish_lengths` (lengths.rs) | pair copper, label poses, tuning patterns |
-| 13 | Write and check | `emit_routes` (board_router/attempt.rs, with copper_emit.rs), `finish_routed_board` (board_router/route.rs): the copper verifier, the board written to `result/`, KiCad's check | `result/<id>.kicad_pcb`, `drc.json`, `board-router.json`, a `KiCadBoardRouterResult` |
-| 14 | Final ladder (while connections or starved thermals stay and at least 240 s of work are left) | `route_kicad_board` on `placed/` rewritten with the final poses and no copper (the route flow below); kept when better | `result-ladder/` renamed to `result/` |
-| 15 | Starved thermals made solid | `solidify_starved_thermals`, board_router/route.rs | the board, kept where KiCad finds it better |
-| 16 | Neck repair | `repair_necks` (route.rs), `repair_connection_width` (necks.rs) | the board, rechecked by KiCad |
-| 17 | Report | `finish_report`, board_layout/report.rs | `board-layout.json`, `KiCadBoardLayoutResult` |
-| 18 | Verdict | `route_facts` and `judge` (verdict.rs), `write_verdict` (agent_cli.rs) | `verdict.json`, the exit code |
+| 9 | Footprint moves where nets fought | `try_moves` and `try_pose` (board_layout/moves.rs): `Router::update` and `reroute` per candidate pose | the best board and router, or the old ones restored |
+| 10 | Resume and polish | `Router::resume_polished`, `Router::polish` | the router's routes, cleaned up, fewer vias |
+| 11 | Pairs, labels, lengths | `finish_pairs` (diff_pairs.rs), `place_labels` (labels.rs), `finish_lengths` (lengths.rs) | pair copper, label poses, tuning patterns |
+| 12 | Write and check | `emit_routes` (board_router/attempt.rs, with copper_emit.rs), `finish_routed_board` (board_router/route.rs): the copper verifier, the board written to `result/`, KiCad's check | `result/<id>.kicad_pcb`, `drc.json`, `board-router.json`, a `KiCadBoardRouterResult` |
+| 13 | Final ladder (while connections or starved thermals stay and at least 240 s of work are left) | `route_kicad_board` on `placed/` rewritten with the final poses and no copper (the route flow below); kept when better | `result-ladder/` renamed to `result/` |
+| 14 | Starved thermals made solid | `solidify_starved_thermals`, board_router/route.rs | the board, kept where KiCad finds it better |
+| 15 | Neck repair | `repair_necks` (route.rs), `repair_connection_width` (necks.rs) | the board, rechecked by KiCad |
+| 16 | Report | `finish_report`, board_layout/report.rs | `board-layout.json`, `KiCadBoardLayoutResult` |
+| 17 | Verdict | `route_facts` and `judge` (verdict.rs), `write_verdict` (agent_cli.rs) | `verdict.json`, the exit code |
 
 `stop_after_first_route` ends the layout after stage 8 (labels, the
 check and the report still run). A four-layer board with pours that is
-far from complete after the first route skips stages 10 and 11 and goes
+far from complete after the first route skips stages 9 and 10 and goes
 to the final ladder's narrow-signal attempt.
 
 ## `route-kicad-board`
@@ -121,7 +120,7 @@ need, then calls `route_kicad_board` (crates/pcb-kicad/src/board_router/route.rs
 | ---: | --- | --- | --- |
 | 1 | A prepared copy (planned pours, net classes, `--strip`) | `strip_tracks`, `add_pour_zones`, `write_net_classes` | `<out>.poured/` |
 | 2 | Pin swaps (with `pin_swaps`) | `swap_kicad_pins`, pin_swap.rs | `<out>.swapped/` |
-| 3 | Parse and plan | `parse_board` (canonical_order.rs), `plan_vias_in_pads` (via_in_pad.rs), `MemoryLimits` (memory.rs) | the `Expr`, layer table, pour nets, memory limits |
+| 3 | Parse and plan | `parse_board` (canonical_order.rs), `plan_vias_in_pads` (`plan` in via_in_pad.rs, re-exported by board_router/mod.rs), `MemoryLimits` (memory.rs) | the `Expr`, layer table, pour nets, memory limits |
 | 4 | The attempt ladder | `Ladder::new` and `Ladder::run`, board_router/ladder.rs, over `KiCadRunner` (route.rs). Rungs are pour modes (`ladder_rungs`), pitches the regular one then 0.075 and 0.05 mm (`ladder_pitches`). In order: probe every rung (75 s each, three rungs or more) and continue the leader; the leader's variants first, then other rungs, finer pitches and seed rounds; last the narrow-signal and minimum-clearance steps while connections stay open. Each attempt runs isolated (a panic is recorded, not fatal); KiCad checks are gated (`CheckGate`, budget.rs). | the best attempt's directory, a `KiCadBoardRouterResult` |
 | 5 | Starved thermals, neck repair | `solidify_starved_thermals`, `repair_necks` | the board, rechecked |
 | 6 | Report | route.rs | `board-router.json`; `<out>.partial` renamed to `<out>` |
@@ -137,8 +136,8 @@ runner's `lower`, `probe`, `resume` and `write`):
 2. **The router.** `Router::new` (crates/pcb-router/src/router/build.rs)
    builds the lattice and the static maps (shared between routers of one
    board). `run`, `probe` and `resume` (router/driver.rs) prepare
-   (`routing_order` in global.rs; escapes, plane skeletons and stubs in
-   escapes.rs and fixed.rs; corridors in corridors.rs) and negotiate
+   (`routing_order` in order.rs; escapes in escapes.rs, plane skeletons and
+   stubs in fixed.rs; corridors in corridors.rs) and negotiate
    (negotiate.rs, batching.rs, give_up.rs).
 3. **The finish** (router/finish.rs), in order: the hard repair
    (resolve.rs), the trouble-makers' repair (trouble.rs: an open net
@@ -159,7 +158,7 @@ runner's `lower`, `probe`, `resume` and `write`):
    drc_cache.rs, and writes `erc.json`, `drc.json` and
    `verification.json`.
 
-The pour model (pour.rs, router/pour_analysis.rs, fill.rs, spokes.rs,
+The pour model (pour.rs, router/pour_analysis.rs, fill.rs, spokes/,
 sever.rs, reclaim.rs) follows KiCad 10's fill and thermal spokes, so the
 router knows which pads a pour joins.
 
@@ -215,7 +214,8 @@ held skeleton; `constraints.rs` holds the hard and soft constraints;
   `inspect-routing-run` (run_diagnosis.rs), `score-kicad-board`
   (quality.rs), `strip-kicad-tracks` and `strip-kicad-copper`
   (board_router/tools.rs, copper_emit.rs).
-- The research commands (`RESEARCH_USAGE` in src/main.rs) call the
+- The research commands (the `COMMANDS` table in src/main.rs, run from
+  src/kicad_commands.rs and src/lab_commands.rs) call the
   measurement-only modules above.
 
 ## Off by default, still in the code
