@@ -206,7 +206,7 @@ held skeleton; `constraints.rs` holds the hard and soft constraints;
   config (`placement_check_config`, board_layout.rs) and calls
   `place_kicad_board`; KiCad checks the placed board.
 - `import-kicad-netlist`: `import_kicad_netlist_options`
-  (netlist_import.rs) exports the netlist with kicad-cli, finds the
+  (netlist_import/) exports the netlist with kicad-cli, finds the
   footprints (or takes them from a board, board_footprints.rs), and
   writes the board, `constraints.json` (key_matrix.rs and
   constraints_template.rs for the starters) and `layout.json`.
