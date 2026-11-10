@@ -716,14 +716,12 @@ fn a_panic_in_the_continuation_falls_back_to_the_rungs() {
 /// where either was not measured.
 #[test]
 fn the_leader_first_applies_in_route_mode_and_gates_by_twice_the_leader() {
-    assert!(leader_first_applies(None, None, true, 4));
-    assert!(leader_first_applies(Some(true), None, true, 2));
-    assert!(!leader_first_applies(Some(false), None, true, 4));
-    assert!(!leader_first_applies(None, Some("0"), true, 4));
-    assert!(leader_first_applies(Some(false), Some("1"), true, 4));
+    assert!(leader_first_applies(None, true, 4));
+    assert!(leader_first_applies(Some(true), true, 2));
+    assert!(!leader_first_applies(Some(false), true, 4));
     // A layout's ladder keeps its order; one rung has no other mode.
-    assert!(!leader_first_applies(None, None, false, 4));
-    assert!(!leader_first_applies(None, None, true, 1));
+    assert!(!leader_first_applies(None, false, 4));
+    assert!(!leader_first_applies(None, true, 1));
     assert!(leader_gate_admits(Some(20), Some(10)));
     assert!(!leader_gate_admits(Some(21), Some(10)));
     assert!(!leader_gate_admits(Some(1), Some(0)));

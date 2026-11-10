@@ -214,7 +214,7 @@ pad too narrow for any gets escape nodes (`escape_nodes`,
 `router/escapes.rs`): up to 12 legal nodes within 2 mm, each reached by a
 straight or bent stub from the pad centre, checked exactly
 (`stub_is_clear`), at the track width else the neck width. With
-`exact_escape_stubs` (on; `PCB_ROUTER_EXACT_ESCAPES`) a stub along a lattice
+`exact_escape_stubs` (on) a stub along a lattice
 line stamps as lattice nodes and others stamp their measured footprint;
 straight stubs are preferred. Discs grown by the snapping error made
 adjacent 0.4 mm stubs conflict for ever: exact stubs took hid-remapper 33
@@ -260,7 +260,7 @@ trees. In *hard* mode (the repairs) any occupied cell is a wall.
 
 `footprint_pin_row_gaps` (lower.rs) marks the gaps between adjacent SMD
 pads of a part. A step into a gap by another net costs `pin_row_cost`
-(2 mm; `pin_row_cost_mm`, `PCB_ROUTER_PIN_ROW_COST`; 0 builds no marks).
+(2 mm; `pin_row_cost_mm`; 0 builds no marks).
 Gaps up to 1.5 mm are charged everywhere, gaps from 1.5 to 2.6 mm only in
 the clean-up and the bend round. At 2 mm the expansion tier went 625 to 592
 unconnected; at 3 mm a gap costs more than a thermal guard and starved
@@ -290,8 +290,8 @@ measurement on record shows a gain over the tile corridors.
 
 A board-wide search that fails proves its open terminals unreachable for
 the rest of the negotiation (only fixed things stop it), and they are left
-out of the net's later searches. `apart_trees` (on;
-`PCB_ROUTER_NO_APART_TREES`) joins them among themselves, so KiCad finds
+out of the net's later searches. `apart_trees` (on) joins them among
+themselves, so KiCad finds
 one unconnected item instead of one per pad. Without the rule one miss
 froze a net: SNSP-CPU-01 went 178 to 5 KiCad unconnected with it.
 
@@ -340,8 +340,8 @@ with no copper.
 
 ### The trouble-makers' repair
 
-`Router::repair_trouble` (`router/trouble.rs`; `trouble_repair`, on;
-`PCB_ROUTER_TROUBLE`). Each net still open, most open terminals first, is
+`Router::repair_trouble` (`router/trouble.rs`; `trouble_repair`, on).
+Each net still open, most open terminals first, is
 routed through other copper at a price of 20; the nets it overlaps lose the
 crossed branches and are routed again hard, their corridors first. The
 exchange is kept when the open terminals of all of them drop, or tie with
@@ -375,8 +375,8 @@ only here, because renegotiation lets neighbours move.
 
 ### The bend round
 
-`reduce_bends` (`router/bends.rs`; `bend_round`, on;
-`PCB_ROUTER_NO_BEND_ROUND`). On a complete board each signal net with a jog
+`reduce_bends` (`router/bends.rs`; `bend_round`, on). On a complete
+board each signal net with a jog
 (two bends returning within 2 mm) or staircase (three or more) is rerouted
 alone by the clean-up's search at `bend_round_cost` (1.0 mm per 45°), kept
 if still complete with no extra via, at most 1 % longer, no extra staircase
@@ -388,7 +388,7 @@ times the designer's.
 
 ### Straightening
 
-`straighten` (`router/straighten.rs`; on; `PCB_ROUTER_NO_STRAIGHTEN`). The
+`straighten` (`router/straighten.rs`; on). The
 search keeps no arrival direction and closes a node at first arrival, so
 among equal shortest paths it often keeps zigzags, and the clean-up keeps
 only strictly shorter reroutes. Straightening tries the two shortest
@@ -404,7 +404,7 @@ only: in the negotiation they cost 46 unconnected on the expansion tier, in
 the via reduction's clean-up 14 vias on CyberKeeb; in the clean-up alone
 they took crossings 64 to 57 on 23 complete boards. `compact`
 (`router/compact.rs`) runs inside the straightening's branch (so
-`PCB_ROUTER_NO_STRAIGHTEN` turns it off too): the middle segment of a Z
+`straighten` off turns it off too): the middle segment of a Z
 slides toward other copper with length, bends and ends unchanged, kept
 where it hugs other copper more. It raised bundling on 18 of 26 boards.
 
@@ -451,8 +451,8 @@ fingerprints and the dense boards. Repairs, all on:
 
 ### Thermal vias, custom pads and necks
 
-The *measured* model (`measured_thermals`, off while routing;
-`PCB_ROUTER_MEASURED_THERMALS`) adds what the measurement of a written
+The *measured* model (`measured_thermals`, off while routing) adds what
+the measurement of a written
 board needs: thermal vias in an exposed pad use their own zone connection,
 custom pads KiCad's spoke frame, and pieces joined through a neck the
 lattice misses count as kept. It stays off while routing because the
@@ -552,8 +552,8 @@ third of what is left, 60 to 900 s of negotiation.
 
 ### The leader first
 
-In route mode on two or more rungs (`leader_first`, on;
-`PCB_LADDER_LEADER_FIRST`) the ladder spends its work on the leader's kind
+In route mode on two or more rungs (`leader_first`, on) the ladder
+spends its work on the leader's kind
 first: a seed round of the leader, the leader on the finer pitches, then
 the other rungs on the regular and finer pitches, each only if its probe
 left at most twice the leader's unfinished nets (`LEADER_GATE_FACTOR`). A
@@ -632,8 +632,7 @@ fitted model in reference nanoseconds (`BUILD_*_NANOS`, `POUR_*_NANOS` in
 KiCad checks. A router's limits are given in search work (a share times the
 search's fraction of all work); the first attempt, with no fraction known,
 stops on all its work (`limits_count_all`). A layout's ladder charges
-search and KiCad's checks (`check_work.rs`). The `PCB_LADDER_*` switches
-restore partial charging for A/B.
+search and KiCad's checks (`check_work.rs`).
 
 **The probes' overhead.** Routers of the same inputs share static maps, and
 the ladder charges the shared part once per phase in judging order
@@ -776,7 +775,7 @@ maximum.
 ### Length minima: the placer's share and the reroute
 
 A net short of its minimum after meandering lacks room for bumps.
-`length_reroute` (off; `PCB_ROUTER_LENGTH_REROUTE`) reroutes such nets with
+`length_reroute` (off) reroutes such nets with
 other tracks kept further off (`reroute_shorts`), kept if all connect and
 the total miss falls; the placer's partner is `length_minima` (off).
 
@@ -792,7 +791,7 @@ Cost 10 took Sisu's skew findings from 7 to 3.
 ## Prepared fan-outs for BGAs
 
 `board_router/bga_fanout.rs` (`plan`, in the lowering; `bga_fanout`, unset
-means on; `PCB_ROUTER_BGA_FANOUT`). A grid array is 16 or more squat SMD
+means on). A grid array is 16 or more squat SMD
 pads in four or more rows and columns at a pitch up to 1.27 mm. A ball's
 *ring* is its distance to the nearest empty place (`rings_of`); rings up to
 the number of tracks that fit between two balls leave on the surface. A
@@ -960,9 +959,8 @@ code is in git history.
 - Renegotiating the residue in a window around the open nets: stalls at
   the price cap like the board; 20 to 20 strict on 54 boards.
 - The last connections: a last pass with ejection chains three deep, pour
-  nets and board-wide victims closed nothing on the 12 near misses
-  (`PCB_ROUTER_TROUBLE_DEPTH` and `_POURS` remain, off). 24 victims instead
-  of 12: mixed. Victims on their corridors only: lost MegaDrive.
+  nets and board-wide victims closed nothing on the 12 near misses. 24
+  victims instead of 12: mixed. Victims on their corridors only: lost MegaDrive.
 - Fan-out before negotiation (one way out per dense pad, reserved by a
   cost): moved which pad of a crossing pair stays open; −3 passes.
 - Crossings decided in the repair (one net of a crossing pair dives beyond

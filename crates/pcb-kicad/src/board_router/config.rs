@@ -165,8 +165,8 @@ pub struct KiCadBoardRouterConfig {
     #[serde(default)]
     pub bend_cost_mm: Option<f64>,
     /// Router `pin_row_cost`: the cost of another net's step between two
-    /// adjacent SMD pads of a part's pin row, in millimetres (default
-    /// `PCB_ROUTER_PIN_ROW_COST`, else 2; 0: off).
+    /// adjacent SMD pads of a part's pin row, in millimetres (default 2;
+    /// 0: off).
     #[serde(default)]
     pub pin_row_cost_mm: Option<f64>,
     /// Differential pairs (docs/router.md, "Differential pairs"): nets
@@ -248,11 +248,10 @@ pub struct KiCadBoardRouterConfig {
     /// `length` minimum after the meanders is routed again alone, every
     /// other net's tracks kept and kept off by half a meander's height
     /// more than the clearance away from its pads, and meandered again;
-    /// kept where it comes out nearer its target, complete and clean.
-    /// `PCB_ROUTER_LENGTH_REROUTE=1` (or `0`) decides where the settings
-    /// name none; off by default (measured on the firestarter: no length
-    /// finding fewer; docs/router.md, "Length minima: the placer's share
-    /// and the reroute (2026-11-04)").
+    /// kept where it comes out nearer its target, complete and clean. Off
+    /// by default (measured on the firestarter: no length finding fewer;
+    /// docs/router.md, "Length minima: the placer's share and the reroute
+    /// (2026-11-04)").
     #[serde(default)]
     pub length_reroute: Option<bool>,
     /// The project's `length` and `skew` rules with the nets they hold for
@@ -269,14 +268,11 @@ pub struct KiCadBoardRouterConfig {
     /// nothing where it has none; `"rule"`: every net of the rule prefers
     /// the rule's layers; `"off"`: no preference. A step off the preferred
     /// layers costs `layer_preference_cost` times as much (a soft
-    /// disallow). `PCB_ROUTER_LENGTH_RULE_LAYERS` decides where the
-    /// settings name none; default `"designer"`.
+    /// disallow). Default `"designer"`.
     #[serde(default)]
     pub length_rule_layers: Option<String>,
     /// The factor on a step off a net's preferred layers
     /// (`length_rule_layers`; default 10, at least 1).
-    /// `PCB_ROUTER_LAYER_PREFERENCE_COST` decides where the settings name
-    /// none.
     #[serde(default)]
     pub layer_preference_cost: Option<f64>,
     /// Per net (normalized like `connection_rules`), the layers it prefers
@@ -432,8 +428,7 @@ pub struct KiCadBoardRouterConfig {
     /// variants first (its seed round, its finer pitches), then the rungs
     /// of other pour modes whose probe (or regular attempt) left at most
     /// twice the leader's unfinished nets (docs/router.md, "The leader
-    /// first"; default on). `PCB_LADDER_LEADER_FIRST` (0 or 1) overrides
-    /// it.
+    /// first"; default on).
     #[serde(default)]
     pub leader_first: Option<bool>,
     /// Fixed escape stubs for fine-pitch pad rows, this long in mm (router
@@ -442,8 +437,7 @@ pub struct KiCadBoardRouterConfig {
     pub escape_stub_mm: Option<f64>,
     /// Escape stubs stamped exactly, straight ones along a lattice line
     /// first (router `exact_escape_stubs`; docs/router.md, "Fine-pitch
-    /// escapes"): unset, the router's default (on since 2026-10-26);
-    /// `PCB_ROUTER_EXACT_ESCAPES` overrides this.
+    /// escapes"): unset, the router's default (on since 2026-10-26).
     #[serde(default)]
     pub exact_escape_stubs: Option<bool>,
     /// Lattice lines at pin rows (router `pin_lines`; docs/router.md,
@@ -475,7 +469,7 @@ pub struct KiCadBoardRouterConfig {
     /// fixed copper of the ball's net that its route may end on, on any
     /// layer; written only where the net's route uses it; an array whose
     /// class's via fits a gap is left to the search. Unset: on (since
-    /// 2026-11-04); `PCB_ROUTER_BGA_FANOUT` overrides this.
+    /// 2026-11-04).
     #[serde(default)]
     pub bga_fanout: Option<bool>,
     /// Blind, buried and micro vias (board_router/via_spans.rs;
@@ -504,7 +498,7 @@ pub struct KiCadBoardRouterConfig {
     pub fixed_plane_stubs: Option<bool>,
     /// The trouble-makers' repair after the hard repair (router
     /// `trouble_repair`; docs/experiments/human-level-routing.md):
-    /// unset, the router's default; `PCB_ROUTER_TROUBLE` overrides this.
+    /// unset, the router's default.
     #[serde(default)]
     pub trouble_repair: Option<bool>,
     /// Router `thermal_guard_cost`.
@@ -851,13 +845,11 @@ impl KiCadBoardRouterConfig {
     }
 
     /// What `length_rule_layers` asks: the settings' value, else
-    /// `PCB_ROUTER_LENGTH_RULE_LAYERS`, else `"designer"` (an unknown
-    /// value is `"off"`).
+    /// `"designer"` (an unknown value is `"off"`).
     pub fn length_rule_layers_mode(&self) -> &'static str {
         let value = self
             .length_rule_layers
             .clone()
-            .or_else(|| std::env::var("PCB_ROUTER_LENGTH_RULE_LAYERS").ok())
             .filter(|value| !value.is_empty());
         match value.as_deref() {
             None | Some("designer") => "designer",
@@ -867,16 +859,9 @@ impl KiCadBoardRouterConfig {
     }
 
     /// Whether a net short of its minimum is routed again for room
-    /// (`length_reroute`): the settings' value, else
-    /// `PCB_ROUTER_LENGTH_REROUTE` (`1` on), else off.
+    /// (`length_reroute`): the settings' value, else off.
     pub fn length_reroute_on(&self) -> bool {
-        if let Some(on) = self.length_reroute {
-            return on;
-        }
-        match std::env::var("PCB_ROUTER_LENGTH_REROUTE") {
-            Ok(value) if !value.is_empty() => value != "0",
-            _ => false,
-        }
+        self.length_reroute.unwrap_or(false)
     }
 
     /// Whether differential pairs route coupled (`diff_pairs_choice`).

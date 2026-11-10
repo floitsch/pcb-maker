@@ -123,26 +123,6 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "no connection-width neck repair after the final DRC.",
     ),
     (
-        "PCB_ROUTER_PIN_ROW_COST",
-        Kind::Switch,
-        "the router's `pin_row_cost` in millimetres where the settings name none (`pin_row_cost_mm`): the cost of another net's step between two adjacent SMD pads of a part's pin row (docs/router.md, \"Pin-row cost\"; for measuring other values).",
-    ),
-    (
-        "PCB_ROUTER_NO_BEND_ROUND",
-        Kind::Switch,
-        "turns the router's bend round off (`bend_round`, on since 2026-11-06): after the via reduction, each complete signal net with a jog or a staircase rerouted alone at a raised bend cost and kept only if it stays complete with no via more, at most 1 % longer and fewer jogs and staircases (docs/router.md, \"The bend round (2026-11-06)\"; a diagnostic, for A/B).",
-    ),
-    (
-        "PCB_ROUTER_BEND_ROUND_COST",
-        Kind::Switch,
-        "the router's `bend_round_cost`: the bend cost of the bend round's searches, in mm per 45 degrees (default 1.0; a diagnostic).",
-    ),
-    (
-        "PCB_ROUTER_NO_STRAIGHTEN",
-        Kind::Switch,
-        "turns the router's straightening off (`straighten`, on since 2026-10-23): after the via reduction and the thermal spoke repairs, stair-steps and jogs taken out of the signal nets' paths where the clearance allows (docs/router.md, \"Straightening\"; for attributing rows).",
-    ),
-    (
         "PCB_MAKER_CACHE_DIR",
         Kind::User,
         "root of the DRC cache and of the library-free kicad-cli configuration (default `$XDG_CACHE_HOME/pcb-maker`, else `~/.cache/pcb-maker`).",
@@ -188,16 +168,6 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "`1`: the command's requests of at most 2 GB of its own beside one KiCad check are short: they go once the capacity has their room and the memory available less the reservations' growth covers them, never behind the ledger's order or a drain; `0`: none are (default: every command that reserves but a route and a layout; docs/benchmarks.md, \"Memory ledger\").",
     ),
     (
-        "PCB_ROUTER_TROUBLE",
-        Kind::Switch,
-        "overrides the router's `trouble_repair` (`0` off, anything else on): the trouble-makers' repair after the hard repair (an open net routed through others at a price, the nets it displaces routed again hard, kept when the open terminals drop; docs/experiments/human-level-routing.md).",
-    ),
-    (
-        "PCB_ROUTER_EXACT_ESCAPES",
-        Kind::Switch,
-        "overrides the router's `exact_escape_stubs` (`0` off, anything else on; on by default since 2026-10-26): escape stubs stamp exactly (along a lattice line as lattice nodes, oblique ones by their measured footprint) and a pad leaves by straight stubs along a lattice line where it has any; off, the stubs stamp the lattice's discs grown by the snapping error (docs/router.md, \"Fine-pitch escapes\").",
-    ),
-    (
         "PCB_ROUTER_CORRIDOR_ESCAPES",
         Kind::Switch,
         "overrides the router's `corridor_escapes` (`0` off, anything else on; on by default since 2026-11-05): a pad without a legal node of its own whose escape nodes lie in a pocket the lattice closes leaves by a corridor stub off the lattice, a path through the region its track keeps its clearances in to a legal node beyond the pocket (OpenFC's U10.5; docs/router.md, \"Corridors of pocketed pads (2026-11-05)\").",
@@ -216,11 +186,6 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "PCB_ROUTER_PIN_LINES_PROBE",
         Kind::Diagnostic,
         "set: the router prints `pin lines:` lines on stderr for each lattice it builds and the finer pitches 0.075 and 0.05 mm: the lines the pin rows and pad gaps ask for, which the regular lattice misses, and what the bands and single lines would place for the exits (`2`: every missed line too) (docs/router.md, \"Lattice lines at pin rows (2026-11-07)\").",
-    ),
-    (
-        "PCB_ROUTER_BGA_FANOUT",
-        Kind::Switch,
-        "overrides the router's `bga_fanout` (`0` off, anything else on; on by default): before routing, the inner balls of every grid array (those no track between the outer balls serves) whose net's own via does not fit a diagonal gap get a stub and a through via in a diagonal gap, the largest of the class's and the project's via sizes that keeps every clearance, as fixed copper of the ball's net that its route may end on; written only where the route uses it; the placer keeps the far side free under those vias (docs/router.md, \"Prepared fan-outs for BGAs (2026-11-04)\").",
     ),
     (
         "PCB_ROUTER_BLIND_VIAS",
@@ -256,36 +221,6 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "PCB_ROUTER_TROUBLE_PER_OPEN",
         Kind::Switch,
         "the trouble-makers' repair: the nets an exchange may displace per open terminal of the trouble-maker; its limit is the larger of this times its open terminals and `PCB_ROUTER_TROUBLE_VICTIMS` (default 2; 0 the flat limit).",
-    ),
-    (
-        "PCB_ROUTER_TROUBLE_TIES",
-        Kind::Switch,
-        "the trouble-makers' repair: `1` keeps an exchange that closes as many terminals as it opens when fewer of the nets involved stay open (default 1; `0` refuses every tie).",
-    ),
-    (
-        "PCB_ROUTER_TROUBLE_ORDER",
-        Kind::Switch,
-        "the trouble-makers' repair: the order of a round's trouble-makers, `open` (most open terminals first) or `few` (each surveyed by its priced search alone, the fewest victims per terminal closed first; default `open`).",
-    ),
-    (
-        "PCB_ROUTER_TROUBLE_DEPTH",
-        Kind::Switch,
-        "the trouble-makers' repair: 2 lets a displaced net that came out worse displace others in turn (default 1).",
-    ),
-    (
-        "PCB_ROUTER_TROUBLE_POURS",
-        Kind::Switch,
-        "the trouble-makers' repair: `1` lets pour nets take part, as trouble-makers and as victims, weighed by their pads off the pour's main piece (an experiment, off).",
-    ),
-    (
-        "PCB_ROUTER_TROUBLE_LOCAL",
-        Kind::Switch,
-        "the trouble-makers' repair: `1` routes an exchange's victims again on their corridors first, and a victim left with more open terminals than it had in its window (not grown, never board-wide) while that could still make the exchange pass (default 1; `0` the full hard search for every victim).",
-    ),
-    (
-        "PCB_ROUTER_TROUBLE_EARLY",
-        Kind::Switch,
-        "the trouble-makers' repair: `1` undoes an exchange as soon as the victims routed so far leave it no way to pass (default 1; `0` routes every victim first).",
     ),
     (
         "PCB_ROUTER_TROUBLE_WHY",
@@ -350,32 +285,12 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_ROUTER_LENGTH_MATCHING",
         Kind::Switch,
-        "turns the length and skew rules' meanders off (0) or on (1) where the settings name none (`length_matching`; unset, on): a net shorter than a custom rule's `length` minimum, or further than a `skew` maximum below the longest net of its rule, gets a meander on a straight track of its route, written as a KiCad tuning pattern (in route mode and on a layout's own routes), and the verdict's `lengths` reports each such net; a net over a `length` maximum is routed again the short way where the nets in its way can go round (`PCB_ROUTER_LENGTH_REPAIR_PRESENT`) (off: none of it; docs/router.md, \"Length and skew rules\").",
-    ),
-    (
-        "PCB_ROUTER_LENGTH_REROUTE",
-        Kind::Switch,
-        "turns the length reroute on (1) or off (0) where the settings name none (`length_reroute`; unset, off): a net still short of its `length` minimum (or its `skew` group's) after the meanders is routed again alone, the other nets' tracks kept and kept off by half a meander's height more than the clearance beyond 1.5 mm of its pads, meandered again and kept where it ends nearer its window (docs/router.md, \"Length minima: the placer's share and the reroute (2026-11-04)\").",
-    ),
-    (
-        "PCB_ROUTER_LENGTH_RULE_LAYERS",
-        Kind::Switch,
-        "where the settings name none, which side of a layer-limited length or skew rule's layers its nets prefer (`length_rule_layers`; unset, `designer`): `designer` the side the designer's board (`--reference`, else the input's own tracks) runs each on, `rule` the rule's layers for all of them, `off` none (docs/router.md, \"Skew groups' layers (2026-11-06)\").",
-    ),
-    (
-        "PCB_ROUTER_LAYER_PREFERENCE_COST",
-        Kind::Switch,
-        "the router's `layer_preference_cost` where the settings name none: the factor on a step off a net's preferred layers (`length_rule_layers`; default 10, at least 1).",
+        "turns the length and skew rules' meanders off (0) or on (1) where the settings name none (`length_matching`; unset, on): a net shorter than a custom rule's `length` minimum, or further than a `skew` maximum below the longest net of its rule, gets a meander on a straight track of its route, written as a KiCad tuning pattern (in route mode and on a layout's own routes), and the verdict's `lengths` reports each such net; a net over a `length` maximum is routed again the short way where the nets in its way can go round (off: none of it; docs/router.md, \"Length and skew rules\").",
     ),
     (
         "PCB_ROUTER_LENGTH_DEBUG",
         Kind::Diagnostic,
         "the length repair: prints per net over its maximum what the priced search found, the victims and why the exchange was kept or undone; the length reroute: its router's log and per net the route's status.",
-    ),
-    (
-        "PCB_ROUTER_LENGTH_REPAIR_PRESENT",
-        Kind::Switch,
-        "the price of sharing a node for the length repair's search (default 2): a net longer than its custom `length` rule's maximum is routed again through the nets in its way, which then go round (docs/router.md, \"Length and skew rules\").",
     ),
     (
         "PCB_ROUTER_DIFF_PAIRS_DEBUG",
@@ -398,16 +313,6 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "bus bundles: tiles a bus's corridor is grown by beyond half its width (default 4).",
     ),
     (
-        "PCB_ROUTER_BUS_NO_CORRIDOR",
-        Kind::Switch,
-        "bus bundles, an ablation: the members keep their own corridors (the lane and the order stay).",
-    ),
-    (
-        "PCB_ROUTER_BUS_NO_ORDER",
-        Kind::Switch,
-        "bus bundles, an ablation: the members keep their place in the usual routing order (the corridor and the lane stay).",
-    ),
-    (
         "PCB_ROUTER_BUS_PATIENCE",
         Kind::Switch,
         "bus bundles: the reroutes after which a member leaves its bundle and negotiates as any other net (default 8).",
@@ -416,31 +321,6 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "PCB_ROUTER_BUS_WHY",
         Kind::Diagnostic,
         "bus bundles: prints every bus found and every member broken out of its bundle.",
-    ),
-    (
-        "PCB_ROUTER_NO_SPOKELESS_TRACKS",
-        Kind::Switch,
-        "turns off the router's `spokeless_tracks` (a straight track into kept fill for a pad the spoke model sees without a spoke).",
-    ),
-    (
-        "PCB_ROUTER_NO_APART_TREES",
-        Kind::Switch,
-        "turns off the router's `apart_trees` (terminals no path reaches from their net's tree joined among themselves).",
-    ),
-    (
-        "PCB_ROUTER_NO_LOST_SPOKES",
-        Kind::Switch,
-        "turns off the router's `lost_spoke_repair` (other nets rerouted around a starved pad's cut spokes after the clean-up).",
-    ),
-    (
-        "PCB_ROUTER_MEASURED_THERMALS",
-        Kind::Switch,
-        "turns on the router's `measured_thermals` while routing too (the measurement's pour model in the in-route repairs: thermal vias by their own zone connection, custom pads' spokes in KiCad's frame, blocked spokes over the pad and necks the lattice misses in the DRC's track rule).",
-    ),
-    (
-        "PCB_ROUTER_NO_RECLAIM",
-        Kind::Switch,
-        "turns off the pour model's reclaimed fill (a pour's fill inside another net's zone of a higher priority where that zone's fill leaves room, `Router::reclaimed_fill`).",
     ),
     (
         "PCB_ROUTER_SEED",
@@ -458,26 +338,6 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "`cap`: the most the wall-clock guards stretch for pinned rates faster than the machine measured (the pinned rate over the measured; default 4, 1: no stretch, the guards before 2026-10-21).",
     ),
     (
-        "PCB_LADDER_SEARCH_ONLY",
-        Kind::Switch,
-        "route mode's ladder counts the attempts' search expansions alone: no manual spokes, pour analyses, lattices or lowerings, and its shares stay search work (the count before 2026-10-21; for attributing rows; was `PCB_LADDER_UNCHARGED_SPOKES`, which named only the spokes).",
-    ),
-    (
-        "PCB_LADDER_UNCHARGED_POUR",
-        Kind::Switch,
-        "route mode's ladder counts the attempts' search expansions and manual spokes only, not their other pour analyses, lattice builds and lowerings, and its shares stay search work (the count before 2026-10-21, all pour work charged; for attributing rows).",
-    ),
-    (
-        "PCB_LADDER_SEARCH_SHARES",
-        Kind::Switch,
-        "route mode's ladder charges all the work but gives each router its share as search work, not scaled by the routers' share of search so far (for attributing rows).",
-    ),
-    (
-        "PCB_LADDER_NO_FIRST_ITERATION_GATE",
-        Kind::Switch,
-        "route mode's steps start without room for their first negotiation iteration (the rule before 2026-10-21; for attributing rows).",
-    ),
-    (
         "PCB_LADDER_LINES_PROBE",
         Kind::Switch,
         "`0`: route mode's ladder does not probe its leader's rung once more with lattice lines at the pin rows where the leader's probe leaves pads unfinished at rows the regular lattice misses; the trigger after the leader's run alone decides (as before 2026-11-08's \"The rows decided at the probes\"; for A/B on one binary).",
@@ -486,41 +346,6 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "PCB_LAYOUT_LINES_PROBE",
         Kind::Switch,
         "`0`: a layout decides no lattice lines at the pin rows itself (the layout before 2026-11-08's \"A layout's rows decided by its probe's open pads\"; for A/B on one binary); `race`: only at the kept placement's probe; `ladder`: only at the final ladder's probes; unset: both (the router setting `pin_lines` and `PCB_ROUTER_PIN_LINES` win over it).",
-    ),
-    (
-        "PCB_LADDER_LEADER_FIRST",
-        Kind::Switch,
-        "`0` or `1`: route mode's ladder runs the leading rung's seed round and finer pitches before the rungs of other pour modes, and those only where their probe left at most twice the leader's unfinished nets (wins over the router setting `leader_first`; default on; `0` the order before 2026-11-07).",
-    ),
-    (
-        "PCB_LADDER_NO_STEP_COST_GATE",
-        Kind::Switch,
-        "route mode's steps start with less left under the bound than a fifth of the ladder's first attempt's work (the rule before 2026-10-21, probe overhead; for attributing rows).",
-    ),
-    (
-        "PCB_LADDER_SEARCH_LIMITS",
-        Kind::Switch,
-        "route mode's first attempt stops on its search alone, its pour analyses and lattice on top (the rule before 2026-10-21, probe overhead; for attributing rows).",
-    ),
-    (
-        "PCB_LADDER_PROBES_COUNT_ALL",
-        Kind::Switch,
-        "route mode's rung probes stop on all their work (search, pour analyses, lattice and their part of the static maps) instead of on their search (an experiment: leaders changed; docs/changelog.md, probe overhead).",
-    ),
-    (
-        "PCB_LADDER_CONTINUATION_LATTICE",
-        Kind::Switch,
-        "route mode's probed rung's continuation takes its share in search work by the routers' proportion of search with their lattices counted, as the fresh routers do (the rule before 2026-10-21, probe overhead; for attributing rows).",
-    ),
-    (
-        "PCB_ROUTER_NO_SHARED_STATICS",
-        Kind::Switch,
-        "every router builds its own static maps and pour masks instead of sharing those of routers of the same board, lattice and classes (for attributing rows; the routing is the same).",
-    ),
-    (
-        "PCB_ROUTER_LIMITS_BETWEEN_ITERATIONS",
-        Kind::Switch,
-        "a negotiation's work limits (its own and the work deadline) bind only after a whole iteration, not between its batches too (the rule before 2026-10-22, probe overshoot; for attributing rows).",
     ),
     (
         "PCB_PROBES_SIDE_BY_SIDE",
@@ -621,11 +446,6 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "PCB_GLOBAL_DEBUG",
         Kind::Diagnostic,
         "the global route's negotiation, a line per iteration (nets to reroute, overflow, search work; docs/global-route.md).",
-    ),
-    (
-        "PCB_LAYOUT_DESCENT_CLASSIC",
-        Kind::Diagnostic,
-        "`<n>`: the move descent's first `n` router trials are also tried and timed as the coupled loop tries a move (a clone, `Router::update`, a reroute without the polish) on a copy; the result does not change.",
     ),
     (
         "PCB_PLACER_TRACE",

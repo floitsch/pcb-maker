@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 //! The trouble-makers' repair (`Config::trouble_repair`, on since
-//! 2026-10-23; `PCB_ROUTER_TROUBLE` overrides it): after the hard repair, each net still open is routed through whatever
+//! 2026-10-23): after the hard repair, each net still open is routed through whatever
 //! is in its way at a price, the nets it then overlaps lose the branches it
 //! crosses and are routed again around it, hard; the exchange is kept when
 //! the open terminals of all of them together drop, or stay and fewer of
@@ -31,62 +31,14 @@ pub(super) struct TroubleSettings {
     /// open pads may displace 40 nets, a two-pad net 12); 0 the flat
     /// limit.
     pub per_open: f64,
-    /// A trade that closes as many terminals as it opens is kept when it
-    /// leaves fewer of the nets involved open (`PCB_ROUTER_TROUBLE_TIES`,
-    /// on; `0` refuses every tie).
-    pub ties: bool,
-    /// The order of the trouble-makers in a round
-    /// (`PCB_ROUTER_TROUBLE_ORDER`, `open`; `few` measured on 2026-10-23
-    /// and not kept, docs/changelog.md).
-    pub order: TroubleOrder,
-    /// 2: a displaced net that comes out worse may displace others in
-    /// turn; 1: not.
-    pub depth: usize,
-    /// Pour nets take part (`PCB_ROUTER_TROUBLE_POURS`, an experiment,
-    /// off): as trouble-makers and as victims (their pour reconnects what
-    /// a victim's reroute leaves), their open terminals counted as the
-    /// pads off their pour's main piece (the pour analysed again after the
-    /// exchange).
-    pub pours: bool,
-    /// The victims are routed again on their corridors first
-    /// (`PCB_ROUTER_TROUBLE_LOCAL`, on), and a victim left with more open
-    /// terminals than it had then in its window (the terminals' box and
-    /// its margin, not grown) while that could still make the exchange
-    /// pass; never board-wide. The hard search's window grown fourfold and
-    /// its board-wide fallback were most of the victims' work, mostly
-    /// failing (docs/changelog.md, 2026-10-23); `0` that full search.
-    pub local: bool,
-    /// An exchange is undone as soon as the victims routed so far leave
-    /// it no way to pass (`PCB_ROUTER_TROUBLE_EARLY`, on): the victims not
-    /// yet routed are counted as closing every terminal they have.
-    pub early: bool,
-}
-
-/// The order of the trouble-makers in a round.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum TroubleOrder {
-    /// Most open terminals first, then the routing order (`open`).
-    MostOpen,
-    /// Surveyed first (each net's priced search alone, undone): the
-    /// fewest victims per terminal its search closes first (`few`); a
-    /// net the survey refuses is not tried in that round.
-    FewestVictims,
 }
 
 /// The repair's default (`Config::trouble_repair`).
 pub const TROUBLE_REPAIR_DEFAULT: bool = true;
 
-/// `PCB_ROUTER_TROUBLE`: unset, the configuration decides; `0` or empty
-/// off; anything else on. It overrides the configuration either way.
-pub fn trouble_override() -> Option<bool> {
-    let value = std::env::var("PCB_ROUTER_TROUBLE").ok()?;
-    Some(!(value.is_empty() || value == "0"))
-}
-
 impl TroubleSettings {
     /// The knobs: `PCB_ROUTER_TROUBLE_PRESENT` (20), `_SHARE` (0.5),
-    /// `_ROUNDS` (3), `_VICTIMS` (12), `_PER_OPEN` (2), `_TIES` (1),
-    /// `_ORDER` (`open`), `_DEPTH` (1), `_LOCAL` (1) and `_EARLY` (1).
+    /// `_ROUNDS` (3), `_VICTIMS` (12) and `_PER_OPEN` (2).
     pub(super) fn from_env() -> Self {
         fn read<T: std::str::FromStr>(name: &str, default: T) -> T {
             std::env::var(name)
@@ -100,15 +52,6 @@ impl TroubleSettings {
             rounds: read("PCB_ROUTER_TROUBLE_ROUNDS", 3),
             victims: read("PCB_ROUTER_TROUBLE_VICTIMS", 12),
             per_open: read("PCB_ROUTER_TROUBLE_PER_OPEN", 2.0),
-            ties: read("PCB_ROUTER_TROUBLE_TIES", 1) != 0,
-            order: match std::env::var("PCB_ROUTER_TROUBLE_ORDER").as_deref() {
-                Ok("few") => TroubleOrder::FewestVictims,
-                _ => TroubleOrder::MostOpen,
-            },
-            depth: read("PCB_ROUTER_TROUBLE_DEPTH", 1),
-            pours: read("PCB_ROUTER_TROUBLE_POURS", 0) != 0,
-            local: read("PCB_ROUTER_TROUBLE_LOCAL", 1) != 0,
-            early: read("PCB_ROUTER_TROUBLE_EARLY", 1) != 0,
         }
     }
 
@@ -148,11 +91,8 @@ pub(super) struct TroubleWork {
     pub(super) retries: usize,
     rescued: usize,
     rescued_work: f64,
-    /// Exchanges undone early (`TroubleSettings::early`).
+    /// Exchanges undone early (`route_victims`).
     early: usize,
-    /// The budget work (`Router::budget_work`) at which the pass's work
-    /// is spent: an ejection chain starts no further step past it.
-    stop_at: f64,
 }
 
 /// A net's state as an exchange may have to restore it, and its open
@@ -160,26 +100,13 @@ pub(super) struct TroubleWork {
 pub(super) type Saved = (NetId, Vec<Branch>, Vec<bool>, bool, usize);
 
 impl Router {
-    fn open_terminals(&self, net: NetId) -> usize {
+    /// The open terminals the exchanges weigh: a signal net's unconnected
+    /// terminals (no pour net takes part in an exchange).
+    pub(super) fn open_measure(&self, net: NetId) -> usize {
         self.nets[net as usize]
             .connected
             .iter()
             .filter(|connected| !**connected)
-            .count()
-    }
-
-    /// The open terminals the exchanges weigh: a signal net's
-    /// unconnected terminals; a pour net's pads off its pour's main piece
-    /// (as `unfinished` counts them).
-    pub(super) fn open_measure(&self, net: NetId) -> usize {
-        let state = &self.nets[net as usize];
-        if state.plane.is_empty() {
-            return self.open_terminals(net);
-        }
-        let (pours, mut parent, main) = self.analyze_pours(net);
-        let terminal_base = pours.pieces + 1;
-        (0..state.terminal_nodes.len())
-            .filter(|terminal| find(&mut parent, terminal_base + terminal) != main)
             .count()
     }
 
@@ -239,63 +166,26 @@ impl Router {
     ) -> usize {
         let clock = *clock;
         let debug = std::env::var_os("PCB_ROUTER_DEBUG").is_some();
-        let why = debug || std::env::var_os("PCB_ROUTER_TROUBLE_WHY").is_some();
         let mut closed = 0;
         let (mut tried, mut kept, mut ties, mut displaced) = (0usize, 0usize, 0usize, 0usize);
         let mut out_of_work = false;
         // A net refused is tried again only once an exchange was kept
         // after its refusal: nothing else changed that it could see.
         let mut refused: HashMap<NetId, usize> = HashMap::new();
-        let mut work = TroubleWork {
-            stop_at: clock.0 + budget,
-            ..TroubleWork::default()
-        };
+        let mut work = TroubleWork::default();
         for round in 0..settings.rounds {
             let mut trouble: Vec<NetId> = order
                 .iter()
                 .copied()
                 .filter(|net| {
                     let state = &self.nets[*net as usize];
-                    state.routable
-                        && if state.plane.is_empty() {
-                            !state.complete
-                        } else {
-                            settings.pours
-                        }
+                    state.routable && state.plane.is_empty() && !state.complete
                 })
                 .filter(|net| self.open_measure(*net) > 0)
                 .collect();
             // Most open first (a bus net with nine of ten pads open), then
             // the routing order.
             trouble.sort_by_cached_key(|net| std::cmp::Reverse(self.open_measure(*net)));
-            if settings.order == TroubleOrder::FewestVictims {
-                let mut surveyed: Vec<(NetId, usize, usize)> = Vec::new();
-                for net in trouble {
-                    if refused.get(&net) == Some(&kept) {
-                        continue;
-                    }
-                    if self.spent(&clock, budget) {
-                        out_of_work = true;
-                        break;
-                    }
-                    match self.trouble_survey(net, order, settings) {
-                        Ok((victims, closes)) => surveyed.push((net, victims, closes)),
-                        Err(reason) => {
-                            refused.insert(net, kept);
-                            if why {
-                                eprintln!(
-                                    "trouble survey {}: {reason}",
-                                    self.board.nets[net as usize].name
-                                );
-                            }
-                        }
-                    }
-                }
-                // Fewest victims per terminal closed (a/b < c/d as a*d <
-                // c*b), then most closed, then most open.
-                surveyed.sort_by(|a, b| (a.1 * b.2).cmp(&(b.1 * a.2)).then(b.2.cmp(&a.2)));
-                trouble = surveyed.into_iter().map(|entry| entry.0).collect();
-            }
             let (mut closed_round, mut kept_round) = (0, 0);
             for net in trouble {
                 if self.spent(&clock, budget) {
@@ -366,8 +256,7 @@ impl Router {
     /// One exchange for `net`: it is routed at `settings.present` through
     /// other copper; the nets it overlaps lose their crossed branches and
     /// are routed again hard. Kept when the open terminals of all of them
-    /// drop, or, with `settings.ties`, stay and fewer of the nets are open;
-    /// else restored.
+    /// drop, or stay and fewer of the nets are open; else restored.
     fn trouble_exchange(
         &mut self,
         net: NetId,
@@ -387,55 +276,6 @@ impl Router {
         exchange
     }
 
-    /// The survey of `net` for `TroubleOrder::FewestVictims`: its priced
-    /// search alone, undone; the victims it would displace and the open
-    /// terminals of its own it closes, or why its exchange would be
-    /// refused.
-    fn trouble_survey(
-        &mut self,
-        net: NetId,
-        order: &[NetId],
-        settings: TroubleSettings,
-    ) -> Result<(usize, usize), String> {
-        let before_net = self.open_measure(net);
-        let saved = vec![self.save_net(net)];
-        self.nets[net as usize].hopeless_searches = 0;
-        self.route_net_seq(net, settings.present, false, 4.0);
-        self.stamp(net);
-        let after_net = self.open_measure(net);
-        let victims: Vec<NetId> = order
-            .iter()
-            .copied()
-            .filter(|other| *other != net && !self.conflicts(*other).is_empty())
-            .collect();
-        let limit = settings.victim_limit(before_net);
-        let refusal = if after_net >= before_net {
-            Some(format!(
-                "the priced search closes nothing ({before_net} open)"
-            ))
-        } else if victims.len() > limit {
-            Some(format!(
-                "{} victims, more than allowed ({limit} for {before_net} open)",
-                victims.len()
-            ))
-        } else {
-            victims
-                .iter()
-                .find(|victim| !settings.pours && !self.nets[**victim as usize].plane.is_empty())
-                .map(|pour| {
-                    format!(
-                        "a pour net among the victims ({})",
-                        self.board.nets[*pour as usize].name
-                    )
-                })
-        };
-        self.restore_nets(saved);
-        match refusal {
-            Some(reason) => Err(reason),
-            None => Ok((victims.len(), before_net - after_net)),
-        }
-    }
-
     fn trouble_exchange_why(
         &mut self,
         net: NetId,
@@ -443,26 +283,10 @@ impl Router {
         settings: TroubleSettings,
         work: &mut TroubleWork,
     ) -> (Exchange, String) {
-        let (mut saved, victims) = match self.displace(net, &[], order, settings, work) {
-            Ok(done) => done,
+        let saved = match self.displace(net, order, settings, work) {
+            Ok(saved) => saved,
             Err(reason) => return (Exchange::default(), reason),
         };
-        // A victim that came out worse may push others aside in turn (not
-        // the net the exchange is for), and its victims theirs, up to
-        // `settings.depth` levels (an ejection chain).
-        let mut nested = 0;
-        if settings.depth > 1 {
-            let mut chain = vec![net];
-            nested = self.push_on(
-                &victims,
-                &mut chain,
-                &mut saved,
-                settings.depth - 1,
-                order,
-                settings,
-                work,
-            );
-        }
         // A conflict one side of a pair of classes sees and the other does
         // not (a neck-width stub of the trouble-maker, a victim of a wider
         // clearance routed hard around it in its own map): the nets still in
@@ -493,7 +317,7 @@ impl Router {
             .iter()
             .filter(|entry| self.open_measure(entry.0) > 0)
             .count();
-        let tie = settings.ties && after == before && nets_after < nets_before;
+        let tie = after == before && nets_after < nets_before;
         if (after < before || tie) && clean {
             (
                 Exchange {
@@ -502,7 +326,7 @@ impl Router {
                     displaced: involved,
                 },
                 format!(
-                    "kept: {before} open to {after}, {nets_before} nets open to {nets_after} ({involved} displaced, {nested} pushed on)"
+                    "kept: {before} open to {after}, {nets_before} nets open to {nets_after} ({involved} displaced)"
                 ),
             )
         } else {
@@ -530,7 +354,7 @@ impl Router {
             (
                 Exchange::default(),
                 format!(
-                    "refused: {before} open to {after}, {nets_before} nets open to {nets_after} ({involved} displaced, {nested} pushed on), clean {clean}{}",
+                    "refused: {before} open to {after}, {nets_before} nets open to {nets_after} ({involved} displaced), clean {clean}{}",
                     if conflicted.is_empty() {
                         String::new()
                     } else {
@@ -541,84 +365,17 @@ impl Router {
         }
     }
 
-    /// The ejection chain of an exchange: each of `victims` that came out
-    /// with more open terminals than it had (`saved`) is routed through
-    /// others in turn (`displace`, the nets of `chain` protected), its own
-    /// victims likewise while `depth` lasts; a step is kept when it leaves
-    /// the nets it changed with fewer open terminals and none in conflict,
-    /// its saved states then joining `saved` (the earliest state of a net
-    /// stays). Returns the steps kept.
-    #[allow(clippy::too_many_arguments)]
-    fn push_on(
-        &mut self,
-        victims: &[NetId],
-        chain: &mut Vec<NetId>,
-        saved: &mut Vec<Saved>,
-        depth: usize,
-        order: &[NetId],
-        settings: TroubleSettings,
-        work: &mut TroubleWork,
-    ) -> usize {
-        if depth == 0 {
-            return 0;
-        }
-        let mut kept = 0;
-        for victim in victims {
-            if self.budget_work() >= work.stop_at || self.past_deadline() {
-                break;
-            }
-            if chain.contains(victim) {
-                continue;
-            }
-            let before = saved
-                .iter()
-                .find(|entry| entry.0 == *victim)
-                .map_or(0, |entry| entry.4);
-            if self.open_measure(*victim) <= before {
-                continue;
-            }
-            let Ok((mut inner, inner_victims)) =
-                self.displace(*victim, chain, order, settings, work)
-            else {
-                continue;
-            };
-            chain.push(*victim);
-            let deeper = self.push_on(
-                &inner_victims,
-                chain,
-                &mut inner,
-                depth - 1,
-                order,
-                settings,
-                work,
-            );
-            chain.pop();
-            if open_now(self, &inner) < open_saved(&inner) && clean(self, &inner) {
-                kept += 1 + deeper;
-                for entry in inner {
-                    if !saved.iter().any(|old| old.0 == entry.0) {
-                        saved.push(entry);
-                    }
-                }
-            } else {
-                self.restore_nets(inner);
-            }
-        }
-        kept
-    }
-
     /// Routes `net` at the settings' price through other copper, rips up
     /// the branches of the nets it then overlaps and routes those again
-    /// hard. Returns the nets changed as they were (`net` first) and the
-    /// victims; or, restored, why not.
+    /// hard. Returns the nets changed as they were (`net` first); or,
+    /// restored, why not.
     fn displace(
         &mut self,
         net: NetId,
-        protected: &[NetId],
         order: &[NetId],
         settings: TroubleSettings,
         work: &mut TroubleWork,
-    ) -> Result<(Vec<Saved>, Vec<NetId>), String> {
+    ) -> Result<Vec<Saved>, String> {
         let before_net = self.open_measure(net);
         let mut saved = vec![self.save_net(net)];
         self.nets[net as usize].hopeless_searches = 0;
@@ -643,12 +400,10 @@ impl Router {
                 "{} victims, more than allowed ({limit} for {before_net} open)",
                 victims.len()
             ))
-        } else if victims.iter().any(|victim| protected.contains(victim)) {
-            Some("it would displace the net the exchange is for".to_string())
         } else {
             victims
                 .iter()
-                .find(|victim| !settings.pours && !self.nets[**victim as usize].plane.is_empty())
+                .find(|victim| !self.nets[**victim as usize].plane.is_empty())
                 .map(|pour| {
                     format!(
                         "a pour net among the victims ({})",
@@ -676,9 +431,7 @@ impl Router {
                 .copied()
                 .filter(|other| !victims.contains(other))
                 .collect();
-            let refusal = if others.iter().any(|other| protected.contains(other)) {
-                Some("it would displace the net the exchange is for".to_string())
-            } else if victims.len() + fresh.len() > limit {
+            let refusal = if victims.len() + fresh.len() > limit {
                 Some(format!(
                     "{} victims with the one-sided conflicts, more than allowed ({limit} for {before_net} open)",
                     victims.len() + fresh.len()
@@ -686,7 +439,7 @@ impl Router {
             } else {
                 others
                     .iter()
-                    .find(|other| !settings.pours && !self.nets[**other as usize].plane.is_empty())
+                    .find(|other| !self.nets[**other as usize].plane.is_empty())
                     .map(|pour| {
                         format!(
                             "a pour net in its way ({})",
@@ -724,20 +477,20 @@ impl Router {
             }
         }
         let started = self.budget_work();
-        let routed = self.route_victims(net, &victims, &saved, settings, work);
+        let routed = self.route_victims(net, &victims, &saved, work);
         work.victims += self.budget_work() - started;
         if let Err(reason) = routed {
             work.early += 1;
             self.restore_nets(saved);
             return Err(reason);
         }
-        Ok((saved, victims))
+        Ok(saved)
     }
 
-    /// Routes the victims of `net`'s exchange again, hard, in their order;
-    /// with `settings.local` on their corridors first, then the victims
-    /// left with more open terminals than they had in their windows,
-    /// while that could still make the exchange pass. With `settings.early`, an error as soon as it
+    /// Routes the victims of `net`'s exchange again, hard, in their order,
+    /// on their corridors first, then the victims left with more open
+    /// terminals than they had in their windows, while that could still
+    /// make the exchange pass (a tie passes). An error as soon as it
     /// cannot pass (the victims not yet routed counted as closing all
     /// their terminals).
     fn route_victims(
@@ -745,52 +498,37 @@ impl Router {
         net: NetId,
         victims: &[NetId],
         saved: &[Saved],
-        settings: TroubleSettings,
         work: &mut TroubleWork,
     ) -> Result<(), String> {
         let before = open_saved(saved);
         // The most open terminals the exchange may end with.
-        let most = if settings.ties {
-            before
-        } else {
-            before.saturating_sub(1)
-        };
-        // The open measure of a pour net moves with other nets' copper.
-        let early = settings.early && !settings.pours;
+        let most = before;
         let before_of = |victim: NetId| {
             saved
                 .iter()
                 .find(|entry| entry.0 == victim)
                 .map_or(0, |entry| entry.4)
         };
-        let local = settings.local;
-        let mut floor = if early { self.open_measure(net) } else { 0 };
+        let mut floor = self.open_measure(net);
         for victim in victims {
             self.nets[*victim as usize].hopeless_searches = 0;
-            if local {
-                self.hard_scope = HardScope::Corridors;
-            }
+            self.hard_scope = HardScope::Corridors;
             self.route_net_seq(*victim, 0.0, true, 4.0);
             self.hard_scope = HardScope::Full;
             self.stamp(*victim);
             work.routed += 1;
-            if early {
-                // A victim routed keeps its terminals: the later ones are
-                // routed around it. One the second pass routes again may
-                // still close all of its own.
-                let open = self.open_measure(*victim);
-                if !local || open <= before_of(*victim) {
-                    floor += open;
-                }
-                if floor > most {
-                    return Err(format!(
-                        "undone early: at least {floor} open after, {before} before"
-                    ));
-                }
+            // A victim routed keeps its terminals: the later ones are
+            // routed around it. One the second pass routes again may still
+            // close all of its own.
+            let open = self.open_measure(*victim);
+            if open <= before_of(*victim) {
+                floor += open;
             }
-        }
-        if !local {
-            return Ok(());
+            if floor > most {
+                return Err(format!(
+                    "undone early: at least {floor} open after, {before} before"
+                ));
+            }
         }
         let retry: Vec<NetId> = victims
             .iter()
@@ -807,7 +545,7 @@ impl Router {
         for victim in &retry {
             // Even closing every open terminal of the victims still to
             // route again leaves too many open.
-            if early && now - left > most {
+            if now - left > most {
                 result = Err(format!(
                     "undone early: at least {} open after, {before} before",
                     now - left
@@ -1040,13 +778,8 @@ impl Router {
             // first, then in their windows those left more open, undone as
             // soon as the exchange cannot pass (ties allowed: the gain is
             // the length).
-            let settings = TroubleSettings {
-                ties: true,
-                pours: false,
-                ..TroubleSettings::from_env()
-            };
             let mut work = TroubleWork::default();
-            let routed = self.route_victims(net, &victims, &saved, settings, &mut work);
+            let routed = self.route_victims(net, &victims, &saved, &mut work);
             let kept = routed.is_ok()
                 && open_now(self, &saved) <= open_saved(&saved)
                 && clean(self, &saved)

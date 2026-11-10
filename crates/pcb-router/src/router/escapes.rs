@@ -6,13 +6,6 @@
 
 use super::*;
 
-/// `PCB_ROUTER_EXACT_ESCAPES` when set: overrides
-/// `Config::exact_escape_stubs` (`0` or empty off, anything else on).
-pub fn exact_escapes_override() -> Option<bool> {
-    let value = std::env::var("PCB_ROUTER_EXACT_ESCAPES").ok()?;
-    Some(!(value.is_empty() || value == "0"))
-}
-
 impl Router {
     /// Access for a pad too narrow to hold a lattice node: nearby legal
     /// nodes that a straight stub from the pad centre reaches without coming

@@ -87,7 +87,7 @@ impl Router {
             // probe and its continuation search what they searched before
             // (only a probe's limit binds inside an iteration: elsewhere
             // the limits stay between iterations).
-            let checkpoints = self.in_probe && self.iterations > 1 && limits_inside_iterations();
+            let checkpoints = self.in_probe && self.iterations > 1;
             let mut cut = None;
             for (index, batch) in batches.iter().enumerate() {
                 if checkpoints
@@ -547,12 +547,4 @@ pub(super) struct CutIteration {
     growth: f64,
     present: f32,
     pending: usize,
-}
-
-/// Whether a probe's work limit binds between a negotiation iteration's batches
-/// (not under `PCB_ROUTER_LIMITS_BETWEEN_ITERATIONS`: only after a whole
-/// iteration, as before 2026-10-22).
-fn limits_inside_iterations() -> bool {
-    static INSIDE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *INSIDE.get_or_init(|| std::env::var_os("PCB_ROUTER_LIMITS_BETWEEN_ITERATIONS").is_none())
 }

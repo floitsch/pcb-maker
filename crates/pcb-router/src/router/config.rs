@@ -96,7 +96,7 @@ pub struct Config {
     /// is short, and a pad KiCad also gives no spoke is no finding with or
     /// without it. The expansion intake: 22 of 85 new starved thermals on
     /// 40 boards were pads the model saw without a spoke and KiCad with
-    /// one (`PCB_ROUTER_NO_SPOKELESS_TRACKS` turns it off).
+    /// one.
     pub spokeless_tracks: bool,
     /// Terminals of a net that no path reaches from its tree (a board-wide
     /// search failed, `NetState::unreachable`) are joined among themselves
@@ -106,14 +106,12 @@ pub struct Config {
     /// halves share one GND and are joined only through a frame no track
     /// crosses: the right half's 20 GND pads stayed apart, also from each
     /// other (KiCad 20 unconnected items, the designer's own board 1).
-    /// `PCB_ROUTER_NO_APART_TREES` turns it off.
     pub apart_trees: bool,
     /// After the clean-up, a pad the spoke model finds starved whose
     /// failed spokes other nets' copper cuts (in the spoke's strip, or
     /// where its end's fill would be) has those nets routed again around
     /// the strips, kept when every net involved stays complete and the
-    /// pour nets' starved spokes go down (`free_lost_spokes`;
-    /// `PCB_ROUTER_NO_LOST_SPOKES` turns it off).
+    /// pour nets' starved spokes go down (`free_lost_spokes`).
     pub lost_spoke_repair: bool,
     /// After the hard repair, each net still open (pour nets aside), most
     /// open first, is routed through other nets' copper at a price; the
@@ -121,8 +119,7 @@ pub struct Config {
     /// again hard, and the exchange is kept when the open terminals of
     /// all of them together drop; not in a layout's move trial
     /// (`repair_trouble`, router/trouble.rs;
-    /// docs/experiments/human-level-routing.md). `PCB_ROUTER_TROUBLE`
-    /// overrides it (`0` off, `1` on).
+    /// docs/experiments/human-level-routing.md).
     pub trouble_repair: bool,
     /// The clean-up keeps a change only if no pour net has more pads off
     /// its main piece after it.
@@ -184,7 +181,6 @@ pub struct Config {
     /// (`Router::neck_joined`). Off while routing (the default), so routes
     /// stay as they were: on, the in-route repairs see it too and routes
     /// move (docs/router.md, "Thermal vias, custom pads and necks").
-    /// `PCB_ROUTER_MEASURED_THERMALS=1` turns it on everywhere.
     pub measured_thermals: bool,
     /// The thermal spokes KiCad's DRC wants a pad to have into each zone
     /// (the board setup's `min_resolved_spokes`, KiCad's default 2; 0
@@ -211,11 +207,9 @@ pub struct Config {
     /// `bend_round_cost` and keep the reroute only if the net stays
     /// complete, has no via more, is at most `bend_round_length` longer
     /// and has fewer jogs and staircases (`bends.rs`, the bend round; part
-    /// of the clean-up: not in a trial without one). On;
-    /// `PCB_ROUTER_NO_BEND_ROUND` turns it off (a diagnostic, for A/B).
+    /// of the clean-up: not in a trial without one). On.
     pub bend_round: bool,
-    /// The bend cost of the bend round's searches (mm per 45 degrees;
-    /// `PCB_ROUTER_BEND_ROUND_COST` sets it, a diagnostic).
+    /// The bend cost of the bend round's searches (mm per 45 degrees).
     pub bend_round_cost: f64,
     /// The bend round's work at most, as a share of the route's work
     /// before it.
@@ -320,8 +314,7 @@ pub struct Config {
     /// twice per gap it crosses (the gaps over 1.5 mm, `cleanup_only`, in
     /// the clean-up's searches and comparisons only, docs/router.md,
     /// "Pin-row gaps and compaction in the clean-up (2026-11-06)"). 0
-    /// turns it off (no gap marks built);
-    /// `PCB_ROUTER_PIN_ROW_COST` sets it (default 2: from 3 mm on the
+    /// turns it off (no gap marks built; default 2: from 3 mm on the
     /// expansion tier loses to the thermal guards, docs/router.md).
     pub pin_row_cost: f64,
     /// A negotiation that has not converged after this many seconds is
@@ -395,7 +388,7 @@ pub struct Config {
     pub layer_preferences:
         Option<std::sync::Arc<std::collections::BTreeMap<String, crate::board::LayerMask>>>,
     /// The factor on a step off a net's preferred layers
-    /// (`layer_preferences`; `PCB_ROUTER_LAYER_PREFERENCE_COST`).
+    /// (`layer_preferences`).
     pub layer_preference_cost: f64,
 }
 
@@ -423,20 +416,19 @@ impl Default for Config {
             spoke_clearance: true,
             kicad_spokes: true,
             manual_spokes: true,
-            spokeless_tracks: std::env::var_os("PCB_ROUTER_NO_SPOKELESS_TRACKS").is_none(),
-            apart_trees: std::env::var_os("PCB_ROUTER_NO_APART_TREES").is_none(),
-            lost_spoke_repair: std::env::var_os("PCB_ROUTER_NO_LOST_SPOKES").is_none(),
-            trouble_repair: super::trouble::trouble_override()
-                .unwrap_or(super::trouble::TROUBLE_REPAIR_DEFAULT),
+            spokeless_tracks: true,
+            apart_trees: true,
+            lost_spoke_repair: true,
+            trouble_repair: super::trouble::TROUBLE_REPAIR_DEFAULT,
             pour_aware_polish: true,
             pour_aware_via_reduction: true,
             pour_whole_rip_up: true,
             escape_stub_mm: 0.0,
-            exact_escape_stubs: super::escapes::exact_escapes_override().unwrap_or(true),
+            exact_escape_stubs: true,
             corridor_escapes: super::corridors::corridor_escapes_override().unwrap_or(true),
             pin_lines: crate::pin_lines::lines_override().unwrap_or(crate::pin_lines::Lines::Off),
             min_spokes: 2,
-            measured_thermals: std::env::var_os("PCB_ROUTER_MEASURED_THERMALS").is_some(),
+            measured_thermals: false,
             global_routing: false,
             neck_reach: 1.5,
             fixed_plane_stubs: false,
@@ -445,12 +437,9 @@ impl Default for Config {
             max_iterations: 80,
             window_margin: 10.0,
             cleanup_passes: 4,
-            straighten: std::env::var_os("PCB_ROUTER_NO_STRAIGHTEN").is_none(),
-            bend_round: std::env::var_os("PCB_ROUTER_NO_BEND_ROUND").is_none(),
-            bend_round_cost: std::env::var("PCB_ROUTER_BEND_ROUND_COST")
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(1.0),
+            straighten: true,
+            bend_round: true,
+            bend_round_cost: 1.0,
             bend_round_share: 0.05,
             bend_round_length: 0.01,
             bus_bundles: std::env::var_os("PCB_ROUTER_BUS_BUNDLES").is_some(),
@@ -474,10 +463,7 @@ impl Default for Config {
             via_reduction_keeps_spokes: false,
             cleanup_seconds: 180.0,
             thermal_guard_cost: 10.0,
-            pin_row_cost: std::env::var("PCB_ROUTER_PIN_ROW_COST")
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(2.0),
+            pin_row_cost: 2.0,
             negotiation_seconds: 900.0,
             negotiation_expansions: 0,
             plane_cut_cost: 3.0,
@@ -493,16 +479,9 @@ impl Default for Config {
             share_static_maps: true,
             limits_count_all: false,
             length_bounded: None,
-            length_repair_present: std::env::var("PCB_ROUTER_LENGTH_REPAIR_PRESENT")
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(2.0),
+            length_repair_present: 2.0,
             layer_preferences: None,
-            layer_preference_cost: std::env::var("PCB_ROUTER_LAYER_PREFERENCE_COST")
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .filter(|cost: &f64| *cost >= 1.0)
-                .unwrap_or(LAYER_PREFERENCE_COST),
+            layer_preference_cost: LAYER_PREFERENCE_COST,
         }
     }
 }

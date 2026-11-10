@@ -91,7 +91,6 @@ fn binary(threads: usize) -> Command {
         "PCB_ROUTER_FINGERPRINT_ALL",
         "PCB_ROUTER_SEED",
         "PCB_ROUTER_SEEDS",
-        "PCB_ROUTER_NO_SHARED_STATICS",
         "PCB_KICAD_NO_NECK_REPAIR",
         "PCB_ROUTER_SPOKE_DEBUG",
         "PCB_PLACER_CHECK_OVERLAP",

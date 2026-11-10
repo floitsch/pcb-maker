@@ -74,14 +74,13 @@ pub use build::{
 pub use coarse::{ParkedRouter, RipUpSaved};
 pub use config::Config;
 pub use corridors::corridor_escapes_override;
-pub use escapes::exact_escapes_override;
 pub use give_up::{GiveUpRule, NO_PATH, NO_ROOM, ReleasedNet};
 pub use pad_exits::{ClosedPad, ExitBlocker, ExitProbe, ProbeCounts, label_part, work_nanos};
 pub use pour_report::{PourLayerReport, StarvedThermal};
 pub use profile::{ProcessAccounting, build_totals, process_accounting};
 pub use result::{DeadPad, Diagnostics, HotSpot, NetStatus, RepairEntry, RoutingResult};
 pub use subset::{SubsetNet, SubsetStanding};
-pub use trouble::{TROUBLE_REPAIR_DEFAULT, trouble_override};
+pub use trouble::TROUBLE_REPAIR_DEFAULT;
 pub use wall::{WALL_CUTS, note_wall_cut, wall_cuts, wall_guard};
 
 use hash::*;

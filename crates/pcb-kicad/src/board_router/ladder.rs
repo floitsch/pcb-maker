@@ -455,20 +455,9 @@ pub(crate) const LEADER_GATE_FACTOR: usize = 2;
 
 /// Whether the ladder puts its leader first (`Ladder::leader_ladder`):
 /// route mode (a layout's ladder keeps its order) on a board of two rungs
-/// or more, unless the setting (`leader_first`) or the environment
-/// (`PCB_LADDER_LEADER_FIRST`, 0 or 1, which wins) turns it off.
-pub(crate) fn leader_first_applies(
-    setting: Option<bool>,
-    environment: Option<&str>,
-    route_mode: bool,
-    rungs: usize,
-) -> bool {
-    let wanted = match environment.map(str::trim) {
-        Some("0") | Some("") => false,
-        Some(_) => true,
-        None => setting.unwrap_or(true),
-    };
-    wanted && route_mode && rungs >= 2
+/// or more, unless the setting (`leader_first`) turns it off.
+pub(crate) fn leader_first_applies(setting: Option<bool>, route_mode: bool, rungs: usize) -> bool {
+    setting.unwrap_or(true) && route_mode && rungs >= 2
 }
 
 /// Whether a rung whose probe (or regular attempt) left `count` unfinished
@@ -523,13 +512,10 @@ fn work_of(expansions: u64) -> f64 {
 }
 
 /// An attempt's work beyond its search as the ladder counts it
-/// (`Ladder::extra_charge`): all of it (`charges_all`), its manual spokes
-/// (`charges_spokes`), or none.
-fn beyond_search(result: &KiCadBoardRouterResult, charges_all: bool, charges_spokes: bool) -> f64 {
+/// (`Ladder::extra_charge`): all of it (`charges_all`), or none.
+fn beyond_search(result: &KiCadBoardRouterResult, charges_all: bool) -> f64 {
     if charges_all {
         result.pour_work_seconds + result.build_work_seconds + result.lowering_work_seconds
-    } else if charges_spokes {
-        result.manual_spokes_work_seconds
     } else {
         0.0
     }
@@ -624,20 +610,12 @@ pub(crate) struct Ladder<'a> {
     reserve_set: bool,
     /// What the ladder's first attempt negotiated (its budget, in work).
     first_negotiation: f64,
-    /// Route mode: whether an attempt's manual spokes count in the
-    /// ladder's work beside its search (`result_work`; not under
-    /// `PCB_LADDER_SEARCH_ONLY`, the count before 2026-10-21, which counts
-    /// nothing but the search).
-    charges_spokes: bool,
     /// Route mode: whether all of an attempt's work counts (`result_work`:
     /// its search, every pour analysis and fill probe, its lattice's build
-    /// and its board's lowering; not under `PCB_LADDER_UNCHARGED_POUR`,
-    /// the count before, search and manual spokes).
+    /// and its board's lowering), and a share of the bound becomes a
+    /// router's limits in search work by the routers' share of search so
+    /// far (`search_fraction`).
     charges_all: bool,
-    /// Route mode, all work charged: whether a share of the bound becomes
-    /// a router's limits in search work by the routers' share of search so
-    /// far (`search_fraction`; not under `PCB_LADDER_SEARCH_SHARES`).
-    converts_shares: bool,
     /// The ladder's work by kind (`work` is their sum).
     pub(crate) charged: KiCadWorkCharges,
     /// The shared parts of builds charged in this phase (`new_phase`), as
@@ -649,8 +627,7 @@ pub(crate) struct Ladder<'a> {
     carried: Vec<(Option<u128>, Box<dyn std::any::Any + Send>)>,
     /// Route mode: the work of the ladder's first attempt up to the end of
     /// its first negotiation iteration (0: none yet), which a fresh router
-    /// does whatever its work deadline: no step starts with less left
-    /// (not under `PCB_LADDER_NO_FIRST_ITERATION_GATE`).
+    /// does whatever its work deadline: no step starts with less left.
     first_iteration: f64,
     /// What the last attempt took, in work, and its pitch (0: none yet).
     last_attempt_work: f64,
@@ -835,15 +812,7 @@ impl<'a> Ladder<'a> {
             }),
             reserve_set: false,
             first_negotiation: 0.0,
-            charges_spokes: work_bound.is_some()
-                && std::env::var_os("PCB_LADDER_SEARCH_ONLY").is_none(),
-            charges_all: work_bound.is_some()
-                && std::env::var_os("PCB_LADDER_SEARCH_ONLY").is_none()
-                && std::env::var_os("PCB_LADDER_UNCHARGED_POUR").is_none(),
-            converts_shares: work_bound.is_some()
-                && std::env::var_os("PCB_LADDER_SEARCH_ONLY").is_none()
-                && std::env::var_os("PCB_LADDER_UNCHARGED_POUR").is_none()
-                && std::env::var_os("PCB_LADDER_SEARCH_SHARES").is_none(),
+            charges_all: work_bound.is_some(),
             charged: KiCadWorkCharges::default(),
             paid: Vec::new(),
             carried: Vec::new(),
@@ -880,7 +849,6 @@ impl<'a> Ladder<'a> {
         };
         ladder.leader_first = leader_first_applies(
             config.leader_first,
-            std::env::var("PCB_LADDER_LEADER_FIRST").ok().as_deref(),
             work_bound.is_some(),
             ladder.modes.len(),
         );
@@ -1055,13 +1023,9 @@ impl<'a> Ladder<'a> {
     /// lattice's build and its board's lowering, each modelled from what
     /// it counted (`charges_all`, since 2026-10-21: brickpico's via
     /// reduction did 8.5 s of pour work beside 25 s of search, ChengminLi
-    /// built 15 lattices in 40 thread seconds); under
-    /// `PCB_LADDER_UNCHARGED_POUR` its manual spokes alone (pour analyses
-    /// and fill probes after the negotiation, which no work deadline
-    /// ends: Vortac's panel spent 30 s of them in every attempt beside 5 s
-    /// of search, and the wall guard cut every run).
+    /// built 15 lattices in 40 thread seconds).
     fn extra_charge(&self, result: &KiCadBoardRouterResult) -> f64 {
-        beyond_search(result, self.charges_all, self.charges_spokes)
+        beyond_search(result, self.charges_all)
     }
 
     /// Counts work of each kind in the ladder's (`charged`, `work`).
@@ -1149,7 +1113,7 @@ impl<'a> Ladder<'a> {
     /// Route mode, all work charged: the share of the routers' work so far
     /// that was search (`search_fraction`), 1 otherwise.
     fn search_share(&self) -> f64 {
-        if self.converts_shares {
+        if self.charges_all {
             let charged = &self.charged;
             search_fraction(
                 charged.search_seconds,
@@ -1164,7 +1128,7 @@ impl<'a> Ladder<'a> {
     /// charged) as a router's limit in its search work: the router stops
     /// on its search alone, and its pour analyses and build come on top
     /// in the proportion they had so far. Unchanged before the first
-    /// search, in a layout's ladder and under `PCB_LADDER_SEARCH_SHARES`.
+    /// search and in a layout's ladder.
     fn router_work(&self, charged: f64) -> f64 {
         charged * self.search_share()
     }
@@ -1174,11 +1138,9 @@ impl<'a> Ladder<'a> {
     /// top of its search, only its pour analyses, in the proportion its
     /// own probe had (the leading rung's: a rung routing its pours as
     /// tracks has none to speak of where the connected rungs beside it
-    /// had a third of their work; Vortac). `PCB_LADDER_CONTINUATION_LATTICE`
-    /// takes the proportion of all the routers' work, lattices included,
-    /// as the fresh routers do (the rule before).
+    /// had a third of their work; Vortac).
     fn built_router_work(&self, charged: f64, own: &RouterWork) -> f64 {
-        if self.converts_shares && std::env::var_os("PCB_LADDER_CONTINUATION_LATTICE").is_none() {
+        if self.charges_all {
             let search = work_of(own.expansions);
             charged * search_fraction(search, search + own.pour)
         } else {
@@ -1199,7 +1161,7 @@ impl<'a> Ladder<'a> {
         negotiation: Option<f64>,
         fraction: f64,
     ) {
-        if self.converts_shares {
+        if self.charges_all {
             eprintln!(
                 "ladder: {what}: work deadline {}, negotiation {} (search work, {fraction:.3} of the routers' work so far)",
                 deadline.map_or("none".to_string(), |deadline| format!("{deadline:.2} s")),
@@ -1212,16 +1174,10 @@ impl<'a> Ladder<'a> {
     /// iteration (`first_iteration`): its search and, with all work
     /// charged, its lattice's build and its board's lowering before it.
     fn note_first_iteration(&mut self, result: &KiCadBoardRouterResult) {
-        if self.work_bound.is_some()
-            && self.first_iteration == 0.0
-            && std::env::var_os("PCB_LADDER_NO_FIRST_ITERATION_GATE").is_none()
-        {
+        if self.work_bound.is_some() && self.first_iteration == 0.0 {
             self.first_iteration = work_of(result.first_iteration_expansions)
-                + if self.charges_all {
-                    result.build_work_seconds + result.lowering_work_seconds
-                } else {
-                    0.0
-                };
+                + result.build_work_seconds
+                + result.lowering_work_seconds;
         }
     }
 
@@ -1593,8 +1549,6 @@ impl<'a> Ladder<'a> {
         runner: &R,
         leader: (usize, usize, R::Probe, R::Board, KiCadBoardRouterConfig),
         probe_work: f64,
-        counts_all: bool,
-        probes_count: f64,
     ) -> (usize, usize, R::Probe, R::Board, KiCadBoardRouterConfig) {
         // A layout's final ladder (its work deadline) decides at its probes
         // too, where the layout's race left the lines to it
@@ -1665,14 +1619,7 @@ impl<'a> Ladder<'a> {
             if panics {
                 test_panic("probe");
             }
-            let limit = if counts_all {
-                let work = runner.work(&lines_router);
-                let shared = work.shared.total();
-                (probe_work - (work.build - shared) - shared / probes_count).max(0.01)
-            } else {
-                probe_work
-            };
-            let lines_unfinished = runner.probe(&mut lines_router, limit, mode);
+            let lines_unfinished = runner.probe(&mut lines_router, probe_work, mode);
             (lines_unfinished, lines_router)
         });
         let Some((lines_unfinished, mut lines_router)) = self.survived(&name, probed) else {
@@ -1808,13 +1755,9 @@ impl<'a> Ladder<'a> {
         }
         // The probes' limits stay search work (the same for every probe:
         // the ranking compares equal search): with their pour work and
-        // lattice out of their shares (`PCB_LADDER_PROBES_COUNT_ALL`,
-        // x1391) the probes stopped an iteration earlier and two leaders
-        // changed on the expansion tier (ducktop2's for the worse, 1 to 7
-        // open).
-        let counts_all = !rungs.is_empty()
-            && self.limits_count_all()
-            && std::env::var_os("PCB_LADDER_PROBES_COUNT_ALL").is_some();
+        // lattice out of their shares (x1391) the probes stopped an
+        // iteration earlier and two leaders changed on the expansion tier
+        // (ducktop2's for the worse, 1 to 7 open).
         // The rungs' static maps, held in rung order once the first
         // probe's router passed the memory gate (before 2026-10-21 before
         // it, and their build charged whether the probes then ran or not):
@@ -1822,9 +1765,8 @@ impl<'a> Ladder<'a> {
         // its own maps and the shared parts of its build the first time
         // their key is charged (`lattice_charge`).
         let mut held: Vec<(Option<u128>, R::Hold)> = Vec::new();
-        let probes_count = rungs.len().max(1) as f64;
         for (_, _, attempt) in &mut rungs {
-            attempt.limits_count_all = counts_all;
+            attempt.limits_count_all = false;
         }
         // The probes run side by side, each a router of its own: as many
         // at once as fit half the memory available (the first router
@@ -1943,18 +1885,7 @@ impl<'a> Ladder<'a> {
                                     if panics {
                                         test_panic("probe");
                                     }
-                                    // Counting all its work, a probe's
-                                    // own maps and its part of the shared
-                                    // ones come out of its share.
-                                    let limit = if counts_all {
-                                        let work = runner.work(&router);
-                                        let shared = work.shared.total();
-                                        (probe_work - (work.build - shared) - shared / probes_count)
-                                            .max(0.01)
-                                    } else {
-                                        probe_work
-                                    };
-                                    let unfinished = runner.probe(&mut router, limit, *mode);
+                                    let unfinished = runner.probe(&mut router, probe_work, *mode);
                                     (
                                         *mode,
                                         unfinished,
@@ -2037,8 +1968,7 @@ impl<'a> Ladder<'a> {
         // from here, the leader's continuation takes what it needs again.
         let idle = core::router::release_idle_search_arrays();
         crate::mem_profile::note("the probes' idle search arrays freed:", idle);
-        let leader = leader
-            .map(|leader| self.lines_probe(runner, leader, probe_work, counts_all, probes_count));
+        let leader = leader.map(|leader| self.lines_probe(runner, leader, probe_work));
         if let Some((_, mode, router, board, mut attempt)) = leader {
             // The continuation and the attempts that vary it count their
             // search (the ladder's shares by the proportion of search).
@@ -2538,13 +2468,9 @@ impl<'a> Ladder<'a> {
     /// share each) stop on their search, pour analyses and lattice
     /// together, not on their search with the rest on top (musicbrain's
     /// first attempt: 34 s of search and 8.4 s of pour work on a bound of
-    /// 31.5 s). Not under `PCB_LADDER_SEARCH_LIMITS` (the limits before).
+    /// 31.5 s).
     fn limits_count_all(&self) -> bool {
-        self.work_bound.is_some()
-            && self.charges_all
-            && self.converts_shares
-            && self.charged.search_seconds == 0.0
-            && std::env::var_os("PCB_LADDER_SEARCH_LIMITS").is_none()
+        self.charges_all && self.charged.search_seconds == 0.0
     }
 
     /// Where rung `mode`'s attempt routes.
@@ -3385,10 +3311,9 @@ impl<'a> Ladder<'a> {
     }
 
     /// Route mode: whether `left` covers a step's realistic cost
-    /// (`step_cost_fits`; always under `PCB_LADDER_NO_STEP_COST_GATE`).
+    /// (`step_cost_fits`).
     fn step_cost_fits(&self, left: f64) -> bool {
-        std::env::var_os("PCB_LADDER_NO_STEP_COST_GATE").is_some()
-            || step_cost_fits(left, self.first_attempt_work)
+        step_cost_fits(left, self.first_attempt_work)
     }
 
     /// Whether the best board is still open (and a best attempt is known).
@@ -3469,7 +3394,7 @@ impl<'a> Ladder<'a> {
                 }
                 narrow_step_relaxed = true;
             }
-            let (charges_all, charges_spokes) = (self.charges_all, self.charges_spokes);
+            let charges_all = self.charges_all;
             let line = format!(
                 "attempt with signals at {narrow} mm{}",
                 config
@@ -3489,8 +3414,7 @@ impl<'a> Ladder<'a> {
                         opens.1,
                         result.vias,
                         result.routing_seconds,
-                        work_of(result.expansions)
-                            + beyond_search(result, charges_all, charges_spokes)
+                        work_of(result.expansions) + beyond_search(result, charges_all)
                     )
                 },
                 true,

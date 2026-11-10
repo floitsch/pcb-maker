@@ -861,9 +861,7 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     // and skew rules"): the meanders lengthen a net, this shortens one.
     router_config.length_bounded = length_bounded_nets(config);
     core_layer_preferences(config, &mut router_config);
-    if let Some(exact) = config.exact_escape_stubs
-        && core::router::exact_escapes_override().is_none()
-    {
+    if let Some(exact) = config.exact_escape_stubs {
         router_config.exact_escape_stubs = exact;
     }
     if let Some(pin_lines) = config.pin_lines
@@ -881,9 +879,7 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     if let Some(minimum) = config.min_resolved_spokes {
         router_config.min_spokes = minimum;
     }
-    if let Some(repair) = config.trouble_repair
-        && core::router::trouble_override().is_none()
-    {
+    if let Some(repair) = config.trouble_repair {
         router_config.trouble_repair = repair;
     }
     if let Some(cost) = config.thermal_guard_cost {
