@@ -218,7 +218,7 @@ pub(crate) fn measured_factory(
         let mut state: Option<(
             router::Board,
             pcb_global::Incremental,
-            Vec<crate::move_descent::PartCopper>,
+            Vec<crate::part_motion::PartCopper>,
             Vec<core::Pose>,
         )> = None;
         Box::new(move |poses: &[core::Pose]| {
@@ -231,7 +231,7 @@ pub(crate) fn measured_factory(
                     work = WORK_PER_OBSTACLE * board.obstacles.len() as u64
                         + WORK_PER_CAPACITY_TEST * global.capacity_tests
                         + WORK_PER_POP * global.pops;
-                    let copper = crate::move_descent::part_copper(&board, &index, components);
+                    let copper = crate::part_motion::part_copper(&board, &index, components);
                     state = Some((board, global, copper, poses.to_vec()));
                 }
                 Some((board, global, copper, last)) => {
@@ -244,8 +244,8 @@ pub(crate) fn measured_factory(
                     if moved.is_empty() {
                         work = 0;
                     } else {
-                        let (_, _, area, nets) =
-                            crate::move_descent::apply(board, copper, last, poses, &moved);
+                        let (area, nets) =
+                            crate::part_motion::apply(board, copper, last, poses, &moved);
                         let next = global.moved(board, area, &nets);
                         work = WORK_PER_CAPACITY_TEST
                             * (next.capacity_tests - global.capacity_tests)

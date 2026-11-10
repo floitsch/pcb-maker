@@ -98,22 +98,17 @@ impl Router {
             })
             .collect();
         self.repair_skipped.clear();
-        if !self.skip_resolve {
-            self.resolve_remaining(order);
-        }
+        self.resolve_remaining(order);
         self.repair_entries = entries;
         if super::negotiate::link_trace() {
             self.trace_links(order, "repaired");
         }
         for entry in &mut self.repair_entries {
-            entry.skipped = if self.skip_resolve {
-                "not_run"
-            } else {
-                self.repair_skipped
-                    .iter()
-                    .find(|(net, _)| *net == entry.net)
-                    .map_or("", |(_, why)| why)
-            };
+            entry.skipped = self
+                .repair_skipped
+                .iter()
+                .find(|(net, _)| *net == entry.net)
+                .map_or("", |(_, why)| why);
         }
         // Not in a layout's move trial (`reroute` without the polish):
         // OpenFC's layout on the short tier, with the repair in every

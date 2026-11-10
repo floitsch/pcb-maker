@@ -42,9 +42,6 @@ pub struct Config {
     /// track plus clearance) the net routes at the board's neck width: the
     /// fan-out of a fine-pitch part. 0 turns it off.
     pub neck_reach: f64,
-    /// Plan every net on the tile graph first and confine its lattice
-    /// search to that plan's corridor; conflicts teach the plan.
-    pub global_routing: bool,
     /// Iterations without fewer conflicted nets that negotiation waits
     /// once the price of sharing is at its cap.
     pub stall_at_cap: usize,
@@ -129,13 +126,6 @@ pub struct Config {
     /// Whether a pour net stuck in conflict is ripped up whole now and
     /// then like the other nets (`rip_up_whole`).
     pub pour_whole_rip_up: bool,
-    /// Fine-pitch pads (narrower than the track plus its clearance, on one
-    /// layer, in a row of their kind) get a straight stub outward fixed
-    /// before negotiation, up to this long in mm (0, the default, turns it
-    /// off). The stubs keep every pad's only way out open: nothing else
-    /// may run along the row inside the escape zone. Tried on Tiny Tapeout
-    /// (82/108 either way) and ColdFire (205 vs 208 of 209): no gain yet.
-    pub escape_stub_mm: f64,
     /// Escape stubs (a pad too narrow for a lattice node leaves by a stub
     /// from its centre) stamp exactly: one along a lattice line as a run
     /// of lattice nodes, an oblique or bent one by its measured footprint
@@ -215,17 +205,6 @@ pub struct Config {
     pub bend_round_share: f64,
     /// The share of a net's length the bend round may add to it.
     pub bend_round_length: f64,
-    /// Route buses as bundles (an experiment, off;
-    /// docs/architecture.md, "Off by default, still in the code"): four or
-    /// more nets joining the same footprints route first, in pad order,
-    /// inside one corridor planned for the bus's width, side by side; a
-    /// member that cannot follow routes as any other net.
-    /// `PCB_ROUTER_BUS_BUNDLES` turns it on.
-    pub bus_bundles: bool,
-    /// With `bus_bundles`: the factor on a bus member's trace step that
-    /// does not lie beside a neighbouring member's copper
-    /// (`PCB_ROUTER_BUS_LANE`, 1.5).
-    pub bus_lane_cost: f64,
     /// Via cost while cleaning up. The existing route is always a fallback
     /// there, so a high value removes vias without risking completion.
     pub cleanup_via_cost: f64,
@@ -424,13 +403,11 @@ impl Default for Config {
             pour_aware_polish: true,
             pour_aware_via_reduction: true,
             pour_whole_rip_up: true,
-            escape_stub_mm: 0.0,
             exact_escape_stubs: true,
             corridor_escapes: super::corridors::corridor_escapes_override().unwrap_or(true),
             pin_lines: crate::pin_lines::lines_override().unwrap_or(crate::pin_lines::Lines::Off),
             min_spokes: 2,
             measured_thermals: false,
-            global_routing: false,
             neck_reach: 1.5,
             fixed_plane_stubs: false,
             exclusive_planes: false,
@@ -443,11 +420,6 @@ impl Default for Config {
             bend_round_cost: 1.0,
             bend_round_share: 0.05,
             bend_round_length: 0.01,
-            bus_bundles: std::env::var_os("PCB_ROUTER_BUS_BUNDLES").is_some(),
-            bus_lane_cost: std::env::var("PCB_ROUTER_BUS_LANE")
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(1.5),
             cleanup_via_cost: 25.0,
             plane_via_cost: 2.0,
             corridors: true,

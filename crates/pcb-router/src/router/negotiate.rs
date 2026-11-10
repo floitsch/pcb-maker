@@ -144,14 +144,6 @@ impl Router {
                 stop = "conflict_free";
                 break;
             }
-            // The plan did not survive the lattice where nets conflict:
-            // those tiles lose room on the graph and the nets are planned
-            // again around them.
-            if self.global.is_some() && iteration % 2 == 1 {
-                let replan_started = std::time::Instant::now();
-                self.replan(&conflicted);
-                self.profile.replan += replan_started.elapsed().as_secs_f64();
-            }
             if std::env::var_os("PCB_ROUTER_DEBUG").is_some() && iteration % 10 == 9 {
                 // The most contested tiles: where history piled up.
                 let mut tiles: Vec<(f32, usize, usize)> = Vec::new();
@@ -301,8 +293,8 @@ impl Router {
     }
 
     /// Routes the rest of the iteration a probe's limit cut and ends it
-    /// as that iteration would have ended (`end_iteration`, the replan,
-    /// the price of sharing grown), so that a resumed probe goes on as one
+    /// as that iteration would have ended (`end_iteration`, the price
+    /// of sharing grown), so that a resumed probe goes on as one
     /// that stopped after that iteration. Nothing without a cut.
     pub(super) fn finish_cut_iteration(&mut self, order: &[NetId]) {
         let Some(cut) = self.cut_iteration.take() else {
@@ -319,11 +311,6 @@ impl Router {
             self.give_up_round(order, &mut conflicted, cut.present);
         }
         if !conflicted.is_empty() {
-            if self.global.is_some() && cut.iteration % 2 == 1 {
-                let replan_started = std::time::Instant::now();
-                self.replan(&conflicted);
-                self.profile.replan += replan_started.elapsed().as_secs_f64();
-            }
             self.present_reached = (cut.present * self.config.present_growth as f32)
                 .min(self.config.present_cap as f32);
         }

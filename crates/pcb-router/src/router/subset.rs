@@ -178,7 +178,6 @@ impl Router {
     /// the board is whatever `stamp_background_stubs` or
     /// `add_background_cost` put there before.
     pub fn probe_subset(&mut self, subset: &[NetId], seconds: f64) -> SubsetStanding {
-        self.ensure_buses();
         let mut in_set = vec![false; self.nets.len()];
         for net in subset {
             if (*net as usize) < in_set.len() {
@@ -191,7 +190,6 @@ impl Router {
             .filter(|net| in_set[*net as usize])
             .collect();
         let started = std::time::Instant::now();
-        self.fix_escapes(&order);
         self.route_skeletons(&order);
         self.fix_plane_stubs(&order);
         self.profile.prepare += started.elapsed().as_secs_f64();

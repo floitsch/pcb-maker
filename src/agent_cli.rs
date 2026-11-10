@@ -1038,17 +1038,9 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         .map_err(Failure::Internal)?;
     facts.constraints_missed = missed_constraints(&result.constraints);
     facts.board_mark_overlaps = result.labels.overlaps.clone();
-    facts.moves = result
-        .move_descent
-        .as_ref()
-        .map(pcb_kicad::KiCadMoveDescentReport::fact);
     // Nothing ran after the first route: no move, no final ladder, nothing
     // stopped or cut it (trial 5's SmartSpin2k: the verdict said neither).
     facts.first_route_only = result.moves.is_empty()
-        && result
-            .move_descent
-            .as_ref()
-            .is_none_or(|descent| descent.trials == 0)
         && result.final_ladder_budget_seconds.is_none()
         && !result.stopped_after_first_route
         && result.cut.is_empty();

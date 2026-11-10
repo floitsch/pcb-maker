@@ -1,8 +1,8 @@
 // Copyright (C) 2026 Toit contributors.
 
-//! After the first route: whether the moves run at all, the move descent
-//! (an experiment) and the footprint moves where nets fought, each a
-//! reroute in place, kept when the board improves.
+//! After the first route: whether the moves run at all and the footprint
+//! moves where nets fought, each a reroute in place, kept when the board
+//! improves.
 
 use super::candidates::Kept;
 use super::placement::Copper;
@@ -112,58 +112,6 @@ pub(super) fn judge_first_route(
         many_open: many_open || far_open,
         narrow_applies,
     }
-}
-
-/// The move descent (an experiment, docs/architecture.md, "Off by default, still in the code"):
-/// cheap trials, so it runs also where the moves below do not; where it
-/// keeps moves, the router's routes as they stand are the result. Hands
-/// on its report where it ran.
-pub(super) fn descend(
-    ctx: &LayoutContext,
-    ledger: &mut WorkLedger,
-    kept: &mut Kept,
-    routing: &mut Routing,
-    copper: &Copper,
-) -> Result<Option<crate::move_descent::KiCadMoveDescentReport>, String> {
-    let config = ctx.config;
-    let Some(descent) = crate::move_descent::descent_config(config.move_descent.as_ref()) else {
-        return Ok(None);
-    };
-    if !(routing.best.0 > 0 && !routing.router.past_deadline() && ctx.stop.allows(LayoutStep::Move))
-    {
-        return Ok(None);
-    }
-    let moves_budget = config
-        .move_seconds
-        .min((0.65 * config.total_seconds - ledger.work).max(0.0));
-    let budget = descent.trial_share * moves_budget;
-    ctx.arm(&mut routing.router, ledger.clock());
-    let pool_excess = ledger.pool_excess;
-    let report = crate::move_descent::descend(
-        crate::move_descent::DescentState {
-            pcb: &mut kept.pcb,
-            board: &mut kept.board,
-            problem: &mut kept.problem,
-            router: &mut routing.router,
-            work: &mut ledger.work,
-        },
-        &descent,
-        budget,
-        &ctx.router_config,
-        copper.connect,
-        config.placer.keep_board_marks,
-        &|router, work| ctx.arm(router, work + pool_excess),
-        &|| ctx.stop.allows(LayoutStep::Move),
-    )?;
-    if report.kept > 0 {
-        routing.result = routing.router.finish_as_is();
-        routing.best = score(&routing.result, &kept.board);
-        eprintln!(
-            "layout: the move descent kept {} moves: {} open (the router's count {})",
-            report.kept, routing.best.0, report.open_after
-        );
-    }
-    Ok(Some(report))
 }
 
 /// The footprint moves where nets fought (`moves` trials, none with

@@ -94,8 +94,7 @@ pub struct RepairEntry {
     /// Why the repair did not search for it again, if it did not:
     /// `hopeless` (the attempt was judged hopeless: no hard repair),
     /// `work_deadline` (the attempt's work deadline had passed), `budget`
-    /// (the repair's own budget ran out), `not_run` (the router runs no
-    /// repair here); empty where it searched.
+    /// (the repair's own budget ran out); empty where it searched.
     pub skipped: &'static str,
 }
 

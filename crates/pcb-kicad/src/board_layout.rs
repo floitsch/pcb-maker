@@ -102,13 +102,6 @@ pub struct KiCadBoardLayoutConfig {
     /// The footprints' Reference and Value fields on the silkscreen, placed
     /// after routing where KiCad's silkscreen checks find nothing.
     pub silkscreen: KiCadSilkscreenConfig,
-    /// The move descent after the first route (an experiment, off when
-    /// absent; docs/architecture.md, "Off by default, still in the code"): single parts nudged,
-    /// turned or swapped where the incremental global route and then a
-    /// local reroute say fewer terminals stay open, also on boards far
-    /// from complete. `PCB_LAYOUT_MOVE_DESCENT` overrides (`0` off).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub move_descent: Option<crate::move_descent::KiCadMoveDescent>,
     /// The race's route probe (docs/placer.md, "The race's route probe";
     /// off when absent, `{}` for the defaults): the race
     /// probes its `seeds` best-ranked placements for `share` of
@@ -481,7 +474,6 @@ impl Default for KiCadBoardLayoutConfig {
             congestion_score: "rudy".into(),
             free_dimension: None,
             silkscreen: KiCadSilkscreenConfig::default(),
-            move_descent: None,
             race_probe: None,
             stop_after_first_route: false,
             race_count: KiCadRaceCount::default(),
@@ -553,10 +545,6 @@ pub struct KiCadBoardLayoutResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pin_lines: Option<String>,
     pub moves: Vec<KiCadBoardLayoutMove>,
-    /// What the move descent did (`move_descent`; absent when it did not
-    /// run).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub move_descent: Option<crate::move_descent::KiCadMoveDescentReport>,
     /// Reference labels moved off pads and other silkscreen, and the
     /// board's own texts and silkscreen graphics parts lie on
     /// (`overlaps`).
@@ -1534,7 +1522,6 @@ pub fn layout_kicad_board(
     let move_work_started = ledger.work;
     let movable = moves::movable_parts(&kept.problem);
     let judgement = moves::judge_first_route(&ctx, &kept.board, &copper, routing.best.0);
-    let move_descent = moves::descend(&ctx, &mut ledger, &mut kept, &mut routing, &copper)?;
     let trials = moves::try_moves(
         &ctx,
         &mut ledger,
@@ -1604,7 +1591,6 @@ pub fn layout_kicad_board(
             race,
             first_route,
             moves: trials.moves,
-            move_descent,
             labels,
             layout_work,
             final_ladder_budget_seconds,

@@ -948,7 +948,13 @@ code is in git history.
   congested area's nets reroute one after another.
 - Capacitated corridors (a global route with hard capacities, learning from
   misses, guiding the search): tier 616 against 588 unconnected; misses are
-  too rare to learn from.
+  too rare to learn from. The tile-graph plan as the negotiation's guide
+  (`global_routing`): no gain over the tile corridors; removed 2026-11-10.
+- Fixed escape stubs for fine-pitch rows before the negotiation
+  (`escape_stub_mm`): no gain; removed 2026-11-10.
+- Bus bundles (`bus_bundles`: buses of four or more nets routed first,
+  side by side, in one corridor): the bus boards 433 to 457 unconnected,
+  the expansion tier 625 to 721; removed 2026-11-10.
 - Island stubs (a track into an island so its spokes count): only silenced
   KiCad's island finding. Hard thermal guards and stitching vias during
   the negotiation: worse.

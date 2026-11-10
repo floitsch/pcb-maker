@@ -24,7 +24,7 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 111 | 92 | 19 | 111 | 71 |
+| [Router settings](#router-settings) | 109 | 90 | 19 | 109 | 69 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 1 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 1 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
@@ -33,14 +33,13 @@ The environment variables are indexed in the hand-over
 | [Router report: rules](#router-report-rules) | 7 | - | 0 | 7 | - |
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 20 | - | 9 | 20 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
-| [Router core](#router-core) | 78 | - | 0 | 78 | - |
+| [Router core](#router-core) | 74 | - | 0 | 74 | - |
 | [Placer settings](#placer-settings) | 56 | 49 | 7 | 56 | 44 |
-| [Layout settings](#layout-settings) | 20 | 20 | 0 | 20 | 11 |
+| [Layout settings](#layout-settings) | 19 | 19 | 0 | 19 | 11 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 1 |
 | [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 3 |
 | [Layout settings: silkscreen](#layout-settings-silkscreen) | 1 | 1 | 0 | 1 | 0 |
 | [Layout settings: race_probe](#layout-settings-race_probe) | 3 | 3 | 0 | 3 | 3 |
-| [Layout settings: move_descent](#layout-settings-move_descent) | 7 | 7 | 0 | 7 | 0 |
 | [Placer core](#placer-core) | 13 | - | 0 | 13 | - |
 | [Placer core: global](#placer-core-global) | 14 | - | 0 | 14 | - |
 | [Placer core: anneal](#placer-core-anneal) | 8 | - | 0 | 8 | - |
@@ -68,7 +67,6 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `present_growth` | `Option<f64>` | unset | - | Growth of that price per iteration. |
 | `stall_at_cap` | `Option<usize>` | unset | - | Iterations negotiation waits for fewer conflicts once the price is at its cap. |
 | `stall_drop` | `Option<f64>` | unset | - | Router `stall_drop`: at the price cap, the share of conflicted nets that must go before negotiation counts it as progress. |
-| `global_routing` | `Option<bool>` | unset | router.md | Plan nets on the tile graph first (global routing). |
 | `automatic_planes` | `Option<bool>` | unset | - | On a board with four or more copper layers and no copper pours, ground becomes a plane on the first inner layer and the supply rail with the most pads one on the last (default true; ignored when `add_pours` is given). |
 | `mask_only_pad_openings` | `Option<bool>` | unset | - | A pad with a mask opening and no copper (a mask-only test point) opens the mask like a mask graphic: copper of a second net may not go under it (default true). hackrf-one's two solder mask bridges. |
 | `via_reduction_present` | `Option<f64>` | unset | - | Price of sharing when a via reduction round starts. |
@@ -131,7 +129,6 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `probe_ladder` | `Option<bool>` | unset | router.md | Large multilayer boards: probe every rung briefly and continue the best (default on). |
 | `probe_seconds` | `Option<f64>` | unset | router.md, placer.md | Seconds of negotiation per probe (default 75). |
 | `leader_first` | `Option<bool>` | unset | router.md | Route mode, on a board of two rungs or more: the leading rung's variants first (its seed round, its finer pitches), then the rungs of other pour modes whose probe (or regular attempt) left at most twice the leader's unfinished nets (docs/router.md, "The leader first"; default on). |
-| `escape_stub_mm` | `Option<f64>` | unset | router.md | Fixed escape stubs for fine-pitch pad rows, this long in mm (router `escape_stub_mm`; off by default). |
 | `exact_escape_stubs` | `Option<bool>` | unset | router.md | Escape stubs stamped exactly, straight ones along a lattice line first (router `exact_escape_stubs`; docs/router.md, "Fine-pitch escapes"): unset, the router's default (on since 2026-10-26). |
 | `pin_lines` | `Option<bool>` | unset | router.md | Lattice lines at pin rows (router `pin_lines`; docs/router.md, "Lattice lines at pin rows" and "Lattice lines where the rows are open"): lines through the pads of fine-pitch rows the regular lattice misses (a part's rows at its own phase over a band, else single lines). Unset (the default), the route-mode ladder decides: at the probes, where the leader's probe leaves pads unfinished at rows the regular lattice misses and the leader's rung probed once more with the lines leaves a tenth fewer nets unfinished, the continuation and the rest of the ladder run with the lines ("The rows decided at the probes": RP2040_base 20 -> 5 open); else after the leader's run, when KiCad's open pads lie in parts whose rows the regular lattice misses (OpenAirScope and koeg-board pass, none lost). A layout decides at the kept placement's probe: where it left pads unfinished at such rows, the first route starts over with the lines and every route after it has them; else its final ladder decides at its probes ("A layout's rows decided by its probe's open pads"). True puts them on every attempt, false never. `PCB_ROUTER_PIN_LINES` (0 or 1) overrides this. |
 | `bga_fanout` | `Option<bool>` | unset | router.md, placer.md | Prepared fan-outs for BGAs (board_router/bga_fanout.rs; docs/router.md, "Prepared fan-outs for BGAs"): before routing, every ball of a grid array's inner rings (those no track between the outer balls serves) gets a stub and a via in a diagonal gap, the largest of the class's and the project's via sizes that keeps every clearance, fixed copper of the ball's net that its route may end on, on any layer; written only where the net's route uses it; an array whose class's via fits a gap is left to the search. Unset: on (since 2026-11-04). |
@@ -294,7 +291,6 @@ One constraint of one rule of the project's `.kicad_dru`. Source: `KiCadCustomRu
 | `fixed_plane_stubs` | `bool` | `false` | `fixed_plane_stubs` | Connect pour nets' pads to their planes first (the pour nets negotiating among themselves) and keep those stubs and vias fixed through negotiation. Off: on ColdFire the pre-pass never settles and fixed stubs left clearance violations. |
 | `exclusive_planes` | `bool` | `false` | `exclusive_planes` | Keep other nets' tracks off exclusive planes entirely (else they pay `plane_cut_cost` there, as designers do cut planes locally). |
 | `neck_reach` | `f64` | `1.5` | `neck_reach_mm` | Within this distance of a net's own narrow pads (narrower than its track plus clearance) the net routes at the board's neck width: the fan-out of a fine-pitch part. 0 turns it off. |
-| `global_routing` | `bool` | `false` | `global_routing` | Plan every net on the tile graph first and confine its lattice search to that plan's corridor; conflicts teach the plan. |
 | `stall_at_cap` | `usize` | `12` | `stall_at_cap` | Iterations without fewer conflicted nets that negotiation waits once the price of sharing is at its cap. |
 | `stall_drop` | `f64` | `0.0` | `stall_drop` | At the price cap, how much fewer conflicted nets count as progress (a share of the last low; at least two nets when above zero). Zero, the default, turns it off: any new low resets the stall count, as below the cap. That can let a board crawl down one net every few iterations for hundreds of seconds (Sisu: 27-32 conflicted from iteration 6 to 38), so the layout's in-place router (its first route and the moves, which compare placements) and its placement race set 0.1 unless the router settings give `stall_drop`; the final ladder and the first route's resume keep the default. |
 | `stall_patience` | `usize` | `25` | - | Iterations without fewer conflicted nets after which negotiation stops below the price cap (`stall_at_cap` at it). |
@@ -310,7 +306,6 @@ One constraint of one rule of the project's `.kicad_dru`. Source: `KiCadCustomRu
 | `pour_aware_polish` | `bool` | `true` | - | The clean-up keeps a change only if no pour net has more pads off its main piece after it. |
 | `pour_aware_via_reduction` | `bool` | `true` | - | The same for a via reduction round. |
 | `pour_whole_rip_up` | `bool` | `true` | - | Whether a pour net stuck in conflict is ripped up whole now and then like the other nets (`rip_up_whole`). |
-| `escape_stub_mm` | `f64` | `0.0` | `escape_stub_mm` | Fine-pitch pads (narrower than the track plus its clearance, on one layer, in a row of their kind) get a straight stub outward fixed before negotiation, up to this long in mm (0, the default, turns it off). The stubs keep every pad's only way out open: nothing else may run along the row inside the escape zone. Tried on Tiny Tapeout (82/108 either way) and ColdFire (205 vs 208 of 209): no gain yet. |
 | `exact_escape_stubs` | `bool` | `true` | `exact_escape_stubs` | Escape stubs (a pad too narrow for a lattice node leaves by a stub from its centre) stamp exactly: one along a lattice line as a run of lattice nodes, an oblique or bent one by its measured footprint (`escapes::stub_footprint`); and a pad leaves by straight stubs along a lattice line where it has any. Off: every stub stamps the lattice's discs grown by the snapping error (0.525 mm at a 0.1 mm lattice with 0.2 mm tracks and clearance), which in a 0.4 or 0.5 mm pitch row covers the neighbouring pads' stubs for good (jfedor2/hid-remapper's RP2040 rows, docs/router.md "Fine-pitch escapes"). On by default since 2026-10-26 (with the pour model matching KiCad's starved thermals): on the expansion tier 32 connections fewer open and three passes more than off, no new error either way. |
 | `corridor_escapes` | `bool` | `true` | - | Corridor stubs (`Router::corridor_escape`, docs/router.md "Corridors of pocketed pads"): a pad without a legal node of its own whose escape nodes lie in a pocket the lattice closes leaves by a stub off the lattice through the way out the lattice misses (a corridor between its part's pads that a track passes only near its centre line: OpenFC's U10), to a legal node beyond. On by default; `PCB_ROUTER_CORRIDOR_ESCAPES=0` turns it off (A/B on one binary). |
 | `pin_lines` | `crate::pin_lines::Lines` | `Off` | - | Lattice lines where the pins are (`crate::pin_lines`): the pads of pin rows the regular lattice misses get lines through their centres (a part's rows at its own phase over a band, else single lines). Off by default here (docs/router.md, "Lattice lines at pin rows"); the KiCad ladder turns it on at its probes or after its leader's run where the open pads are at such rows ("The rows decided at the probes", "Lattice lines where the rows are open"), a KiCad layout at the kept placement's probe ("A layout's rows decided by its probe's open pads"), and the KiCad router settings' `pin_lines` and `PCB_ROUTER_PIN_LINES` set it. |
@@ -325,8 +320,6 @@ One constraint of one rule of the project's `.kicad_dru`. Source: `KiCadCustomRu
 | `bend_round_cost` | `f64` | `1.0` | - | The bend cost of the bend round's searches (mm per 45 degrees). |
 | `bend_round_share` | `f64` | `0.05` | - | The bend round's work at most, as a share of the route's work before it. |
 | `bend_round_length` | `f64` | `0.01` | - | The share of a net's length the bend round may add to it. |
-| `bus_bundles` | `bool` | `false` (`true` with `PCB_ROUTER_BUS_BUNDLES`) | - | Route buses as bundles (an experiment, off; docs/architecture.md, "Off by default, still in the code"): four or more nets joining the same footprints route first, in pad order, inside one corridor planned for the bus's width, side by side; a member that cannot follow routes as any other net. `PCB_ROUTER_BUS_BUNDLES` turns it on. |
-| `bus_lane_cost` | `f64` | `1.5` | - | With `bus_bundles`: the factor on a bus member's trace step that does not lie beside a neighbouring member's copper (`PCB_ROUTER_BUS_LANE`, 1.5). |
 | `cleanup_via_cost` | `f64` | `25.0` | `cleanup_via_cost_mm` | Via cost while cleaning up. The existing route is always a fallback there, so a high value removes vias without risking completion. |
 | `plane_via_cost` | `f64` | `2.0` | - | Via cost when connecting to a copper pour: a short stub and a via is the preferred connection, not a long track to another pad. |
 | `corridors` | `bool` | `true` | - | Plan every connection on a coarse tile graph first and search the lattice only inside that corridor (widening it on failure). |
@@ -448,7 +441,6 @@ The layout config file of `layout-kicad-board`. Unknown keys are rejected; a mis
 | `congestion_score` | `String` | `"rudy"` | placer.md | The placement race's pre-ranking (docs/placer.md, "The race"): the placer makes `congestion_candidates` placements (seeds), they are ranked by this score, and the race probes only the best `congestion_probes`: - `rudy` (default): RUDY routing demand above the tiles' free   capacity (quick tier: KiCad unconnected 98 -> 64 against the   plain race of three seeds); - `none`: the plain race (the placer's `placement_seeds`, all   probed); - `global`: the coarse global route's usage above half the tile   boundaries' capacity (`pcb-global`, docs/global-route.md; an   experiment). |
 | `free_dimension` | `Option<crate::free_dimension::KiCadFreeDimension>` | unset | placer.md | One edge of a rectangular outline the layout may move, to find the smallest board that comes out clean (docs/constraints.md, "A free dimension"): `layout-kicad-board` then lays the board out at several sizes, `total_seconds` being the whole search's budget. |
 | `silkscreen` | `KiCadSilkscreenConfig` | its own table | - | The footprints' Reference and Value fields on the silkscreen, placed after routing where KiCad's silkscreen checks find nothing. |
-| `move_descent` | `Option<crate::move_descent::KiCadMoveDescent>` | unset | - | The move descent after the first route (an experiment, off when absent; docs/architecture.md, "Off by default, still in the code"): single parts nudged, turned or swapped where the incremental global route and then a local reroute say fewer terminals stay open, also on boards far from complete. `PCB_LAYOUT_MOVE_DESCENT` overrides (`0` off). |
 | `race_probe` | `Option<KiCadRaceProbe>` | unset | placer.md | The race's route probe (docs/placer.md, "The race's route probe"; off when absent, `{}` for the defaults): the race probes its `seeds` best-ranked placements for `share` of `total_seconds` of work each, all of them charged to the layout's work clock and none dropped for the final route's minimum share (without it, a probe gets the router's `probe_seconds`, 75 s, and the race probes fewer placements where the final route would keep less than `RACE_MIN_FINAL_SHARE`), ranks them by the probe's open terminals (then its unfinished nets, then its nets in conflict) and routes on with the best. The pre-ranking (`congestion_score`) chooses the probed placements as before, `seeds` of them instead of `congestion_probes`. |
 | `stop_after_first_route` | `bool` | `false` | placer.md | A measurement mode (off by default; docs/benchmarks.md, "The ladder of placer measurements"): the layout ends after its first route. Sizing, placement, the race and the first route run as without it (the same work, the same budget), then the move trials, the resume, the polish, the final ladder and the neck repair are skipped and the layout finishes with the first route's board: its labels, KiCad's check and the report, whose `first_unconnected_terminals` is the full layout's at the same `total_seconds`. The report says so (`stopped_after_first_route`). |
 | `race_count` | `KiCadRaceCount` | `"ripped"` | placer.md | What the race ranks its probes by (docs/placer.md, "The race ranks its probes by the ripped count"; `"ripped"` by default since the nine seed pairs of 2026-10-28): `"unfinished"` (the nets each probe left unfinished; with `race_probe`, its standing) or `"ripped"`: the board's open terminals once each probe's nets in conflict lose their conflicted branches (the hard repair's rip-up without its searches, on a copy of the probe's router: the kept one routes on unripped), ties by the standing. Without `race_probe` the pick then needs `RACE_RIPPED_MARGIN` over the first-ranked placement's count. Not with `race_probe.repair`. |
@@ -498,20 +490,6 @@ The `race_probe` object of the layout settings (off when absent, `{}` for the de
 | `race_probe.seeds` | `usize` | `3` | router.md, placer.md | How many placements the race probes (the best-ranked; at least one, default 3). |
 | `race_probe.share` | `f64` | `0.08` | router.md, placer.md | The work each probe negotiates, as a share of the layout's `total_seconds` (default 0.08: 24 % for three probes; the probe the race keeps is the first part of the first route). |
 | `race_probe.repair` | `bool` | `false` | router.md, placer.md | Each probe is a whole first route within its share (half of it negotiating, then the first route's repair and its trouble rounds, no polish), ranked by the open terminals it leaves; the kept one's is the layout's first route (default false: the probe negotiates only, and the kept one routes on). |
-
-## Layout settings: move_descent
-
-The `move_descent` object of the layout settings (an experiment, off when absent): single parts nudged, turned or swapped after the first route where the incremental global route and a local reroute say fewer terminals stay open (docs/architecture.md, "Off by default, still in the code"). Source: `KiCadMoveDescent` in [crates/pcb-kicad/src/move_descent.rs](../crates/pcb-kicad/src/move_descent.rs).
-
-| Key | Type | Default | Docs | Description |
-|---|---|---|---|---|
-| `move_descent.trial_share` | `f64` | `0.5` | - | Share of the moves' budget (`move_seconds`, within 65 % of `total_seconds`) the descent may spend, in work. |
-| `move_descent.steps_mm` | `Vec<f64>` | `[0.5, 1.0, 2.0, 3.0]` | - | Nudge distances in millimetres, each in eight directions. |
-| `move_descent.confirm` | `usize` | `4` | - | Moves per part the router tries (the best by the global route). |
-| `move_descent.local_seconds` | `f64` | `2.0` | - | Search work of one router trial at most, in seconds. |
-| `move_descent.swap_mm` | `f64` | `10.0` | - | Swaps with a part of the same size whose centre is at most this far, in millimetres (0: no swaps). |
-| `move_descent.patience` | `usize` | `60` | - | The descent stops after this many parts in a row without a kept move. |
-| `move_descent.retry_mm` | `f64` | `5.0` | - | After a kept move, the parts within this many millimetres of the moved parts (and those sharing a net of up to eight pads with them) may be tried again. |
 
 ## Placer core
 

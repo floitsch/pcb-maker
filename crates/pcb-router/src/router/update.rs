@@ -13,28 +13,6 @@ impl Router {
     /// objects. Returns the number of nets rerouted. Everything else keeps
     /// its copper, occupancy, and history.
     pub fn update(&mut self, board: &Board) -> Result<usize, String> {
-        self.update_changed(board, false).map(|(all, _)| all)
-    }
-
-    /// `update`, returning the nets the change touched: routable nets whose
-    /// pads moved or whose copper is no longer legal, in net order. A net
-    /// without copper whose pads stayed keeps its state (a pour net joined
-    /// through its pour alone stays joined; one still open stays open).
-    /// A net whose pads moved keeps its legal branches that do not end on
-    /// a moved pad (a supply's other pads stay connected); `local_reroute`
-    /// joins the moved pads to them.
-    pub fn update_nets(&mut self, board: &Board) -> Result<Vec<NetId>, String> {
-        self.update_changed(board, true).map(|(_, changed)| changed)
-    }
-
-    /// `update`'s work: the nets to route again in all, and those the
-    /// change touched; with `partial` a net whose pads moved keeps the
-    /// legal branches that do not end on one of them.
-    fn update_changed(
-        &mut self,
-        board: &Board,
-        partial: bool,
-    ) -> Result<(usize, Vec<NetId>), String> {
         // The nets given up so far are given up on the new board too.
         let board = self.with_releases(board);
         let (board, neck_of, class_rules) = Self::with_neck_classes(&board, &self.config);
@@ -121,7 +99,6 @@ impl Router {
         self.build_hot();
 
         let mut rerouted = 0;
-        let mut changed = Vec::new();
         for (net, old) in previous.into_iter().enumerate() {
             let id = net as NetId;
             // An optional net's rounds go on (`give_up_round`).
@@ -140,62 +117,11 @@ impl Router {
                 state.reroutes = old.reroutes;
                 state.fixed = old.fixed;
                 self.stamp(id);
-            } else if partial && same_terminals && old.branches.is_empty() {
-                // Nothing of it moved and it has no copper: as it was (a
-                // pour net joined through its pour alone stays joined;
-                // `local_reroute` routes the pads the new copper cuts off).
-                let state = &mut self.nets[net];
-                state.connected = old.connected;
-                state.complete = old.complete;
-                state.reroutes = old.reroutes;
-                if self.nets[net].routable && !self.nets[net].complete {
-                    rerouted += 1;
-                }
             } else if self.nets[net].routable {
                 rerouted += 1;
-                if !same_terminals || !old.branches.is_empty() {
-                    changed.push(id);
-                }
-                if partial && !same_terminals && !old.branches.is_empty() {
-                    let new_nodes = &self.nets[net].terminal_nodes;
-                    let moved = |end: u16| {
-                        let end = end as usize;
-                        end < old.terminal_nodes.len()
-                            && (end >= new_nodes.len() || old.terminal_nodes[end] != new_nodes[end])
-                    };
-                    let fixed = old.fixed;
-                    let mut kept_fixed = 0;
-                    let mut kept = Vec::new();
-                    for (index, branch) in old.branches.into_iter().enumerate() {
-                        if moved(branch.start_terminal)
-                            || moved(branch.end_terminal)
-                            || !self.branch_is_legal(id, &branch)
-                        {
-                            continue;
-                        }
-                        if index < fixed {
-                            kept_fixed += 1;
-                        }
-                        kept.push(branch);
-                    }
-                    if !kept.is_empty() {
-                        let state = &mut self.nets[net];
-                        state.branches = kept;
-                        state.fixed = kept_fixed;
-                        state.reroutes = old.reroutes;
-                        self.stamp(id);
-                    }
-                }
             }
         }
-        Ok((rerouted, changed))
-    }
-
-    /// The work of rebuilding the maps in `update` (the static maps, the
-    /// nets' masks), modelled as `Router::new`'s build is
-    /// (`BuildCounts`), in seconds at this process's rate.
-    pub fn update_work(&self) -> f64 {
-        self.build_counts().work_seconds()
+        Ok(rerouted)
     }
 
     /// Terminals not connected to their net, over every routable net, and
@@ -213,58 +139,11 @@ impl Router {
             .sum()
     }
 
-    /// A move's local trial after `update_nets` (the move descent,
-    /// docs/architecture.md, "Off by default, still in the code"): the ripped nets `nets` are
-    /// routed again one by one in the routing order with every other
-    /// net's copper as a wall (the hard repair's search), so that no other
-    /// net is touched and no conflict arises; the pour nets whose pads
-    /// the new copper cut off their pour are routed to it the same way.
-    /// Stops starting searches past `work_seconds` of search work (the
-    /// nets left stay open). Returns the open terminals of the board
-    /// (`board_open_terminals`).
-    pub fn local_reroute(&mut self, nets: &[NetId], work_seconds: f64) -> usize {
-        let order = self.routing_order();
-        let limit =
-            self.scratch.expansions + (work_seconds.max(0.0) * expansions_per_second()) as u64;
-        let pending: Vec<NetId> = order
-            .iter()
-            .copied()
-            .filter(|net| nets.contains(net))
-            .collect();
-        for net in pending {
-            if self.scratch.expansions > limit {
-                break;
-            }
-            let state = &self.nets[net as usize];
-            if state.complete && self.conflicts(net).is_empty() {
-                continue;
-            }
-            self.route_net_seq(net, 0.0, true, 1.0);
-            self.stamp(net);
-        }
-        if self.config.pour_islands {
-            let stranded: Vec<NetId> = order
-                .iter()
-                .copied()
-                .filter(|net| self.refresh_pour(*net) > 0)
-                .collect();
-            for net in stranded {
-                if self.scratch.expansions > limit {
-                    break;
-                }
-                self.route_net_seq(net, 0.0, true, 1.0);
-                self.stamp(net);
-            }
-        }
-        self.board_open_terminals()
-    }
-
     /// Routes whatever is unrouted or in conflict after `update`, then
     /// finishes as `run` does. Cheap when little changed. Without `polish`
     /// the per-net cleanup pass is skipped (for trials).
     pub fn reroute(&mut self, polish: bool) -> RoutingResult {
         let order = self.routing_order();
-        self.fix_escapes(&order);
         self.route_skeletons(&order);
         let pending: Vec<NetId> = order
             .iter()
@@ -317,45 +196,6 @@ impl Router {
             );
         }
         result
-    }
-
-    /// The result of the routes as they are (after `local_reroute`s): the
-    /// pours stitched and the routes materialized as `finish` does, but
-    /// without the hard repair, the trouble repair, the clean-up and the
-    /// via reduction (a trial's finish; nothing is in conflict).
-    pub fn finish_as_is(&mut self) -> RoutingResult {
-        let order = self.routing_order();
-        self.in_trial = true;
-        self.skip_resolve = true;
-        let result = self.finish_polished(&order, false);
-        self.skip_resolve = false;
-        self.in_trial = false;
-        result
-    }
-
-    /// The terminals not connected to their net, as (net, terminal),
-    /// every terminal of an unreachable net included.
-    pub fn unconnected(&self) -> Vec<(NetId, usize)> {
-        let mut open = Vec::new();
-        for (net, state) in self.nets.iter().enumerate() {
-            let terminals = self.board.nets[net].terminals.len();
-            if terminals < 2 && state.plane.is_empty() {
-                continue;
-            }
-            if !state.routable {
-                open.extend((0..terminals).map(|terminal| (net as NetId, terminal)));
-            } else if !state.complete {
-                open.extend(
-                    state
-                        .connected
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, connected)| !**connected)
-                        .map(|(terminal, _)| (net as NetId, terminal)),
-                );
-            }
-        }
-        open
     }
 
     /// The status of every net as it stands.

@@ -20,7 +20,6 @@ use crate::rules::ClassRules;
 mod batching;
 mod bends;
 mod build;
-mod bundles;
 mod cleanup;
 mod coarse;
 mod compact;
@@ -36,13 +35,13 @@ mod fill;
 mod finish;
 mod fixed;
 mod give_up;
-mod global;
 mod guards;
 pub(crate) mod hash;
 mod heap;
 mod manual_spokes;
 mod negotiate;
 mod occupancy;
+mod order;
 mod output;
 mod pad_exits;
 mod planner;
@@ -400,9 +399,6 @@ struct NetState {
     /// Whether its masks were found rather than computed here (the work
     /// this process did, `Router::physical_build_work`).
     masks_found: bool,
-    /// A bus member broken out of its bundle (`bundles`): it found no
-    /// path inside the bus's corridor and routes as any other net.
-    bus_broken: bool,
     /// Given up by the negotiation (`give_up_round`): not routable, not
     /// routed again; the nets it stood in for route without it.
     released: bool,
@@ -1254,8 +1250,6 @@ pub struct Scratch {
     /// The tile planner's arrays (`plan_corridor`), started afresh by each
     /// plan.
     planner: planner::PlannerArrays,
-    /// The routed bus member's lane (`bundles`; inactive otherwise).
-    lane: bundles::Lane,
     expansions: u64,
     searches: u64,
     /// Searches (and their expansions) that ran without a corridor.
@@ -1337,7 +1331,6 @@ impl Scratch {
             own_active,
             generation,
             corridor,
-            lane,
             ..
         } = std::mem::take(self);
         *self = Scratch {
@@ -1351,7 +1344,6 @@ impl Scratch {
             own_active,
             generation,
             corridor,
-            lane,
             ..counters.clone()
         };
     }
@@ -1815,9 +1807,6 @@ pub struct Router {
     tiles_y: usize,
     tile_claimed: Vec<Vec<u32>>,
     tile_routable: Vec<Vec<u32>>,
-    /// The global plan (the upper layer): per net a route on the tile
-    /// graph whose corridor confines the lattice search.
-    global: Option<crate::global::GlobalPlan>,
     /// Per layer (last entry: vias): where conflicts kept happening, so the
     /// corridor planner learns to send some nets another way.
     tile_history: Vec<Vec<f32>>,
@@ -1930,14 +1919,6 @@ pub struct Router {
     /// While a layout's trial (`reroute` without the polish) finishes:
     /// the trouble-makers' repair waits for the board kept.
     in_trial: bool,
-    /// The buses routed as bundles (`bundles`; empty with the switch off),
-    /// per net its bus and position there (`u32::MAX`: none), and whether
-    /// they were detected.
-    buses: Vec<bundles::Bus>,
-    bus_of: Vec<(u32, u32)>,
-    buses_planned: bool,
-    /// `finish` without the hard repair (`finish_as_is`).
-    skip_resolve: bool,
     /// Whether the negotiation running is a probe's (`probe`).
     in_probe: bool,
     /// The rest of the iteration a probe's work limit cut (`probe`), for

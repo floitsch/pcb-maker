@@ -2,9 +2,9 @@
 // Use of this source code is governed by an MIT-style license that can be
 // found in the LICENSE file.
 
-//! The global route kept up to date while parts move (the layout's move
-//! descent, docs/architecture.md, "Off by default, still in the code"): a
-//! move re-measures the capacities of the tiles around the part's old and new
+//! The global route kept up to date while parts move (the placer's
+//! measured escape demand, docs/global-route.md, "Where it runs"): a move
+//! re-measures the capacities of the tiles around the part's old and new
 //! place and routes only the part's nets again, against the usage, the
 //! history and the present price the rest's negotiation left.
 
@@ -12,28 +12,6 @@ use crate::GlobalConfig;
 use crate::negotiate::{GlobalRoute, Graph, NetRoute, plan, pour_owned};
 use pcb_router::Board;
 use pcb_router::geometry::Aabb;
-
-/// What a placement's global route says, for comparing two placements
-/// that differ in a part or two.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Measure {
-    /// Usage above half the capacity, summed over every boundary and
-    /// layer (the soft overflow phase 1 validated).
-    pub soft: f64,
-    /// Tracks and vias over capacity, summed.
-    pub overflow: f64,
-    /// Nets crossing an overflowing boundary or via site, or with a
-    /// terminal the graph does not reach: the predicted open nets.
-    pub overflowed_nets: usize,
-}
-
-impl Measure {
-    /// One number to rank by: the predicted open nets first, the overflow,
-    /// then the soft overflow.
-    pub fn cost(&self) -> f64 {
-        100.0 * self.overflowed_nets as f64 + 10.0 * self.overflow + self.soft
-    }
-}
 
 /// A global route that follows moves.
 #[derive(Clone, Debug)]
@@ -63,53 +41,6 @@ impl Incremental {
             route,
             index,
         }
-    }
-
-    /// The measure of the current state.
-    #[allow(
-        clippy::needless_range_loop,
-        reason = "usage, capacity and overflow marks are parallel arrays"
-    )]
-    pub fn measure(&self) -> Measure {
-        let route = &self.route;
-        let capacity = &route.capacity;
-        let per = route.frame.layers * route.frame.tiles();
-        let mut measure = Measure::default();
-        let mut over_edge = [vec![false; per], vec![false; per]];
-        for direction in 0..2 {
-            for (index, (used, room)) in route.usage[direction]
-                .iter()
-                .zip(&capacity.edges[direction])
-                .enumerate()
-            {
-                let (used, room) = (*used as f64, *room as f64);
-                measure.soft += (used - 0.5 * room).max(0.0);
-                if used - room > 1.0e-4 {
-                    measure.overflow += used - room;
-                    over_edge[direction][index] = true;
-                }
-            }
-        }
-        let mut over_via = vec![false; route.frame.tiles()];
-        for (tile, (used, room)) in route.via_usage.iter().zip(&capacity.vias).enumerate() {
-            if used - room > 1.0e-4 {
-                measure.overflow += (used - room) as f64;
-                over_via[tile] = true;
-            }
-        }
-        measure.overflowed_nets = route
-            .nets
-            .iter()
-            .filter(|net| {
-                !net.routed
-                    || net.crossings.iter().any(|edge| {
-                        let edge = *edge as usize;
-                        over_edge[edge / per][edge % per]
-                    })
-                    || net.vias.iter().any(|tile| over_via[*tile as usize])
-            })
-            .count();
-        measure
     }
 
     /// The tiles (x0, y0, x1, y1, inclusive) a box in millimetres
@@ -210,7 +141,7 @@ mod tests {
     use crate::capacity::tests::{empty_board, wall};
 
     #[test]
-    fn a_part_moved_and_back_gives_the_same_measure() {
+    fn a_part_moved_and_back_gives_the_same_capacities() {
         // A wall with a gap the net must pass; the wall moves away and
         // back: the capacities measured again equal the full build's.
         let mut board = empty_board(9.0, 6.0, 1);
@@ -230,7 +161,6 @@ mod tests {
         assert_eq!(after.route.capacity.vias, full.route.capacity.vias);
         let back = after.moved(&board, area, &[0]);
         assert_eq!(back.route.capacity.edges, first.route.capacity.edges);
-        assert_eq!(back.measure().overflowed_nets, 0);
         assert!(back.route.nets.iter().all(|net| net.routed));
     }
 }

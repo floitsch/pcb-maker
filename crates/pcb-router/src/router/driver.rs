@@ -21,15 +21,10 @@ impl Router {
     /// are skipped (for trials judged on what stays open, which the polish
     /// does not change; a later `reroute(true)` polishes).
     pub fn run_in_place_polished(&mut self, polish: bool) -> RoutingResult {
-        self.ensure_buses();
         let order = self.routing_order();
         let started = std::time::Instant::now();
-        self.fix_escapes(&order);
         self.route_skeletons(&order);
         self.fix_plane_stubs(&order);
-        if self.config.global_routing {
-            self.plan_globally(&order);
-        }
         self.profile.prepare += started.elapsed().as_secs_f64();
         profile::note_prepare(started.elapsed().as_secs_f64());
         self.negotiate(&order, order.clone());
@@ -41,15 +36,10 @@ impl Router {
     /// can go on from here. Returns how many nets are still conflicted or
     /// incomplete (the measure a caller ranks probes by).
     pub fn probe(&mut self, seconds: f64) -> usize {
-        self.ensure_buses();
         let order = self.routing_order();
         let started = std::time::Instant::now();
-        self.fix_escapes(&order);
         self.route_skeletons(&order);
         self.fix_plane_stubs(&order);
-        if self.config.global_routing {
-            self.plan_globally(&order);
-        }
         self.profile.prepare += started.elapsed().as_secs_f64();
         profile::note_prepare(started.elapsed().as_secs_f64());
         let limit = (
