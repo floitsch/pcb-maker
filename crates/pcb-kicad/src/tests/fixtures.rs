@@ -2,7 +2,7 @@
 
 //! The fixture tests that need the crate's insides, on the committed
 //! fixture board F1 (`tests/fixtures/f1`; docs/handover.md, "The fixture
-//! boards"): the static maps' cache key (review 2026-10-21, fixture test 2), the lowering's
+//! boards"): the static maps' cache key, the lowering's
 //! obstacles, terminals and no-via pads against a golden table (test 7)
 //! and the order test without the race (test 9). The CLI's fixture tests
 //! are the root package's `tests/fixtures.rs`; the golden files are
@@ -79,7 +79,7 @@ fn golden(name: &str, actual: &str) {
 
 #[test]
 fn routers_of_other_inputs_do_not_share_static_maps() {
-    // Review 2026-10-21, fixture test 2: the static maps are shared by a
+    // Fixture test 2: the static maps are shared by a
     // key of what they are built from (`statics_key`); ded766d had to add
     // `no_via_pads` to it. Routers of F1 that differ in one input have
     // another key.
@@ -198,7 +198,7 @@ fn layers_text(mask: pcb_router::LayerMask, count: usize) -> String {
 
 #[test]
 fn the_lowering_of_f1_is_the_golden_table() {
-    // Review 2026-10-21, fixture test 7 (and the lowering's half of test
+    // Fixture test 7 (and the lowering's half of test
     // 5): what F1's items lower to, by kind, the obstacles that are not
     // pads in full, the terminals of every net (the stacked pair two, the
     // jumper group one, net "14", the exposed pad's thermal vias merged)
@@ -380,7 +380,7 @@ fn reversed_f1() -> String {
 #[test]
 #[ignore = "until fence-report-placer's fix of canonical_order's SOURCE_ORDERS lands (review 2026-10-21, fixture test 9)"]
 fn f1_places_the_same_in_either_order_of_the_file() {
-    // Review 2026-10-21, fixture test 9: the order test without the race.
+    // Fixture test 9: the order test without the race.
     // board_placer's a_placement_does_not_depend_on_the_order_of_the_file
     // compares the written files, whose footprint graphics the writer
     // puts back in the order of the file read last by any thread

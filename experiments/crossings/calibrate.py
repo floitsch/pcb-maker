@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Toit contributors.
 """The weight of ratsnest crossings against wirelength (docs/placer.md,
-"Ratsnest crossings (2026-10-24)"), calibrated on the placement
+"Ratsnest crossings"), calibrated on the placement
 ablation's data: for each weight w (mm of wirelength per crossing), how
 well wirelength + w * crossings orders
 

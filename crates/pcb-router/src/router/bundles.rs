@@ -2,9 +2,10 @@
 // Use of this source code is governed by an MIT-style license that can be
 // found in the LICENSE file.
 
-//! Bus bundles (`Config::bus_bundles`, off; docs/experiments/bus-bundles.md):
-//! groups of similar nets routed together along one planned corridor,
-//! side by side, and broken up where they cannot follow it.
+//! Bus bundles (`Config::bus_bundles`, off; docs/architecture.md, "Off by
+//! default, still in the code"): groups of similar nets routed together along
+//! one planned corridor, side by side, and broken up where they cannot follow
+//! it.
 //!
 //! 1. Detection: four or more signal nets of one rule class with two to
 //!    twelve pads each that join exactly the same set of footprints (the

@@ -66,7 +66,7 @@ fn pose_json(pose: core::Pose) -> serde_json::Value {
 }
 
 /// Diagnostic start (`PCB_PLACER_START=<designer's .kicad_pcb>`, docs/placer.md
-/// "Where the arrangement is lost (2026-11-04)"): the placer's stages from
+/// "Where the arrangement is lost"): the placer's stages from
 /// `PCB_PLACER_START_STAGE` (`global`, the default; `anneal`; `legalize`)
 /// on run from the designer's poses. With `global`,
 /// `PCB_PLACER_START_PARTS=<file>` (a JSON list of `REF#n`, the n-th

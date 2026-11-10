@@ -3,7 +3,7 @@
 # Use of this source code is governed by an MIT-style license that can be
 # found in the LICENSE file.
 """Route-mode tasks of the boards that use blind, buried or micro vias
-(docs/router.md, "Blind, buried and micro vias (2026-11-05)"), for
+(docs/router.md, "Blind, buried and micro vias"), for
 benchmarks/agent-tasks/run.py: the designer's placement, tracks stripped,
 with the designer's findings as the baseline.
 

@@ -6,7 +6,7 @@
 //! `fp-lib-table` before it starts (`PCBNEW_JOBS_HANDLER::JobExportDrc`:
 //! `AsyncLoad`, `BlockUntilLoaded`), for the library parity test alone:
 //! about 2.7 s, 9 CPU s and 2 GB per call on any board (docs/handover.md,
-//! "KiCad check cost"). Its `lib_footprint_*` findings are warnings that
+//! "Gotchas"). Its `lib_footprint_*` findings are warnings that
 //! pcb-maker never counts. The DRC therefore runs with `KICAD_CONFIG_HOME`
 //! pointing at a pcb-maker-owned directory whose `fp-lib-table` and
 //! `sym-lib-table` are empty: `<cache root>/kicad-config/<major.minor>/`,

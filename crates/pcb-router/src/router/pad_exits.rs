@@ -9,10 +9,9 @@
 //! its net, or a node where its net's via may stand, lies in a pocket that
 //! fixed copper, keepouts and the board edge close at its class's width.
 //! No route can connect it: no move of the router opens it, only moving or
-//! turning a part does (docs/router.md, "Crossings decided in the repair":
+//! turning a part does (docs/router.md, "Tried and rejected":
 //! OpenAirScope's CM1624 and the laptop keyboard's nRF aQFN). The placer
-//! asks it of a placement (pcb-kicad's `pad_exits`, docs/placer.md "Pads
-//! without a way out (2026-11-04)").
+//! asks it of a placement (pcb-kicad's `pad_exits`, docs/placer.md "Pads without a way out").
 //!
 //! The fan-out's ways out (`fanout_plan`: straight runs from the node at
 //! the pad's centre) say less: a pad the router enters off its centre

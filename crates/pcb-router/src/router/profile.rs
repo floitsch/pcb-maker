@@ -61,8 +61,7 @@ pub(super) fn search_rate_enabled() -> bool {
 /// `PCB_ROUTER_NET_WORK=<file>`: the search expansions per net name over
 /// the process (every router, every phase), written to `<file>` as JSON
 /// at each router's finish (the last write holds the whole run). A
-/// diagnostic: it counts, nothing reads it (docs/router.md, "Prepared
-/// fan-outs for BGAs (2026-11-04)").
+/// diagnostic: it counts, nothing reads it (docs/router.md, "Prepared fan-outs for BGAs").
 pub(super) fn net_work_path() -> Option<&'static std::path::Path> {
     static PATH: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
     PATH.get_or_init(|| std::env::var_os("PCB_ROUTER_NET_WORK").map(std::path::PathBuf::from))

@@ -191,8 +191,7 @@ pub struct Grid {
     /// coordinates per axis where they are not `origin + k * pitch`; `None`
     /// for the regular lattice. Indices stay row-major over `nx` by `ny`,
     /// and every neighbour is still one index step away: only the
-    /// coordinates of the lines differ (docs/router.md, "Lattice lines at
-    /// pin rows (2026-11-07)").
+    /// coordinates of the lines differ (docs/router.md, "Lattice lines at pin rows").
     pub warp: Option<std::sync::Arc<Warp>>,
 }
 

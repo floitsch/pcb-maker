@@ -2,14 +2,13 @@
 // Use of this source code is governed by an MIT-style license that can be
 // found in the LICENSE file.
 
-//! Lattice lines where the pins are (docs/router.md, "Lattice lines at
-//! pin rows (2026-11-07)"). The regular lattice has one pitch and one
-//! phase per axis (`Grid::choose`); a pin row whose rules are an exact
-//! fit (a 0.4 mm QFN row at 0.2 mm track and clearance) can only be left
-//! along a line through its pads' centres, and a channel between two pads
-//! that holds two necked tracks only along two lines far enough apart.
-//! Where the regular lattice has no line within the slack such a channel
-//! leaves, the row is a wall.
+//! Lattice lines where the pins are (docs/router.md, "Lattice lines at pin
+//! rows"). The regular lattice has one pitch and one phase per axis
+//! (`Grid::choose`); a pin row whose rules are an exact fit (a 0.4 mm QFN row
+//! at 0.2 mm track and clearance) can only be left along a line through its
+//! pads' centres, and a channel between two pads that holds two necked tracks
+//! only along two lines far enough apart. Where the regular lattice has no
+//! line within the slack such a channel leaves, the row is a wall.
 //!
 //! `pin_lines` finds the lines the pins ask for: per pad of a row its
 //! straight exit's band (between the neighbours' edges, minus the
@@ -363,8 +362,8 @@ pub fn missing<'a>(lines: &'a [PinLine], grid: &crate::grid::Grid) -> Vec<&'a Pi
 /// The pads (labels, "U19.12") of pin rows whose straight exit the
 /// regular lattice of `pitches` (`Grid::choose`) misses: where lines at the
 /// pin rows can open a pad. Sorted, without repeats. Route mode's ladder
-/// and a layout's race ask it once a board (docs/router.md, "The rows
-/// decided at the probes (2026-11-08)").
+/// and a layout's race ask it once a board (docs/router.md, "The rows decided
+/// at the probes").
 pub fn missed_exit_pads(board: &Board, pitches: &[f64]) -> Vec<String> {
     let grid = crate::grid::Grid::choose(board, pitches);
     let lines: Vec<PinLine> = pin_lines(board, grid.pitch)
@@ -425,7 +424,7 @@ pub enum Lines {
     Off,
     /// The pads' straight exits out of their rows. (Lines for the tracks
     /// of tight channels between pads were measured and left out:
-    /// docs/router.md, "Lattice lines at pin rows (2026-11-07)".)
+    /// docs/router.md, "Lattice lines at pin rows".)
     Exits,
 }
 
@@ -593,8 +592,8 @@ pub fn warp(
             // The shift of the regular lines onto that phase, within half
             // a pitch either way; none where the regular lattice holds
             // every exit of the part within its slack already (a band
-            // there only moved routes: docs/router.md, "Lattice lines
-            // where the rows are open (2026-11-08)").
+            // there only moved routes: docs/router.md, "Lattice lines where
+            // the rows are open").
             let held = part_lines
                 .iter()
                 .all(|line| regular_has(grid.origin[axis], grid.pitch, line.at, line.slack));

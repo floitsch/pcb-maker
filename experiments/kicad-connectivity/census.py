@@ -3,8 +3,7 @@
 """Where our connectivity and KiCad's disagree: the intake's boards (or a
 route-mode run's) that the router counts complete while KiCad's DRC
 (zones refilled) reports unconnected items, each classified by the cause
-of its unconnected items (docs/changelog.md, "KiCad connectivity
-agreement").
+of its unconnected items.
 
     python3 -I experiments/kicad-connectivity/census.py              # the intake (benchmarks/expansion/data)
     python3 -I experiments/kicad-connectivity/census.py --run build/conn-x1322 [--json out.json]

@@ -9,7 +9,7 @@ other sites are not fetched.
 
     python3 scripts/check_links.py                    # README.md, docs/, benchmarks/
     python3 scripts/check_links.py --into handover.md benchmarks.md
-    python3 scripts/check_links.py docs/todo.md       # only these files
+    python3 scripts/check_links.py docs/cost.md       # only these files
 
 `--into NAME...` judges only links whose target file has one of these
 names (the gate of a split or a cut of those files); the other broken

@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Toit contributors.
 
 //! Pads without a way out (`pad_exits`, off by default; docs/placer.md
-//! "Pads without a way out (2026-11-04)"): the placement lowered as the
+//! "Pads without a way out"): the placement lowered as the
 //! layout routes it, and the router's test of each pad's way out on the
 //! statics (`pcb_router::router::ExitProbe`) for the placer's
 //! repair (`pcb_placer::exits`), the place check's report and the

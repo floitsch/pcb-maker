@@ -3,10 +3,10 @@
 // found in the LICENSE file.
 
 //! The global route kept up to date while parts move (the layout's move
-//! descent, docs/experiments/move-descent.md): a move re-measures the
-//! capacities of the tiles around the part's old and new place and
-//! routes only the part's nets again, against the usage, the history and
-//! the present price the rest's negotiation left.
+//! descent, docs/architecture.md, "Off by default, still in the code"): a
+//! move re-measures the capacities of the tiles around the part's old and new
+//! place and routes only the part's nets again, against the usage, the
+//! history and the present price the rest's negotiation left.
 
 use crate::GlobalConfig;
 use crate::negotiate::{GlobalRoute, Graph, NetRoute, plan, pour_owned};

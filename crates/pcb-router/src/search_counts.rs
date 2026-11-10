@@ -8,7 +8,7 @@
 //! searches' apart, and the board-wide fallbacks refused after two had
 //! failed. The verdict reports them (`corridors`). Until 2026-11-04 they
 //! also counted the capacitated corridors' learning (`capacitated_corridors`,
-//! off, removed; docs/handover.md, "Removed experiments (2026-11-04)").
+//! off, removed; docs/handover.md, "Tried and not taken").
 
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 

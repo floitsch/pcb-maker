@@ -1,6 +1,6 @@
 # Copyright (C) 2026 Toit contributors.
 #
-# The race probe ceiling (docs/placer.md, "The race's route probe (2026-10-25)"):
+# The race probe ceiling (docs/placer.md, "The race's route probe"):
 # per dense board the KiCad unconnected over three layout seeds, and which run
 # the kept placement's race probe, the first route and the crossings would
 # have picked. Run from the repository root: python3 -I experiments/race-probe/ceiling.py

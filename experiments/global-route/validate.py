@@ -35,7 +35,7 @@ DESIGNER_DIRS = ["build/designer-x1315b", "build/designer-x1315"]
 LAYOUT_RESULTS = "build/github-layout-v18c/results.json"
 DESIGNER_RESULTS = "build/designer-x1315b/results.json"
 # The eleven dense or bus-heavy boards holding 82 % of the placement gap
-# (docs/benchmarks.md, "Layout sweep v18").
+# (measured on layout sweep v18).
 DENSE = [
     "Huaqiu-Electronics__ecad-viewer__video",
     "stonedDiscord__nonSNES__SNSP-CPU-01",

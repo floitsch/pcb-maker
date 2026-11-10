@@ -294,7 +294,7 @@ def zone_neck(actual, uuid="8951654c-dd26-460d-9f97-f89e9425e93d", at=(0.0, 0.0)
 
 
 class OneItemFindings(unittest.TestCase):
-    """Rule 3 (review 2026-10-21, H2): a finding of one item is at the
+    """Rule 3: a finding of one item is at the
     designer's place only where its item is."""
 
     def test_usb_keypads_neck_on_the_pour_is_ours(self):
@@ -343,7 +343,7 @@ class OneItemFindings(unittest.TestCase):
 
 
 class KilledRuns(unittest.TestCase):
-    """A run the machine killed is no result (review 2026-10-21, H1)."""
+    """A run the machine killed is no result."""
 
     def test_codes_outside_the_verdicts_are_kills(self):
         for code in (-9, -11, 137, 101, 5):
@@ -374,7 +374,7 @@ class KilledRuns(unittest.TestCase):
 @unittest.skipUnless(Path("/proc").is_dir(), "needs /proc")
 class ProcessGroups(unittest.TestCase):
     """A timeout kills the board's whole tree, and the gate admits the next
-    board only once it is gone (review 2026-10-21, M4)."""
+    board only once it is gone."""
 
     def test_a_timeout_kills_the_grandchildren(self):
         started = []
@@ -508,8 +508,7 @@ class LayoutReuseTests(unittest.TestCase):
 
 
 class Provenance(unittest.TestCase):
-    """Rows name their binary, spliced rows their log (review 2026-10-21,
-    M2 and M3)."""
+    """Rows name their binary, spliced rows their log."""
 
     def test_spliced_rows_name_their_source(self):
         with tempfile.TemporaryDirectory() as scratch:
@@ -534,7 +533,7 @@ class Provenance(unittest.TestCase):
 
 
 class FinalLadder(unittest.TestCase):
-    """The layout's final ladder's work (review 2026-10-21, H3)."""
+    """The layout's final ladder's work."""
 
     def test_from_the_report(self):
         self.assertEqual(run.final_ladder_budget({"final_ladder_budget_seconds": 917.8}, "", 1500),

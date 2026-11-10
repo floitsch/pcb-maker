@@ -24,9 +24,8 @@ use std::collections::BTreeMap;
 const NETLIST_NOISE: f64 = 0.1;
 
 /// What the global placement does with the netlist's stacks
-/// (`spread_stacks`; docs/placer.md, "The netlist's stacks are lost in the
-/// descent, not at the start (2026-11-08)" and "Banks on a wide bus glued
-/// through the descent (2026-11-08)").
+/// (`spread_stacks`; docs/placer.md, "The global placement's start" and
+/// "Banks on a wide bus glued through the descent").
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Stacks {
     /// Left on their spot (the start's noise separates them).
@@ -549,7 +548,7 @@ impl Field {
 
 /// The descent's state at an iteration (`GlobalResult::history`): what
 /// decides whether the wires arrange the parts before the density spreads
-/// them (docs/placer.md, "The global placement's start (2026-11-07)").
+/// them (docs/placer.md, "The global placement's start").
 #[derive(Clone, Copy, Debug, Default)]
 pub struct GlobalStep {
     pub iteration: usize,
@@ -857,8 +856,7 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
         // them (`initial::quadratic_start`), with a tenth of the noise
         // drawn above: it breaks ties (parts on the same nets), not the
         // arrangement. From one point with the whole noise the arrangement
-        // was the noise's (docs/placer.md, "The global placement's start
-        // (2026-11-07)").
+        // was the noise's (docs/placer.md, "The global placement's start").
         let count = movable.len();
         let warm = |index: usize| config.warm.as_ref().is_some_and(|warm| warm[index]);
         // A part with a start of its own (a panel copy's, at its region's

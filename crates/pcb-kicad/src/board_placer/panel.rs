@@ -4,7 +4,7 @@
 //! circuit in one outline (KiKit's tabbed copies, a keyboard's repeated
 //! cells, numbered sheets side by side). Designers place one copy and
 //! replicate it; placing every part independently interleaves or drifts
-//! the copies (docs/placer.md, "Panel copies (2026-10-26)").
+//! the copies (docs/placer.md, "Panel copies").
 //!
 //! `detect` finds the copies: groups of parts with the same footprints
 //! (references with pin counts, bodies and pin offsets) whose nets map one

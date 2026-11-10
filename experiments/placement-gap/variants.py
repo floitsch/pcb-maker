@@ -4,8 +4,7 @@
 # found in the LICENSE file.
 """Stage 0's table for several variants of one placer switch against the
 designer: the metrics.json of `metrics.py run` per variant (its `ours` the
-variant's placement), side by side (docs/placer.md, "The designer as
-teacher (2026-11-04)", "Net weights").
+variant's placement), side by side (docs/placer.md, "Where the gap to the designer comes from", "Net weights").
 
     variants.py --metric hpwl_mm --metric crossings steep=build/teach2-gap/steep sqrt=build/teach2-gap/sqrt
 

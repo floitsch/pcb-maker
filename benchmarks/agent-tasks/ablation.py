@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Toit contributors.
-"""Placement ablation (docs/placer.md "Placement ablation (2026-10-24)"):
+"""Placement ablation (docs/placer.md "Placement ablation"):
 which of our placement's decisions cost open connections.
 
     ablation.py prepare <out> --task NAME --designer <designer project dir> --placed <our placed dir> \\

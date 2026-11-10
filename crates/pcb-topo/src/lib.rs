@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 //! A topological router in the manner of TopoR (Luzin & Polubasov; see
-//! docs/reviews/2026-09-29-topor.md and docs/topological.md).
+//! docs/router.md, "The topological engine (off)").
 //!
 //! 1. One constrained Delaunay triangulation of all obstacles, shared by
 //!    the layers, with free points in open areas ([`mesh`]).

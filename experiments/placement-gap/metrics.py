@@ -3,8 +3,7 @@
 # Use of this source code is governed by an MIT-style license that can be
 # found in the LICENSE file.
 """What the designer's placement does that ours does not: placement metrics
-of two placements of one board, side by side (docs/placer.md, "The designer
-as teacher (2026-11-04)").
+of two placements of one board, side by side (docs/placer.md, "Where the gap to the designer comes from").
 
     metrics.py run --sweep build/nightly/2026-11-03/sweep \\
         --designer build/nightly/2026-11-03/designer --first-open build/teach1-fr/first-open.json \\

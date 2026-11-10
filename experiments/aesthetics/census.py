@@ -2,8 +2,7 @@
 # Use of this source code is governed by an MIT-style license that can be
 # found in the LICENSE file.
 
-"""What the routes look like next to a designer's (docs/router.md, "What
-the routes look like (2026-11-05)"): measures a designer recognises,
+"""What the routes look like next to a designer's (docs/router.md, "What the routes look like"): measures a designer recognises,
 computed from a routed .kicad_pcb, the same way on the designer's board
 and on ours.
 

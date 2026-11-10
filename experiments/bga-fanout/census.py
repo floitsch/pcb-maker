@@ -2,8 +2,7 @@
 # Copyright (C) 2026 Toit contributors.
 # Use of this source code is governed by an MIT-style license that can be
 # found in the LICENSE file.
-"""How the balls of the task boards' BGAs escape (docs/router.md, "Prepared
-fan-outs for BGAs (2026-11-04)").
+"""How the balls of the task boards' BGAs escape (docs/router.md, "Prepared fan-outs for BGAs").
 
     census.py find   [--tasks benchmarks/agent-tasks/tasks/v7/tasks.json] --out DIR
     census.py escape --out DIR [--sweep build/nightly/2026-11-04/sweep]

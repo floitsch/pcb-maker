@@ -651,7 +651,7 @@ impl Stamped {
     /// it will read: the list decoded once, through a ring of the pairs
     /// ahead (until 2026-10-27 a second iterator decoded it again `AHEAD`
     /// entries on: the restamp's passes decoded every list twice; the
-    /// third router round, docs/profiling.md).
+    /// third router round, docs/profiling.md, "Router rounds", item 3).
     #[inline(always)]
     fn iter_ahead<const AHEAD: usize>(&self) -> StampsAhead<'_, AHEAD> {
         let mut iter = self.iter();
@@ -1041,7 +1041,7 @@ fn diagonal_extra(radius: f64, pitch: f64) -> Vec<(i32, i32)> {
 /// the search asks `zone_class`'s question at every step near the zones,
 /// and a net with a zone at each of its narrow pads (Glasgow's ground: two
 /// hundred) had each step scan them all (2 % of a dense board's
-/// instructions; the fifth router round, docs/profiling.md). Built for the
+/// instructions; the fifth router round, docs/profiling.md, "Router rounds", item 5). Built for the
 /// searched net at the start of each search, into the thread's scratch.
 #[derive(Default)]
 struct ZoneMask {
@@ -1169,7 +1169,7 @@ struct SearchNode {
     /// `SLOT_UNQUEUED` for a target not reached yet. The slot lets a better
     /// key for a queued node move its entry instead of queueing another
     /// (since 2026-10-27: 39 to 41 % of the pops were such stale entries;
-    /// the third router round, docs/profiling.md); it took the closed mark
+    /// the third router round, docs/profiling.md, "Router rounds", item 3); it took the closed mark
     /// and the target mark's bytes, so a node stays 12 bytes.
     slot: u32,
     /// The search generation that last reached the node: 16 bits (a
@@ -1180,7 +1180,7 @@ struct SearchNode {
     /// Bits 0 to 6: steps along the path from the last node arrived at
     /// through a via or from a source (0 there; at most 127), set with
     /// `parent`: the hop test (`hops_from_a_via`) walks back only where a
-    /// via can lie within its reach (since 2026-10-25, docs/profiling.md;
+    /// via can lie within its reach (since 2026-10-25, docs/profiling.md, "Router rounds", item 1;
     /// a count that stops at 127 is still a lower bound: beyond it the
     /// walk answers). Bit 7 (`TARGET_MARK`): the node is a target of the
     /// search (with `seen`).
@@ -1666,7 +1666,7 @@ type SpokePad = (
 );
 
 /// The via spans of a board that allows them (`Board::via_spans`;
-/// docs/router.md, "Blind, buried and micro vias (2026-11-05)"): a via
+/// docs/router.md, "Blind, buried and micro vias"): a via
 /// between two layers takes the shortest allowed span holding both, and is
 /// copper only there. Each class has a via map per layer as well
 /// (`Router::via_layer_map`, after the diagonal maps): where that layer's

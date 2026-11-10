@@ -506,7 +506,7 @@ impl LadderRunner for KiCadRunner<'_> {
 
     fn probe(&self, router: &mut core::router::Router, work: f64, mode: usize) -> usize {
         let unfinished = router.probe(work);
-        // Experiment hook (the ladder's judge, docs/congestion-model.md):
+        // Experiment hook (the ladder's judge):
         // the probe's other statistics.
         if std::env::var_os("PCB_LADDER_STATS").is_some() {
             let labels = router.congestion_labels();
@@ -1368,7 +1368,7 @@ pub(crate) fn add_solid_pad(
 /// board after that round: k30-SBC's J1.39 after J1.14 and its neighbours,
 /// ghoul's RN3.3, then RN3.1 and RN3.2 of the same array (the designer
 /// tier of 2026-11-06: one more round, then three, and nothing starved,
-/// open or new; router-ceiling.md, bug 1).
+/// open or new; docs/router.md, "The solid step in rounds").
 pub(crate) const SOLID_ROUNDS: usize = 4;
 
 /// What the solid step needs of KiCad (`solid_rounds`): the check of a

@@ -7,7 +7,7 @@
 //! searches' apart). Summed over every router of the process, the
 //! ladder's attempts and probes alike. Until 2026-11-04 also what the
 //! capacitated corridors' learning did (`capacitated_corridors`, off,
-//! removed; docs/handover.md, "Removed experiments (2026-11-04)").
+//! removed; docs/handover.md, "Tried and not taken").
 
 use pcb_router::search_counts::{CorridorTotals, SearchTotals, corridor_totals};
 use serde::{Deserialize, Serialize};

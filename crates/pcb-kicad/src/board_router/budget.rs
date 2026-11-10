@@ -257,13 +257,13 @@ pub(crate) fn search_fraction(search: f64, router: f64) -> f64 {
 /// alone is a lower bound of the first, with no slack (KiCad's part only
 /// adds). An attempt whose router count already loses to the kept board's
 /// checked quality cannot win, and its check (10 to 50 s of kicad-cli on a
-/// big or hatched board, not counted as work) is skipped. In the layout's
-/// final ladder (`top`), only the attempts among the best `top` by the
-/// router's measures (its open count, then vias, then copper), the
-/// layout's own board counted, are checked at all; KiCad decides between
-/// the attempts checked. Once the wall clock passes the deadline,
-/// nothing after an attempt depends on it but whether it beats the kept
-/// board and the caller's (`kept`).
+/// big or hatched board; route mode counts no work for it, a layout a
+/// modelled cost, `check_work.rs`) is skipped. In the layout's final ladder
+/// (`top`), only the attempts among the best `top` by the router's measures
+/// (its open count, then vias, then copper), the layout's own board counted,
+/// are checked at all; KiCad decides between the attempts checked. Once the
+/// wall clock passes the deadline, nothing after an attempt depends on it but
+/// whether it beats the kept board and the caller's (`kept`).
 #[derive(Debug, Default)]
 pub(crate) struct CheckGate {
     /// At most this many attempts by the router's measures are checked

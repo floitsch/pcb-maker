@@ -2,11 +2,11 @@
 // Use of this source code is governed by an MIT-style license that can be
 // found in the LICENSE file.
 
-//! The trouble-maker probe (a research measure, docs/placer.md, "The
-//! trouble-maker probe (2026-10-26)"): a set of nets negotiated alone, the
-//! board's other nets present only as a background (fixed escape stubs out
-//! of their pads, or a cost from the global route's tile usage), so that a
-//! placement's difficulty is measured in a fraction of a whole-board probe.
+//! The trouble-maker probe (a research measure, docs/placer.md, "Tried and
+//! rejected"): a set of nets negotiated alone, the board's other nets present
+//! only as a background (fixed escape stubs out of their pads, or a cost from
+//! the global route's tile usage), so that a placement's difficulty is
+//! measured in a fraction of a whole-board probe.
 
 use super::*;
 

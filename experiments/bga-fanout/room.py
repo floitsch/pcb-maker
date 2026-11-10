@@ -2,8 +2,7 @@
 # Copyright (C) 2026 Toit contributors.
 # Use of this source code is governed by an MIT-style license that can be
 # found in the LICENSE file.
-"""The room a placement keeps around a grid array (docs/placer.md, "Room
-around grid arrays (2026-11-04)").
+"""The room a placement keeps around a grid array (docs/placer.md, "Room around grid arrays").
 
     room.py --reference U30 NAME=BOARD.kicad_pcb [NAME=BOARD ...] [--json OUT]
 

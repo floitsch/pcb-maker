@@ -2,17 +2,16 @@
 // Use of this source code is governed by an MIT-style license that can be
 // found in the LICENSE file.
 
-//! Stacks in the netlist's start (docs/placer.md, "The netlist's stacks
-//! are lost in the descent, not at the start (2026-11-08)" and "Banks on a
-//! wide bus glued through the descent (2026-11-08)"). The quadratic solve
-//! (`initial::quadratic_start`) puts parts on the same nets on one spot:
-//! the bound-to-bound model cannot tell them apart (the OpenESC 4in1-mini's
-//! 22 bulk capacitors on the battery rail and ground within 0.2 mm, video's
-//! eight memory modules on one bus within 1 mm). A stack here is a group of
-//! movable parts on one side whose nets have a share and a count in common
-//! (`shared`, `common`) and whose solved bodies, halos included, overlap
-//! (`find_stacks`); each is spread into a bank of cells at its pitch around
-//! its centroid (`bank_columns`, `bank_centers`).
+//! Stacks in the netlist's start (docs/placer.md, "The global placement's
+//! start" and "Banks on a wide bus glued through the descent").
+//! The quadratic solve (`initial::quadratic_start`) puts parts on the same
+//! nets on one spot: the bound-to-bound model cannot tell them apart (the
+//! OpenESC 4in1-mini's 22 bulk capacitors on the battery rail and ground
+//! within 0.2 mm, video's eight memory modules on one bus within 1 mm). A
+//! stack here is a group of movable parts on one side whose nets have a share
+//! and a count in common (`shared`, `common`) and whose solved bodies, halos
+//! included, overlap (`find_stacks`); each is spread into a bank of cells at
+//! its pitch around its centroid (`bank_columns`, `bank_centers`).
 //!
 //! A bank at the start alone is undone by the global placement's descent
 //! wherever no wire holds its parts (capacitors on a rail and ground); glued

@@ -2,8 +2,7 @@
 # Copyright (C) 2026 Toit contributors.
 # Use of this source code is governed by an MIT-style license that can be
 # found in the LICENSE file.
-"""The rows of run.py logs side by side (docs/router.md, "Blind, buried and
-micro vias (2026-11-05)"): KiCad's unconnected items, the strict pass and
+"""The rows of run.py logs side by side (docs/router.md, "Blind, buried and micro vias"): KiCad's unconnected items, the strict pass and
 its new findings, the vias of the routed board by kind, the length and the
 CPU seconds.
 

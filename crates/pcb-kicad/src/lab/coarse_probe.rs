@@ -1,13 +1,13 @@
 // Copyright (C) 2026 Toit contributors.
 
 //! The coarse probe (`pcb-maker probe-coarse-placement`, a research
-//! command; docs/placer.md, "A coarse whole first route as the race probe
-//! (2026-10-27)"): a placed board routed whole, as the layout's first
-//! route routes it, at a reduced fidelity: a coarser lattice (the router's
-//! candidate pitches times a factor), fewer negotiation iterations, the
-//! hard repair and the trouble repair off or on, all of it within a work
-//! budget that is a share of the task budget. Its open terminals rank the
-//! placement. Deterministic: the budget is work.
+//! command; docs/placer.md, "Tried and rejected"):
+//! a placed board routed whole, as the layout's first route routes it, at a
+//! reduced fidelity: a coarser lattice (the router's candidate pitches times
+//! a factor), fewer negotiation iterations, the hard repair and the trouble
+//! repair off or on, all of it within a work budget that is a share of the
+//! task budget. Its open terminals rank the placement. Deterministic: the
+//! budget is work.
 
 use super::global_route::lower_placed;
 use crate::*;

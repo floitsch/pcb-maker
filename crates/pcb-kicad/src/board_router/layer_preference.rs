@@ -1,7 +1,6 @@
 // Copyright (C) 2026 Toit contributors.
 
-//! Skew groups' layers (docs/router.md, "Skew groups' layers
-//! (2026-11-06)").
+//! Skew groups' layers (docs/router.md, "Skew groups' layers").
 //!
 //! KiCad counts a net's copper for a length or skew rule with a layer
 //! condition on those layers alone, so a net routed elsewhere is not

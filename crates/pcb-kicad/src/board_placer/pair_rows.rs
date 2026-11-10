@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Toit contributors.
 
 //! A differential pair's two series parts as a row of two (`pair_rows`,
-//! docs/placer.md "Pair rows (2026-11-04)").
+//! docs/placer.md "Pair rows").
 //!
 //! The router couples a pair only between parts whose pads of the pair lie
 //! side by side (router.md, "Pair points and links"); a pair's AC-coupling

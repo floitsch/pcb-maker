@@ -2,7 +2,7 @@
 # Use of this source code is governed by an MIT-style license that can be
 # found in the LICENSE file.
 
-"""The router's ceiling (docs/router-ceiling.md): what keeps each board of
+"""The router's ceiling (docs/router.md, "What limits the router"): what keeps each board of
 the matched designer tier (route mode on the designer's own placement)
 from the strict pass, per open connection and per finding, grouped into
 classes.

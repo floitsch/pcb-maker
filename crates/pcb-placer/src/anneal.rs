@@ -1173,7 +1173,7 @@ pub fn overlaps(problem: &Problem, poses: &[Pose]) -> Vec<f64> {
 }
 
 /// The placer's objective at `poses`, split by term (a diagnostic:
-/// docs/placer.md, "Where the arrangement is lost (2026-11-04)"). The
+/// docs/placer.md, "Where the arrangement is lost"). The
 /// anneal judges a move by `wirelength` (all buckets) plus `relations`
 /// plus 1000 times `hard` plus its penalty (0.5 growing to 400 mm a mm²)
 /// times `overlap` plus `crossing_weight` times `crossings_anneal`; the

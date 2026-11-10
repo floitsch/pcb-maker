@@ -239,8 +239,7 @@ pub(crate) struct LayoutLinesProbes {
 /// on one binary), `race` the race's alone, `ladder` the final ladder's
 /// alone, `lead` both with the race's lines kept only where its probe
 /// with them leads (the measured alternative); unset (or anything else)
-/// both (docs/router.md, "A layout's rows decided by its probe's open pads
-/// (2026-11-08)").
+/// both (docs/router.md, "A layout's rows decided by its probe's open pads").
 pub(crate) fn layout_lines_probes_of(value: Option<&str>) -> LayoutLinesProbes {
     match value.map(str::trim) {
         Some("0") | Some("off") => LayoutLinesProbes {
@@ -768,11 +767,13 @@ impl<'a> Ladder<'a> {
             // Without a deadline (route mode) the wall clock guards the work
             // at `GUARD` times it; with one, the deadline is the only wall
             // guard. The guard takes over only when the wall clock is ahead
-            // by more than a twentieth of the budget: the work counts only
-            // search expansions, so the wall clock is always ahead of it at
-            // the start of the ladder and after KiCad's checks, and every
-            // route-mode run reported a "ladder" cut (0 s of wall clock for
-            // 0 s of work) that changed nothing.
+            // by more than a twentieth of the budget: the work counts the
+            // search, the pour analyses, the builds and lowerings (not
+            // KiCad's checks in route mode; in a layout each check counts a
+            // modelled cost, not its wall time), so the wall clock is always
+            // ahead of it at the start of the ladder and after KiCad's
+            // checks, and every route-mode run reported a "ladder" cut (0 s
+            // of wall clock for 0 s of work) that changed nothing.
             wall_margin: 0.05 * ladder_budget,
             memory_at_start,
             memory_total_mb,
@@ -1514,8 +1515,7 @@ impl<'a> Ladder<'a> {
     /// them, which vary the best attempt) runs on the lattice with lines
     /// at the pin rows; the leader's board stays a candidate. A board
     /// complete after the leader's run, or whose open pads are elsewhere,
-    /// routes as without lines (docs/router.md, "Lattice lines where the
-    /// rows are open (2026-11-08)").
+    /// routes as without lines (docs/router.md, "Lattice lines where the rows are open").
     fn pin_lines_from_here<R: LadderRunner>(&mut self, runner: &R) {
         if !self.lines_automatic() || self.pin_lines_on || !self.open_best() {
             return;
@@ -1582,11 +1582,11 @@ impl<'a> Ladder<'a> {
     /// such a row pays nothing and routes as without it. Where the probe
     /// with lines does not lead, the trigger after the leader's run
     /// (`pin_lines_from_here`) still applies (docs/router.md, "The rows
-    /// decided at the probes (2026-11-08)"). A layout's final ladder (its
-    /// leader the best probe, its share the layout's work left) decides
-    /// the same way where the layout's race left the lines to it
-    /// (`PCB_LAYOUT_LINES_PROBE`; "A layout's rows decided by its probe's open pads
-    /// (2026-11-08)"); it has no trigger after the leader's run.
+    /// decided at the probes"). A layout's final ladder (its leader the best
+    /// probe, its share the layout's work left) decides the same way where
+    /// the layout's race left the lines to it (`PCB_LAYOUT_LINES_PROBE`; "A
+    /// layout's rows decided by its probe's open pads"); it has no trigger
+    /// after the leader's run.
     #[allow(clippy::type_complexity, clippy::too_many_arguments)]
     fn lines_probe<R: LadderRunner>(
         &mut self,
@@ -2270,7 +2270,7 @@ impl<'a> Ladder<'a> {
     /// what they leave; the best rung's seed rounds and the steps follow
     /// as before. Until 2026-11-07 every pour mode ran on the regular
     /// pitch first, then on each finer pitch, and the seed rounds last
-    /// (docs/router-ceiling.md, "Design 1").
+    /// (docs/router.md, "The leader first").
     pub(crate) fn leader_ladder<R: LadderRunner>(&mut self, runner: &R) -> Result<(), String> {
         if self.probe_complete {
             return Ok(());

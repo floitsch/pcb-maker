@@ -14,8 +14,7 @@
 #              `git branch -d` (merged branches only).
 #   snapshots  build/bin/pcb-maker-* that no committed file on main names
 #              (pcb-maker-x1170 counts as named by "x1170" anywhere in the
-#              tree: the docs, docs/handover.md's references and its tier
-#              logs, the changelog, tier files), that no running process
+#              tree: the docs, the scripts, the tests), that no running process
 #              uses or names, and older than --keep-days (default 7: a
 #              snapshot of work in progress is not in the docs yet).
 #

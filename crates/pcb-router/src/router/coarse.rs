@@ -3,11 +3,11 @@
 // found in the LICENSE file.
 
 //! The coarse probe's ends (pcb-kicad's `probe-coarse-placement`, a
-//! research measure; docs/placer.md, "A coarse whole first route as the
-//! race probe (2026-10-27)"): after `probe`, the board as it stands once
-//! the nets in conflict lose their conflicted branches (the hard repair's
-//! rip-up without its searches), or the first route's finish (the hard
-//! repair and the trouble repair as configured, no polish).
+//! research measure; docs/placer.md, "Tried and rejected"): after `probe`,
+//! the board as it stands once the nets in conflict lose their conflicted
+//! branches (the hard repair's rip-up without its searches), or the first
+//! route's finish (the hard repair and the trouble repair as configured, no
+//! polish).
 
 use super::*;
 

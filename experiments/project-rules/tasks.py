@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Toit contributors.
-"""Writes the route-mode task list of the project-rules measurement
-(docs/changelog.md, "project rules at scale"): 20 intake boards from
+"""Writes the route-mode task list of the project-rules measurement: 20 intake boards from
 drc_failure_boards.csv whose only new findings are clearance,
 track_width, copper_edge_clearance or hole_to_hole, with a licence
 run.py fetches.

@@ -5,8 +5,7 @@
 """Stage 0 of the placer protocol for a placer switch: the placement alone,
 as the layout of the sweep's config places (`place-kicad-board` with the
 board's layout.json and router.json: the layout's share of its budget, its
-seeds), per variant and board (docs/placer.md, "The designer as teacher
-(2026-11-04)", "Net weights").
+seeds), per variant and board (docs/placer.md, "Where the gap to the designer comes from", "Net weights").
 
     place.py --sweep build/nightly/2026-11-03/sweep --out build/teach2-place \\
         --variant 'steep=build/bin/pcb-maker-x1890={}' \\

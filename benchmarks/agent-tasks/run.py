@@ -590,12 +590,12 @@ SAME_PLACE_MM = 0.05
 # finding with one item is at the same place where its item is, within
 # SAME_PLACE_MM, or where it is the same item (not a zone) with the same
 # finding word for word; the same uuid alone no longer does, and a zone
-# item KiCad places at (0, 0) has no place (2026-10-22, review 2026-10-21
-# H2). 4: a finding between items of one footprint only is the reference's
-# (`footprint_own`); a finding at the same place is the reference's also
-# of a type the reference has at KiCad's cap; a copper_edge_clearance is at
-# the same place by its copper item, whichever piece of the outline KiCad
-# names beside it (2026-10-23, Batch_1's mounting holes and GND ring).
+# item KiCad places at (0, 0) has no place (2026-10-22). 4: a finding between
+# items of one footprint only is the reference's (`footprint_own`); a finding
+# at the same place is the reference's also of a type the reference has at
+# KiCad's cap; a copper_edge_clearance is at the same place by its copper
+# item, whichever piece of the outline KiCad names beside it (2026-10-23,
+# Batch_1's mounting holes and GND ring).
 STRICT_RULE = 4
 # The designer's own board's solder mask bridges, kept in a task's work
 # directory by designer_findings for the strict rule.
@@ -971,7 +971,7 @@ def verdict_extras(row, verdict):
 
 def killed(code):
     """Whether a binary's exit code is none of its verdict's (0 to 4,
-    docs/agents.md "Exit codes"): a signal (negative: the OOM killer's -9,
+    docs/agents.md, "Read the verdict"): a signal (negative: the OOM killer's -9,
     a crash's -11), a shell's 128 + n, a panic past the verdict. Such a
     run wrote whatever it had at that moment (route mode's best attempt
     before x1500): its files are not a result."""
@@ -1668,8 +1668,7 @@ REUSE_IGNORED_ENVIRONMENT = ("PCB_MAKER_LEDGER",)
 
 class LayoutReuse:
     """--reuse DIR: a layout whose placement equals one routed before skips
-    its routing (docs/benchmarks.md, "The ladder of placer measurements
-    (2026-10-28)"). Everything a layout does after its placement phase is a
+    its routing (docs/benchmarks.md, "The ladder of placer measurements"). Everything a layout does after its placement phase is a
     function of the binary, the task (its prepared source directory and its
     entry), the layout settings beside the placer's, the rates, the threads,
     the PCB_* environment and what the placement phase handed on: the
@@ -2005,7 +2004,7 @@ def layout_result(row, task, work, code, output, allowed, designer_seconds, drc_
     findings come from `drc_directory`/drc.json (default: the result's).
     `total_seconds` is the layout's budget (for the final ladder's share)."""
     report = work / "layout/board-layout.json"
-    # The binary's own verdict (docs/agents.md, "Exit codes"): its status
+    # The binary's own verdict (docs/agents.md, "Read the verdict"): its status
     # and exit code go into the row; the pass rule below stays the
     # runner's (it knows the task's expected misses and the designer's
     # findings).
@@ -2854,7 +2853,7 @@ def main():
                              "a layout whose placement digest, binary, task, layout settings beside the placer's, "
                              "rates and threads equal an earlier run's stops after its placement and takes that "
                              "run's row and layout (marked reused_from); finished rows are stored there "
-                             "(docs/benchmarks.md, \"The ladder of placer measurements (2026-10-28)\")")
+                             "(docs/benchmarks.md, \"The ladder of placer measurements\")")
     parser.add_argument("--quality", action="store_true",
                         help="score the designer's board and the result with score-kicad-board (quality.py's "
                              "measures, about 0.1 s a board) into each row's quality")
@@ -2940,7 +2939,7 @@ def main():
         arguments.tasks_label = str(tasks_path)
     arguments.tasks_sha256 = hashlib.sha256(tasks_path.read_bytes()).hexdigest()
     print(f"tasks {arguments.tasks_label} (sha256 {arguments.tasks_sha256[:12]})", file=sys.stderr)
-    # Every row names the binary it ran (review 2026-10-21, M2): a
+    # Every row names the binary it ran: a
     # snapshot's path alone does not say which build it is.
     arguments.binary_sha256 = file_sha256(arguments.binary) if arguments.binary.is_file() else None
     print(f"binary {arguments.binary} (sha256 {(arguments.binary_sha256 or '?')[:12]})", file=sys.stderr)

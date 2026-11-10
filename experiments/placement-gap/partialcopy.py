@@ -4,7 +4,7 @@
 # found in the LICENSE file.
 """Which placement decisions carry the designer's advantage: a part of the
 designer's placement copied, the rest placed by the placer, the first route
-of each (docs/placer.md, "Which placement decisions matter (2026-11-04)").
+of each (docs/placer.md, "Which placement decisions matter").
 
     partialcopy.py prepare --out DIR BOARD...
     partialcopy.py run --out DIR --binary PATH [--slots 4]

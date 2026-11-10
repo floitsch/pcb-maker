@@ -2349,8 +2349,7 @@ fn rows_of_keys_without_courtyards_may_not_lie_on_each_other_and_carry_their_slo
     );
 }
 
-/// Net weights (`net_weight`; docs/placer.md, "The designer as teacher
-/// (2026-11-04)", "Net weights").
+/// Net weights (`net_weight`; docs/placer.md, "Net weights").
 mod net_weights {
     use super::*;
 

@@ -52,6 +52,6 @@ page='''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewpor
 <div class="gallery">__GALLERY__</div>
 __DENSE__
 <h2>What to pursue next</h2><p>Use failed-route evidence to identify scarce passages, decide which consuming route should change corridor or which movable body should make room, then relax and verify the resulting geometry. Preserve good alternatives and distinguish search-budget exhaustion from proven capacity failure. Test the strongest placement candidates at denser prefixes under both clearance profiles.</p>
-<p><a href="../../docs/reviews/2026-09-07-algorithm-exploration.md">Read the assessment and research parallels</a> · <a href="summary.json">Machine-readable results</a></p></html>'''
+<p><a href="summary.json">Machine-readable results</a></p></html>'''
 (root/'index.html').write_text(page.replace('__ROWS__',''.join(rows)).replace('__GALLERY__',''.join(gallery)).replace('__DENSE__',dense_section))
 print(root/'index.html')

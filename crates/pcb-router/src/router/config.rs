@@ -121,7 +121,7 @@ pub struct Config {
     /// again hard, and the exchange is kept when the open terminals of
     /// all of them together drop; not in a layout's move trial
     /// (`repair_trouble`, router/trouble.rs;
-    /// docs/experiments/human-level-routing.md). `PCB_ROUTER_TROUBLE`
+    /// docs/router.md, "The trouble-makers' repair"). `PCB_ROUTER_TROUBLE`
     /// overrides it (`0` off, `1` on).
     pub trouble_repair: bool,
     /// The clean-up keeps a change only if no pour net has more pads off
@@ -164,14 +164,13 @@ pub struct Config {
     /// Lattice lines where the pins are (`crate::pin_lines`): the pads of
     /// pin rows the regular lattice misses get lines through their centres
     /// (a part's rows at its own phase over a band, else single lines).
-    /// Off by default here (docs/router.md, "Lattice lines at pin rows
-    /// (2026-11-07)"); the KiCad ladder turns it on at its probes or after
-    /// its leader's run where the open pads are at such rows ("The rows
-    /// decided at the probes (2026-11-08)", "Lattice lines where the rows
-    /// are open (2026-11-08)"), a KiCad layout at the kept placement's
-    /// probe ("A layout's rows decided by its probe's open pads (2026-11-08)"), and
-    /// the KiCad router settings' `pin_lines` and `PCB_ROUTER_PIN_LINES`
-    /// set it.
+    /// Off by default here (docs/router.md, "Lattice lines at pin rows"); the
+    /// KiCad ladder turns it on at its probes or after its leader's run where
+    /// the open pads are at such rows ("The rows decided at the probes",
+    /// "Lattice lines where the rows are open"), a KiCad layout
+    /// at the kept placement's probe ("A layout's rows decided by its probe's
+    /// open pads"), and the KiCad router settings' `pin_lines` and
+    /// `PCB_ROUTER_PIN_LINES` set it.
     pub pin_lines: crate::pin_lines::Lines,
     /// The pour model as the measurement of a written board takes it
     /// (`measured_board`'s starved thermals, its solid step, and
@@ -223,10 +222,11 @@ pub struct Config {
     /// The share of a net's length the bend round may add to it.
     pub bend_round_length: f64,
     /// Route buses as bundles (an experiment, off;
-    /// docs/experiments/bus-bundles.md): four or more nets joining the same
-    /// footprints route first, in pad order, inside one corridor planned
-    /// for the bus's width, side by side; a member that cannot follow
-    /// routes as any other net. `PCB_ROUTER_BUS_BUNDLES` turns it on.
+    /// docs/architecture.md, "Off by default, still in the code"): four or
+    /// more nets joining the same footprints route first, in pad order,
+    /// inside one corridor planned for the bus's width, side by side; a
+    /// member that cannot follow routes as any other net.
+    /// `PCB_ROUTER_BUS_BUNDLES` turns it on.
     pub bus_bundles: bool,
     /// With `bus_bundles`: the factor on a bus member's trace step that
     /// does not lie beside a neighbouring member's copper
@@ -311,15 +311,16 @@ pub struct Config {
     /// this, nor later than the negotiation took (at least 60 s). A
     /// 130 x 90 mm six-layer board spent 470 s in clean-up.
     pub cleanup_seconds: f64,
-    /// Cost factor for another net's step on the ring around a pad that
-    /// joins its pour by thermal spokes (copper there starves the spokes).
+    /// Cost factor for another net's step on the four spoke corridors of a
+    /// pad that joins its pour by thermal spokes (copper there starves the
+    /// spokes).
     pub thermal_guard_cost: f64,
     /// Cost in millimetres of trace of a step into a pin-row gap
     /// (`Board::pin_row_gaps`) by a net other than the gap's two pads':
     /// a track snaking between a part's adjacent SMD pins pays it once or
     /// twice per gap it crosses (the gaps over 1.5 mm, `cleanup_only`, in
     /// the clean-up's searches and comparisons only, docs/router.md,
-    /// "Pin-row gaps and compaction in the clean-up (2026-11-06)"). 0
+    /// "Pin-row gaps and compaction in the clean-up"). 0
     /// turns it off (no gap marks built);
     /// `PCB_ROUTER_PIN_ROW_COST` sets it (default 2: from 3 mm on the
     /// expansion tier loses to the thermal guards, docs/router.md).

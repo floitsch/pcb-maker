@@ -1,15 +1,15 @@
 # Copyright (C) 2026 Toit contributors.
 #
 # The ripped count's pick margin (docs/placer.md, "The race ranks its probes
-# by the ripped count (2026-10-27)"), calibrated on the coarse study's data:
-# the trouble study's placements (build/trouble1-study/rows.json: each seed's
-# kept placement, its final KiCad unconnected and the run's 75 s race probe)
-# with the coarse study's p1-i25 probe at 5 % (build/coarse1-study: the
-# race's probe but for an iteration cap of 25, its ripped count and its
-# standing). Prints the race of k = 3 with a margin over the first-ranked
-# placement (every subset, every member as the first-ranked) and the seed
-# pairs by the relative margin of the lower count, for the ripped count and
-# for the recorded probe's unfinished nets.
+# by the ripped count"), calibrated on the coarse study's data: the trouble
+# study's placements (build/trouble1-study/rows.json: each seed's kept
+# placement, its final KiCad unconnected and the run's 75 s race probe) with
+# the coarse study's p1-i25 probe at 5 % (build/coarse1-study: the race's
+# probe but for an iteration cap of 25, its ripped count and its standing).
+# Prints the race of k = 3 with a margin over the first-ranked placement
+# (every subset, every member as the first-ranked) and the seed pairs by the
+# relative margin of the lower count, for the ripped count and for the
+# recorded probe's unfinished nets.
 #
 #   python3 -I experiments/race-ripped/margin.py [BUILD_DIR]
 import itertools, json, os, sys

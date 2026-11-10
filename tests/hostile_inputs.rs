@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Toit contributors.
 
-//! Hostile and odd input files through the command line
-//! (docs/reviews/2026-10-21-review-robustness.md): each ends with an exit
+//! Hostile and odd input files through the command line:
+//! each ends with an exit
 //! code and a message, never a crash, a panic or a write outside the
 //! output directory. The files are in tests/fixtures/hostile/; they are
 //! read as boards and rules, never run.

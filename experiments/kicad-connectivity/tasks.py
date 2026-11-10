@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Toit contributors.
-"""Writes the route-mode task list of the KiCad connectivity measurement
-(docs/changelog.md, "KiCad connectivity agreement"): the intake's boards
+"""Writes the route-mode task list of the KiCad connectivity measurement: the intake's boards
 where the router counted every connection routed and KiCad's DRC (zones
 refilled) reported unconnected items, with a licence run.py fetches
 (boards without one are listed by census.py only).

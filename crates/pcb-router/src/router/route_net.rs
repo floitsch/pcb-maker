@@ -44,7 +44,7 @@ impl Router {
     /// search's map of its targets kept it. Until 2026-11-05 every search
     /// put each of its targets in a hash map for this one lookup (the
     /// other components' nodes, thousands a search: 2 % of a dense
-    /// board's instructions; the fifth router round, docs/profiling.md).
+    /// board's instructions; the fifth router round, docs/profiling.md, "Router rounds", item 5).
     /// A target the hard search left out (`escape_is_free`) is never
     /// reached, and the test is the same for every entry of a node.
     pub(super) fn reached_element(&self, targets: &[(Node, u16)], state: usize) -> u16 {

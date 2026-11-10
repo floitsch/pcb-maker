@@ -15,8 +15,7 @@ keeps the ones that are finished designs of some size (see `judge`), and
 records them in manifest.json (committed: origin, commit, licence and the
 designer's numbers). With `fetch --training`, boards go to benchmarks/real/external/training/
 instead, judged by relaxed criteria (`judge_training`: any finished board
-of some size), recorded in training-manifest.json: training data for the
-congestion model (docs/congestion-model.md), not benchmarks. `boards` writes boards.json in the corpus runner's
+of some size), recorded in training-manifest.json: training data (for a congestion predictor that was dropped), not benchmarks. `boards` writes boards.json in the corpus runner's
 format from the manifest; run it with
 `benchmarks/corpus/run.py <out> --corpus benchmarks/github/boards.json`,
 and make layout tasks with

@@ -1,6 +1,6 @@
 // Copyright (C) 2026 Toit contributors.
 
-//! Placement ablation (docs/placer.md "Placement ablation (2026-10-24)"):
+//! Placement ablation (docs/placer.md "Placement ablation"):
 //! which of our placement's decisions cost routability. From the designer's
 //! board and our placed board of the same project it writes hybrids: the
 //! designer's placement with one group of parts where we put them, and our

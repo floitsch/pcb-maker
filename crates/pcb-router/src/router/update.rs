@@ -214,7 +214,7 @@ impl Router {
     }
 
     /// A move's local trial after `update_nets` (the move descent,
-    /// docs/experiments/move-descent.md): the ripped nets `nets` are
+    /// docs/architecture.md, "Off by default, still in the code"): the ripped nets `nets` are
     /// routed again one by one in the routing order with every other
     /// net's copper as a wall (the hard repair's search), so that no other
     /// net is touched and no conflict arises; the pour nets whose pads

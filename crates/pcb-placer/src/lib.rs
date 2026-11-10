@@ -53,10 +53,10 @@ pub struct Config {
     /// a stack). Off: the parts start at the angles they hold, options in
     /// the order given (the placer before 2026-10-15).
     pub orientation_search: bool,
-    /// Bus-group moves (`groups`, docs/placer.md "Bus-group moves
-    /// (2026-10-26)"): banks of parts on one bus and parts with their
-    /// passives move, turn, trade places and reorder as units in the
-    /// anneal and the refinement. Off (`None`) by default.
+    /// Bus-group moves (`groups`, docs/placer.md "Bus-group moves"): banks of
+    /// parts on one bus and parts with their passives move, turn, trade
+    /// places and reorder as units in the anneal and the refinement. Off
+    /// (`None`) by default.
     pub bus_groups: Option<groups::Settings>,
     /// KiCad's legality at the last level (where courtyards may touch):
     /// courtyards touch where the pads
@@ -66,11 +66,10 @@ pub struct Config {
     /// board keeps the copper clearance from the far side's pads
     /// (docs/placer.md, "The legality model against KiCad", the molecules).
     pub kicad_last_level: bool,
-    /// Pads without a way out (`exits`, docs/placer.md "Pads without a
-    /// way out (2026-11-04)"): after the placement, the router's test of
-    /// every pad's way out on the statics, and moves or turns
-    /// of the parts whose pads another part or the edge closes. Off
-    /// (`None`) by default.
+    /// Pads without a way out (`exits`, docs/placer.md "Pads without a way
+    /// out"): after the placement, the router's test of every pad's way out
+    /// on the statics, and moves or turns of the parts whose pads another
+    /// part or the edge closes. Off (`None`) by default.
     pub pad_exits: Option<exits::PadExits>,
     /// The first relaxation level the placement tries (`relaxation_levels`;
     /// the last if there are fewer): the race over skeletons places the
@@ -78,14 +77,13 @@ pub struct Config {
     /// legal at theirs (`skeleton`). 0 by default: every level.
     pub first_level: usize,
     /// A diagnostic start (`PCB_PLACER_START`, docs/placer.md "Where the
-    /// arrangement is lost (2026-11-04)"): the stages from `Start::stage`
-    /// on run from given poses (the designer's). `None` by default: the
-    /// placer's own start.
+    /// arrangement is lost"): the stages from `Start::stage` on run from
+    /// given poses (the designer's). `None` by default: the placer's own
+    /// start.
     pub start: Option<std::sync::Arc<Start>>,
     /// A diagnostic (`PCB_PLACER_SKIP_ANNEAL`, docs/placer.md "Where the
-    /// arrangement is lost (2026-11-04)"): no anneal at any level, each
-    /// level's legaliser seats the global placement's poses (or the
-    /// start's). Off by default.
+    /// arrangement is lost"): no anneal at any level, each level's legaliser
+    /// seats the global placement's poses (or the start's). Off by default.
     pub skip_anneal: bool,
 }
 

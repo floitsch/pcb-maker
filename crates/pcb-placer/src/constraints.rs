@@ -94,16 +94,15 @@ pub enum Relation {
     /// frames) lie within `soft` of each other, octilinearly, and never
     /// beyond `max`: a net's length rule (KiCad's `length` constraint with
     /// a maximum), which no route of the net can meet when its pads lie
-    /// further apart than the maximum (docs/placer.md, "Length maxima and
-    /// the far side of vias in pads (2026-10-28)"). Missed by the distance
-    /// beyond `soft`, and `WITHIN_STEEPNESS` times the distance beyond
-    /// `max` besides: no wirelength pays for a pad pair beyond the maximum.
-    /// `floor` (0: none) is a net's length minimum's share the pins keep
-    /// apart at least: closer than it, no meander on the route between
-    /// them makes up the minimum (docs/placer.md, "Length minima
-    /// (2026-11-04)"); missed by `WITHIN_FLOOR_WEIGHT` times the distance
-    /// short of it. A rule with a
-    /// minimum and no maximum has `soft` and `max` infinite.
+    /// further apart than the maximum (docs/placer.md, "Length maxima").
+    /// Missed by the distance beyond `soft`, and `WITHIN_STEEPNESS` times the
+    /// distance beyond `max` besides: no wirelength pays for a pad pair
+    /// beyond the maximum. `floor` (0: none) is a net's length minimum's
+    /// share the pins keep apart at least: closer than it, no meander on the
+    /// route between them makes up the minimum (docs/placer.md, "Length
+    /// minima"); missed by `WITHIN_FLOOR_WEIGHT` times the distance short of
+    /// it. A rule with a minimum and no maximum has `soft` and `max`
+    /// infinite.
     Within {
         part: usize,
         pin: Point,
@@ -122,7 +121,7 @@ pub const WITHIN_STEEPNESS: f64 = 20.0;
 /// What a millimetre short of a `Within` relation's floor costs against a
 /// millimetre of any other relation missed (a fifth was measured on the
 /// firestarter: no fewer connections lost, the lengths no better;
-/// docs/placer.md, "Length minima (2026-11-04)").
+/// docs/placer.md, "Length minima").
 pub const WITHIN_FLOOR_WEIGHT: f64 = 1.0;
 
 /// The octilinear distance of two points: the length of the shortest
@@ -195,8 +194,7 @@ pub struct Constraints {
     /// skeletons treats such a region as the outline: it neither keeps a
     /// passive in the skeleton nor stops a part's body from growing
     /// (`skeleton::absent_parts`; zpn_devboard's two pieces gave every
-    /// part a region, and no skeleton ran, docs/placer.md "The first night
-    /// (2026-11-06)").
+    /// part a region, and no skeleton ran).
     pub automatic_regions: BTreeSet<usize>,
     /// The part reaches beyond this board edge with the given box of its
     /// own frame ([min x, min y, max x, max y]; an antenna, a connector's

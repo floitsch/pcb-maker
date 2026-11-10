@@ -2,8 +2,7 @@
 # Use of this source code is governed by an MIT-style license that can be
 # found in the LICENSE file.
 
-"""Via room census on pad boxes (docs/placer.md, "A far-side pad under fine
-pitch, and what it was (2026-11-05)").
+"""Via room census on pad boxes.
 
     python3 census.py <out.json> <run dir>...   (a run dir holds layout/result)
     python3 census.py --summary <out.json>

@@ -8,11 +8,10 @@
 //! and what closes each (a neighbour's via or track), and whether that
 //! neighbour's pad in the row has a target on the other side along the
 //! row: a crossing pair, where on one layer the two nets cannot both
-//! leave and one of them has to dive (docs/router.md, "Fan-out before
-//! negotiation (2026-10-28)", the diagnosis). Analysis only: nothing is
-//! changed and no work is charged. The crossing dive that acted on the
-//! pairs (`crossing_dive`, off) was removed on 2026-11-04 (docs/handover.md,
-//! "Removed experiments (2026-11-04)").
+//! leave and one of them has to dive (docs/router.md, "Tried and rejected",
+//! the diagnosis). Analysis only: nothing is changed and no work is charged.
+//! The crossing dive that acted on the pairs (`crossing_dive`, off) was
+//! removed on 2026-11-04 (docs/handover.md, "Tried and not taken").
 
 use super::fanout::{DensePad, FanoutPlan};
 use super::*;

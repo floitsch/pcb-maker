@@ -9,8 +9,7 @@
 //! Started from one point with a little noise (`global::global_place`
 //! without it), the descent's density spreads the parts in the order the
 //! noise gave them and the wires never rearrange them: the active parts'
-//! arrangement was its start's noise (docs/placer.md, "Where the
-//! arrangement is lost (2026-11-04)").
+//! arrangement was its start's noise (docs/placer.md, "Where the arrangement is lost").
 //!
 //! Each axis is a sparse positive definite system, solved by conjugate
 //! gradients with a diagonal preconditioner; the bound-to-bound weights
