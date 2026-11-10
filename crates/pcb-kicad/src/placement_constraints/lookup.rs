@@ -85,7 +85,11 @@ impl Parts<'_> {
                         .and_then(Option::as_deref)
                         .is_some_and(|own| own.eq_ignore_ascii_case(uuid))
                 })
-                .ok_or_else(|| format!("constraint names {reference} with uuid {uuid:?}, which no footprint {reference} has"))?
+                .ok_or_else(|| {
+                    format!(
+                        "constraint names {reference} with uuid {uuid:?}, which no footprint {reference} has"
+                    )
+                })?
         } else {
             if parts.len() < 2 {
                 return self.find(reference);
