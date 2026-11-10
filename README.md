@@ -62,7 +62,7 @@ Not finished, but already useful.
   30 s budget: 2 309 route clean under KiCad's own DRC within 30 s, 3 896
   pass the designer-relative rule, 4 528 are complete at 300 s; the clean
   boards take a median 3.4 s
-  ([details and caveats](docs/benchmarks.md#expansion-intake-5-834-boards-routed-on-the-designers-placement-2026-10-18)).
+  ([details and caveats](docs/benchmarks.md)).
 - **Against Freerouting and KiCadRoutingTools** (measured 2026-10-21 to
   23; our side is x1367, main has moved on since): the same 109
   placements, all results judged by KiCad's DRC with the same rules.
@@ -71,18 +71,18 @@ Not finished, but already useful.
   open on 101 boards against 4; on the 74 boards both finish Freerouting
   leaves 3.6 times the unconnected items and 21 times the DRC errors, at
   a median 1.31 times our CPU seconds per board
-  ([table](docs/benchmarks.md#freerouting-against-x1367-2026-10-21)).
+  ([table](docs/benchmarks.md)).
   KiCadRoutingTools (cddf4cd), capped at one to three times our wall: 51
   passes against 7, all seven passed by ours too; fewer open connections
   on 93 boards against 6; it wrote no board on 43, and on ten boards run
   to completion it took a median 4.6 times our single-thread CPU seconds
   on the seven it finished
-  ([table](docs/benchmarks.md#kicadroutingtools-against-x1367-2026-10-21)).
+  ([table](docs/benchmarks.md)).
   The last cold-route round (2026-10-15, x738, the designer's placement
   with all copper removed, 1500 s each): fewer open connections on 47
   boards against 6, 51 boards clean against 8, at 0.65 times
   Freerouting's CPU
-  ([table](docs/benchmarks.md#freerouting-against-our-cold-route-x738-2026-10-15)).
+  ([table](docs/benchmarks.md)).
 - **Open-source boards, PCBench / PCBWorld D3** (617 boards, prepared the
   way PCBWorld prepares them; measured 2026-09-29): pcb-maker routes 601
   (97 %) clean, PCBench's Freerouting run 526 (85 %); vias about half and copper 93 % of
@@ -92,16 +92,16 @@ Not finished, but already useful.
   - Pours: our fill model is more fragmented than KiCad's, which shows as
     starved thermal reliefs on dense boards and as pads routed by tracks
     that KiCad would have joined through the fill.
-  - Placement: dense boards (a video board, ESC-class four-in-one
-    controllers, a SNES motherboard, Glasgow) stay 60-200 connections
-    short of what our router leaves on the designer's own placement
-    (video 202 open against 1, Glasgow 127 against 55, SNSP-CPU-01 97
-    against 35, the OpenESC 4in1 88 against 15; nightly 2026-11-04). The
-    gap is the arrangement of the active parts as a whole, not the
-    number of seeds tried: our global placement does not find the
-    designer's coarse arrangement, and on two of the densest boards
-    measured (the 4in1, Glasgow) our anneal loses the fine one
-    ([docs/placer.md](docs/placer.md#where-the-arrangement-is-lost-2026-11-04)).
+  - Placement: dense boards (ESC-class four-in-one controllers, Glasgow
+    and others) stay 50-140 connections short of what our router leaves
+    on the designer's own placement (Batch_1 142
+    open against 2, protoesp 87 against 1, Glasgow 85 against 17, the
+    OpenESC 4in1 79 against 12; nightly 2026-11-10). The gap is the
+    arrangement of the active parts as a whole, not the number of seeds
+    tried: our global placement does not find the designer's coarse
+    arrangement, and on two of the densest boards measured (the 4in1,
+    Glasgow) our anneal loses the fine one
+    ([docs/placer.md](docs/placer.md)).
   - Features: differential pairs are routed coupled by default only in
     route mode, and only where the project's rules ask for them (a
     layout couples them with the router's `diff_pairs`, at a cost in
@@ -339,7 +339,7 @@ designer tier, the short and expansion tiers and four fingerprint
 boards on main and publishes them here. A placer default is decided on
 eleven dense boards at five seed pairs (nine when that leaves it
 open), after a cheaper stage that stops each layout at its first route
-([the protocol and its ladder](docs/benchmarks.md#measurement-discipline-placer-defaults-2026-10-26)).
+([the protocol and its ladder](docs/benchmarks.md)).
 The task lists are committed (benchmarks/agent-tasks/tasks/v7, made by
 from_pcbench.py from benchmarks/github/boards.json):
 
@@ -358,13 +358,13 @@ benchmarks/github/freerouting.py build/freerouting --ours      # both routers, h
 | `crates/pcb-router` | the format-independent routing core: geometry, lattice, negotiation, pours, verifier |
 | `crates/pcb-placer` | the electrostatic placer, annealer, legaliser and playback |
 | `crates/pcb-kicad` | KiCad S-expression parsing and writing, project rules, the board adapters, native verification |
-| `src/` | the `pcb-maker` command line: `main.rs` (dispatch, the inspection and benchmark commands), `agent_cli.rs` (the agent commands), `freerouting_backend.rs` |
+| `src/` | the `pcb-maker` command line: `main.rs` (dispatch, the inspection and benchmark commands), `agent_cli.rs` (the agent commands) |
 | `benchmarks/corpus` | the KiCad-demo corpus runner (route and layout) |
 | `benchmarks/github` | the harvested open-source boards: harvest, manifest, Freerouting comparison |
 | `benchmarks/pcbench` | 617 open-source boards (PCBench through PCBWorld's D3 preparation): fetch, manifest, runner, triage |
 | `benchmarks/agent-tasks` | layout tasks as an agent poses them: stacked parts, constraints, a finished board |
-| `crates/pcb-congestion` | congestion features (RUDY) the placement race ranks its candidates by |
-| `docs/` | design notes and results; [the hand-over](docs/handover.md) (current state, open problems, how to work on it) and [the changelog](docs/changelog.md) |
+| `crates/pcb-global` | a coarse tile-graph global router; used only by opt-in experiments and research commands |
+| `docs/` | design notes and results; [the hand-over](docs/handover.md) (current state, open problems, how to work on it) and [the architecture](docs/architecture.md) (where each stage lives in the code) |
 | `skills/pcb-maker` | the agent skill (`SKILL.md`): the short form of docs/agents.md for agent CLIs; tests/cli_exit_codes.rs checks it against the command table and the exit codes |
 | `scripts/` | `worktree.sh`, `check.sh` (the test set), `snapshot.sh`, `release.sh` (the `snapshot` release by hand), `check_links.py` |
 | `tools/config-reference` | generates [the configuration reference](docs/config-reference.md) (every settings key with its type, default and doc comment) and the hand-over's environment index from the code |
@@ -383,9 +383,7 @@ commit be4b012 (removed 2026-10-20); `pcb-kicad`'s research modules (the
 semantic ladder, the sequential and adaptive routers, the grid router's
 inspections, via actions and route relaxation) with the crates
 `pcb-engine`, `pcb-grid-router`, `layout-trace-model` and `pcb-core` up to
-b306347 (removed 2026-10-21). The
-[trust audit](docs/reviews/2026-09-21-trust-audit.md) explains what was
-kept and why.
+b306347 (removed 2026-10-21).
 
 ## License
 
