@@ -8,6 +8,7 @@
 
 use super::*;
 use crate::board_placer::{connector_mouth, local_body};
+use std::collections::HashMap;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct KiCadQualityReport {
@@ -1231,6 +1232,7 @@ fn connectors_of(parts: &[Part], outline: Option<[f64; 4]>) -> KiCadConnectors {
 /// Small two-pad SMD parts whose pads get very unequal track widths: a
 /// tombstoning risk.
 fn tombstone_risks(parts: &[Part], tracks: &[Track]) -> Vec<String> {
+    let ends = TrackEnds::of(tracks);
     let mut tombstone_risk = Vec::new();
     for part in parts
         .iter()
@@ -1243,8 +1245,9 @@ fn tombstone_risks(parts: &[Part], tracks: &[Track]) -> Vec<String> {
             continue;
         }
         let width_into = |pad: &Pad| -> f64 {
-            tracks
-                .iter()
+            ends.near(pad.center, pad.half)
+                .into_iter()
+                .map(|index| &tracks[index])
                 .filter(|track| {
                     [track.start, track.end].iter().any(|end| {
                         (end[0] - pad.center[0]).abs() <= pad.half[0]
@@ -1260,6 +1263,73 @@ fn tombstone_risks(parts: &[Part], tracks: &[Track]) -> Vec<String> {
         }
     }
     tombstone_risk
+}
+
+/// The tracks by the squares their ends lie in, for the tracks that end in
+/// a pad (the tombstone risks asked every track of every small part: a
+/// board of 940 parts and 20,000 tracks took a second).
+struct TrackEnds {
+    buckets: HashMap<(i64, i64), Vec<usize>>,
+    tracks: usize,
+}
+
+impl TrackEnds {
+    /// The squares' side, in mm.
+    const SIDE: f64 = 1.0;
+
+    fn of(tracks: &[Track]) -> Self {
+        let mut buckets: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
+        for (index, track) in tracks.iter().enumerate() {
+            for end in [track.start, track.end] {
+                let bucket = Self::bucket(end);
+                let list = buckets.entry(bucket).or_default();
+                if list.last() != Some(&index) {
+                    list.push(index);
+                }
+            }
+        }
+        Self {
+            buckets,
+            tracks: tracks.len(),
+        }
+    }
+
+    fn bucket(point: [f64; 2]) -> (i64, i64) {
+        (
+            (point[0] / Self::SIDE).floor() as i64,
+            (point[1] / Self::SIDE).floor() as i64,
+        )
+    }
+
+    /// The tracks, in their order, that may end within `half` of
+    /// `center` (a square around the box more, for the rounding): a
+    /// superset of those that do.
+    fn near(&self, center: [f64; 2], half: [f64; 2]) -> Vec<usize> {
+        let low = Self::bucket([center[0] - half[0], center[1] - half[1]]);
+        let high = Self::bucket([center[0] + half[0], center[1] + half[1]]);
+        let (x0, y0) = (low.0.saturating_sub(1), low.1.saturating_sub(1));
+        let (x1, y1) = (high.0.saturating_add(1), high.1.saturating_add(1));
+        let squares = (x1.saturating_sub(x0) as u128 + 1) * (y1.saturating_sub(y0) as u128 + 1);
+        if !(center[0].is_finite()
+            && center[1].is_finite()
+            && half[0].is_finite()
+            && half[1].is_finite())
+            || squares > self.buckets.len() as u128
+        {
+            return (0..self.tracks).collect();
+        }
+        let mut found = Vec::new();
+        for x in x0..=x1 {
+            for y in y0..=y1 {
+                if let Some(list) = self.buckets.get(&(x, y)) {
+                    found.extend_from_slice(list);
+                }
+            }
+        }
+        found.sort_unstable();
+        found.dedup();
+        found
+    }
 }
 
 /// The DRC violation counts of `<directory>/drc.json`, if the file is there

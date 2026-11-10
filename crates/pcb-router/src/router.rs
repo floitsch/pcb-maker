@@ -1788,6 +1788,12 @@ pub struct Router {
     /// The static maps' key when they are shared (`statics_key`): the
     /// pour masks held for them are this router's too.
     statics_key: Option<u128>,
+    /// `prepare::pour_masks_key` of `statics_key` and the board, once
+    /// asked (`Router::pour_masks_key`).
+    pour_masks_key: std::sync::OnceLock<u128>,
+    /// The board's planes by outline (`Board::planes_by_outline`), made
+    /// when first asked.
+    plane_outlines: std::sync::OnceLock<Arc<crate::board::PlanesByOutline>>,
     /// Dynamic occupancy, `[class * (layers + 1) + layer]`; index `layers`
     /// is the via map. A value counts the nets forbidding that class there
     /// (a byte a count, `Occupancy`). After the class maps follow the diagonal maps (see `diagonal_map`):

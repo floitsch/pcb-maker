@@ -265,7 +265,14 @@ impl Router {
         net: NetId,
         connected_only: bool,
     ) -> (Vec<Vec<bool>>, Vec<usize>, [u64; 2]) {
-        compute_pour_masks(&self.board, &self.statics, &self.grid, net, connected_only)
+        compute_pour_masks(
+            &self.board,
+            &self.statics,
+            &self.grid,
+            net,
+            connected_only,
+            self.plane_outlines(),
+        )
     }
 
     /// `pour_masks_counted(net, true)` as the router's preparation takes
@@ -278,8 +285,17 @@ impl Router {
         &self,
         net: NetId,
     ) -> (Vec<Vec<bool>>, Vec<usize>, [u64; 2], bool) {
-        if let Some(key) = self.statics_key {
-            let key = pour_masks_key(key, &self.board);
+        // The key only when some masks are held (it hashes every pour's
+        // outlines: once a router, not once a net).
+        let held = || {
+            let mut cache = POUR_MASKS
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            cache.retain(|(_, masks)| masks.strong_count() > 0);
+            !cache.is_empty()
+        };
+        if self.statics_key.is_some() && held() {
+            let key = self.pour_masks_key().expect("the static maps' key");
             let found = {
                 let mut cache = POUR_MASKS
                     .lock()
@@ -298,6 +314,23 @@ impl Router {
         }
         let (plane, plane_class, counts) = self.pour_masks_counted(net, true);
         (plane, plane_class, counts, false)
+    }
+
+    /// The board's planes by outline, made once.
+    pub(super) fn plane_outlines(&self) -> &crate::board::PlanesByOutline {
+        self.plane_outlines
+            .get_or_init(|| Arc::new(self.board.planes_by_outline()))
+    }
+
+    /// `pour_masks_key` of this router's static maps and board, computed
+    /// once (None when the maps are not shared).
+    pub(super) fn pour_masks_key(&self) -> Option<u128> {
+        let statics = self.statics_key?;
+        Some(
+            *self
+                .pour_masks_key
+                .get_or_init(|| pour_masks_key(statics, &self.board)),
+        )
     }
 
     /// The rule class `net` routes with at `cell`: its neck class inside
@@ -331,6 +364,7 @@ pub(super) fn compute_pour_masks(
     grid: &Grid,
     net: NetId,
     connected_only: bool,
+    outlines: &crate::board::PlanesByOutline,
 ) -> (Vec<Vec<bool>>, Vec<usize>, [u64; 2]) {
     let mut counts = [0u64; 2];
     let description = &board.nets[net as usize];
@@ -369,6 +403,8 @@ pub(super) fn compute_pour_masks(
         let corners =
             pour.polygon.len() + pour.excluded.iter().map(|other| other.len()).sum::<usize>();
         counts[0] += ((x1 - x0 + 1) * (y1 - y0 + 1)) as u64;
+        // (Asked only of nodes inside the pour.)
+        let excluded = crate::geometry::BoxedPolygons::meeting(&pour.excluded, &pour.polygon);
         for y in y0..=y1 {
             for x in x0..=x1 {
                 let cell = grid.index(x, y);
@@ -379,10 +415,7 @@ pub(super) fn compute_pour_masks(
                 }
                 if allowed
                     && crate::geometry::point_in_polygon(center, &pour.polygon)
-                    && !pour
-                        .excluded
-                        .iter()
-                        .any(|other| crate::geometry::point_in_polygon(center, other))
+                    && !excluded.any_contains(center)
                 {
                     inside.push((cell, true));
                 }
@@ -393,12 +426,14 @@ pub(super) fn compute_pour_masks(
         // (`Board::excluded_clearance`).
         if half > 0.0 {
             let mut near_edge: std::collections::HashSet<usize> = std::collections::HashSet::new();
-            let outlines = std::iter::once((&pour.polygon, half)).chain(
-                pour.excluded
-                    .iter()
-                    .map(|other| (other, half + board.excluded_clearance(pour, other))),
-            );
-            for (polygon, reach) in outlines {
+            let regions =
+                std::iter::once((&pour.polygon, half)).chain(pour.excluded.iter().map(|other| {
+                    (
+                        other,
+                        half + outlines.excluded_clearance(board, pour, other),
+                    )
+                }));
+            for (polygon, reach) in regions {
                 for (a, b) in crate::geometry::polygon_edges(polygon) {
                     let bounds = crate::geometry::Aabb {
                         minimum: [a[0].min(b[0]), a[1].min(b[1])],
@@ -411,6 +446,10 @@ pub(super) fn compute_pour_masks(
                     let nodes = ((ex1 - ex0 + 1) * (ey1 - ey0 + 1)) as u64;
                     counts[0] += nodes;
                     counts[1] += nodes;
+                    // Only the nodes in the pour's range can be inside it
+                    // (an excluded region far from the pour is counted
+                    // as tested, as before, but not walked).
+                    let (ex0, ey0, ex1, ey1) = (ex0.max(x0), ey0.max(y0), ex1.min(x1), ey1.min(y1));
                     for y in ey0..=ey1 {
                         for x in ex0..=ex1 {
                             if crate::geometry::point_segment_distance(grid.center(x, y), a, b)
@@ -464,7 +503,9 @@ pub(super) fn mask_set_bytes(set: &PourMaskSet) -> usize {
 /// What the pour masks are computed from beyond the static maps (their
 /// key, `statics`): every pour's net, layer, class, connection, outline
 /// and the regions it leaves out (a mask keeps clear of other nets' pours
-/// of the same outline, `Board::excluded_clearance`).
+/// of the same outline, `Board::excluded_clearance`), hashed (128 bits)
+/// by their bits. Until 2026-11-10 by their debug text: a board of 5353
+/// pours excluding 7 million regions made that a gigabyte, once a net.
 pub(super) fn pour_masks_key(statics: u128, board: &Board) -> u128 {
     use std::hash::Hasher as _;
     let mut hashers = [
@@ -472,23 +513,29 @@ pub(super) fn pour_masks_key(statics: u128, board: &Board) -> u128 {
         std::collections::hash_map::DefaultHasher::new(),
     ];
     hashers[1].write_u64(0x9e37_79b9_7f4a_7c15);
-    let text = format!(
-        "{statics} {:?}",
-        board
-            .planes
-            .iter()
-            .map(|plane| (
-                plane.net,
-                plane.layer,
-                plane.class,
-                plane.connect,
-                &plane.polygon,
-                &plane.excluded
-            ))
-            .collect::<Vec<_>>()
-    );
     for hasher in &mut hashers {
-        hasher.write(text.as_bytes());
+        hasher.write_u128(statics);
+        hasher.write_usize(board.planes.len());
+        for plane in &board.planes {
+            hasher.write_u32(plane.net);
+            hasher.write_usize(plane.layer);
+            hasher.write_usize(plane.class);
+            hasher.write_u8(plane.connect as u8);
+            hash_polygon(hasher, &plane.polygon);
+            hasher.write_usize(plane.excluded.len());
+            for region in &plane.excluded {
+                hash_polygon(hasher, region);
+            }
+        }
     }
     ((hashers[0].finish() as u128) << 64) | hashers[1].finish() as u128
+}
+
+/// A polygon's corners into `hasher`, by their bits, after their count.
+fn hash_polygon(hasher: &mut impl std::hash::Hasher, points: &[crate::geometry::Point]) {
+    hasher.write_usize(points.len());
+    for point in points {
+        hasher.write_u64(point[0].to_bits());
+        hasher.write_u64(point[1].to_bits());
+    }
 }

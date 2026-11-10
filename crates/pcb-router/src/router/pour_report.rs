@@ -128,10 +128,8 @@ impl Router {
                 }
                 let half_brush = self.board.classes[state.plane_class[layer]].trace_width / 2.0;
                 let mut nodes: HashMap<u32, (usize, usize)> = HashMap::new();
-                for (index, label) in labels.iter().enumerate() {
-                    if *label == 0 {
-                        continue;
-                    }
+                for index in crate::pour::occupied_cells(labels) {
+                    let label = &labels[index];
                     // Rim nodes: a side neighbour outside the piece.
                     let rim = [index - 1, index + 1, index - nx, index + nx]
                         .iter()
@@ -185,15 +183,13 @@ impl Router {
             ) else {
                 continue;
             };
+            let excluded = crate::geometry::BoxedPolygons::meeting(&plane.excluded, &plane.polygon);
             for y in y0..=y1 {
                 for x in x0..=x1 {
                     let center = self.grid.center(x, y);
                     if crate::geometry::point_in_polygon(center, &plane.polygon)
                         && crate::geometry::point_in_polygon(center, &self.board.outline)
-                        && !plane
-                            .excluded
-                            .iter()
-                            .any(|other| crate::geometry::point_in_polygon(center, other))
+                        && !excluded.any_contains(center)
                     {
                         inside[self.grid.index(x, y)] = true;
                     }

@@ -11,6 +11,29 @@
 
 use crate::grid::Grid;
 
+/// The indices of the cells that are not empty (`T::default()`: a mask's
+/// set nodes, a label map's labelled ones), in order, past empty stretches
+/// a block at a time: a net's pour is a small part of a large board's
+/// lattice, which the pour analysis walked node by node once a net and
+/// layer.
+pub fn occupied_cells<T: Copy + Default + PartialEq>(
+    cells: &[T],
+) -> impl Iterator<Item = usize> + '_ {
+    const BLOCK: usize = 64;
+    let empty = T::default();
+    cells
+        .chunks(BLOCK)
+        .enumerate()
+        .filter(move |(_, chunk)| chunk.iter().fold(false, |any, cell| any | (*cell != empty)))
+        .flat_map(move |(block, chunk)| {
+            chunk
+                .iter()
+                .enumerate()
+                .filter(move |(_, cell)| **cell != empty)
+                .map(move |(index, _)| block * BLOCK + index)
+        })
+}
+
 /// Per layer and node: the pour's brush (its minimum width, keeping the pour's
 /// clearance) fits here, so there is solid pour copper.
 pub struct PourMap {
@@ -38,14 +61,26 @@ impl PourMap {
         let mut solid = Vec::new();
         for layer in free {
             let mut result = vec![false; layer.len()];
-            if !layer.is_empty() {
+            if !layer.is_empty() && nx >= 2 {
                 for y in 1..ny.saturating_sub(1) {
-                    for x in 1..nx.saturating_sub(1) {
-                        result[y * nx + x] = layer[y * nx + x];
-                    }
+                    let row = y * nx + 1..y * nx + nx - 1;
+                    result[row.clone()].copy_from_slice(&layer[row]);
                 }
             }
             solid.push(result);
+        }
+        // The first solid node of a row at `x` or after, before `end`
+        // (`end` if none), past empty stretches a block at a time: a net's
+        // pour is a small part of a large board's lattice.
+        fn next_solid(row: &[bool], mut x: usize, end: usize) -> usize {
+            const BLOCK: usize = 32;
+            while x + BLOCK <= end && row[x..x + BLOCK] == [false; BLOCK] {
+                x += BLOCK;
+            }
+            while x < end && !row[x] {
+                x += 1;
+            }
+            x
         }
         // The pieces by runs of solid nodes along the rows (until
         // 2026-11-04 a flood node by node: a tenth of brickpico's and the
@@ -79,10 +114,11 @@ impl PourMap {
             let mut above = 0..0;
             for y in 1..ny.saturating_sub(1) {
                 let row = runs.len();
+                let cells = &solid[y * nx..(y + 1) * nx];
                 let mut x = 1;
                 while x + 1 < nx {
-                    if !solid[y * nx + x] {
-                        x += 1;
+                    if !cells[x] {
+                        x = next_solid(cells, x, nx - 1);
                         continue;
                     }
                     let first = x;

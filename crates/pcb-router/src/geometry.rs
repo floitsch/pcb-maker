@@ -266,6 +266,104 @@ pub fn point_in_polygon(point: Point, points: &[Point]) -> bool {
     inside
 }
 
+/// Polygons with their boxes, for many `point_in_polygon` questions about
+/// the same polygons (a pour's excluded regions: a board of 5353 pours had
+/// 1300 a pour): `any_contains` answers what testing each polygon answers,
+/// testing only those whose box holds the point.
+pub struct BoxedPolygons<'a> {
+    polygons: Vec<(&'a [Point], Option<Aabb>)>,
+}
+
+impl<'a> BoxedPolygons<'a> {
+    pub fn new(polygons: impl IntoIterator<Item = &'a Vec<Point>>) -> Self {
+        Self {
+            polygons: polygons
+                .into_iter()
+                .map(|polygon| (polygon.as_slice(), finite_box(polygon)))
+                .collect(),
+        }
+    }
+
+    /// Those of `polygons` that may hold a point inside `outline`
+    /// (`may_meet`): `any_contains` answers for points inside `outline`
+    /// what testing all of them answers.
+    pub fn meeting(polygons: impl IntoIterator<Item = &'a Vec<Point>>, outline: &[Point]) -> Self {
+        let outline = finite_box(outline);
+        let mut boxed = Self::new(polygons);
+        boxed
+            .polygons
+            .retain(|(_, bounds)| boxes_may_meet(bounds, &outline));
+        boxed
+    }
+
+    /// Whether a point can be inside both the `index`th polygon and
+    /// `outline` (`point_in_polygon` of both): their boxes, widened by
+    /// the margin, meet.
+    pub fn may_meet(&self, index: usize, outline: &[Point]) -> bool {
+        boxes_may_meet(&self.polygons[index].1, &finite_box(outline))
+    }
+
+    /// Whether `point_in_polygon(point, polygon)` holds for any of them.
+    pub fn any_contains(&self, point: Point) -> bool {
+        self.polygons
+            .iter()
+            .any(|(polygon, bounds)| may_contain(bounds, point) && point_in_polygon(point, polygon))
+    }
+
+    /// Whether `point_in_polygon(point, polygon)` holds for the `index`th.
+    pub fn contains(&self, index: usize, point: Point) -> bool {
+        let (polygon, bounds) = &self.polygons[index];
+        may_contain(bounds, point) && point_in_polygon(point, polygon)
+    }
+}
+
+/// A polygon's box, or None when a corner is not finite (then no box
+/// bounds what `point_in_polygon` answers).
+fn finite_box(polygon: &[Point]) -> Option<Aabb> {
+    let mut bounds = Aabb {
+        minimum: [f64::INFINITY; 2],
+        maximum: [f64::NEG_INFINITY; 2],
+    };
+    for point in polygon {
+        if !(point[0].is_finite() && point[1].is_finite()) {
+            return None;
+        }
+        bounds = bounds.union(Aabb {
+            minimum: *point,
+            maximum: *point,
+        });
+    }
+    Some(bounds)
+}
+
+/// Whether a point can pass `may_contain` of both boxes.
+fn boxes_may_meet(a: &Option<Aabb>, b: &Option<Aabb>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => a
+            .inflated(POLYGON_BOX_MARGIN)
+            .intersects(b.inflated(POLYGON_BOX_MARGIN)),
+        _ => true,
+    }
+}
+
+/// How far beyond its box `may_contain` lets a polygon reach in x, for
+/// the rounding of `point_in_polygon`'s crossings.
+const POLYGON_BOX_MARGIN: f64 = 1.0e-6;
+
+/// Whether `point_in_polygon(point, polygon)` can hold for a polygon of
+/// box `bounds` (None: unknown, so yes). Outside the box's rows no edge
+/// crosses the point's row; left of it every crossing toggles, and a
+/// closed outline crosses a row an even number of times; right of it
+/// none does. The margin covers the crossing's rounding.
+fn may_contain(bounds: &Option<Aabb>, point: Point) -> bool {
+    bounds.is_none_or(|bounds| {
+        point[1] >= bounds.minimum[1]
+            && point[1] <= bounds.maximum[1]
+            && point[0] >= bounds.minimum[0] - POLYGON_BOX_MARGIN
+            && point[0] <= bounds.maximum[0] + POLYGON_BOX_MARGIN
+    })
+}
+
 /// A polygon of many vertices with its edges bucketed on a square grid
 /// over its box, for local queries: `distance_below`, `distance` and
 /// `contains` answer exactly what `Shape::distance_to_point` and
