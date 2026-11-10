@@ -127,7 +127,7 @@ fn union_box(inner: [f64; 4], outer: [f64; 4]) -> [f64; 4] {
 }
 
 /// Room around grid arrays (`bga_room`; docs/placer.md, "Room around grid
-/// arrays (2026-11-04)"). Per array the router's detection finds
+/// arrays"). Per array the router's detection finds
 /// (`array_rooms`, the fan-out's `board_arrays`), in its own frame from
 /// its ball field (the box of the ball centres grown by half a pitch):
 ///
@@ -282,7 +282,7 @@ const LENGTH_MOST_PINS: usize = 16;
 /// pins is about their octilinear distance, and the meanders on its
 /// straight tracks add at most about as much again where a bus runs at
 /// its clearance (the firestarter's DVP bus on the designer's placement:
-/// docs/placer.md, "Length minima (2026-11-04)").
+/// docs/placer.md, "Length minima").
 pub(super) const LENGTH_FLOOR_SHARE: f64 = 0.5;
 
 /// Length windows (`length_maxima`, `length_minima`): for each net of a
