@@ -34,6 +34,8 @@ mod merge;
 mod pad;
 mod pin_rows;
 mod planes;
+#[cfg(test)]
+mod tests;
 mod tracks;
 mod warnings;
 

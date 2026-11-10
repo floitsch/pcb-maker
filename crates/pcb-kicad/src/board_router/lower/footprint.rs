@@ -390,7 +390,7 @@ impl Builder {
 /// on B.Cu, and under the footprint's mask opening; the designer reaches
 /// it with a via in its corner. Its pad holds its net's vias (not in
 /// `no_via_pads`) and its own mask opening leaves them there.
-fn touch_electrode(footprint: &Expr) -> bool {
+pub(super) fn touch_electrode(footprint: &Expr) -> bool {
     let mut pads = footprint
         .children()
         .iter()
@@ -408,7 +408,7 @@ fn touch_electrode(footprint: &Expr) -> bool {
 /// so; kicad-cli: a tie by `(tags "net tie")` at 20220815 and before, by
 /// "net tie short" too, not by "Net Tie", "foo net tie" or a description,
 /// and not at 20220817 and after).
-fn net_tie_groups(footprint: &Expr, board_version: Option<u64>) -> Vec<Vec<String>> {
+pub(super) fn net_tie_groups(footprint: &Expr, board_version: Option<u64>) -> Vec<Vec<String>> {
     if let Some(groups) = footprint.child("net_tie_pad_groups") {
         return groups
             .children()
@@ -460,7 +460,7 @@ fn net_tie_groups(footprint: &Expr, board_version: Option<u64>) -> Vec<Vec<Strin
 /// it, else its cells (of 0.02 mm, coarser for a large graphic) whose
 /// whole square lies inside no disc, as rectangles per row; None when
 /// nothing is left.
-fn carve_net_tie(shape: core::Shape, carves: &[([f64; 2], f64)]) -> Option<core::Shape> {
+pub(super) fn carve_net_tie(shape: core::Shape, carves: &[([f64; 2], f64)]) -> Option<core::Shape> {
     let bounds = shape.aabb();
     let width = bounds.maximum[0] - bounds.minimum[0];
     let height = bounds.maximum[1] - bounds.minimum[1];

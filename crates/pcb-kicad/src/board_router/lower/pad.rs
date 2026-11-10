@@ -591,7 +591,7 @@ impl Builder {
 
 /// The drilled hole of a pad: a circle, or a capsule for a slot
 /// (`(drill oval 1 7)`), centred on the pad.
-fn drill_shape(pad: &Expr, center: [f64; 2]) -> Result<Option<core::Shape>, String> {
+pub(super) fn drill_shape(pad: &Expr, center: [f64; 2]) -> Result<Option<core::Shape>, String> {
     let Some(drill) = pad.child("drill") else {
         return Ok(None);
     };
@@ -703,7 +703,7 @@ fn pad_spokes_frame(pad: &Expr, center: [f64; 2]) -> Result<core::PadSpokes, Str
 /// entry's shape, size and other forms in place of its own. The pad's own
 /// forms are the front's (and, in custom mode, every layer's the stack
 /// does not name).
-fn padstack_variants(pad: &Expr, layers: &LayerTable) -> Vec<(core::LayerMask, Expr)> {
+pub(super) fn padstack_variants(pad: &Expr, layers: &LayerTable) -> Vec<(core::LayerMask, Expr)> {
     let Some(stack) = pad.child("padstack") else {
         return Vec::new();
     };
