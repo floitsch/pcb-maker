@@ -108,3 +108,39 @@ deduplication/retry, discovery completeness, conversion quarantine, and
 advancing/accumulating data batches. Real smoke runs additionally exercised
 downloads, successful native routing, resource limits, feature export and
 routing of exported placements.
+
+## Held-out set (`holdout/`, 2026-11-10)
+
+56 boards the tool has never seen, to check that gains made on the 109
+harvested boards and the 46 of the expansion tier generalise. **Rule:
+nobody diagnoses, debugs or tunes on these boards; they are only counted**
+(pass and strict counts, medians against the designer, per tier run). A
+board that looks wrong is reported, not fixed for; a placer or router
+change is judged on the other tiers and only then looked at here.
+
+- **Selection.** Repositories found by topic and code searches that are in
+  none of the earlier harvests (not in `data/repositories.json`, so no
+  board of them was ever quick-routed or used for training), no forks,
+  licence by GitHub's SPDX id within `USABLE_LICENSES`; their trees scanned
+  for `.kicad_pcb`; `harvest.py fetch` with its admission rules (KiCad 6+,
+  outline, 2-32 layers, 8+ footprints and tracks); boards whose SHA-256 is
+  in the expansion manifest dropped, flagged paths (panel, backup, fixture,
+  qa, demo, archive) dropped; `describe-kicad-board` for the numbers and
+  `kicad-cli pcb drc --refill-zones` on the designer's board: all but one
+  (iMX6 Demo Board, 1 finding, recorded) are clean (no error, no
+  unconnected item). A spread over layers, BGAs, fine pitch, differential
+  pairs, length rules, HDI, power, RF and ordinary small boards; one
+  board per repository, two for OpenVVVF's distinct boards.
+- **Files.** `holdout/manifest.json` (facts per board: repository, commit,
+  licence, layers, parts, pads, nets, connections, why it is interesting,
+  designer DRC, file digests) and `holdout/tasks.json` (route-mode tasks
+  as in `agent-tasks/expansion-tasks.json`). The downloads live in
+  `data/holdout/` (not committed; its own `harvest.jsonl`, `manifest.json`
+  of all 2185 accepted boards and `native/` DRC reports).
+- **Running.** Route mode, as the expansion tier:
+  `benchmarks/agent-tasks/run.py build/holdout-X --tasks
+  benchmarks/expansion/holdout/tasks.json --harvest-data
+  benchmarks/expansion/data/holdout --jobs 8 --threads 1 --binary ...`
+  (the pinned files come from `data/holdout/boards/` or, with matching
+  digests, from GitHub). It is not a tier of `run.py` (`--tier` is a fixed
+  list in the code), so it takes `--tasks`.
