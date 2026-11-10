@@ -48,9 +48,7 @@ pub(crate) fn natural(reference: &str) -> (String, u64, String) {
     )
 }
 
-/// What `apply_rows` returns: each follower's leader, each row member's
-/// place, and the rows' first parts.
-/// The followers' leaders, their places, and the user's rows: each
+/// What `apply_rows` returns: the followers' leaders, their places, and the user's rows: each
 /// leader with a member's own body size (before the members' bodies go to
 /// the leader), for the outline's test.
 type AppliedRows = (

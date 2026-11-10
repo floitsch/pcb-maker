@@ -21,10 +21,13 @@ pub struct KiCadEdgeConstraint {
     /// 0 when `flush`).
     #[serde(default)]
     pub max_mm: Option<f64>,
-    /// Not supported yet: reported as a warning.
+    /// The part may take only the orientations that point its footprint's
+    /// keepout at the edge, and that keepout may hang over it (applied by
+    /// `apply_overhang`).
     #[serde(default)]
     pub overhang: Option<serde_json::Value>,
-    /// Not supported yet: reported as a warning.
+    /// With `true` the part is turned to open outwards (applied by
+    /// `apply_opening_outwards`).
     #[serde(default)]
     pub opening_outwards: Option<bool>,
     /// Which of several footprints sharing `part`'s reference (a panel's

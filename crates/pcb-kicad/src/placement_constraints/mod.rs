@@ -205,8 +205,9 @@ pub(super) fn resolve_constraints(
 }
 
 /// Applies `constraints` to a lowered problem. `pads[i]` maps pad names of
-/// footprint `i` to their local offsets. Returns warnings for parts of the
-/// constraints that are accepted but not acted on.
+/// footprint `i` to their local offsets. Returns `Ok` with an empty list (no
+/// constraint is accepted without being acted on: what cannot be kept is an
+/// `Err`), or the error that refuses the constraints.
 ///
 /// The stages run in this order, and each refuses its own mistakes as it
 /// meets them: rows (each made one part), rotation, place, edge, region,

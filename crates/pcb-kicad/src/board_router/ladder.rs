@@ -3145,8 +3145,8 @@ impl<'a> Ladder<'a> {
             // without a deadline a seed round of the narrow-signal attempt
             // run alone (which keeps no reserve: its step does not apply
             // to itself) negotiated to its own budget, three seeds charged
-            // three times the longest (DSP-ADAU1452 on the move descent:
-            // 742 s left, 1470 s of the ladder's work).
+            // three times the longest (DSP-ADAU1452: 742 s left, 1470 s
+            // of the ladder's work).
             if self.config.deadline_work.is_some() {
                 seeded.router_deadline_work = Some(deadline_before_reserve(
                     self.work_left() - self.check_charge,

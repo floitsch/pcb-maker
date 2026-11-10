@@ -286,10 +286,9 @@ pub struct KiCadReferencePlacement {
     /// What `nets[].reference.connected` shows, in a sentence.
     pub connected_means: String,
     /// A layout's own routes of its placement (board-layout.json): the
-    /// first route's open terminals, vias and length, the move descent's
-    /// routed moves and open terminals before and after (`moves`), and the
-    /// result's open terminals and KiCad's unconnected items. Absent for a
-    /// route.
+    /// first route's open terminals, vias and length, the footprint moves
+    /// tried and kept (`moves`), and the result's open terminals and
+    /// KiCad's unconnected items. Absent for a route.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evidence_for_this_placement: Option<serde_json::Value>,
 }
@@ -311,25 +310,14 @@ fn reference_placement(
     let items = crate::verdict::input_items_of(reference, result);
     let same = items.parts > 0 && items.kept_parts == items.parts;
     let evidence = layout.map(|(report, path)| {
-        let descent = &report["move_descent"];
-        let moves = if descent.is_object() {
-            serde_json::json!({
-                "routed": descent["confirmed"],
-                "kept": descent["kept"],
-                "open_before": descent["open_before"],
-                "open_after": descent["open_after"],
-                "parts_moved": descent["parts_moved"],
-            })
-        } else {
-            let tried = report["moves"].as_array().map_or(0, Vec::len);
-            let kept = report["moves"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter(|entry| entry["kept"] == true)
-                .count();
-            serde_json::json!({"routed": tried, "kept": kept})
-        };
+        let tried = report["moves"].as_array().map_or(0, Vec::len);
+        let kept = report["moves"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|entry| entry["kept"] == true)
+            .count();
+        let moves = serde_json::json!({"routed": tried, "kept": kept});
         serde_json::json!({
             "report": path.display().to_string(),
             "first_route_unconnected_terminals": report["first_unconnected_terminals"],
@@ -357,7 +345,7 @@ fn reference_placement(
             items.parts - items.kept_parts,
             items.parts,
             if evidence.is_some() {
-                "; the evidence for this placement is the layout's own routes (evidence_for_this_placement: its first route and its move descent)"
+                "; the evidence for this placement is the layout's own routes (evidence_for_this_placement: its first route and its moves)"
             } else {
                 ""
             }
@@ -1764,7 +1752,6 @@ mod tests {
         let layout = serde_json::json!({
             "first_unconnected_terminals": 8, "first_vias": 314, "first_length_mm": 10480.8,
             "moves": [{"kept": false}, {"kept": true}],
-            "move_descent": {"confirmed": 6, "kept": 2, "open_before": 8, "open_after": 4, "parts_moved": ["C16"]},
             "routed": {"unconnected_terminals": 4},
         });
         let verdict = serde_json::json!({"kicad_unconnected_items": 4});
@@ -1779,28 +1766,15 @@ mod tests {
         assert_eq!((other.parts_in_place, other.parts), (1, 2));
         assert_eq!(
             other.connected_means,
-            "the designer's route on the designer's own placement: 1 of the 2 parts of this run's board lie elsewhere on the reference, so reference.connected shows that a net routes under these rules there, not on this placement, and no route of the designer's on this placement exists; the evidence for this placement is the layout's own routes (evidence_for_this_placement: its first route and its move descent)"
+            "the designer's route on the designer's own placement: 1 of the 2 parts of this run's board lie elsewhere on the reference, so reference.connected shows that a net routes under these rules there, not on this placement, and no route of the designer's on this placement exists; the evidence for this placement is the layout's own routes (evidence_for_this_placement: its first route and its moves)"
         );
         let evidence = other.evidence_for_this_placement.unwrap();
         assert_eq!(evidence["first_route_unconnected_terminals"], 8);
-        assert_eq!(evidence["moves"]["routed"], 6);
-        assert_eq!(evidence["moves"]["open_after"], 4);
-        assert_eq!(evidence["kicad_unconnected_items"], 4);
-        // A report before the move descent's record: its moves counted.
-        let mut old = layout.clone();
-        old.as_object_mut().unwrap().remove("move_descent");
-        let other = reference_placement(
-            "/designer",
-            &reference,
-            &moved,
-            Some((&old, Path::new("/run/board-layout.json"))),
-            None,
-        );
-        let evidence = other.evidence_for_this_placement.unwrap();
         assert_eq!(
             evidence["moves"],
             serde_json::json!({"routed": 2, "kept": 1})
         );
+        assert_eq!(evidence["kicad_unconnected_items"], 4);
     }
 
     /// A hot spot's tile names the pads in it, the nets whose copper
