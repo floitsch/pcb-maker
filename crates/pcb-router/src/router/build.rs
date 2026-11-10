@@ -514,7 +514,7 @@ impl Router {
     /// The parts of `build_work` routers of the same inputs share
     /// (`SharedBuild`): the static maps beyond a router's own maps and the
     /// connected pours' masks, each with its key; none when the maps are
-    /// not shared (`Config::share_static_maps`, `PCB_ROUTER_NO_SHARED_STATICS`).
+    /// not shared (`Config::share_static_maps`).
     pub fn shared_build(&self) -> SharedBuild {
         let Some(key) = self.statics_key else {
             return SharedBuild::default();
@@ -1404,8 +1404,7 @@ fn statics_key(board: &Board, grid: &Grid, searched: &[bool], rules: Option<&Cla
 }
 
 /// The static maps of every class: another router's of the same inputs
-/// (`STATICS_CACHE`, and true), or built (false). Not shared under
-/// `PCB_ROUTER_NO_SHARED_STATICS` (for attributing).
+/// (`STATICS_CACHE`, and true), or built (false).
 fn shared_statics(
     board: &Board,
     grid: &Grid,
@@ -1413,9 +1412,6 @@ fn shared_statics(
     rules: Option<&ClassRules>,
 ) -> (Arc<Vec<StaticMaps>>, bool, Option<u128>) {
     let build = || build_statics(board, grid, searched, rules);
-    if std::env::var_os("PCB_ROUTER_NO_SHARED_STATICS").is_some() {
-        return (build(), false, None);
-    }
     let key = statics_key(board, grid, searched, rules);
     let found = {
         let mut cache = STATICS_CACHE
@@ -1538,7 +1534,7 @@ fn statics_inputs(
 /// The key of the static maps a router of `board` and `config` would
 /// build (`statics_key`; None when they are not shared).
 pub fn static_maps_key(board: &Board, config: &Config) -> Option<u128> {
-    if !config.share_static_maps || std::env::var_os("PCB_ROUTER_NO_SHARED_STATICS").is_some() {
+    if !config.share_static_maps {
         return None;
     }
     let (board, grid, searched, class_rules) = statics_inputs(board, config);

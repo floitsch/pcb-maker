@@ -32,9 +32,6 @@ impl Router {
     pub(super) fn reclaimed_fill(&self, net: NetId) -> Vec<Vec<bool>> {
         let layers = self.board.layer_count;
         let mut result: Vec<Vec<bool>> = vec![Vec::new(); layers];
-        if std::env::var_os("PCB_ROUTER_NO_RECLAIM").is_some() {
-            return result;
-        }
         let state = &self.nets[net as usize];
         let description = &self.board.nets[net as usize];
         let cells = self.grid.cells();

@@ -1274,11 +1274,10 @@ impl KiCadRepairs {
 /// Environment variables that change what a run does or reports (the
 /// router's seed and switches, KiCad's check and its repairs, the budgets'
 /// guards), echoed into the verdict when set.
-pub const RESULT_ENVIRONMENT: [&str; 18] = [
+pub const RESULT_ENVIRONMENT: [&str; 17] = [
     "PCB_ROUTER_SEED",
     "PCB_ROUTER_DIFF_PAIRS",
     "PCB_ROUTER_LENGTH_MATCHING",
-    "PCB_ROUTER_PIN_ROW_COST",
     "PCB_ROUTER_SEEDS",
     "PCB_ROUTER_NO_WALL_GUARD",
     "PCB_SKIP_NATIVE",

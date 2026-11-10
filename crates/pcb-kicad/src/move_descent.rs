@@ -464,16 +464,6 @@ fn moves_of(problem: &placer::Problem, index: usize, descent: &KiCadMoveDescent)
     moves
 }
 
-/// Debugging aid: `PCB_LAYOUT_DESCENT_CLASSIC=<n>`: the first `n` router
-/// trials are also tried as the coupled loop tries a move (a clone, the
-/// update, a reroute without the polish) and both are timed.
-fn classic_trials() -> usize {
-    std::env::var("PCB_LAYOUT_DESCENT_CLASSIC")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(0)
-}
-
 /// Runs the descent on `state` with `budget` seconds of work. `arm` sets
 /// a router's work deadline from the layout's work; `allowed` says
 /// whether the wall clock lets another trial start.
@@ -538,8 +528,6 @@ pub(crate) fn descend(
             ripped.len()
         );
     }
-    let classic = classic_trials();
-    let mut classic_done = 0;
     let mut tried: Vec<bool> = vec![false; parts];
     let mut since_kept = 0;
     let mut working = board.clone();
@@ -668,34 +656,6 @@ pub(crate) fn descend(
             // nets the router holds: no trial.
             let other_plan =
                 |error: &str| plan_work > 0.0 && error == core::router::UPDATE_NEEDS_SAME_NETS;
-            if classic_done < classic {
-                classic_done += 1;
-                let clone_started = std::time::Instant::now();
-                let mut copy = router.clone();
-                let cloned = clone_started.elapsed().as_secs_f64();
-                arm(&mut copy, *work);
-                let update_started = std::time::Instant::now();
-                let before = copy.expansions();
-                let ripped = match copy.update(&trial_board) {
-                    Ok(ripped) => ripped,
-                    // A move that takes a part to another sub-board splits
-                    // the nets otherwise (`sub_boards`): no trial.
-                    Err(error) if error == crate::sub_boards::OTHER_NETS || other_plan(&error) => 0,
-                    Err(error) => return Err(error),
-                };
-                let updated = update_started.elapsed().as_secs_f64();
-                let reroute_started = std::time::Instant::now();
-                let rerouted = copy.reroute(false);
-                let search = copy.expansions().saturating_sub(before) as f64
-                    / core::router::expansions_per_second();
-                eprintln!(
-                    "move descent: classic trial of {}: lowering {lowered:.2} s ({lower_work:.2} s of work), clone {cloned:.2} s, update {updated:.2} s ({:.2} s of build work, {ripped} nets ripped up), reroute {:.2} s ({search:.2} s of search work), open {} (before {open})",
-                    problem.references[part],
-                    copy.update_work(),
-                    reroute_started.elapsed().as_secs_f64(),
-                    score_open(&rerouted, &trial_board),
-                );
-            }
             let clone_started = std::time::Instant::now();
             let mut trial = router.clone();
             let cloned = clone_started.elapsed().as_secs_f64();
@@ -839,22 +799,6 @@ pub(crate) fn descend(
         report.stopped
     );
     Ok(report)
-}
-
-/// The layout's open count of a result (as `score`).
-fn score_open(result: &core::RoutingResult, board: &core::Board) -> usize {
-    result
-        .status
-        .iter()
-        .map(|status| match status {
-            core::NetStatus::Partial {
-                unconnected_terminals,
-            } => *unconnected_terminals,
-            core::NetStatus::Unreachable => 1,
-            _ => 0,
-        })
-        .sum::<usize>()
-        + core::verify(board, &result.routes).len()
 }
 
 #[cfg(test)]
