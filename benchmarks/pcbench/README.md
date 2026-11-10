@@ -84,70 +84,12 @@ no unconnected item.
 
 ## Results
 
-### 2026-09-28, route mode, all 617 boards
-
-Commit 7b8fc4d, 4 boards at a time with 2 threads each, 900 s per board
-(`build/pcbench-all-v9`; two outline boards re-run after the last fix).
-
-| Tier | Boards | pcb-maker clean | PCBench Freerouting success | pcb-maker vias / designer | copper / designer | median s |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| D3-A | 97 | 97 (100 %) | 93 (96 %) | 0.49 | 0.89 | 6.4 |
-| D3-B | 267 | 263 (99 %) | 242 (91 %) | 0.43 | 0.92 | 9.1 |
-| D3-C | 248 | 236 (95 %) | 187 (75 %) | 0.59 | 0.94 | 37.3 |
-| not in D3 | 5 | 5 | 4 | | | |
-| all | 617 | **601 (97 %)** | 526 (85 %) | 0.56 | 0.93 | 12.3 |
-
-- **PCBWorld's test splits** (94 + 9 + 9 boards reproduced here): all
-  clean.
-- **Published Clean Pass on the same splits:**
-  - D3-A: Freerouting 0.80, KiCadRoutingTools 0.74, best RL 0.94, best
-    LLM 0.65.
-  - D3-B: Freerouting 0.78, best RL 0.45.
-- **The 16 boards that are not clean** (`triage.py`):
-  - 14 leave connections open.
-  - glasgow reaches the 900 s limit.
-  - navelino-leaf's outline has junctions.
-  - No board has a model mismatch or a copper DRC error.
-- **Progress over the day.** The first full run (commit 30df46e) had
-  586/617 clean, with 31 failures: 4 errors, 3 model mismatches, 7 DRC
-  errors and 17 open.
-
-### Bugs these boards exposed (all fixed)
-
-The first sweeps found real bugs in how pcb-maker reads boards:
-
-- **Nets and holes.**
-  - Numeric net labels under a sheet path (`/1`) were dropped as
-    single-pin placeholders.
-  - Slotted mechanical holes were discs of their long side.
-- **Pad shapes.**
-  - Trapezoidal pads were rectangles.
-  - SMD pads on every copper layer were used as vias.
-  - Custom pads without primitives were rejected.
-- **Copper text.** Its boxes were up to 1.75 times too large. The estimate
-  now comes from glyph advances measured on KiCad's own plots.
-- **Clearances.**
-  - Pad clearance overrides did not replace the net class the way KiCad
-    does.
-  - Negative overrides (KiCad 4) were rejected.
-- **Outlines.** Micrometre gaps, full circles written as arcs, and
-  outlines made of 0.01 mm segments.
-
-The benchmark also led to router changes:
-
-- Attempts that leave connections open are retried with four seeds.
-  Starling completes; Freerouting fails on it.
-- The ladder ranks clean attempts by vias.
-- `board-router.json` now says why a board is incomplete.
-
-### What is left
-
-- **Structurally hard boards.**
-  - Congestion at fine-pitch parts: T962A, stm32_mech_keyboard.
-  - Dense 4-layer boards: Own-Mailbox, glasgow (Freerouting fails on
-    them too).
-  - Large boards that hit the 900 s limit: dropbot, glasgow.
-- **A D3 artifact.** BB-PWR-8113 needs copper exactly on the board edge,
-  which D3's rule patch (edge clearance 0) allows and pcb-maker does not.
-- **An unusual outline.** navelino-leaf's outline has junctions where more
-  than two segments meet.
+The last full route-mode run (all 617 boards that pass the filter, 900 s
+a board) was clean on 601 (97 %), every board of PCBWorld's reproduced test
+splits included; PCBench's Freerouting success on the same boards is 526
+(85 %). Of the 16 boards that were not clean, 14 left connections open,
+glasgow reached the time limit and navelino-leaf's outline has junctions
+where more than two segments meet. BB-PWR-8113 needs copper exactly on the
+board edge, which D3's rule patch (edge clearance 0) allows and pcb-maker
+does not. `triage.py <run-output>` sorts the boards that are not clean by
+cause (error, model mismatch, DRC, open).

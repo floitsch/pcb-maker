@@ -26,4 +26,4 @@ Left out: the simulation demos (no footprints), jetson, One-Air-Max,
 RoyalBlue54L and Q17ng (footprints their projects do not ship), and
 vme-wren (1507 parts).
 
-Results: [docs/benchmarks.md](../../docs/benchmarks.md#schematic-to-board).
+Results are in [docs/benchmarks.md](../../docs/benchmarks.md).
