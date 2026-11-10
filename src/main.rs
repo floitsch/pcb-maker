@@ -3,8 +3,12 @@
 // found in the LICENSE file.
 
 mod agent_cli;
+mod kicad_commands;
+mod lab_commands;
 
-use std::{env, fs, path::Path, process::ExitCode};
+pub(crate) use lab_commands::board_router_config;
+
+use std::{env, process::ExitCode};
 
 /// The last panic's message (its first line) and place, for the one line
 /// `main` prints: the uncaught panic is the last (a panic the ladder
@@ -229,7 +233,7 @@ fn print_help() {
         "Research and benchmark commands (no detailed help; exit 0 done, 1 failed or incomplete, 2 usage,"
     );
     println!("4 panic):");
-    for line in RESEARCH_USAGE {
+    for line in COMMANDS.iter().filter_map(|entry| entry.usage) {
         println!("  pcb-maker {line}");
     }
 }
@@ -317,1063 +321,175 @@ const ENVIRONMENT_HELP: &[(&str, &str)] = &[
     ),
 ];
 
-/// What `pcb-maker ledger` says of a reservation's KiCad checks and of the
-/// harness's reservation it runs inside.
-fn ledger_notes(reservation: &pcb_kicad::ledger::Reservation) -> String {
-    let mut notes = String::new();
-    if let Some(check) = reservation.check_mb {
-        notes.push_str(&format!(
-            " [KiCad's check: {check:.0} MB, {}]",
-            if reservation.checking {
-                "running"
-            } else {
-                "reserved"
-            }
-        ));
-    }
-    if let Some(pid) = reservation.inside {
-        notes.push_str(&format!(" [inside pid {pid}'s reservation]"));
-    }
-    if let Some(granted) = reservation.granted_mb {
-        notes.push_str(&format!(
-            " [at least the {granted:.0} MB its harness reserved]"
-        ));
-    }
-    notes
+/// The arguments after a command's name.
+type Arguments = std::vec::IntoIter<String>;
+
+/// A research or utility command: what it is called, its line in
+/// `--help` (without the leading `pcb-maker`; none for commands whose help
+/// `agent_cli::help` gives), and what runs it.
+struct Command {
+    name: &'static str,
+    usage: Option<&'static str>,
+    run: fn(Arguments) -> Result<(), String>,
 }
 
-/// `pcb-maker ledger`: the memory ledger's live reservations, who holds
-/// what, as text or JSON.
-fn print_ledger(json: bool) -> Result<(), String> {
-    use pcb_kicad::ledger;
-    let Some(book) = ledger::Ledger::from_env() else {
-        println!("memory ledger: off (PCB_MAKER_LEDGER=off)");
-        return Ok(());
-    };
-    let live = book
-        .live()
-        .map_err(|error| format!("{}: {error}", book.path().display()))?;
-    let capacity_described = ledger::capacity_described();
-    let capacity = capacity_described.as_ref().map(|(capacity, _)| *capacity);
-    let total = ledger::total_mb(&live);
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0.0, |elapsed| elapsed.as_secs_f64());
-    // The first waiter and whether the ledger drains for it (a new
-    // request's view: every entry is another's).
-    let all: Vec<&ledger::Reservation> = live.iter().collect();
-    let available = ledger::available_less_growth(&all);
-    let first = ledger::first_waiter(&all).map(|waiter| {
-        (
-            waiter,
-            ledger::drain_state(waiter, &all, now, capacity, available),
-        )
-    });
-    // The waiter a new request is held to a drain for: the first the ledger
-    // drains for, which need not be the first waiter (since 2026-10-28).
-    let drained = ledger::drained_for(&all, u32::MAX, now, now, capacity, available)
-        .filter(|waiter| first.is_none_or(|(first, _)| !std::ptr::eq(*waiter, first)))
-        .map(|waiter| {
-            (
-                waiter,
-                ledger::drain_state(waiter, &all, now, capacity, available),
-            )
-        });
-    // run.py's floor of available memory (before its board's tier's
-    // overshoot): measured from the headroom samples, else the default.
-    let headroom = book.headroom();
-    let (floor, floor_text) = ledger::measured_floor_mb(headroom.as_ref(), 0.0, now);
-    if json {
-        let value = serde_json::json!({
-            "path": book.path(),
-            "capacity_mb": capacity,
-            "capacity": capacity_described.as_ref().map(|(_, how)| how),
-            "checks_mb": live.iter().filter_map(|r| r.check_mb).sum::<f64>(),
-            "reserved_mb": total,
-            "headroom": headroom,
-            "floor_mb": floor,
-            "reservations": live,
-            "first_waiter": first.map(|(waiter, state)| serde_json::json!({
-                "pid": waiter.pid,
-                "label": waiter.label,
-                "waiting_mb": waiter.waiting_mb,
-                "waited_seconds": (now - waiter.waiting_since()).max(0.0),
-                "drained_for": state.drains(),
-                "drain": state.describe(),
-            })),
-            "drained_for": drained.map(|(waiter, state)| serde_json::json!({
-                "pid": waiter.pid,
-                "label": waiter.label,
-                "waiting_mb": waiter.waiting_mb,
-                "waited_seconds": (now - waiter.waiting_since()).max(0.0),
-                "drain": state.describe(),
-            })),
-        });
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?
-        );
-        return Ok(());
-    }
-    println!(
-        "memory ledger {}: {total:.0} MB reserved of {} by {} run{}",
-        book.path().display(),
-        capacity_described
-            .as_ref()
-            .map_or("an unknown capacity".to_string(), |(c, how)| format!(
-                "{c:.0} MB ({how})"
-            )),
-        live.len(),
-        if live.len() == 1 { "" } else { "s" }
-    );
-    for reservation in &live {
-        println!(
-            "  pid {:>7}  {:>6.0} MB{}  {:>6.0} s  {}{}{}",
-            reservation.pid,
-            reservation.megabytes,
-            reservation
-                .waiting_mb
-                .map_or(String::new(), |wanted| format!(
-                    " (waits for {wanted:.0} MB)"
-                )),
-            (now - reservation.started).max(0.0),
-            reservation.label,
-            if reservation.nightly() {
-                " [nightly]"
-            } else if reservation.short {
-                " [short]"
-            } else {
-                ""
-            },
-            ledger_notes(reservation)
-        );
-    }
-    println!(
-        "run.py's floor of available memory: {:.1} GB before a board's tier's overshoot ({floor_text}; {})",
-        floor / 1024.0,
-        book.headroom_path().display()
-    );
-    if let Some((waiter, state)) = first {
-        println!(
-            "first waiter: pid {}, {}, waiting {:.0} s for {:.0} MB: {}",
-            waiter.pid,
-            waiter.label,
-            (now - waiter.waiting_since()).max(0.0),
-            waiter.waiting_mb.unwrap_or(0.0),
-            state.describe()
-        );
-    }
-    if let Some((waiter, state)) = drained {
-        println!(
-            "drained for: pid {}, {}, waiting {:.0} s for {:.0} MB: {}",
-            waiter.pid,
-            waiter.label,
-            (now - waiter.waiting_since()).max(0.0),
-            waiter.waiting_mb.unwrap_or(0.0),
-            state.describe()
-        );
-    }
-    Ok(())
-}
+/// The commands without the agent contract (and the agent commands that
+/// only read and write files, which `agent_cli` checks first), in the
+/// order `--help` lists the ones with a usage line. The dispatch and the
+/// usage list both read this table.
+const COMMANDS: &[Command] = &[
+    Command {
+        name: "ledger",
+        usage: Some("ledger [--json]"),
+        run: lab_commands::cmd_ledger,
+    },
+    Command {
+        name: "verify-kicad-rung",
+        usage: Some("verify-kicad-rung <directory> <board-id>"),
+        run: kicad_commands::cmd_verify_kicad_rung,
+    },
+    Command {
+        name: "normalize-kicad-footprint-links",
+        usage: Some("normalize-kicad-footprint-links <directory> <board-id> [report.json]"),
+        run: kicad_commands::cmd_normalize_kicad_footprint_links,
+    },
+    Command {
+        name: "shrink-kicad-board",
+        usage: Some("shrink-kicad-board <source.kicad_pcb> <output.kicad_pcb> <factor>"),
+        run: kicad_commands::cmd_shrink_kicad_board,
+    },
+    Command {
+        name: "inspect-kicad-board",
+        usage: Some("inspect-kicad-board <board.kicad_pcb>"),
+        run: lab_commands::cmd_inspect_kicad_board,
+    },
+    Command {
+        name: "inspect-kicad-connections",
+        usage: Some("inspect-kicad-connections <board.kicad_pcb>"),
+        run: lab_commands::cmd_inspect_kicad_connections,
+    },
+    Command {
+        name: "pad-exits-kicad-board",
+        usage: Some(
+            "pad-exits-kicad-board <project-dir> <board-id> [router-config.json|auto] [--out <report.json>] [--repair]",
+        ),
+        run: lab_commands::cmd_pad_exits_kicad_board,
+    },
+    Command {
+        name: "legality-kicad-board",
+        usage: Some(
+            "legality-kicad-board <project-dir> <board-id> <report.json> [--poses <board.kicad_pcb>] [--drc <drc.json>] [--placer <placer.json>]",
+        ),
+        run: lab_commands::cmd_legality_kicad_board,
+    },
+    Command {
+        name: "ablate-kicad-placement",
+        usage: Some(
+            "ablate-kicad-placement <designer.kicad_pcb> <placed-directory> <board-id> <output-directory> [ablation.json] [router-config.json|auto]",
+        ),
+        run: lab_commands::cmd_ablate_kicad_placement,
+    },
+    Command {
+        name: "global-route-kicad-board",
+        usage: Some(
+            "global-route-kicad-board <source-directory> <board-id> [router-config.json|auto] [--global <global.json>] [--probe <work-seconds>] [--corridors <out.json>]",
+        ),
+        run: lab_commands::cmd_global_route_kicad_board,
+    },
+    Command {
+        name: "probe-trouble-placement",
+        usage: Some(
+            "probe-trouble-placement <placed.kicad_pcb> [router-config.json|auto] (--trouble-from <run-dir|board-router.json|probe.json> | --trouble <names.txt> | --auto)... [--nets <n>] [--background none|stubs|global|full] [--share <0.05>] [--total-seconds <1500>] [--work-seconds <s>] [--stub-mm <1.0>] [--global-weight <2.0>] [--out <report.json>]",
+        ),
+        run: lab_commands::cmd_probe_trouble_placement,
+    },
+    Command {
+        name: "probe-coarse-placement",
+        usage: Some(
+            "probe-coarse-placement <placed.kicad_pcb> [router-config.json|auto] [--pitch-factor <1.0>] [--iterations <n>] [--hard-repair] [--trouble-repair] [--negotiation-share <0.5>] [--share <0.05>] [--total-seconds <1500>] [--work-seconds <s>] [--out <report.json>]",
+        ),
+        run: lab_commands::cmd_probe_coarse_placement,
+    },
+    Command {
+        name: "dump-pour-map",
+        usage: Some(
+            "dump-pour-map <source-directory> <board-id> <output-directory> [config.json|auto]",
+        ),
+        run: lab_commands::cmd_dump_pour_map,
+    },
+    Command {
+        name: "calibrate-work-rate",
+        usage: Some("calibrate-work-rate [rounds]"),
+        run: lab_commands::cmd_calibrate_work_rate,
+    },
+    Command {
+        name: "sub-boards-kicad-board",
+        usage: Some("sub-boards-kicad-board <board.kicad_pcb>"),
+        run: lab_commands::cmd_sub_boards_kicad_board,
+    },
+    Command {
+        name: "repair-kicad-silkscreen",
+        usage: None,
+        run: kicad_commands::cmd_repair_kicad_silkscreen,
+    },
+    Command {
+        name: "strip-kicad-tracks",
+        usage: None,
+        run: kicad_commands::cmd_strip_kicad_tracks,
+    },
+    Command {
+        name: "strip-kicad-copper",
+        usage: None,
+        run: kicad_commands::cmd_strip_kicad_copper,
+    },
+    Command {
+        name: "import-kicad-netlist",
+        usage: None,
+        run: kicad_commands::cmd_import_kicad_netlist,
+    },
+    Command {
+        name: "export-kicad-fab",
+        usage: None,
+        run: kicad_commands::cmd_export_kicad_fab,
+    },
+    Command {
+        name: "score-kicad-board",
+        usage: None,
+        run: kicad_commands::cmd_score_kicad_board,
+    },
+    Command {
+        name: "describe-kicad-board",
+        usage: None,
+        run: kicad_commands::cmd_describe_kicad_board,
+    },
+    Command {
+        name: "swap-kicad-pins",
+        usage: None,
+        run: kicad_commands::cmd_swap_kicad_pins,
+    },
+    Command {
+        name: "repair-kicad-necks",
+        usage: None,
+        run: kicad_commands::cmd_repair_kicad_necks,
+    },
+];
 
 /// The usage line of a research command.
 fn research_usage(command: &str) -> Option<String> {
-    RESEARCH_USAGE
+    COMMANDS
         .iter()
-        .find(|line| line.split_whitespace().next() == Some(command))
+        .find(|entry| entry.name == command)
+        .and_then(|entry| entry.usage)
         .map(|line| format!("usage: pcb-maker {line}"))
 }
 
-/// Usage lines of the research and benchmark commands, without the
-/// leading `pcb-maker`.
-const RESEARCH_USAGE: &[&str] = &[
-    "ledger [--json]",
-    "verify-kicad-rung <directory> <board-id>",
-    "normalize-kicad-footprint-links <directory> <board-id> [report.json]",
-    "shrink-kicad-board <source.kicad_pcb> <output.kicad_pcb> <factor>",
-    "inspect-kicad-board <board.kicad_pcb>",
-    "inspect-kicad-connections <board.kicad_pcb>",
-    "pad-exits-kicad-board <project-dir> <board-id> [router-config.json|auto] [--out <report.json>] [--repair]",
-    "legality-kicad-board <project-dir> <board-id> <report.json> [--poses <board.kicad_pcb>] [--drc <drc.json>] [--placer <placer.json>]",
-    "ablate-kicad-placement <designer.kicad_pcb> <placed-directory> <board-id> <output-directory> [ablation.json] [router-config.json|auto]",
-    "global-route-kicad-board <source-directory> <board-id> [router-config.json|auto] [--global <global.json>] [--probe <work-seconds>] [--corridors <out.json>]",
-    "probe-trouble-placement <placed.kicad_pcb> [router-config.json|auto] (--trouble-from <run-dir|board-router.json|probe.json> | --trouble <names.txt> | --auto)... [--nets <n>] [--background none|stubs|global|full] [--share <0.05>] [--total-seconds <1500>] [--work-seconds <s>] [--stub-mm <1.0>] [--global-weight <2.0>] [--out <report.json>]",
-    "probe-coarse-placement <placed.kicad_pcb> [router-config.json|auto] [--pitch-factor <1.0>] [--iterations <n>] [--hard-repair] [--trouble-repair] [--negotiation-share <0.5>] [--share <0.05>] [--total-seconds <1500>] [--work-seconds <s>] [--out <report.json>]",
-    "dump-pour-map <source-directory> <board-id> <output-directory> [config.json|auto]",
-    "calibrate-work-rate [rounds]",
-    "sub-boards-kicad-board <board.kicad_pcb>",
-];
-
-/// The commands without the agent contract (and the agent commands that
-/// only read and write files, which `agent_cli` checks first).
+/// Runs a command of `COMMANDS`; an unknown name is a usage error.
 pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
     let mut arguments = arguments.into_iter();
     let command = arguments.next().unwrap_or_else(|| "help".into());
-    match command.as_str() {
-        "ledger" => {
-            let json = match arguments.next().as_deref() {
-                None => false,
-                Some("--json") => true,
-                Some(_) => return Err("usage: pcb-maker ledger [--json]".into()),
-            };
-            print_ledger(json)
-        }
-        "verify-kicad-rung" => {
-            let directory = arguments.next().ok_or_else(|| {
-                "usage: pcb-maker verify-kicad-rung <directory> <board-id>".to_string()
-            })?;
-            let board_id = arguments.next().ok_or_else(|| {
-                "usage: pcb-maker verify-kicad-rung <directory> <board-id>".to_string()
-            })?;
-            pcb_kicad::check_board_id(&board_id)?;
-            if arguments.next().is_some() {
-                return Err("usage: pcb-maker verify-kicad-rung <directory> <board-id>".into());
-            }
-            let report = pcb_kicad::verify_materialized_rung(Path::new(&directory), &board_id)?;
-            println!(
-                "{}: ERC={}, DRC={}, parity={}, selected-net-unconnected={}, intentional-no-connect-groups={}, library-metadata-warnings={}",
-                if report.complete {
-                    "complete"
-                } else {
-                    "incomplete"
-                },
-                report.erc_violations,
-                report.drc_design_violations,
-                report.schematic_parity_issues,
-                report.selected_net_unconnected_items,
-                report.intentional_no_connect_groups,
-                report.library_metadata_warnings
-            );
-            if report.complete {
-                Ok(())
-            } else {
-                Err("KiCad rung did not pass the completion policy".into())
-            }
-        }
-        "repair-kicad-silkscreen" => {
-            let usage = "usage: pcb-maker repair-kicad-silkscreen <source-directory> <board-id> <output-directory>";
-            let source = arguments.next().ok_or(usage)?;
-            let board_id = arguments.next().ok_or(usage)?;
-            pcb_kicad::check_board_id(&board_id)?;
-            let output = arguments.next().ok_or(usage)?;
-            if arguments.next().is_some() {
-                return Err(usage.into());
-            }
-            let report = pcb_kicad::repair_kicad_silkscreen(
-                Path::new(&source),
-                &board_id,
-                Path::new(&output),
-            )?;
-            println!(
-                "wrote {output}: silkscreen-complete={}, remaining-annotation-findings={}",
-                report["silkscreen_complete"], report["remaining_annotation_findings"]
-            );
-            if report["silkscreen_complete"] == true {
-                Ok(())
-            } else {
-                let report_path =
-                    std::path::absolute(Path::new(&output).join("silkscreen-repair.json"))
-                        .unwrap_or_else(|_| Path::new(&output).join("silkscreen-repair.json"));
-                Err(format!(
-                    "{}: {} silkscreen findings left; see {} (fields.blocked and proposal.unresolved_marks; KiCad's findings in drc.json and the rendering beside it): move those labels or marks by hand in KiCad, or give their parts room, and run repair-kicad-silkscreen {output} {board_id} <new-dir> again",
-                    agent_cli::SILKSCREEN_INCOMPLETE,
-                    report["remaining_annotation_findings"],
-                    report_path.display()
-                ))
-            }
-        }
-        "normalize-kicad-footprint-links" => {
-            let usage = "usage: pcb-maker normalize-kicad-footprint-links <directory> <board-id> [report.json]";
-            let directory = arguments.next().ok_or_else(|| usage.to_string())?;
-            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
-            pcb_kicad::check_board_id(&board_id)?;
-            let report_path = arguments.next();
-            if arguments.next().is_some() {
-                return Err(usage.into());
-            }
-            let report =
-                pcb_kicad::lab::normalize_kicad_footprint_links(Path::new(&directory), &board_id)?;
-            let serialized =
-                serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
-            if let Some(report_path) = report_path {
-                fs::write(&report_path, format!("{serialized}\n"))
-                    .map_err(|error| format!("failed to write {report_path}: {error}"))?;
-                println!(
-                    "wrote {report_path}: normalized {} footprint link(s)",
-                    report.updated_references.len()
-                );
-            } else {
-                println!("{serialized}");
-            }
-            Ok(())
-        }
-        "shrink-kicad-board" => {
-            let usage = "usage: pcb-maker shrink-kicad-board <source.kicad_pcb> <output.kicad_pcb> <factor>";
-            let source = arguments.next().ok_or_else(|| usage.to_string())?;
-            let output = arguments.next().ok_or_else(|| usage.to_string())?;
-            let factor: f64 = arguments
-                .next()
-                .ok_or_else(|| usage.to_string())?
-                .parse()
-                .map_err(|error| format!("invalid factor: {error}"))?;
-            if arguments.next().is_some() {
-                return Err(usage.into());
-            }
-            let report =
-                pcb_kicad::lab::shrink_kicad_board(Path::new(&source), Path::new(&output), factor)?;
-            println!(
-                "wrote {output}: {:.1} x {:.1} mm -> {:.1} x {:.1} mm, {} footprints, {} pushed back inside: {}",
-                report.size_before_mm[0],
-                report.size_before_mm[1],
-                report.size_after_mm[0],
-                report.size_after_mm[1],
-                report.footprints,
-                report.edge_bound.len(),
-                report.edge_bound.join(" ")
-            );
-            Ok(())
-        }
-        "strip-kicad-tracks" => {
-            let usage = "usage: pcb-maker strip-kicad-tracks <source.kicad_pcb> <output.kicad_pcb> [--keep-nets <net>[,<net>...]]";
-            let source = arguments.next().ok_or_else(|| usage.to_string())?;
-            let output = arguments.next().ok_or_else(|| usage.to_string())?;
-            let mut keep_nets: Vec<String> = Vec::new();
-            while let Some(argument) = arguments.next() {
-                match argument.as_str() {
-                    "--keep-nets" => keep_nets.extend(
-                        arguments
-                            .next()
-                            .ok_or_else(|| usage.to_string())?
-                            .split(',')
-                            .map(str::trim)
-                            .filter(|net| !net.is_empty())
-                            .map(str::to_string),
-                    ),
-                    _ => return Err(usage.into()),
-                }
-            }
-            let [kept, removed] = pcb_kicad::write_kicad_board_without_tracks_except(
-                Path::new(&source),
-                Path::new(&output),
-                &keep_nets,
-            )?;
-            if keep_nets.is_empty() {
-                println!("wrote {output} without tracks and vias; copper pours kept");
-            } else {
-                println!(
-                    "wrote {output}: kept {kept} tracks, arcs and vias of the nets {} and removed {removed} others; copper pours kept (route-kicad-board keeps the kept ones and routes the rest)",
-                    keep_nets.join(", ")
-                );
-            }
-            Ok(())
-        }
-        "strip-kicad-copper" => {
-            let usage = "usage: pcb-maker strip-kicad-copper <source.kicad_pcb> <output.kicad_pcb> [report.json]";
-            let source = arguments.next().ok_or_else(|| usage.to_string())?;
-            let output = arguments.next().ok_or_else(|| usage.to_string())?;
-            let report_path = arguments.next();
-            if arguments.next().is_some() {
-                return Err(usage.into());
-            }
-            let report = pcb_kicad::write_kicad_board_without_copper(
-                Path::new(&source),
-                Path::new(&output),
-            )?;
-            let serialized =
-                serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
-            if let Some(report_path) = report_path {
-                fs::write(&report_path, format!("{serialized}\n"))
-                    .map_err(|error| format!("failed to write {report_path}: {error}"))?;
-                println!(
-                    "wrote {output} and {report_path}: removed {} tracks/arcs, {} vias, {} copper zones, and {} copper graphics",
-                    report.removed_segments + report.removed_arcs,
-                    report.removed_vias,
-                    report.removed_copper_zones,
-                    report.removed_copper_graphics,
-                );
-            } else {
-                println!("{serialized}");
-            }
-            Ok(())
-        }
-        "import-kicad-netlist" => {
-            let usage = "usage: pcb-maker import-kicad-netlist <schematic.kicad_sch|netlist.net> <out-dir> <board-id> [--layers N] [--footprints-from <board.kicad_pcb>] [--near-decoupling]";
-            let input = arguments.next().ok_or_else(|| usage.to_string())?;
-            let output = arguments.next().ok_or_else(|| usage.to_string())?;
-            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
-            pcb_kicad::check_board_id(&board_id)?;
-            let mut layers = None;
-            let mut footprints_from = None;
-            let mut near_decoupling = false;
-            while let Some(argument) = arguments.next() {
-                match argument.as_str() {
-                    "--near-decoupling" => near_decoupling = true,
-                    "--layers" => {
-                        layers = Some(
-                            arguments
-                                .next()
-                                .and_then(|value| value.parse::<usize>().ok())
-                                .filter(|value| *value >= 2 && value % 2 == 0)
-                                .ok_or_else(|| usage.to_string())?,
-                        );
-                    }
-                    "--footprints-from" => {
-                        footprints_from = Some(std::path::PathBuf::from(
-                            arguments.next().ok_or_else(|| usage.to_string())?,
-                        ));
-                    }
-                    _ => return Err(usage.into()),
-                }
-            }
-            let report = pcb_kicad::import_kicad_netlist_options(
-                Path::new(&input),
-                Path::new(&output),
-                &board_id,
-                layers,
-                footprints_from.as_deref(),
-                near_decoupling,
-            )?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?
-            );
-            if !report.missing.is_empty() {
-                return Err(agent_cli::IMPORT_INCOMPLETE.into());
-            }
-            Ok(())
-        }
-        "export-kicad-fab" => {
-            let usage = "usage: pcb-maker export-kicad-fab <project-dir> <board-id> <out-dir>";
-            let directory = arguments.next().ok_or_else(|| usage.to_string())?;
-            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
-            pcb_kicad::check_board_id(&board_id)?;
-            let output = arguments.next().ok_or_else(|| usage.to_string())?;
-            if arguments.next().is_some() {
-                return Err(usage.into());
-            }
-            let report =
-                pcb_kicad::export_kicad_fab(Path::new(&directory), &board_id, Path::new(&output))?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?
-            );
-            Ok(())
-        }
-        "score-kicad-board" => {
-            let usage = "usage: pcb-maker score-kicad-board <project-dir> <board-id>";
-            let directory = arguments.next().ok_or_else(|| usage.to_string())?;
-            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
-            pcb_kicad::check_board_id(&board_id)?;
-            if arguments.next().is_some() {
-                return Err(usage.into());
-            }
-            let report = pcb_kicad::score_kicad_board(Path::new(&directory), &board_id)?;
-            let mut json = serde_json::to_value(&report).map_err(|error| error.to_string())?;
-            // The pours' pieces by the router's pour model (the verdict's
-            // `pours`), with the project's rules.
-            let config = board_router_config(None, &directory, &board_id)?;
-            let pours = pcb_kicad::measure_pours(Path::new(&directory), &board_id, &config)?;
-            json["pours"] = serde_json::to_value(&pours).map_err(|error| error.to_string())?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&json).map_err(|error| error.to_string())?
-            );
-            Ok(())
-        }
-        "describe-kicad-board" => {
-            let usage = "usage: pcb-maker describe-kicad-board <project-dir> <board-id> [--constraints-template <file>]";
-            let mut positional = Vec::new();
-            let mut template = None;
-            while let Some(argument) = arguments.next() {
-                if argument == "--constraints-template" {
-                    template = Some(arguments.next().ok_or_else(|| usage.to_string())?);
-                } else {
-                    positional.push(argument);
-                }
-            }
-            let [directory, board_id] =
-                <[String; 2]>::try_from(positional).map_err(|_| usage.to_string())?;
-            pcb_kicad::check_board_id(&board_id)?;
-            let description = pcb_kicad::describe_kicad_board(Path::new(&directory), &board_id)?;
-            if let Some(file) = template {
-                let constraints =
-                    pcb_kicad::constraints_template(Path::new(&directory), &board_id)?;
-                fs::write(
-                    &file,
-                    serde_json::to_string_pretty(&constraints)
-                        .map_err(|error| error.to_string())?
-                        + "\n",
-                )
-                .map_err(|error| format!("failed to write {file}: {error}"))?;
-                let banks = constraints["comment"].as_array().map_or(0, |lines| {
-                    lines
-                        .iter()
-                        .filter(|line| line.as_str().is_some_and(|line| line.starts_with("bank: ")))
-                        .count()
-                });
-                eprintln!(
-                    "constraints template: {file} ({} edge, {} near entries{}; read its comments)",
-                    constraints["edge"].as_array().map_or(0, Vec::len),
-                    constraints["near"].as_array().map_or(0, Vec::len),
-                    if banks > 0 {
-                        format!(", {banks} bank of parts on two nets with its row in a comment")
-                    } else {
-                        String::new()
-                    }
-                );
-            }
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&description).map_err(|error| error.to_string())?
-            );
-            Ok(())
-        }
-        "inspect-kicad-board" => {
-            let usage = "usage: pcb-maker inspect-kicad-board <board.kicad_pcb>";
-            let board = arguments.next().ok_or_else(|| usage.to_string())?;
-            if arguments.next().is_some() {
-                return Err(usage.into());
-            }
-            let statistics = pcb_kicad::inspect_kicad_board(Path::new(&board))?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&statistics).map_err(|error| error.to_string())?
-            );
-            Ok(())
-        }
-        "inspect-kicad-connections" => {
-            let usage = "usage: pcb-maker inspect-kicad-connections <board.kicad_pcb>";
-            let board = arguments.next().ok_or_else(|| usage.to_string())?;
-            if arguments.next().is_some() {
-                return Err(usage.into());
-            }
-            let connections = pcb_kicad::inspect_kicad_routable_connections(Path::new(&board))?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&connections).map_err(|error| error.to_string())?
-            );
-            Ok(())
-        }
-        "pad-exits-kicad-board" => {
-            let usage = "usage: pcb-maker pad-exits-kicad-board <project-dir> <board-id> [router-config.json|auto] [--out <report.json>] [--repair]";
-            let source = arguments.next().ok_or_else(|| usage.to_string())?;
-            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
-            pcb_kicad::check_board_id(&board_id)?;
-            let mut router_path = None;
-            let mut out = None;
-            let mut repair = false;
-            while let Some(argument) = arguments.next() {
-                if argument == "--repair" {
-                    repair = true;
-                } else if argument == "--out" {
-                    out = Some(arguments.next().ok_or_else(|| usage.to_string())?);
-                } else if router_path.is_none() {
-                    router_path = Some(argument);
-                } else {
-                    return Err(usage.into());
-                }
-            }
-            let router = board_router_config(router_path.as_deref(), &source, &board_id)?;
-            let settings = pcb_kicad::KiCadPadExits::default();
-            let census = pcb_kicad::pad_exits_kicad_board(
-                Path::new(&source),
-                &board_id,
-                &router,
-                repair.then_some(&settings),
-            )?;
-            for pad in &census.closed {
-                println!("{} {} {}: {}", pad.pad, pad.net, pad.layer, pad.reason);
-            }
-            println!(
-                "{} pads without a way out of {} pads tested ({} left by escape stubs, not judged) on {} parts ({} by other parts or the edge); work {:.3} s (lowering {:.3}, probe {:.3}), cpu lowering {:.3} s, probe {:.3} s",
-                census.closed.len(),
-                census.pads,
-                census.escape_pads,
-                census.parts,
-                census
-                    .closed
-                    .iter()
-                    .filter(|pad| !pad.footprint_only)
-                    .count(),
-                census.work_seconds,
-                census.lower_work_seconds,
-                census.probe_work_seconds,
-                census.lower_seconds,
-                census.probe_seconds
-            );
-            if let Some(repaired) = &census.repaired {
-                for moved in &repaired.moves {
-                    println!(
-                        "repair: {} from ({:.2}, {:.2}, {}) to ({:.2}, {:.2}, {}) opens {}",
-                        moved.part,
-                        moved.from[0],
-                        moved.from[1],
-                        moved.from[2],
-                        moved.to[0],
-                        moved.to[1],
-                        moved.to[2],
-                        moved.opened.join(", ")
-                    );
-                }
-                println!(
-                    "repair: {} closed before, {} after ({} by other parts or the edge), {} moves, {} candidates, work {:.3} s",
-                    repaired.closed_before,
-                    repaired.closed.len(),
-                    repaired
-                        .closed
-                        .iter()
-                        .filter(|pad| !pad.footprint_only)
-                        .count(),
-                    repaired.moves.len(),
-                    repaired.tried,
-                    repaired.work_seconds
-                );
-            }
-            if let Some(out) = out {
-                let text =
-                    serde_json::to_string_pretty(&census).map_err(|error| error.to_string())?;
-                std::fs::write(&out, format!("{text}\n"))
-                    .map_err(|error| format!("failed to write {out}: {error}"))?;
-            }
-            Ok(())
-        }
-        "legality-kicad-board" => {
-            let usage = "usage: pcb-maker legality-kicad-board <project-dir> <board-id> <report.json> [--poses <board.kicad_pcb>] [--drc <drc.json>] [--placer <placer.json>]";
-            let directory = arguments.next().ok_or_else(|| usage.to_string())?;
-            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
-            pcb_kicad::check_board_id(&board_id)?;
-            let output = arguments.next().ok_or_else(|| usage.to_string())?;
-            let mut drc = None;
-            let mut poses = None;
-            let mut config = pcb_kicad::KiCadBoardPlacerConfig::default();
-            while let Some(flag) = arguments.next() {
-                let value = arguments.next().ok_or_else(|| usage.to_string())?;
-                match flag.as_str() {
-                    "--drc" => drc = Some(value),
-                    "--poses" => poses = Some(value),
-                    "--placer" => {
-                        config = serde_json::from_str(
-                            &std::fs::read_to_string(&value)
-                                .map_err(|error| format!("failed to read {value}: {error}"))?,
-                        )
-                        .map_err(|error| format!("{value}: {error}"))?
-                    }
-                    _ => return Err(usage.into()),
-                }
-            }
-            let report = pcb_kicad::lab::legality_kicad_board(
-                Path::new(&directory),
-                &board_id,
-                &config,
-                poses.as_deref().map(Path::new),
-                drc.as_deref().map(Path::new),
-            )?;
-            let text = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
-            std::fs::write(&output, format!("{text}\n"))
-                .map_err(|error| format!("failed to write {output}: {error}"))?;
-            for level in &report.levels {
-                println!(
-                    "level {}: halo {} spacing {:.3} grid {} inset {} tight {} courtyards touch {}: {} of {} movable illegal{}",
-                    level.index,
-                    level.halo_scale,
-                    level.spacing_mm,
-                    level.grid_mm,
-                    level.edge_inset,
-                    level.tight,
-                    level.courtyard_spacing,
-                    level.illegal,
-                    report.movable,
-                    match (level.kicad_agrees, level.model_stricter) {
-                        (Some(agrees), Some(stricter)) =>
-                            format!(" ({agrees} with a KiCad error, {stricter} without)"),
-                        _ => String::new(),
-                    }
-                );
-            }
-            println!("{output}");
-            Ok(())
-        }
-        "ablate-kicad-placement" => {
-            let usage = "usage: pcb-maker ablate-kicad-placement <designer.kicad_pcb> <placed-directory> <board-id> <output-directory> [ablation.json] [router-config.json|auto]";
-            let designer = arguments.next().ok_or_else(|| usage.to_string())?;
-            let placed = arguments.next().ok_or_else(|| usage.to_string())?;
-            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
-            pcb_kicad::check_board_id(&board_id)?;
-            let output = arguments.next().ok_or_else(|| usage.to_string())?;
-            let config: pcb_kicad::lab::KiCadAblationConfig = match arguments.next().as_deref() {
-                None | Some("default") => Default::default(),
-                Some(path) => serde_json::from_str(
-                    &std::fs::read_to_string(path)
-                        .map_err(|error| format!("failed to read {path}: {error}"))?,
-                )
-                .map_err(|error| format!("{path}: {error}"))?,
-            };
-            let router_path = arguments.next();
-            if arguments.next().is_some() {
-                return Err(usage.into());
-            }
-            let router = board_router_config(router_path.as_deref(), &placed, &board_id)?;
-            let report = pcb_kicad::lab::ablate_kicad_placement(
-                Path::new(&designer),
-                Path::new(&placed),
-                &board_id,
-                Path::new(&output),
-                &config,
-                &router,
-            )?;
-            let text = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
-            let path = Path::new(&output).join("ablation.json");
-            std::fs::write(&path, format!("{text}\n"))
-                .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
-            println!("{}", path.display());
-            Ok(())
-        }
-        "global-route-kicad-board" => {
-            let usage = "usage: pcb-maker global-route-kicad-board <source-directory> <board-id> [router-config.json|auto] [--global <global.json>] [--probe <work-seconds>] [--corridors <out.json>]";
-            let source = arguments.next().ok_or_else(|| usage.to_string())?;
-            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
-            let mut router_path = None;
-            let mut config = pcb_global::GlobalConfig::default();
-            let mut probe = None;
-            let mut corridors = None;
-            while let Some(argument) = arguments.next() {
-                match argument.as_str() {
-                    "--global" => {
-                        let path = arguments.next().ok_or_else(|| usage.to_string())?;
-                        config = serde_json::from_str(
-                            &std::fs::read_to_string(&path)
-                                .map_err(|error| format!("failed to read {path}: {error}"))?,
-                        )
-                        .map_err(|error| format!("{path}: {error}"))?;
-                    }
-                    "--probe" => {
-                        let value = arguments.next().ok_or_else(|| usage.to_string())?;
-                        probe = Some(
-                            value
-                                .parse::<f64>()
-                                .map_err(|_| format!("--probe: not a number: {value}"))?,
-                        );
-                    }
-                    "--corridors" => {
-                        corridors = Some(arguments.next().ok_or_else(|| usage.to_string())?);
-                    }
-                    _ if router_path.is_none() && !argument.starts_with("--") => {
-                        router_path = Some(argument)
-                    }
-                    _ => return Err(usage.into()),
-                }
-            }
-            let router = board_router_config(router_path.as_deref(), &source, &board_id)?;
-            let report = pcb_kicad::lab::global_route_kicad_board(
-                Path::new(&source),
-                &board_id,
-                &router,
-                &config,
-                probe,
-                corridors.as_deref().map(Path::new),
-            )?;
-            println!(
-                "{}",
-                serde_json::to_string(&report).map_err(|error| error.to_string())?
-            );
-            Ok(())
-        }
-        "sub-boards-kicad-board" => {
-            let usage = research_usage("sub-boards-kicad-board").unwrap_or_default();
-            let board = arguments.next().ok_or_else(|| usage.clone())?;
-            let report = pcb_kicad::describe_sub_boards(Path::new(&board))?;
-            println!(
-                "{}",
-                serde_json::to_string(&report).map_err(|error| error.to_string())?
-            );
-            Ok(())
-        }
-        "probe-trouble-placement" => {
-            let usage = research_usage("probe-trouble-placement").unwrap_or_default();
-            let board = arguments.next().ok_or_else(|| usage.clone())?;
-            let mut router_path = None;
-            let mut config = pcb_kicad::lab::KiCadTroubleProbeConfig::default();
-            let mut out = None;
-            let number = |name: &str, value: Option<String>| -> Result<f64, String> {
-                let value = value.ok_or_else(|| format!("{name}: a value"))?;
-                value
-                    .parse::<f64>()
-                    .map_err(|_| format!("{name}: not a number: {value}"))
-            };
-            while let Some(argument) = arguments.next() {
-                match argument.as_str() {
-                    "--trouble-from" => {
-                        config
-                            .sources
-                            .push(pcb_kicad::lab::KiCadTroubleSource::From(
-                                arguments.next().ok_or_else(|| usage.clone())?.into(),
-                            ))
-                    }
-                    "--trouble" => config
-                        .sources
-                        .push(pcb_kicad::lab::KiCadTroubleSource::Names(
-                            arguments.next().ok_or_else(|| usage.clone())?.into(),
-                        )),
-                    "--auto" => config
-                        .sources
-                        .push(pcb_kicad::lab::KiCadTroubleSource::Auto),
-                    "--nets" => config.nets = Some(number("--nets", arguments.next())? as usize),
-                    "--background" => {
-                        config.background = pcb_kicad::lab::KiCadTroubleBackground::parse(
-                            &arguments.next().ok_or_else(|| usage.clone())?,
-                        )?
-                    }
-                    "--share" => config.share = number("--share", arguments.next())?,
-                    "--total-seconds" => {
-                        config.total_seconds = number("--total-seconds", arguments.next())?
-                    }
-                    "--work-seconds" => {
-                        config.work_seconds = Some(number("--work-seconds", arguments.next())?)
-                    }
-                    "--stub-mm" => config.stub_mm = number("--stub-mm", arguments.next())?,
-                    "--global-weight" => {
-                        config.global_weight = number("--global-weight", arguments.next())?
-                    }
-                    "--out" => out = Some(arguments.next().ok_or_else(|| usage.clone())?),
-                    _ if router_path.is_none() && !argument.starts_with("--") => {
-                        router_path = Some(argument)
-                    }
-                    _ => return Err(usage),
-                }
-            }
-            let board = Path::new(&board);
-            let directory = board
-                .parent()
-                .map(|parent| parent.to_string_lossy().into_owned())
-                .unwrap_or_else(|| ".".into());
-            let board_id = board
-                .file_stem()
-                .map(|stem| stem.to_string_lossy().into_owned())
-                .ok_or_else(|| usage.clone())?;
-            let router = board_router_config(router_path.as_deref(), &directory, &board_id)?;
-            // A probe holds its router for up to minutes: not a short command.
-            pcb_kicad::ledger::arm(
-                &format!("probe-trouble-placement {}", board.display()),
-                false,
-            );
-            // One router, about the size the race's probe takes; the
-            // watchdog raises it while the ledger has room.
-            pcb_kicad::ledger::reserve_at_least(1024.0, "the trouble-maker probe's router");
-            let report = pcb_kicad::lab::probe_trouble_placement(board, &router, &config)?;
-            let text = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
-            match out {
-                Some(path) => std::fs::write(&path, format!("{text}\n"))
-                    .map_err(|error| format!("failed to write {path}: {error}"))?,
-                None => println!("{text}"),
-            }
-            Ok(())
-        }
-        "probe-coarse-placement" => {
-            let usage = research_usage("probe-coarse-placement").unwrap_or_default();
-            let board = arguments.next().ok_or_else(|| usage.clone())?;
-            let mut router_path = None;
-            let mut config = pcb_kicad::lab::KiCadCoarseProbeConfig::default();
-            let mut out = None;
-            let number = |name: &str, value: Option<String>| -> Result<f64, String> {
-                let value = value.ok_or_else(|| format!("{name}: a value"))?;
-                value
-                    .parse::<f64>()
-                    .map_err(|_| format!("{name}: not a number: {value}"))
-            };
-            while let Some(argument) = arguments.next() {
-                match argument.as_str() {
-                    "--pitch-factor" => {
-                        config.pitch_factor = number("--pitch-factor", arguments.next())?
-                    }
-                    "--iterations" => {
-                        config.iterations = Some(number("--iterations", arguments.next())? as usize)
-                    }
-                    "--hard-repair" => config.hard_repair = true,
-                    "--trouble-repair" => config.trouble_repair = true,
-                    "--negotiation-share" => {
-                        config.negotiation_share = number("--negotiation-share", arguments.next())?
-                    }
-                    "--share" => config.share = number("--share", arguments.next())?,
-                    "--total-seconds" => {
-                        config.total_seconds = number("--total-seconds", arguments.next())?
-                    }
-                    "--work-seconds" => {
-                        config.work_seconds = Some(number("--work-seconds", arguments.next())?)
-                    }
-                    "--out" => out = Some(arguments.next().ok_or_else(|| usage.clone())?),
-                    _ if router_path.is_none() && !argument.starts_with("--") => {
-                        router_path = Some(argument)
-                    }
-                    _ => return Err(usage),
-                }
-            }
-            if config.trouble_repair && !config.hard_repair {
-                return Err("--trouble-repair follows the hard repair: give --hard-repair".into());
-            }
-            let board = Path::new(&board);
-            let directory = board
-                .parent()
-                .map(|parent| parent.to_string_lossy().into_owned())
-                .unwrap_or_else(|| ".".into());
-            let board_id = board
-                .file_stem()
-                .map(|stem| stem.to_string_lossy().into_owned())
-                .ok_or_else(|| usage.clone())?;
-            let router = board_router_config(router_path.as_deref(), &directory, &board_id)?;
-            // A probe holds its router for up to minutes: not a short command.
-            pcb_kicad::ledger::arm(
-                &format!("probe-coarse-placement {}", board.display()),
-                false,
-            );
-            pcb_kicad::ledger::reserve_at_least(1024.0, "the coarse probe's router");
-            let report = pcb_kicad::lab::probe_coarse_placement(board, &router, &config)?;
-            let text = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
-            match out {
-                Some(path) => std::fs::write(&path, format!("{text}\n"))
-                    .map_err(|error| format!("failed to write {path}: {error}"))?,
-                None => println!("{text}"),
-            }
-            Ok(())
-        }
-        "swap-kicad-pins" => {
-            let usage = "usage: pcb-maker swap-kicad-pins <source-directory> <board-id> <output-directory> <pin-swaps.json> [config.json]";
-            let source = arguments.next().ok_or_else(|| usage.to_string())?;
-            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
-            pcb_kicad::check_board_id(&board_id)?;
-            let output = arguments.next().ok_or_else(|| usage.to_string())?;
-            let spec = pcb_kicad::read_pin_swap_spec(Path::new(
-                &arguments.next().ok_or_else(|| usage.to_string())?,
-            ))?;
-            let config: pcb_kicad::KiCadPinSwapConfig = match arguments.next() {
-                Some(path) => serde_json::from_str(
-                    &std::fs::read_to_string(&path)
-                        .map_err(|error| format!("failed to read {path}: {error}"))?,
-                )
-                .map_err(|error| format!("failed to parse {path}: {error}"))?,
-                None => Default::default(),
-            };
-            let result = pcb_kicad::swap_kicad_pins(
-                Path::new(&source),
-                &board_id,
-                Path::new(&output),
-                &spec,
-                &config,
-            )?;
-            println!(
-                "{} groups, {} units: ratsnest {:.0} mm with {} crossings -> {:.0} mm with {} crossings; {} pins changed, {} schematic pins relabelled; {:.2}s",
-                result.groups,
-                result.units,
-                result.before.length_mm,
-                result.before.crossings,
-                result.after.length_mm,
-                result.after.crossings,
-                result.changes.len(),
-                result.schematic_labels_changed,
-                result.seconds,
-            );
-            Ok(())
-        }
-        "dump-pour-map" => {
-            let usage = "usage: pcb-maker dump-pour-map <source-directory> <board-id> <output-directory> [config.json|auto]";
-            let source = arguments.next().ok_or_else(|| usage.to_string())?;
-            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
-            pcb_kicad::check_board_id(&board_id)?;
-            let output = arguments.next().ok_or_else(|| usage.to_string())?;
-            let config = board_router_config(arguments.next().as_deref(), &source, &board_id)?;
-            pcb_kicad::dump_kicad_pour_map(
-                Path::new(&source),
-                &board_id,
-                Path::new(&output),
-                &config,
-            )
-        }
-        "repair-kicad-necks" => {
-            let usage = "usage: pcb-maker repair-kicad-necks <routed-directory> <board-id> [config.json|auto] (changes the directory in place)";
-            let directory = arguments.next().ok_or_else(|| usage.to_string())?;
-            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
-            pcb_kicad::check_board_id(&board_id)?;
-            let config = board_router_config(arguments.next().as_deref(), &directory, &board_id)?;
-            let repair = pcb_kicad::repair_kicad_necks(Path::new(&directory), &board_id, &config)?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&repair).map_err(|error| error.to_string())?
-            );
-            Ok(())
-        }
-        "calibrate-work-rate" => {
-            // The start-up calibration's measurement alone, `rounds` times
-            // (default 1), one JSON line each (docs/router.md, "Determinism
-            // and the wall clock").
-            let usage = "usage: pcb-maker calibrate-work-rate [rounds]";
-            let rounds: usize = match arguments.next() {
-                Some(value) => value.parse().map_err(|_| usage.to_string())?,
-                None => 1,
-            };
-            for _ in 0..rounds {
-                let measured = pcb_kicad::measure_work_rate();
-                println!(
-                    "{}",
-                    serde_json::to_string(&measured).map_err(|error| error.to_string())?
-                );
-            }
-            Ok(())
-        }
-        other => Err(format!("unknown command {other:?}")),
-    }
-}
-
-/// A router configuration from a file, or resolved from the KiCad project
-/// when the path is absent or `auto`.
-fn board_router_config(
-    path: Option<&str>,
-    source: &str,
-    board_id: &str,
-) -> Result<pcb_kicad::KiCadBoardRouterConfig, String> {
-    let mut config = board_router_config_of(path, source, board_id)?;
-    // Experiment hook for machines without kicad-cli (with a config file
-    // too).
-    if std::env::var_os("PCB_SKIP_NATIVE").is_some() {
-        config.skip_native_verification = true;
-    }
-    Ok(config)
-}
-
-/// `board_router_config` before the environment's switches.
-fn board_router_config_of(
-    path: Option<&str>,
-    source: &str,
-    board_id: &str,
-) -> Result<pcb_kicad::KiCadBoardRouterConfig, String> {
-    match path {
-        None | Some("auto") => {
-            let mut config = pcb_kicad::resolve_project_rules(
-                &Path::new(source).join(format!("{board_id}.kicad_pro")),
-                &Path::new(source).join(format!("{board_id}.kicad_pcb")),
-            )?;
-            if let Some(seeds) = std::env::var("PCB_ROUTER_SEEDS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-            {
-                config.seeds = Some(seeds);
-            }
-            Ok(config)
-        }
-        Some(path) => {
-            let file = serde_json::from_str(
-                &std::fs::read_to_string(path)
-                    .map_err(|error| format!("failed to read {path}: {error}"))?,
-            )
-            .map_err(|error| format!("failed to parse {path}: {error}"))?;
-            // The project's rules are the base; the file's keys replace
-            // them key by key.
-            pcb_kicad::router_config_over_project(
-                file,
-                pcb_kicad::resolve_project_rules(
-                    &Path::new(source).join(format!("{board_id}.kicad_pro")),
-                    &Path::new(source).join(format!("{board_id}.kicad_pcb")),
-                ),
-            )
-        }
+    match COMMANDS.iter().find(|entry| entry.name == command) {
+        Some(entry) => (entry.run)(arguments),
+        None => Err(format!("unknown command {command:?}")),
     }
 }
 
@@ -1400,5 +516,16 @@ mod tests {
         assert!(!is_closed_stdout("index out of bounds"));
         let payload: Box<dyn std::any::Any + Send> = Box::new(String::from("owned"));
         assert_eq!(payload_message(payload.as_ref()), "owned");
+    }
+
+    #[test]
+    fn the_commands_table_names_match_their_usage_lines() {
+        let mut seen = std::collections::HashSet::new();
+        for entry in COMMANDS {
+            assert!(seen.insert(entry.name), "{} twice", entry.name);
+            if let Some(line) = entry.usage {
+                assert_eq!(line.split_whitespace().next(), Some(entry.name));
+            }
+        }
     }
 }
