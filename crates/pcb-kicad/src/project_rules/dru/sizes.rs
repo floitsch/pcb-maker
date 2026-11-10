@@ -333,7 +333,7 @@ fn set_bounds(
 /// its rules before the custom rules keep (`BoardFacts::current`): a
 /// width or via below its minimum, above its maximum, or a track width
 /// off its opt.
-fn changes_current(
+pub(super) fn changes_current(
     board: &BoardFacts,
     kind: &str,
     constraint: &Constraint,
@@ -366,7 +366,7 @@ fn changes_current(
 
 /// The note on the neck-down width a width minimum above it raises, for
 /// a rule's detail; `None` where it raises none.
-fn neck_note(
+pub(super) fn neck_note(
     board: &BoardFacts,
     constraint: &Constraint,
     widths: bool,

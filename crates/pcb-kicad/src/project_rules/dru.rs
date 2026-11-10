@@ -17,10 +17,13 @@
 //! narrower than what the router can tell apart (an item type, a layer,
 //! a pair of classes).
 //!
-//! The module: the rule file (here), the condition language
-//! (`condition`), the lowering of each constraint (`lower`, with the
-//! clearances in `clearance` and the sizes of tracks and vias in
-//! `sizes`), and the rule KiCad applies to one track (`tracks`).
+//! The module: the rule file and what came of each constraint (here),
+//! the condition language (`condition`), the lowering of each constraint
+//! (`lower`, with the clearances in `clearance` and the sizes of tracks
+//! and vias in `sizes`), and the rule KiCad applies to one track
+//! (`tracks`).
+
+use serde::Serialize;
 
 mod clearance;
 mod condition;
@@ -29,7 +32,6 @@ mod sizes;
 mod tracks;
 
 pub(crate) use condition::{Kind, NetFacts};
-pub use lower::KiCadCustomRuleReport;
 pub(crate) use lower::{
     BoardFacts, Lowered, NamedArea, finding_severity, lower, rule_copper_layers,
 };
@@ -55,6 +57,25 @@ pub(crate) struct Constraint {
     /// Bare words after the kind (`disallow via track`, `zone_connection
     /// solid`) and the text of an `assertion`.
     pub words: Vec<String>,
+}
+
+/// What a rule did, for `board-router.json`'s `rules`.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct KiCadCustomRuleReport {
+    /// The rule's name in the .kicad_dru.
+    pub rule: String,
+    /// The constraint (`clearance`, `track_width`, ...).
+    pub constraint: String,
+    /// `applied` (the router keeps it as KiCad does), `approximated` (kept
+    /// more widely than KiCad asks: every layer, every item type, both
+    /// nets of a pair), `no_effect` (the router's rules already keep at
+    /// least as much, or nothing it routes matches), `not_routing` (not a
+    /// rule on the copper the router lays: silk, text, courtyards, pads),
+    /// `unmodelled` (a routing rule the router cannot keep; KiCad still
+    /// checks it), `skipped` (its severity or the project's makes its
+    /// findings no errors, or no layer of the board has it).
+    pub status: String,
+    pub detail: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]

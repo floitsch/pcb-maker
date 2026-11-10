@@ -784,3 +784,133 @@ fn conditions_are_evaluated_both_ways_and_with_kleene_logic() {
         )
     );
 }
+
+#[test]
+fn recognition_notes_what_the_router_does_not_keep_and_passes_the_rest() {
+    let board = board(&[("A", &["Default"]), ("B", &["HV"])]);
+    let rules = parse_rules(
+        r#"(version 1)
+(rule silk (constraint silk_clearance (min 0.2)))
+(rule soft (severity warning) (constraint clearance (min 0.3)))
+(rule inner (layer In1.Cu) (constraint clearance (min 0.3)))
+(rule broken (condition "A.NetClass ==") (constraint clearance (min 0.3)))
+(rule vias (constraint disallow blind_via micro_via))
+(rule creep (constraint creepage (min 2)))
+(rule hv (layer outer) (condition "A.NetClass == 'HV'") (constraint clearance (min 0.3)))"#,
+    )
+    .unwrap();
+    let mut lowered = Lowered::new(board.nets.len());
+    let recognised: Vec<Option<Vec<&str>>> = rules
+        .iter()
+        .map(|rule| {
+            recognise(
+                &mut lowered,
+                rule,
+                &rule.constraints[0],
+                &board,
+                &BTreeMap::new(),
+            )
+            .map(|(layers, _)| layers)
+        })
+        .collect();
+    assert_eq!(
+        recognised,
+        [
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(vec!["F.Cu", "B.Cu"])
+        ]
+    );
+    // One note for each rule recognised as not kept; none yet for the
+    // last, whose kind's lowering notes it.
+    let statuses: Vec<(&str, &str)> = lowered
+        .report
+        .iter()
+        .map(|note| (note.rule.as_str(), note.status.as_str()))
+        .collect();
+    assert_eq!(
+        statuses,
+        [
+            ("silk", "not_routing"),
+            ("soft", "skipped"),
+            ("inner", "skipped"),
+            ("broken", "unmodelled"),
+            ("vias", "no_effect"),
+            ("creep", "unmodelled"),
+        ]
+    );
+}
+
+#[test]
+fn the_matcher_groups_nets_and_a_later_rule_takes_what_it_surely_matches() {
+    let board = board(&[("A", &["HV"]), ("B", &["Default"]), ("C", &["Default"])]);
+    let no_net = NetFacts::default();
+    let hv = parse_condition("A.NetClass == 'HV'").unwrap();
+    let matcher = Matcher::new(
+        &board,
+        &no_net,
+        &[],
+        "clearance",
+        vec!["F.Cu", "B.Cu"],
+        hv.clone(),
+    );
+    // HV's net apart from the two the condition cannot tell apart.
+    assert_eq!(matcher.groups, [vec![1, 2], vec![0]]);
+    let net = |index: usize| Some(&board.nets[index]);
+    assert_eq!(matcher.truth_for(net(0), net(1), false), T3::True);
+    assert_eq!(matcher.truth_for(net(1), net(2), false), T3::False);
+    assert!(!matcher.shadowed_any.get());
+    // A later rule on every item takes every pair this one matches.
+    let every = Ex::Number(1.0);
+    let later = [(&every, vec!["F.Cu", "B.Cu"])];
+    let shadowed = Matcher::new(
+        &board,
+        &no_net,
+        &later,
+        "clearance",
+        vec!["F.Cu", "B.Cu"],
+        hv,
+    );
+    assert_eq!(shadowed.truth_for(net(0), net(1), false), T3::False);
+    assert!(shadowed.shadowed_any.get());
+}
+
+#[test]
+fn a_size_rule_changes_what_its_nets_keep_and_notes_the_necks_it_raises() {
+    use super::sizes::{changes_current, neck_note};
+    let mut board = board(&[("A", &["Default"]), ("B", &["Default"])]);
+    board.neck_width = 0.1;
+    let constraint = |kind: &str, min: Option<f64>, opt: Option<f64>| Constraint {
+        kind: kind.into(),
+        min,
+        opt,
+        max: None,
+        words: Vec::new(),
+    };
+    // The nets' vias: 0.4 mm over a 0.2 mm drill, an annular ring of 0.1.
+    let ring = constraint("annular_width", Some(0.1), None);
+    assert!(!changes_current(&board, "annular_width", &ring, &[0, 1]));
+    let ring = constraint("annular_width", Some(0.15), None);
+    assert!(changes_current(&board, "annular_width", &ring, &[0]));
+    // A track width's opt off the nets' 0.1 mm changes them.
+    let opt = constraint("track_width", None, Some(0.2));
+    assert!(changes_current(&board, "track_width", &opt, &[1]));
+    // A minimum above the neck-down width raises it: the board's for a
+    // rule on every net on every layer, else the nets'.
+    let wide = constraint("track_width", Some(0.15), None);
+    assert_eq!(
+        neck_note(&board, &wide, true, true, false).as_deref(),
+        Some("; the neck-down width 0.1 mm rises to it")
+    );
+    assert_eq!(
+        neck_note(&board, &wide, true, false, false).as_deref(),
+        Some("; their neck-downs rise from 0.1 mm to it")
+    );
+    assert_eq!(neck_note(&board, &wide, false, true, false), None);
+    let narrow = constraint("track_width", Some(0.1), None);
+    assert_eq!(neck_note(&board, &narrow, true, true, false), None);
+}

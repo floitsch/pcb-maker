@@ -8,13 +8,11 @@
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::Serialize;
-
 use super::condition::{
     Ex, Item, Kind, NetFacts, Side, T3, leaf_on, net_leaves, opaque_atoms, pair_truth,
     parse_condition, side_name, text_matches,
 };
-use super::{Constraint, Rule, clearance, sizes};
+use super::{Constraint, KiCadCustomRuleReport, Rule, clearance, sizes};
 
 /// What the lowering needs of the board.
 #[derive(Clone)]
@@ -117,25 +115,6 @@ pub(super) fn unknown_only_by_area(ex: &Ex) -> bool {
     let mut atoms = BTreeSet::new();
     opaque_atoms(ex, &mut atoms);
     !atoms.is_empty() && atoms.iter().all(|atom| atom.starts_with(AREA_ATOM))
-}
-
-/// What a rule did, for `board-router.json`'s `rules`.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct KiCadCustomRuleReport {
-    /// The rule's name in the .kicad_dru.
-    pub rule: String,
-    /// The constraint (`clearance`, `track_width`, ...).
-    pub constraint: String,
-    /// `applied` (the router keeps it as KiCad does), `approximated` (kept
-    /// more widely than KiCad asks: every layer, every item type, both
-    /// nets of a pair), `no_effect` (the router's rules already keep at
-    /// least as much, or nothing it routes matches), `not_routing` (not a
-    /// rule on the copper the router lays: silk, text, courtyards, pads),
-    /// `unmodelled` (a routing rule the router cannot keep; KiCad still
-    /// checks it), `skipped` (its severity or the project's makes its
-    /// findings no errors, or no layer of the board has it).
-    pub status: String,
-    pub detail: String,
 }
 
 /// A clearance between the items of two sets of nets (router
@@ -266,7 +245,7 @@ pub(super) fn mm(value: f64) -> String {
 }
 
 impl Lowered {
-    fn new(nets: usize) -> Self {
+    pub(super) fn new(nets: usize) -> Self {
         Self {
             clearance: vec![0.0; nets],
             width_min: vec![0.0; nets],
@@ -514,7 +493,7 @@ fn lower_constraint(
 /// condition that does not parse, a `disallow`, a kind the router does
 /// not model. Otherwise the board's layers of the rule and its condition
 /// (with its areas resolved).
-fn recognise<'a>(
+pub(super) fn recognise<'a>(
     lowered: &mut Lowered,
     rule: &Rule,
     constraint: &Constraint,

@@ -455,9 +455,6 @@ struct ClassSpec {
     dp_gap: Option<f64>,
 }
 
-/// The copper layer names of a board's `(layers ...)`, in the router's
-/// order (F.Cu, In1.Cu, In2.Cu, ..., B.Cu: the lowering's `LayerTable`),
-/// so that a layer's index is the router's.
 /// The board's zones and rule areas with a name or uuid, the footprints'
 /// too, with their copper layers (`dru::NamedArea`): what KiCad's area
 /// tests in rule conditions search (`searchAreas`).
@@ -507,6 +504,9 @@ fn named_areas(pcb: &Expr) -> Vec<dru::NamedArea> {
         .collect()
 }
 
+/// The copper layer names of a board's `(layers ...)`, in the router's
+/// order (F.Cu, In1.Cu, In2.Cu, ..., B.Cu: the lowering's `LayerTable`),
+/// so that a layer's index is the router's.
 pub(crate) fn copper_layer_names(pcb: &Expr) -> Vec<String> {
     let mut names: Vec<String> = pcb
         .child("layers")
@@ -546,6 +546,12 @@ pub(crate) fn copper_layer_names(pcb: &Expr) -> Vec<String> {
 /// copper. The project's custom rules (`<project>.kicad_dru`) raise the
 /// clearances, widths, vias and the board's edge, hole and hole-to-hole
 /// clearances where they apply (`dru`); `project_rules` reports them.
+///
+/// The stages: the board setup (`report_board_setup`), the net classes
+/// (`Classes`) and the nets' (`assign_nets`), the board-wide values
+/// (`board_wide`), the custom rules (`read_custom_rules`,
+/// `apply_lowered`), the rules on one track (`diff_pair_rules`,
+/// `length_rules`, `track_disallowed`), then the config.
 pub fn resolve_project_rules(
     project_path: &Path,
     pcb_path: &Path,
@@ -567,40 +573,234 @@ pub fn resolve_project_rules(
     let mut report = KiCadProjectRulesReport::default();
 
     let rules = &project["board"]["design_settings"]["rules"];
-    let kicad_minimum = |key: &str| {
-        KICAD_MINIMUMS
-            .iter()
-            .find(|(name, _)| *name == key)
-            .map_or(0.0, |(_, value)| *value)
+    let setup = DesignRules(rules);
+    report_board_setup(&project, &pcb, setup, &mut report);
+    let severity = project["board"]["design_settings"]["rule_severities"]["connection_width"]
+        .as_str()
+        .map(str::to_owned);
+    let floor = connection_width_floor(
+        setup.minimum("min_connection"),
+        severity.as_deref(),
+        floor_mode(),
+    );
+
+    let classes = Classes::of_project(&project, &pcb, setup, floor, &mut report);
+    let default_rules = classes.floored(classes.default.clone());
+    let (nets, pad_kinds) = pads_of(&pcb);
+    let NetAssignment {
+        connection_rules,
+        pair_classes,
+        net_facts,
+    } = assign_nets(
+        nets,
+        &classes,
+        &Assignments::of_project(&project),
+        &default_rules,
+        &net_names,
+        &mut report,
+    );
+    let wide = board_wide(&project, &classes, &default_rules);
+    let severities = rule_severities(&project);
+    // The router's rules beyond the classes (`pcb_router::NetRules`).
+    let mut net_rules = pcb_router::NetRules::default();
+    // KiCad's hole_to_hole holds between the holes of one net too (a via
+    // beside a pad hole of its own net: nuclone's VSS); the router keeps
+    // it where the project rates the findings errors.
+    if dru::finding_severity("hole_to_hole", &severities) == "error" {
+        net_rules.same_net_hole_to_hole = wide.hole_to_hole;
+    }
+    let mut resolved = Resolved {
+        connection_rules,
+        default_rules,
+        wide,
+        net_rules,
+        // The nets whose width a custom rule's opt gives on every layer:
+        // the narrow-signal step keeps them (`ruled_widths`).
+        ruled_widths: BTreeSet::new(),
+        report,
     };
-    let minimum = |key: &str| rules[key].as_f64().unwrap_or_else(|| kicad_minimum(key));
+
+    // The project's custom rules.
+    let dru_path = project_path.with_extension("kicad_dru");
+    let pair_facts = net_facts.clone();
+    let mut pair_custom_rules: Vec<dru::Rule> = Vec::new();
+    if let Some(rules) = read_custom_rules(&dru_path, &mut resolved.report) {
+        let board = board_facts(net_facts, &pcb, pad_kinds, &resolved, &net_names);
+        let lowered = dru::lower(&rules, &board, &severities);
+        let board_minimum = setup.minimum("min_track_width").max(floor.unwrap_or(0.0));
+        apply_lowered(&mut resolved, lowered, &board, &net_names, board_minimum);
+        pair_custom_rules = rules;
+    }
+    let Resolved {
+        connection_rules,
+        default_rules,
+        wide,
+        net_rules,
+        ruled_widths,
+        mut report,
+    } = resolved;
+
+    let diff_pair_rules = diff_pair_rules(
+        &pair_facts,
+        &pair_classes,
+        &pair_custom_rules,
+        &copper_layer_names(&pcb),
+        |name: &str| connection_rules.get(net_names.normalize(name)).cloned(),
+        |name: &str| net_names.normalize(name).to_string(),
+        setup.minimum("min_track_width").max(floor.unwrap_or(0.0)),
+    );
+    let length_rules = length_rules(
+        &pair_facts,
+        &pair_custom_rules,
+        &copper_layer_names(&pcb),
+        |name: &str| net_names.normalize(name).to_string(),
+        &severities,
+    );
+    let track_disallowed = track_disallowed(
+        &pair_facts,
+        &pair_custom_rules,
+        &copper_layer_names(&pcb),
+        |name: &str| net_names.normalize(name).to_string(),
+        &severities,
+        &mut report,
+    );
+    let copper = copper_layer_names(&pcb);
+    report.layer_geometry_rules = layer_geometry_rules(&pair_custom_rules, &copper);
+    report.track_disallowed_layers = layer_names(&track_disallowed, &copper);
+    let mut config = KiCadBoardRouterConfig {
+        narrow_signal_mm: wide.narrow_signal,
+        // Designers neck down to the board minimum where a pad demands it
+        // (KiCad's 0.2 mm where the project states none); a project whose
+        // minimum is 0 gets a fab's usual 0.127 mm (KiCad's DRC checks
+        // widths against the stated minimum only).
+        neck_width_mm: Some(wide.neck),
+        connection_rules,
+        default_rules: Some(default_rules),
+        // KiCad's built-in board setup applies when the project is silent.
+        edge_clearance_mm: wide.edge_clearance,
+        hole_clearance_mm: wide.hole_clearance,
+        hole_to_hole_clearance_mm: wide.hole_to_hole,
+        min_connection_mm: floor,
+        connection_width_severity: (setup.minimum("min_connection") > 0.0)
+            .then(|| severity.unwrap_or_else(|| "warning".into())),
+        project_rules: Some(report),
+        net_rules: (!net_rules.is_empty()).then(|| std::sync::Arc::new(net_rules)),
+        diff_pair_rules,
+        length_rules,
+        track_disallowed,
+        ruled_widths,
+        ..setup_checks(&project, setup)
+    };
+    // The narrow-signal and neck widths, too (the classes are floored
+    // above).
+    config.apply_width_floor();
+    Ok(config)
+}
+
+/// The router config's values that come straight from the board setup's
+/// checks (the rest at their defaults): the clearance a project relaxes
+/// to where its clearance findings are no errors, the solder mask's
+/// clearance and bridge severity, the starved-thermal spoke count.
+fn setup_checks(project: &serde_json::Value, setup: DesignRules) -> KiCadBoardRouterConfig {
+    let rules = setup.0;
+    let severities = &project["board"]["design_settings"]["rule_severities"];
+    KiCadBoardRouterConfig {
+        relaxed_clearance_mm: match severities["clearance"].as_str() {
+            Some("warning" | "ignore") if setup.minimum("min_clearance") > 0.0 => {
+                Some(setup.minimum("min_clearance"))
+            }
+            _ => None,
+        },
+        solder_mask_to_copper_mm: rules["solder_mask_to_copper_clearance"].as_f64(),
+        solder_mask_bridge_severity: severities["solder_mask_bridge"].as_str().map(str::to_owned),
+        // KiCad's starved-thermal check: the board setup's minimum spoke
+        // count, none where the project ignores the finding.
+        min_resolved_spokes: Some(
+            if severities["starved_thermal"].as_str() == Some("ignore") {
+                0
+            } else {
+                rules["min_resolved_spokes"].as_u64().unwrap_or(2) as usize
+            },
+        ),
+        ..KiCadBoardRouterConfig::default()
+    }
+}
+
+/// Per net, the names of the copper layers of its mask (`copper`: the
+/// router's order).
+fn layer_names(
+    masks: &BTreeMap<String, pcb_router::LayerMask>,
+    copper: &[String],
+) -> BTreeMap<String, Vec<String>> {
+    masks
+        .iter()
+        .map(|(net, mask)| {
+            let layers = copper
+                .iter()
+                .enumerate()
+                .filter(|(layer, _)| mask & (1 << layer) != 0)
+                .map(|(_, name)| name.clone())
+                .collect();
+            (net.clone(), layers)
+        })
+        .collect()
+}
+
+/// The board setup's design rules (`board.design_settings.rules` of the
+/// project).
+#[derive(Clone, Copy)]
+struct DesignRules<'a>(&'a serde_json::Value);
+
+impl DesignRules<'_> {
+    /// A minimum as the project states it, else KiCad's default
+    /// (`KICAD_MINIMUMS`), else 0.
+    fn minimum(&self, key: &str) -> f64 {
+        self.0[key].as_f64().unwrap_or_else(|| {
+            KICAD_MINIMUMS
+                .iter()
+                .find(|(name, _)| *name == key)
+                .map_or(0.0, |(_, value)| *value)
+        })
+    }
+
+    /// Where a minimum comes from, for the report.
+    fn source_of(&self, key: &str) -> String {
+        if self.0[key].as_f64().is_some() {
+            format!("board.design_settings.rules.{key} in the .kicad_pro")
+        } else {
+            format!("KiCad's default {key} (the project does not state it)")
+        }
+    }
+}
+
+/// In nanometres, as KiCad holds them (a project's 0.19999999999999998
+/// is 0.2).
+fn nanometres(value: f64) -> f64 {
+    (value * 1.0e6).round() / 1.0e6
+}
+
+/// Reports the board setup: the minimums taken at KiCad's defaults, the
+/// board's minimum track width and clearance with their sources, and
+/// what a via may be (the project's via sizes and minimums, the
+/// designer's own vias in pads and of spans, the micro vias).
+fn report_board_setup(
+    project: &serde_json::Value,
+    pcb: &Expr,
+    setup: DesignRules,
+    report: &mut KiCadProjectRulesReport,
+) {
+    let rules = setup.0;
     for (key, value) in KICAD_MINIMUMS {
         if value > 0.0 && rules[key].as_f64().is_none() {
             report.kicad_defaults.push(format!("{key} {value} mm"));
         }
     }
-    let source_of = |key: &str| {
-        if rules[key].as_f64().is_some() {
-            format!("board.design_settings.rules.{key} in the .kicad_pro")
-        } else {
-            format!("KiCad's default {key} (the project does not state it)")
-        }
-    };
-    // In nanometres, as KiCad holds them (a project's 0.19999999999999998
-    // is 0.2).
-    let nanometres = |value: f64| (value * 1.0e6).round() / 1.0e6;
     report.minimums = Some(KiCadProjectMinimums {
-        track_width_mm: nanometres(minimum("min_track_width")),
-        track_width_source: source_of("min_track_width"),
-        clearance_mm: nanometres(minimum("min_clearance")),
-        clearance_source: source_of("min_clearance"),
+        track_width_mm: nanometres(setup.minimum("min_track_width")),
+        track_width_source: setup.source_of("min_track_width"),
+        clearance_mm: nanometres(setup.minimum("min_clearance")),
+        clearance_source: setup.source_of("min_clearance"),
     });
-    let severity = project["board"]["design_settings"]["rule_severities"]["connection_width"]
-        .as_str()
-        .map(str::to_owned);
-    let floor =
-        connection_width_floor(minimum("min_connection"), severity.as_deref(), floor_mode());
-
     // A via in a pad's sizes: the project's predefined vias, within the
     // board's minimums (raised below by custom rules on every via).
     report.via_sizes = project["board"]["design_settings"]["via_dimensions"]
@@ -612,17 +812,17 @@ pub fn resolve_project_rules(
         .map(|[diameter, drill]| [nanometres(diameter), nanometres(drill)])
         .collect();
     report.via_minimums = [
-        nanometres(minimum("min_via_diameter")),
-        nanometres(minimum("min_through_hole_diameter")),
-        nanometres(minimum("min_via_annular_width")),
+        nanometres(setup.minimum("min_via_diameter")),
+        nanometres(setup.minimum("min_through_hole_diameter")),
+        nanometres(setup.minimum("min_via_annular_width")),
     ];
-    report.via_in_pad_designer = crate::board_router::designer_entries(&pcb, "the board");
-    report.via_spans_designer = crate::board_router::designer_spans(&pcb, "the board");
+    report.via_in_pad_designer = crate::board_router::designer_entries(pcb, "the board");
+    report.via_spans_designer = crate::board_router::designer_spans(pcb, "the board");
     report.via_spans_project = crate::board_router::project_spans(rules);
     report.micro_via_minimums = crate::board_router::KiCadMicroViaMinimums {
         diameter_mm: rules["min_microvia_diameter"].as_f64().unwrap_or(0.2),
         drill_mm: rules["min_microvia_drill"].as_f64().unwrap_or(0.1),
-        annular_mm: minimum("min_via_annular_width"),
+        annular_mm: setup.minimum("min_via_annular_width"),
     };
     report.micro_via_mm = project["net_settings"]["classes"]
         .as_array()
@@ -637,114 +837,139 @@ pub fn resolve_project_rules(
         })
         .filter(|[diameter, drill]| *drill > 0.0 && diameter > drill)
         .map(|[diameter, drill]| [nanometres(diameter), nanometres(drill)]);
-    let mut widths = Vec::new();
-    let mut via_sizes = Vec::new();
-    let mut via_drills = Vec::new();
-    for item in pcb.children() {
-        match item.head() {
-            Some("segment") => widths.extend(form_f64(item, "width", 1).ok()),
-            Some("via") => {
-                via_sizes.extend(form_f64(item, "size", 1).ok());
-                via_drills.extend(form_f64(item, "drill", 1).ok());
-            }
-            _ => {}
+}
+
+/// The project's net classes (`net_settings.classes`) and how a net's
+/// values resolve from them, floored at the board's minimums.
+struct Classes<'a> {
+    specs: Vec<ClassSpec>,
+    /// Default's values before the board's minimums (`default_class`).
+    default: KiCadConnectionRoutingRules,
+    setup: DesignRules<'a>,
+    /// The track width floor of the board's minimum connection width
+    /// (`connection_width_floor`).
+    floor: Option<f64>,
+}
+
+impl<'a> Classes<'a> {
+    /// Reads the project's classes, reporting each one's track width and
+    /// clearance as the project states them (`class_values`).
+    fn of_project(
+        project: &serde_json::Value,
+        pcb: &Expr,
+        setup: DesignRules<'a>,
+        floor: Option<f64>,
+        report: &mut KiCadProjectRulesReport,
+    ) -> Self {
+        let mut specs = Vec::<ClassSpec>::new();
+        for (index, class) in project["net_settings"]["classes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .enumerate()
+        {
+            let Some(name) = class["name"].as_str() else {
+                continue;
+            };
+            let value = |key: &str| class[key].as_f64().filter(|v| *v > 0.0);
+            report
+                .class_values
+                .insert(name.to_string(), [value("track_width"), value("clearance")]);
+            specs.push(ClassSpec {
+                name: name.to_string(),
+                priority: class["priority"].as_i64().unwrap_or(index as i64),
+                track: value("track_width"),
+                clearance: value("clearance"),
+                via: value("via_diameter"),
+                drill: value("via_drill"),
+                dp_width: value("diff_pair_width"),
+                dp_gap: value("diff_pair_gap"),
+            });
+        }
+        let default = default_class(&specs, pcb);
+        Self {
+            specs,
+            default,
+            setup,
+            floor,
         }
     }
 
-    let mut specs = Vec::<ClassSpec>::new();
-    for (index, class) in project["net_settings"]["classes"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .enumerate()
-    {
-        let Some(name) = class["name"].as_str() else {
-            continue;
-        };
-        let value = |key: &str| class[key].as_f64().filter(|v| *v > 0.0);
-        report
-            .class_values
-            .insert(name.to_string(), [value("track_width"), value("clearance")]);
-        specs.push(ClassSpec {
-            name: name.to_string(),
-            priority: class["priority"].as_i64().unwrap_or(index as i64),
-            track: value("track_width"),
-            clearance: value("clearance"),
-            via: value("via_diameter"),
-            drill: value("via_drill"),
-            dp_width: value("diff_pair_width"),
-            dp_gap: value("diff_pair_gap"),
-        });
+    /// The class named `name`, if the project has it.
+    fn spec(&self, name: &str) -> Option<&ClassSpec> {
+        self.specs.iter().find(|spec| spec.name == name)
     }
-    let default = match specs.iter().find(|spec| spec.name == "Default") {
-        Some(spec) => KiCadConnectionRoutingRules {
-            trace_width_mm: spec.track.unwrap_or(DEFAULT_TRACK),
-            clearance_mm: spec.clearance.unwrap_or(DEFAULT_CLEARANCE),
-            via_size_mm: spec.via.unwrap_or(DEFAULT_VIA),
-            via_drill_mm: spec.drill.unwrap_or(DEFAULT_DRILL),
-        },
-        None => KiCadConnectionRoutingRules {
-            trace_width_mm: most_common(&widths).unwrap_or(DEFAULT_TRACK),
-            clearance_mm: DEFAULT_CLEARANCE,
-            via_size_mm: most_common(&via_sizes).unwrap_or(DEFAULT_VIA),
-            via_drill_mm: most_common(&via_drills).unwrap_or(DEFAULT_DRILL),
-        },
-    };
-    let floored = |mut class: KiCadConnectionRoutingRules| {
+
+    /// A class's values floored at the board's minimums (and the via's
+    /// diameter at its drill and annular ring).
+    fn floored(&self, mut class: KiCadConnectionRoutingRules) -> KiCadConnectionRoutingRules {
+        let minimum = |key: &str| self.setup.minimum(key);
         class.trace_width_mm = class
             .trace_width_mm
             .max(minimum("min_track_width"))
-            .max(floor.unwrap_or(0.0));
+            .max(self.floor.unwrap_or(0.0));
         class.clearance_mm = class.clearance_mm.max(minimum("min_clearance"));
         class.via_size_mm = class.via_size_mm.max(minimum("min_via_diameter"));
         class.via_drill_mm = class.via_drill_mm.max(minimum("min_through_hole_diameter"));
         let annulus = minimum("min_via_annular_width").max(0.05);
         class.via_size_mm = class.via_size_mm.max(class.via_drill_mm + 2.0 * annulus);
         class
-    };
-    // The values of a net in `classes` (names of `specs`, any order).
-    let resolve = |classes: &[&ClassSpec]| {
+    }
+
+    /// The values of a net in `classes` (names of `specs`, any order).
+    fn resolve(&self, classes: &[&ClassSpec]) -> KiCadConnectionRoutingRules {
         let mut ordered: Vec<&ClassSpec> = classes.to_vec();
         ordered.sort_by_key(|spec| spec.priority);
         let first =
             |field: fn(&ClassSpec) -> Option<f64>| ordered.iter().find_map(|spec| field(spec));
-        floored(KiCadConnectionRoutingRules {
+        let default = &self.default;
+        self.floored(KiCadConnectionRoutingRules {
             trace_width_mm: first(|spec| spec.track).unwrap_or(default.trace_width_mm),
             clearance_mm: first(|spec| spec.clearance).unwrap_or(default.clearance_mm),
             via_size_mm: first(|spec| spec.via).unwrap_or(default.via_size_mm),
             via_drill_mm: first(|spec| spec.drill).unwrap_or(default.via_drill_mm),
         })
-    };
-    let default_rules = floored(default.clone());
+    }
+}
 
-    let assignments = &project["net_settings"]["netclass_assignments"];
-    let patterns: Vec<(NetClassPattern, String)> = project["net_settings"]["netclass_patterns"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|entry| {
-            Some((
-                NetClassPattern::new(entry["pattern"].as_str()?),
-                entry["netclass"].as_str()?.to_string(),
-            ))
-        })
-        .collect();
+/// Default's values: the project's Default class (KiCad's built-in
+/// values where it leaves one out), else, for a project without net
+/// settings, the board's most common track width and via.
+fn default_class(specs: &[ClassSpec], pcb: &Expr) -> KiCadConnectionRoutingRules {
+    match specs.iter().find(|spec| spec.name == "Default") {
+        Some(spec) => KiCadConnectionRoutingRules {
+            trace_width_mm: spec.track.unwrap_or(DEFAULT_TRACK),
+            clearance_mm: spec.clearance.unwrap_or(DEFAULT_CLEARANCE),
+            via_size_mm: spec.via.unwrap_or(DEFAULT_VIA),
+            via_drill_mm: spec.drill.unwrap_or(DEFAULT_DRILL),
+        },
+        None => {
+            let mut widths = Vec::new();
+            let mut via_sizes = Vec::new();
+            let mut via_drills = Vec::new();
+            for item in pcb.children() {
+                match item.head() {
+                    Some("segment") => widths.extend(form_f64(item, "width", 1).ok()),
+                    Some("via") => {
+                        via_sizes.extend(form_f64(item, "size", 1).ok());
+                        via_drills.extend(form_f64(item, "drill", 1).ok());
+                    }
+                    _ => {}
+                }
+            }
+            KiCadConnectionRoutingRules {
+                trace_width_mm: most_common(&widths).unwrap_or(DEFAULT_TRACK),
+                clearance_mm: DEFAULT_CLEARANCE,
+                via_size_mm: most_common(&via_sizes).unwrap_or(DEFAULT_VIA),
+                via_drill_mm: most_common(&via_drills).unwrap_or(DEFAULT_DRILL),
+            }
+        }
+    }
+}
 
-    // KiCad 6 and 7 list a class's nets in the class itself.
-    let listed: BTreeMap<String, String> = project["net_settings"]["classes"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .flat_map(|class| {
-            let name = class["name"].as_str().unwrap_or("Default").to_string();
-            class["nets"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|net| net.as_str().map(|net| (net.to_string(), name.clone())))
-                .collect::<Vec<_>>()
-        })
-        .collect();
+/// The nets of the board's pads (as the board writes them) and the kinds
+/// of pad it has.
+fn pads_of(pcb: &Expr) -> (BTreeSet<String>, BTreeSet<dru::Kind>) {
     let mut nets = BTreeSet::<String>::new();
     let mut pad_kinds = BTreeSet::new();
     for footprint in pcb
@@ -767,24 +992,65 @@ pub fn resolve_project_rules(
             }
         }
     }
-    let mut connection_rules = BTreeMap::new();
-    // Per net of `net_facts`: its classes' diff pair width and gap (the
-    // first by priority that has one, else Default's) and the class.
-    let mut pair_classes: Vec<PairClass> = Vec::new();
-    let default_spec = specs.iter().find(|spec| spec.name == "Default");
-    let mut net_facts = Vec::new();
-    for raw in nets {
-        // The name as KiCad reads it: the board's atom keeps its escapes
-        // (`A\"B`), the project's JSON and the custom rules hold the
-        // text (`A"B`).
-        let text = unescape(&raw);
+    (nets, pad_kinds)
+}
+
+/// How the project assigns nets to classes besides their patterns' own:
+/// by name (`netclass_assignments`), by pattern (`netclass_patterns`),
+/// and by a KiCad 6 or 7 class's net list.
+struct Assignments<'a> {
+    assignments: &'a serde_json::Value,
+    patterns: Vec<(NetClassPattern, String)>,
+    /// Per net, the class whose list names it.
+    listed: BTreeMap<String, String>,
+}
+
+impl<'a> Assignments<'a> {
+    fn of_project(project: &'a serde_json::Value) -> Self {
+        let patterns = project["net_settings"]["netclass_patterns"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| {
+                Some((
+                    NetClassPattern::new(entry["pattern"].as_str()?),
+                    entry["netclass"].as_str()?.to_string(),
+                ))
+            })
+            .collect();
+        // KiCad 6 and 7 list a class's nets in the class itself.
+        let listed = project["net_settings"]["classes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|class| {
+                let name = class["name"].as_str().unwrap_or("Default").to_string();
+                class["nets"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|net| net.as_str().map(|net| (net.to_string(), name.clone())))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        Self {
+            assignments: &project["net_settings"]["netclass_assignments"],
+            patterns,
+            listed,
+        }
+    }
+
+    /// The names of the classes a net (`text`, as KiCad reads its name) is
+    /// assigned to, each once, in the order found: by name, by its class's
+    /// list, by pattern.
+    fn class_names(&self, text: &str, net_names: &NetNames) -> Vec<String> {
         let mut names: Vec<String> = Vec::new();
         let mut add = |name: &str| {
             if !names.iter().any(|known| known == name) {
                 names.push(name.to_string());
             }
         };
-        match &assignments[text.as_ref()] {
+        match &self.assignments[text] {
             serde_json::Value::String(name) => add(name),
             serde_json::Value::Array(entries) => {
                 for name in entries.iter().filter_map(serde_json::Value::as_str) {
@@ -793,33 +1059,70 @@ pub fn resolve_project_rules(
             }
             _ => {}
         }
-        if let Some(name) = listed
-            .get(text.as_ref())
-            .or_else(|| listed.get(net_names.normalize(&text)))
+        if let Some(name) = self
+            .listed
+            .get(text)
+            .or_else(|| self.listed.get(net_names.normalize(text)))
         {
             add(name);
         }
-        for (pattern, name) in &patterns {
-            if pattern.matches(&text) {
+        for (pattern, name) in &self.patterns {
+            if pattern.matches(text) {
                 add(name);
             }
         }
-        let mut classes: Vec<&ClassSpec> = names
-            .iter()
-            .filter_map(|name| specs.iter().find(|spec| &spec.name == name))
-            .collect();
-        classes.sort_by_key(|spec| spec.priority);
-        let rules = if classes.is_empty() {
+        names
+    }
+}
+
+/// The nets' classes and rules (`assign_nets`).
+struct NetAssignment {
+    /// Per net (as the router names it), its rules before the custom
+    /// rules.
+    connection_rules: BTreeMap<String, KiCadConnectionRoutingRules>,
+    /// Per net of `net_facts`: its classes' diff pair width and gap (the
+    /// first by priority that has one, else Default's) and the class.
+    pair_classes: Vec<PairClass>,
+    /// Per net with pads, in the board's order of names: its name and
+    /// classes as the custom rules' conditions see them.
+    net_facts: Vec<dru::NetFacts>,
+}
+
+/// Gives every net with pads its classes, highest priority first
+/// ("Default" for a net in none, reported in `net_classes`), and its
+/// rules: its classes' (`Classes::resolve`), else `default_rules`.
+fn assign_nets(
+    nets: BTreeSet<String>,
+    classes: &Classes,
+    assignments: &Assignments,
+    default_rules: &KiCadConnectionRoutingRules,
+    net_names: &NetNames,
+    report: &mut KiCadProjectRulesReport,
+) -> NetAssignment {
+    let mut connection_rules = BTreeMap::new();
+    let mut pair_classes: Vec<PairClass> = Vec::new();
+    let default_spec = classes.spec("Default");
+    let mut net_facts = Vec::new();
+    for raw in nets {
+        // The name as KiCad reads it: the board's atom keeps its escapes
+        // (`A\"B`), the project's JSON and the custom rules hold the
+        // text (`A"B`).
+        let text = unescape(&raw);
+        let names = assignments.class_names(&text, net_names);
+        let mut net_classes: Vec<&ClassSpec> =
+            names.iter().filter_map(|name| classes.spec(name)).collect();
+        net_classes.sort_by_key(|spec| spec.priority);
+        let rules = if net_classes.is_empty() {
             default_rules.clone()
         } else {
-            resolve(&classes)
+            classes.resolve(&net_classes)
         };
         net_facts.push(dru::NetFacts {
             name: text.to_string(),
-            classes: if classes.is_empty() {
+            classes: if net_classes.is_empty() {
                 vec!["Default".to_string()]
             } else {
-                classes.iter().map(|spec| spec.name.clone()).collect()
+                net_classes.iter().map(|spec| spec.name.clone()).collect()
             },
             diff_pair: None,
         });
@@ -827,11 +1130,11 @@ pub fn resolve_project_rules(
             net_names.normalize(&raw).to_string(),
             net_facts
                 .last()
-                .map(|net| net.classes.clone())
+                .map(|net: &dru::NetFacts| net.classes.clone())
                 .unwrap_or_default(),
         );
         let first = |field: fn(&ClassSpec) -> Option<f64>| {
-            classes
+            net_classes
                 .iter()
                 .find_map(|spec| field(spec))
                 .or_else(|| default_spec.and_then(field))
@@ -839,17 +1142,46 @@ pub fn resolve_project_rules(
         pair_classes.push(PairClass {
             width: first(|spec| spec.dp_width),
             gap: first(|spec| spec.dp_gap),
-            class: classes
+            class: net_classes
                 .first()
                 .map_or_else(|| "Default".to_string(), |spec| spec.name.clone()),
         });
         connection_rules.insert(net_names.normalize(&raw).to_string(), rules);
     }
-    let mut default_rules = default_rules;
+    NetAssignment {
+        connection_rules,
+        pair_classes,
+        net_facts,
+    }
+}
+
+/// The board-wide widths and clearances, which the custom rules may raise
+/// (`apply_lowered`).
+struct BoardWide {
+    edge_clearance: f64,
+    hole_clearance: f64,
+    hole_to_hole: f64,
+    /// The neck-down width.
+    neck: f64,
+    /// The narrow-signal width: the smallest of the project's width menu,
+    /// where it has one.
+    narrow_signal: Option<f64>,
+}
+
+/// The board setup's edge, hole and hole-to-hole clearances, the neck-down
+/// width (the board's minimum, else the narrowest class's within 0.1 to
+/// 0.127 mm) and the narrow-signal width.
+fn board_wide(
+    project: &serde_json::Value,
+    classes: &Classes,
+    default_rules: &KiCadConnectionRoutingRules,
+) -> BoardWide {
+    let setup = classes.setup;
     // The narrowest width of the project's classes, used or not.
-    let narrowest = specs
+    let narrowest = classes
+        .specs
         .iter()
-        .map(|spec| resolve(&[spec]).trace_width_mm)
+        .map(|spec| classes.resolve(&[spec]).trace_width_mm)
         .chain(std::iter::once(default_rules.trace_width_mm))
         .fold(f64::INFINITY, f64::min);
     // The smallest width of the project's width menu, if it allows any
@@ -859,190 +1191,227 @@ pub fn resolve_project_rules(
         .into_iter()
         .flatten()
         .filter_map(|value| value.as_f64())
-        .filter(|width| *width > 0.0 && *width >= minimum("min_track_width"))
+        .filter(|width| *width > 0.0 && *width >= setup.minimum("min_track_width"))
         .fold(f64::INFINITY, f64::min);
-    let mut edge_clearance = minimum("min_copper_edge_clearance");
-    let mut hole_clearance = minimum("min_hole_clearance");
-    let mut hole_to_hole = minimum("min_hole_to_hole");
-    let mut neck = if minimum("min_track_width") > 0.0 {
-        minimum("min_track_width").max(0.1)
+    let neck = if setup.minimum("min_track_width") > 0.0 {
+        setup.minimum("min_track_width").max(0.1)
     } else {
         // (`narrowest` is a fold of `f64::min` from infinity: never NaN.)
         narrowest.clamp(0.1, 0.127)
     };
-    let mut narrow_signal = narrow_signal.is_finite().then_some(narrow_signal);
-    let severities: BTreeMap<String, String> =
-        project["board"]["design_settings"]["rule_severities"]
-            .as_object()
-            .into_iter()
-            .flatten()
-            .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_string())))
-            .collect();
-    // The router's rules beyond the classes (`pcb_router::NetRules`).
-    let mut net_rules = pcb_router::NetRules::default();
-    // KiCad's hole_to_hole holds between the holes of one net too (a via
-    // beside a pad hole of its own net: nuclone's VSS); the router keeps
-    // it where the project rates the findings errors.
-    if dru::finding_severity("hole_to_hole", &severities) == "error" {
-        net_rules.same_net_hole_to_hole = hole_to_hole;
+    BoardWide {
+        edge_clearance: setup.minimum("min_copper_edge_clearance"),
+        hole_clearance: setup.minimum("min_hole_clearance"),
+        hole_to_hole: setup.minimum("min_hole_to_hole"),
+        neck,
+        narrow_signal: narrow_signal.is_finite().then_some(narrow_signal),
     }
+}
 
-    // The project's custom rules.
-    let dru_path = project_path.with_extension("kicad_dru");
-    let pair_facts = net_facts.clone();
-    let mut pair_custom_rules: Vec<dru::Rule> = Vec::new();
-    // The nets whose width a custom rule's opt gives on every layer: the
-    // narrow-signal step keeps them (`ruled_widths`).
-    let mut ruled_widths: BTreeSet<String> = BTreeSet::new();
-    if let Ok(text) = fs::read_to_string(&dru_path) {
-        report.custom_rules_file = dru_path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned());
-        match dru::parse_rules(&text) {
-            Err(error) => {
-                report.unmodelled.push(format!(
-                    "the custom rules file does not parse ({error}): none of its rules is kept"
-                ));
-                report.custom_rules_error = Some(error);
-            }
-            Ok(rules) => {
-                pair_custom_rules = rules.clone();
-                let current = net_facts
-                    .iter()
-                    .map(|net| connection_rules[net_names.normalize(&net.name)].clone())
-                    .collect();
-                let board = dru::BoardFacts {
-                    nets: net_facts,
-                    copper_layers: copper_layer_names(&pcb),
-                    pad_kinds,
-                    current,
-                    board_clearances: [edge_clearance, hole_clearance, hole_to_hole],
-                    neck_width: neck,
-                    connection_floor_warnings: floor_mode() == FloorMode::ErrorsAndWarnings,
-                    areas: named_areas(&pcb),
-                };
-                let lowered = dru::lower(&rules, &board, &severities);
-                for (index, net) in board.nets.iter().enumerate() {
-                    if let Some(rules) = connection_rules.get_mut(net_names.normalize(&net.name)) {
-                        apply_custom(rules, &lowered, Some(index));
-                    }
-                }
-                apply_custom(&mut default_rules, &lowered, None);
-                report.via_minimums = [
-                    report.via_minimums[0].max(lowered.via_diameter_min_all),
-                    report.via_minimums[1].max(lowered.via_drill_min_all),
-                    report.via_minimums[2].max(lowered.annulus_min_all),
-                ];
-                for (index, net) in board.nets.iter().enumerate() {
-                    if lowered.width_opt[index].is_some() {
-                        ruled_widths.insert(net_names.normalize(&net.name).to_string());
-                    }
-                }
-                edge_clearance = edge_clearance.max(lowered.edge_clearance);
-                hole_clearance = hole_clearance.max(lowered.hole_clearance);
-                hole_to_hole = hole_to_hole.max(lowered.hole_to_hole);
-                neck = neck.max(lowered.width_min_all);
-                narrow_signal = narrow_signal.map(|width| width.max(lowered.width_min_all));
-                // A net's own minimum floors its neck-downs and its narrow
-                // width (the classes are raised by `apply_custom`).
-                for (index, net) in board.nets.iter().enumerate() {
-                    let floor = lowered.width_min[index].max(lowered.width_min_all);
-                    if floor > neck + 1.0e-9 {
-                        net_rules
-                            .width_floor
-                            .insert(net_names.normalize(&net.name).to_string(), floor);
-                    }
-                }
-                // Track widths per layer (rules on some layers only): per
-                // net with one, its bounds on each layer, every-layer
-                // bounds and the board's minimum widths folded in.
-                for (&index, widths) in &lowered.rule_layer_widths {
-                    report.layer_track_widths.insert(
-                        net_names.normalize(&board.nets[index].name).to_string(),
-                        widths
-                            .iter()
-                            .map(|(&layer, &width)| (board.copper_layers[layer].clone(), width))
-                            .collect(),
-                    );
-                }
-                if !lowered.layer_width_min.is_empty() {
-                    let board_minimum = minimum("min_track_width").max(floor.unwrap_or(0.0));
-                    for (index, net) in board.nets.iter().enumerate() {
-                        let ruled = (0..board.copper_layers.len()).any(|layer| {
-                            lowered.layer_width_min[layer][index] > 0.0
-                                || lowered.layer_width_max[layer][index].is_finite()
-                                || lowered.layer_width_opt[layer][index].is_some()
-                        });
-                        if !ruled {
-                            continue;
-                        }
-                        let widths = (0..board.copper_layers.len())
-                            .map(|layer| pcb_router::LayerWidth {
-                                min: lowered.layer_width_min[layer][index]
-                                    .max(lowered.width_min[index])
-                                    .max(lowered.width_min_all)
-                                    .max(board_minimum),
-                                max: lowered.layer_width_max[layer][index]
-                                    .min(lowered.width_max[index]),
-                                opt: lowered.layer_width_opt[layer][index],
-                            })
-                            .collect();
-                        net_rules
-                            .layer_widths
-                            .insert(net_names.normalize(&net.name).to_string(), widths);
-                    }
-                }
-                let names = |nets: &Option<Vec<usize>>| {
-                    nets.as_ref().map(|nets| {
-                        nets.iter()
-                            .map(|&index| net_names.normalize(&board.nets[index].name).to_string())
-                            .collect::<Vec<_>>()
-                    })
-                };
-                for pair in &lowered.pair_clearances {
-                    net_rules.clearances.push(pcb_router::ClearanceRule {
-                        first: names(&pair.first),
-                        second: names(&pair.second),
-                        kinds: pair.kinds,
-                        layers: pair.layers,
-                        clearance: pair.clearance,
-                    });
-                }
-                report.pad_clearance_mm =
-                    (lowered.pad_clearance_all > 0.0).then_some(lowered.pad_clearance_all);
-                report.custom_rules = lowered.report;
-                report.unmodelled.extend(lowered.unmodelled);
+/// The project's severities of KiCad's findings (`rule_severities`).
+fn rule_severities(project: &serde_json::Value) -> BTreeMap<String, String> {
+    project["board"]["design_settings"]["rule_severities"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_string())))
+        .collect()
+}
+
+/// What the resolution has gathered for the router config by the custom
+/// rules, which raise it (`apply_lowered`).
+struct Resolved {
+    connection_rules: BTreeMap<String, KiCadConnectionRoutingRules>,
+    default_rules: KiCadConnectionRoutingRules,
+    wide: BoardWide,
+    net_rules: pcb_router::NetRules,
+    /// The nets whose width a custom rule's opt gives on every layer.
+    ruled_widths: BTreeSet<String>,
+    report: KiCadProjectRulesReport,
+}
+
+/// The rules of the project's custom rules file, where it has one that
+/// parses; the file is reported, and why it does not parse.
+fn read_custom_rules(
+    dru_path: &Path,
+    report: &mut KiCadProjectRulesReport,
+) -> Option<Vec<dru::Rule>> {
+    let text = fs::read_to_string(dru_path).ok()?;
+    report.custom_rules_file = dru_path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned());
+    match dru::parse_rules(&text) {
+        Err(error) => {
+            report.unmodelled.push(format!(
+                "the custom rules file does not parse ({error}): none of its rules is kept"
+            ));
+            report.custom_rules_error = Some(error);
+            None
+        }
+        Ok(rules) => Some(rules),
+    }
+}
+
+/// What the custom rules' lowering needs of the board: its nets with
+/// pads (`net_facts`) and their rules so far, its copper layers and kinds
+/// of pad, the board-wide clearances and neck width so far, its areas.
+fn board_facts(
+    net_facts: Vec<dru::NetFacts>,
+    pcb: &Expr,
+    pad_kinds: BTreeSet<dru::Kind>,
+    resolved: &Resolved,
+    net_names: &NetNames,
+) -> dru::BoardFacts {
+    let current = net_facts
+        .iter()
+        .map(|net| resolved.connection_rules[net_names.normalize(&net.name)].clone())
+        .collect();
+    dru::BoardFacts {
+        nets: net_facts,
+        copper_layers: copper_layer_names(pcb),
+        pad_kinds,
+        current,
+        board_clearances: [
+            resolved.wide.edge_clearance,
+            resolved.wide.hole_clearance,
+            resolved.wide.hole_to_hole,
+        ],
+        neck_width: resolved.wide.neck,
+        connection_floor_warnings: floor_mode() == FloorMode::ErrorsAndWarnings,
+        areas: named_areas(pcb),
+    }
+}
+
+/// Folds the lowered custom rules into the resolution: the nets' and the
+/// default rules (`apply_custom`), the via minimums, the board-wide
+/// clearances and widths, the router's per-net width floors, widths per
+/// layer and pair clearances, and the report. `board_minimum`: the
+/// board's minimum track width (with the connection width floor).
+fn apply_lowered(
+    resolved: &mut Resolved,
+    lowered: dru::Lowered,
+    board: &dru::BoardFacts,
+    net_names: &NetNames,
+    board_minimum: f64,
+) {
+    let key = |index: usize| net_names.normalize(&board.nets[index].name).to_string();
+    for (index, net) in board.nets.iter().enumerate() {
+        if let Some(rules) = resolved
+            .connection_rules
+            .get_mut(net_names.normalize(&net.name))
+        {
+            apply_custom(rules, &lowered, Some(index));
+        }
+    }
+    apply_custom(&mut resolved.default_rules, &lowered, None);
+    let report = &mut resolved.report;
+    report.via_minimums = [
+        report.via_minimums[0].max(lowered.via_diameter_min_all),
+        report.via_minimums[1].max(lowered.via_drill_min_all),
+        report.via_minimums[2].max(lowered.annulus_min_all),
+    ];
+    for index in 0..board.nets.len() {
+        if lowered.width_opt[index].is_some() {
+            resolved.ruled_widths.insert(key(index));
+        }
+    }
+    let wide = &mut resolved.wide;
+    wide.edge_clearance = wide.edge_clearance.max(lowered.edge_clearance);
+    wide.hole_clearance = wide.hole_clearance.max(lowered.hole_clearance);
+    wide.hole_to_hole = wide.hole_to_hole.max(lowered.hole_to_hole);
+    wide.neck = wide.neck.max(lowered.width_min_all);
+    wide.narrow_signal = wide
+        .narrow_signal
+        .map(|width| width.max(lowered.width_min_all));
+    // A net's own minimum floors its neck-downs and its narrow
+    // width (the classes are raised by `apply_custom`).
+    for index in 0..board.nets.len() {
+        let floor = lowered.width_min[index].max(lowered.width_min_all);
+        if floor > wide.neck + 1.0e-9 {
+            resolved.net_rules.width_floor.insert(key(index), floor);
+        }
+    }
+    // Track widths per layer (rules on some layers only): per
+    // net with one, its bounds on each layer, every-layer
+    // bounds and the board's minimum widths folded in.
+    for (&index, widths) in &lowered.rule_layer_widths {
+        report.layer_track_widths.insert(
+            key(index),
+            widths
+                .iter()
+                .map(|(&layer, &width)| (board.copper_layers[layer].clone(), width))
+                .collect(),
+        );
+    }
+    if !lowered.layer_width_min.is_empty() {
+        for index in 0..board.nets.len() {
+            if let Some(widths) = layer_widths(&lowered, board, index, board_minimum) {
+                resolved.net_rules.layer_widths.insert(key(index), widths);
             }
         }
     }
+    let names = |nets: &Option<Vec<usize>>| {
+        nets.as_ref()
+            .map(|nets| nets.iter().map(|&index| key(index)).collect::<Vec<_>>())
+    };
+    for pair in &lowered.pair_clearances {
+        resolved
+            .net_rules
+            .clearances
+            .push(pcb_router::ClearanceRule {
+                first: names(&pair.first),
+                second: names(&pair.second),
+                kinds: pair.kinds,
+                layers: pair.layers,
+                clearance: pair.clearance,
+            });
+    }
+    report.pad_clearance_mm =
+        (lowered.pad_clearance_all > 0.0).then_some(lowered.pad_clearance_all);
+    report.custom_rules = lowered.report;
+    report.unmodelled.extend(lowered.unmodelled);
+}
 
-    let diff_pair_rules = diff_pair_rules(
-        &pair_facts,
-        &pair_classes,
-        &pair_custom_rules,
-        &copper_layer_names(&pcb),
-        |name: &str| connection_rules.get(net_names.normalize(name)).cloned(),
-        |name: &str| net_names.normalize(name).to_string(),
-        minimum("min_track_width").max(floor.unwrap_or(0.0)),
-    );
-    let length_rules = length_rules(
-        &pair_facts,
-        &pair_custom_rules,
-        &copper_layer_names(&pcb),
-        |name: &str| net_names.normalize(name).to_string(),
-        &severities,
-    );
-    let track_disallowed = track_disallowed(
-        &pair_facts,
-        &pair_custom_rules,
-        &copper_layer_names(&pcb),
-        |name: &str| net_names.normalize(name).to_string(),
-        &severities,
-        &mut report,
-    );
-    let copper = copper_layer_names(&pcb);
-    for rule in &pair_custom_rules {
-        let layers = dru::rule_copper_layers(rule, &copper);
+/// A net's track width bounds on each copper layer (`index` into the
+/// lowering's nets), where a custom rule on some layers only bounds it:
+/// the per-layer bounds with the every-layer ones and `board_minimum`
+/// folded in. `None` for a net no such rule bounds.
+fn layer_widths(
+    lowered: &dru::Lowered,
+    board: &dru::BoardFacts,
+    index: usize,
+    board_minimum: f64,
+) -> Option<Vec<pcb_router::LayerWidth>> {
+    let ruled = (0..board.copper_layers.len()).any(|layer| {
+        lowered.layer_width_min[layer][index] > 0.0
+            || lowered.layer_width_max[layer][index].is_finite()
+            || lowered.layer_width_opt[layer][index].is_some()
+    });
+    if !ruled {
+        return None;
+    }
+    Some(
+        (0..board.copper_layers.len())
+            .map(|layer| pcb_router::LayerWidth {
+                min: lowered.layer_width_min[layer][index]
+                    .max(lowered.width_min[index])
+                    .max(lowered.width_min_all)
+                    .max(board_minimum),
+                max: lowered.layer_width_max[layer][index].min(lowered.width_max[index]),
+                opt: lowered.layer_width_opt[layer][index],
+            })
+            .collect(),
+    )
+}
+
+/// The custom rules' track geometry on some copper layers only
+/// (`KiCadProjectRulesReport::layer_geometry_rules`): a `track_width`,
+/// `diff_pair_gap` or `diff_pair_width` constraint whose layer clause or
+/// condition names a strict subset of the board's copper layers.
+fn layer_geometry_rules(rules: &[dru::Rule], copper: &[String]) -> Vec<KiCadLayerGeometryRule> {
+    let mut found = Vec::new();
+    for rule in rules {
+        let layers = dru::rule_copper_layers(rule, copper);
         if layers.is_empty() || layers.len() == copper.len() {
             continue;
         }
@@ -1056,7 +1425,7 @@ pub fn resolve_project_rules(
                 "track_width" | "diff_pair_gap" | "diff_pair_width"
             ) && (constraint.opt.is_some() || constraint.max.is_some())
         }) {
-            report.layer_geometry_rules.push(KiCadLayerGeometryRule {
+            found.push(KiCadLayerGeometryRule {
                 rule: rule.name.clone(),
                 constraint: constraint.kind.clone(),
                 min_mm: constraint.min,
@@ -1067,69 +1436,7 @@ pub fn resolve_project_rules(
             });
         }
     }
-    report.track_disallowed_layers = track_disallowed
-        .iter()
-        .map(|(net, mask)| {
-            let layers = copper
-                .iter()
-                .enumerate()
-                .filter(|(layer, _)| mask & (1 << layer) != 0)
-                .map(|(_, name)| name.clone())
-                .collect();
-            (net.clone(), layers)
-        })
-        .collect();
-    let mut config = KiCadBoardRouterConfig {
-        narrow_signal_mm: narrow_signal,
-        relaxed_clearance_mm:
-            match project["board"]["design_settings"]["rule_severities"]["clearance"].as_str() {
-                Some("warning" | "ignore") if minimum("min_clearance") > 0.0 => {
-                    Some(minimum("min_clearance"))
-                }
-                _ => None,
-            },
-        // Designers neck down to the board minimum where a pad demands it
-        // (KiCad's 0.2 mm where the project states none); a project whose
-        // minimum is 0 gets a fab's usual 0.127 mm (KiCad's DRC checks
-        // widths against the stated minimum only).
-        neck_width_mm: Some(neck),
-        connection_rules,
-        default_rules: Some(default_rules),
-        // KiCad's built-in board setup applies when the project is silent.
-        edge_clearance_mm: edge_clearance,
-        hole_clearance_mm: hole_clearance,
-        hole_to_hole_clearance_mm: hole_to_hole,
-        solder_mask_to_copper_mm: rules["solder_mask_to_copper_clearance"].as_f64(),
-        solder_mask_bridge_severity:
-            project["board"]["design_settings"]["rule_severities"]["solder_mask_bridge"]
-                .as_str()
-                .map(str::to_owned),
-        // KiCad's starved-thermal check: the board setup's minimum spoke
-        // count, none where the project ignores the finding.
-        min_resolved_spokes: Some(
-            if project["board"]["design_settings"]["rule_severities"]["starved_thermal"].as_str()
-                == Some("ignore")
-            {
-                0
-            } else {
-                rules["min_resolved_spokes"].as_u64().unwrap_or(2) as usize
-            },
-        ),
-        min_connection_mm: floor,
-        connection_width_severity: (minimum("min_connection") > 0.0)
-            .then(|| severity.unwrap_or_else(|| "warning".into())),
-        project_rules: Some(report),
-        net_rules: (!net_rules.is_empty()).then(|| std::sync::Arc::new(net_rules)),
-        diff_pair_rules,
-        length_rules,
-        track_disallowed,
-        ruled_widths,
-        ..KiCadBoardRouterConfig::default()
-    };
-    // The narrow-signal and neck widths, too (the classes are floored
-    // above).
-    config.apply_width_floor();
-    Ok(config)
+    found
 }
 
 /// A router config file over the project's rules. The project's rules are
@@ -2730,5 +3037,92 @@ mod tests {
                 .is_err()
         );
         fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn the_board_setup_states_a_minimum_or_takes_kicads() {
+        let rules = serde_json::json!({"min_track_width": 0.15});
+        let setup = DesignRules(&rules);
+        assert_eq!(setup.minimum("min_track_width"), 0.15);
+        assert_eq!(setup.minimum("min_via_diameter"), 0.5);
+        assert_eq!(setup.minimum("min_microvia_drill"), 0.0);
+        assert!(setup.source_of("min_track_width").contains(".kicad_pro"));
+        assert!(
+            setup
+                .source_of("min_clearance")
+                .starts_with("KiCad's default")
+        );
+        assert_eq!(nanometres(0.19999999999999998), 0.2);
+    }
+
+    #[test]
+    fn a_net_takes_its_classes_by_name_list_and_pattern_each_once() {
+        let project = serde_json::json!({"net_settings": {
+            "classes": [{"name": "Power", "nets": ["VBUS"]}],
+            "netclass_assignments": {"VBUS": ["USB", "Power"], "SDA": "I2C"},
+            "netclass_patterns": [
+                {"pattern": "V*", "netclass": "Power"},
+                {"pattern": "VB.*", "netclass": "Wide"}
+            ]
+        }});
+        let assignments = Assignments::of_project(&project);
+        let pcb = parse("(kicad_pcb)").unwrap();
+        let names = crate::note_net_names(&pcb);
+        assert_eq!(
+            assignments.class_names("VBUS", &names),
+            ["USB", "Power", "Wide"]
+        );
+        assert_eq!(assignments.class_names("SDA", &names), ["I2C"]);
+        assert!(assignments.class_names("GND", &names).is_empty());
+    }
+
+    #[test]
+    fn a_project_without_a_default_class_takes_the_boards_common_copper() {
+        let pcb = parse(
+            r#"(kicad_pcb
+              (segment (start 0 0) (end 1 0) (width 0.3) (layer "F.Cu") (net 1))
+              (segment (start 1 0) (end 2 0) (width 0.3) (layer "F.Cu") (net 1))
+              (segment (start 2 0) (end 3 0) (width 0.15) (layer "F.Cu") (net 1))
+              (via (at 3 0) (size 0.8) (drill 0.4) (layers "F.Cu" "B.Cu") (net 1)))"#,
+        )
+        .unwrap();
+        let rules = default_class(&[], &pcb);
+        assert_eq!(rules.trace_width_mm, 0.3);
+        assert_eq!(rules.via_size_mm, 0.8);
+        assert_eq!(rules.via_drill_mm, 0.4);
+        assert_eq!(rules.clearance_mm, DEFAULT_CLEARANCE);
+    }
+
+    #[test]
+    fn layer_geometry_is_a_rule_aiming_at_a_width_on_some_layers() {
+        let rules = dru::parse_rules(
+            r#"(version 1)
+(rule outer (layer outer) (constraint track_width (min 0.1) (opt 0.2)))
+(rule floor (layer outer) (constraint track_width (min 0.16)))
+(rule every (constraint track_width (opt 0.2)))
+(rule inner (condition "A.Layer == 'In1.Cu'") (constraint diff_pair_gap (max 0.2)))"#,
+        )
+        .unwrap();
+        let copper: Vec<String> = ["F.Cu", "In1.Cu", "In2.Cu", "B.Cu"]
+            .map(String::from)
+            .to_vec();
+        let found = layer_geometry_rules(&rules, &copper);
+        let summary: Vec<(&str, &str, Vec<&str>)> = found
+            .iter()
+            .map(|rule| {
+                (
+                    rule.rule.as_str(),
+                    rule.constraint.as_str(),
+                    rule.layers.iter().map(String::as_str).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                ("outer", "track_width", vec!["F.Cu", "B.Cu"]),
+                ("inner", "diff_pair_gap", vec!["In1.Cu"]),
+            ]
+        );
     }
 }
