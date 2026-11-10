@@ -17,9 +17,7 @@ library links (`normalize-kicad-footprint-links`, report
 
 The JSON files here (`pcb-maker-adaptive.json`,
 `pcb-maker-sequential-*.json`, `grid-*.json`) are configurations of the
-September 2026 research router, whose commands were removed; the
-experiments they drove are written up in
-[docs/experiments/interf-u-cold-baseline.md](../../../docs/experiments/interf-u-cold-baseline.md).
+September 2026 research router, whose commands were removed.
 The project permits zero copper-to-edge clearance, which Freerouting's DSN
 export cannot express exactly: an external comparison on this board is not
 an equal-rule comparison.

@@ -160,7 +160,7 @@ an off switch; a fresh-agent trial every few days.
    stage that keeps the placement's budget and cuts only the routing.
 3. **The router's ceiling.** The matched designer tier fails 33 boards
    under the strict rule. The last census of its failures
-   ([router-ceiling.md](router-ceiling.md)) found about a third the
+   ([router.md](router.md)) found about a third the
    input's or the budget's, and of ours congestion first (a residue that
    single-net exchanges only trade), then pad access and fine-pitch rows,
    plus a few plain bugs: the solid-thermal step runs once (k30-SBC,
@@ -412,7 +412,7 @@ CPU pairs reserve for both sides at once and start both inside it
 | The code's map: crates, stages, files | [architecture.md](architecture.md) |
 | Every setting with its default | [config-reference.md](config-reference.md) (generated: `cargo run -p config-reference`) |
 | The agent contract | [agents.md](agents.md), [constraints.md](constraints.md), [skills/pcb-maker/SKILL.md](../skills/pcb-maker/SKILL.md) |
-| Design notes | [router.md](router.md), [placer.md](placer.md), [router-ceiling.md](router-ceiling.md), [coupling.md](coupling.md), [global-route.md](global-route.md), [topological.md](topological.md) |
+| Design notes | [router.md](router.md), [placer.md](placer.md), [global-route.md](global-route.md), [pin-swap.md](pin-swap.md), [profiling.md](profiling.md) |
 | Results | [benchmarks.md](benchmarks.md); the tiers and the measurement discipline in [benchmarks/agent-tasks/README.md](../benchmarks/agent-tasks/README.md); the harvest in [benchmarks/github/README.md](../benchmarks/github/README.md) |
 | Nightly logs | `build/nightly/<date>/` (`summary.md`, `gap.txt`, `diff-*.txt`, one directory and log per stage); the newest 14 nights keep their board directories |
 | Tasks | `benchmarks/agent-tasks/tasks/v7/` (every tier); tier lists in `benchmarks/agent-tasks/{quick,short,schematic}.json` |

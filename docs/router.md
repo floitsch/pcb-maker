@@ -889,7 +889,7 @@ fail on:
   other side) and ways closed by neighbours' vias need a layer change the
   negotiation does not find.
   The corridor search keeps a margin of at least 0.5 µm, so an exact fit on
-  the 0.05 mm rung has no way out. Handover open problem 2. **No live
+  the 0.05 mm rung has no way out. Handover open problem 4. **No live
   design.**
 - **The budget (about 5 boards).** At twice the work 17 of 27 failing
   boards end unchanged to the item; the leader first took the cheap gains.

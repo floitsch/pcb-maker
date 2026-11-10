@@ -296,7 +296,7 @@ model, and every part keeps a halo sized to the tracks that must escape it.
 Global placement is followed by annealing on rotations and positions, a
 legalisation step and a refinement; up to 16 seeds are placed, and a race
 routes the most promising three briefly and keeps the one that routes
-best. The **layout loop** ([docs/coupling.md](docs/coupling.md)) then
+best. The **layout loop** ([docs/router.md](docs/router.md)) then
 routes, and tries footprint moves where the router's congestion history
 says nets fought for room, kept when open connections fall.
 

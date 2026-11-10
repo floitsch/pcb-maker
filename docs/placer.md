@@ -30,7 +30,7 @@ rules), so its yes is the layout's. Every key of `placer.json` (the
 [configuration reference](config-reference.md); the constraint language
 is in [constraints.md](constraints.md). After the first route the coupled
 loop nudges congested parts within the placement's level
-([coupling.md](coupling.md)), pin swaps run once if the layout names them
+([router.md](router.md)), pin swaps run once if the layout names them
 ([pin-swap.md](pin-swap.md)), and the polish places the reference and
 value fields (`labels.rs`, `silk_fields.rs`).
 

@@ -392,7 +392,7 @@ killed; the designer tier's budget scale; the gap split over the target
 boards (`compare.py --gap --targets`); against the previous night,
 better / same / worse per stage and the passes gained and lost.
 What keeps the matched designer tier's failing boards from the strict
-pass is analysed in [router-ceiling.md](router-ceiling.md).
+pass is analysed in [router.md](router.md).
 
 <!-- nightly:begin -->
 | Night | main | Fingerprints | Expansion | Short | Sweep | Designer | Gap (placement / routing) | Against the previous night (better/same/worse) |
