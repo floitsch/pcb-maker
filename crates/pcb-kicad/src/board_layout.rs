@@ -80,7 +80,7 @@ pub struct KiCadBoardLayoutConfig {
     /// With a pre-ranking score, how many of the best-ranked placements
     /// the race routes (at least one).
     pub congestion_probes: usize,
-    /// The placement race's pre-ranking (`docs/congestion-model.md`): the
+    /// The placement race's pre-ranking (docs/placer.md, "The race"): the
     /// placer makes `congestion_candidates` placements (seeds), they are
     /// ranked by this score, and the race probes only the best
     /// `congestion_probes`:
@@ -103,14 +103,14 @@ pub struct KiCadBoardLayoutConfig {
     /// after routing where KiCad's silkscreen checks find nothing.
     pub silkscreen: KiCadSilkscreenConfig,
     /// The move descent after the first route (an experiment, off when
-    /// absent; docs/experiments/move-descent.md): single parts nudged,
+    /// absent; docs/architecture.md, "Off by default, still in the code"): single parts nudged,
     /// turned or swapped where the incremental global route and then a
     /// local reroute say fewer terminals stay open, also on boards far
     /// from complete. `PCB_LAYOUT_MOVE_DESCENT` overrides (`0` off).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub move_descent: Option<crate::move_descent::KiCadMoveDescent>,
-    /// The race's route probe (docs/placer.md, "The race's route probe
-    /// (2026-10-25)"; off when absent, `{}` for the defaults): the race
+    /// The race's route probe (docs/placer.md, "The race's route probe";
+    /// off when absent, `{}` for the defaults): the race
     /// probes its `seeds` best-ranked placements for `share` of
     /// `total_seconds` of work each, all of them charged to the layout's
     /// work clock and none dropped for the final route's minimum share
@@ -125,7 +125,7 @@ pub struct KiCadBoardLayoutConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub race_probe: Option<KiCadRaceProbe>,
     /// A measurement mode (off by default; docs/benchmarks.md, "The
-    /// ladder of placer measurements (2026-10-28)"): the layout ends after
+    /// ladder of placer measurements"): the layout ends after
     /// its first route. Sizing, placement, the race and the first route
     /// run as without it (the same work, the same budget), then the move
     /// trials, the resume, the polish, the final ladder and the neck repair
@@ -135,7 +135,7 @@ pub struct KiCadBoardLayoutConfig {
     /// `total_seconds`. The report says so (`stopped_after_first_route`).
     pub stop_after_first_route: bool,
     /// What the race ranks its probes by (docs/placer.md, "The race ranks
-    /// its probes by the ripped count (2026-10-27)"; `"ripped"` by default
+    /// its probes by the ripped count"; `"ripped"` by default
     /// since the nine seed pairs of 2026-10-28): `"unfinished"` (the nets
     /// each probe left unfinished; with `race_probe`, its standing) or
     /// `"ripped"`: the board's open terminals once each probe's nets in
@@ -237,8 +237,8 @@ pub const RACE_CONFIDENT_MARGIN: f64 = 0.05;
 /// `RACE_CONFIDENT_MARGIN` for the ripped count (`race_count: "ripped"`:
 /// fewer open terminals after the rip-up, as a share of the first-ranked
 /// placement's). Calibrated on the coarse study's 73 placements
-/// (docs/placer.md, "The race ranks its probes by the ripped count
-/// (2026-10-27)"): of the seed pairs whose counts differ by less than
+/// (docs/placer.md, "The race ranks its probes by the ripped count"
+///): of the seed pairs whose counts differ by less than
 /// 2 %, the lower count routed better in 8 and worse in 9; from 2 % to
 /// 5 % in 23 against 13, from 5 % to 10 % in 38 against 12.
 pub const RACE_RIPPED_MARGIN: f64 = 0.02;
@@ -544,7 +544,7 @@ pub struct KiCadBoardLayoutResult {
     /// for it) had: `total_seconds` less the work so far and the seed
     /// pool's excess; `None` where it did not run. A route of the
     /// designer's placement at this budget gets the routing work this
-    /// layout's last router got (review 2026-10-21, H3).
+    /// layout's last router got.
     pub final_ladder_budget_seconds: Option<f64>,
     /// Whether the layout's routes had lattice lines at the pin rows from
     /// the kept placement's probe on, and why, in one line (`pin_lines`
@@ -1100,7 +1100,7 @@ impl<F: Fn() -> bool> WallStop<F> {
 /// The digest of what a layout's steps after its placement read from the
 /// placement phase (`layout: placement digest` in the log,
 /// `placement_digest` in the report; docs/benchmarks.md, "The ladder of
-/// placer measurements (2026-10-28)"): the placed board (with its pours
+/// placer measurements"): the placed board (with its pours
 /// and pin swaps), the lowered placement problem (its parts, nets, poses
 /// and the placer settings it carries, the first placement's relaxation
 /// applied), the other placements the race may probe and their
@@ -1340,7 +1340,7 @@ pub(crate) fn race_lines_automatic(config: &KiCadBoardRouterConfig) -> bool {
 }
 
 /// The lines at the pin rows decided at the kept placement's probe
-/// (docs/router.md, "A layout's rows decided by its probe's open pads (2026-11-08)"):
+/// (docs/router.md, "A layout's rows decided by its probe's open pads"):
 /// where the race's probe of the placement it keeps left nets unfinished
 /// (`unfinished`) at pads of pin rows whose straight exit the regular
 /// lattice misses (`pin_lines::missed_exit_pads`, against

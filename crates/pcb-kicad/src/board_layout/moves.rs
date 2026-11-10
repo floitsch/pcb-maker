@@ -114,7 +114,7 @@ pub(super) fn judge_first_route(
     }
 }
 
-/// The move descent (an experiment, docs/experiments/move-descent.md):
+/// The move descent (an experiment, docs/architecture.md, "Off by default, still in the code"):
 /// cheap trials, so it runs also where the moves below do not; where it
 /// keeps moves, the router's routes as they stand are the result. Hands
 /// on its report where it ran.

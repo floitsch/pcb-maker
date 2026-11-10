@@ -94,17 +94,17 @@ deadline is skipped and reported as cut.
 | 4 | Pours and classes added, the placed board lowered again | `add_pour_zones` (board_router/pour_plan.rs), `lower_placement` (board_placer/lower/) | the board as an `Expr`, a `pcb_placer::Problem` for the moves' legality |
 | 5 | Lowering for the router | `core_config` (board_router/route.rs), `lower_for_route` (board_router/diff_pairs.rs, around `lower`) | a `pcb_router::Config` and `pcb_router::Board` |
 | 6 | Pre-ranking of the placements | `rank_placements`, congestion_rank.rs | the candidates in RUDY order (sixteen placements, three probed) |
-| 7 | The race | inline in board_layout.rs: `Router::new` and `Router::probe` per candidate, side by side as the ledger allows; `race_pick`; `race_lines_probe` | one `Router` (the winner's, resumed), its `RoutingResult`, `KiCadRaceReport` |
-| 8 | First route (without a race) | `route_once`, board_layout.rs | a `Router` and its `RoutingResult` |
+| 7 | The race | `run_race`, `probe_placements` and `pick_placement` (board_layout/race.rs): `Router::new` and `Router::probe` per candidate, side by side as the ledger allows; `race_pick`; `race_lines_probe` | one `Router` (the winner's, resumed), its `RoutingResult`, `KiCadRaceReport` |
+| 8 | First route (without a race) | `route_once`, board_layout/race.rs | a `Router` and its `RoutingResult` |
 | 9 | Move descent (off unless `move_descent`) | `descend`, move_descent.rs | moved poses, the router updated |
-| 10 | Footprint moves where nets fought | inline in board_layout.rs: `Router::update` and `reroute` per candidate pose | the best board and router, or the old ones restored |
+| 10 | Footprint moves where nets fought | `try_moves` and `try_pose` (board_layout/moves.rs): `Router::update` and `reroute` per candidate pose | the best board and router, or the old ones restored |
 | 11 | Resume and polish | `Router::resume_polished`, `Router::polish` | the router's routes, cleaned up, fewer vias |
 | 12 | Pairs, labels, lengths | `finish_pairs` (diff_pairs.rs), `place_labels` (labels.rs), `finish_lengths` (lengths.rs) | pair copper, label poses, tuning patterns |
 | 13 | Write and check | `emit_routes` (board_router/attempt.rs, with copper_emit.rs), `finish_routed_board` (board_router/route.rs): the copper verifier, the board written to `result/`, KiCad's check | `result/<id>.kicad_pcb`, `drc.json`, `board-router.json`, a `KiCadBoardRouterResult` |
 | 14 | Final ladder (while connections or starved thermals stay and at least 240 s of work are left) | `route_kicad_board` on `placed/` rewritten with the final poses and no copper (the route flow below); kept when better | `result-ladder/` renamed to `result/` |
 | 15 | Starved thermals made solid | `solidify_starved_thermals`, board_router/route.rs | the board, kept where KiCad finds it better |
 | 16 | Neck repair | `repair_necks` (route.rs), `repair_connection_width` (necks.rs) | the board, rechecked by KiCad |
-| 17 | Report | board_layout.rs | `board-layout.json`, `KiCadBoardLayoutResult` |
+| 17 | Report | `finish_report`, board_layout/report.rs | `board-layout.json`, `KiCadBoardLayoutResult` |
 | 18 | Verdict | `route_facts` and `judge` (verdict.rs), `write_verdict` (agent_cli.rs) | `verdict.json`, the exit code |
 
 `stop_after_first_route` ends the layout after stage 8 (labels, the
