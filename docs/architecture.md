@@ -220,13 +220,6 @@ held skeleton; `constraints.rs` holds the hard and soft constraints;
 
 ## Off by default, still in the code
 
-- **The move descent** (`move_descent`, move_descent.rs): after the first
-  route, single parts nudged, turned or swapped where pcb-global's
-  incremental global route and then a local reroute say fewer terminals
-  stay open.
-- **Bus bundles** (`bus_bundles`, pcb-router router/bundles.rs): buses of
-  four or more nets joining the same footprints routed first, side by
-  side, in one corridor.
 - **The topological engine** (`engine: "topological"`, pcb-topo) and
   `tighten`.
 - **Global guidance** (`global_guidance`, board_placer/guidance.rs and
@@ -237,6 +230,11 @@ held skeleton; `constraints.rs` holds the hard and soft constraints;
   board_placer/pair_rows.rs, pcb-placer facing.rs), **length minima**
   (`length_minima`), **the length reroute** (`length_reroute`), **blind
   vias** (`blind_vias`, board_router/via_spans.rs).
+
+Removed on 2026-11-10, each lost or null under its measurement: the move
+descent (`move_descent`), bus bundles (`bus_bundles`), the router's
+global plan (`global_routing`) and fixed escape stubs (`escape_stub_mm`);
+git history has the code.
 
 ## Where things happen
 

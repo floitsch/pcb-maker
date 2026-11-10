@@ -871,6 +871,10 @@ Objective terms:
 - The global route inside the anneal (`global_guidance`, an experiment,
   October): its gain was undone by the legaliser and refinement; see
   [global-route.md](global-route.md).
+- The move descent after the first route (`move_descent`: single parts
+  nudged, turned or swapped where the incremental global route and a
+  local reroute said fewer terminals stay open): the dense boards 973 to
+  988 KiCad unconnected; removed 2026-11-10.
 
 Race and measurement:
 
