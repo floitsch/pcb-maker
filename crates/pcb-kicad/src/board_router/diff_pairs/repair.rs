@@ -341,7 +341,11 @@ impl StubRepair<'_> {
 
 /// The terminal of `net`'s pad at `pad` on `board`, or the pad merged into
 /// another (its own terminal here).
-fn pad_terminal(board: &core::Board, net: core::NetId, pad: Point) -> Option<core::Terminal> {
+pub(super) fn pad_terminal(
+    board: &core::Board,
+    net: core::NetId,
+    pad: Point,
+) -> Option<core::Terminal> {
     board.nets[net as usize]
         .terminals
         .iter()

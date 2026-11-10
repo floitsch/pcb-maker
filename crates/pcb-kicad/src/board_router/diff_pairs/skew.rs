@@ -99,18 +99,18 @@ fn net_length(
 /// A meander that adds `need`: `count` bumps of `height` (at most the
 /// cap, as few as hold the length, as high as needed), `spacing` apart,
 /// `span` long, at least `margin` from a track's ends.
-struct MeanderShape {
-    count: usize,
-    height: f64,
-    spacing: f64,
-    span: f64,
-    margin: f64,
+pub(super) struct MeanderShape {
+    pub count: usize,
+    pub height: f64,
+    pub spacing: f64,
+    pub span: f64,
+    pub margin: f64,
 }
 
 impl MeanderShape {
     /// The meander that adds `need` with bumps of at most `cap`, `spacing`
     /// apart, on a track of `pair`.
-    fn of(need: f64, cap: f64, spacing: f64, pair: &Pair) -> Self {
+    pub(super) fn of(need: f64, cap: f64, spacing: f64, pair: &Pair) -> Self {
         // Bumps of at most `cap`: as few as hold the length, as high as
         // needed (bisected).
         let added = |height: f64| {

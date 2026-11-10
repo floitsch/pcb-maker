@@ -162,7 +162,7 @@ impl Pair {
 
 /// A pair's width, gap, layers and where they came from
 /// (`Pair::width`, `gap`, `layers`, `source`).
-type PairGeometry = (f64, f64, core::LayerMask, String);
+pub(super) type PairGeometry = (f64, f64, core::LayerMask, String);
 
 /// A pair's pair points, what each is and its links (`Pair::points`,
 /// `kinds`, `links`).
@@ -268,7 +268,7 @@ fn pair_clearance(config: &KiCadBoardRouterConfig, names: [&str; 2], classes: f6
 /// The width, gap and layers of the pair of the positive net `name`: the
 /// net class's width and the pair's clearance, on every layer, unless the
 /// rules name the pair.
-fn pair_geometry(
+pub(super) fn pair_geometry(
     board: &core::Board,
     config: &KiCadBoardRouterConfig,
     name: &str,

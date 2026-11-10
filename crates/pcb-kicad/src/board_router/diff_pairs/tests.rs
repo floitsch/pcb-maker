@@ -1596,3 +1596,232 @@ fn what_joins_nothing_is_pruned() {
             .all(|segment| segment.layer == 0 && segment.start[1] == 0.0)
     );
 }
+
+/// Why a link was not routed comes from the router's diagnostics, the
+/// negotiation's give-up first, then a dead launch, then the hard repair's
+/// record (`not_routed_cause`).
+#[test]
+fn a_links_cause_not_routed_is_read_from_the_diagnostics() {
+    let entry = |skipped: &'static str, complete: bool, conflicted: bool| core::RepairEntry {
+        net: 7,
+        complete,
+        conflicted,
+        skipped,
+    };
+    let mut diagnostics = core::Diagnostics::default();
+    assert_eq!(not_routed_cause(&diagnostics, 7), "lost after the repair");
+    for (repair, cause) in [
+        (
+            entry("hopeless", false, false),
+            "no hard repair: the attempt was judged hopeless",
+        ),
+        (
+            entry("budget", false, true),
+            "the hard repair's budget ran out before it",
+        ),
+        (entry("", false, false), "no path in the negotiation"),
+        (entry("", true, true), "the hard repair found no room"),
+    ] {
+        diagnostics.repair = vec![repair];
+        assert_eq!(not_routed_cause(&diagnostics, 7), cause);
+    }
+    diagnostics.dead_pads.push(core::DeadPad {
+        net: 7,
+        label: "pair launch 1a".into(),
+        anchor: [0.0, 0.0],
+        near: Vec::new(),
+        wall: String::new(),
+    });
+    assert_eq!(
+        not_routed_cause(&diagnostics, 7),
+        "a launch has no legal node"
+    );
+    diagnostics.released.push(core::router::ReleasedNet {
+        net: 7,
+        reason: core::router::NO_PATH,
+        iteration: 3,
+        work_seconds: 0.0,
+    });
+    assert_eq!(
+        not_routed_cause(&diagnostics, 7),
+        "given up in the negotiation: no path"
+    );
+    // Another net's record is not the link's.
+    assert_eq!(not_routed_cause(&diagnostics, 8), "lost after the repair");
+}
+
+/// A pair rule's first allowed layer sets the pair's width and gap; the
+/// layers with the same values (and allowed) are the pair's; without a
+/// rule the net class's width and the pair's clearance hold everywhere.
+#[test]
+fn a_rule_sets_a_pairs_width_gap_and_layers_from_its_first_allowed_layer() {
+    let (board, mut config) = lowered();
+    let all = board.all_layers();
+    let (width, gap, layers, source) = pair_geometry(&board, &config, "/D+", 0.2, 0.25);
+    assert_eq!((width, gap, layers), (0.2, 0.25, all));
+    assert_eq!(source, "net class width and clearance");
+    config.diff_pair_rules.insert(
+        "/D+".into(),
+        KiCadDiffPairRule {
+            layers: vec![(0.1, 0.1), (0.15, 0.12)],
+            disallowed: vec![true, false],
+            sources: vec!["rule 'top'".into(), "rule 'bottom'".into()],
+            ..KiCadDiffPairRule::default()
+        },
+    );
+    let (width, gap, layers, source) = pair_geometry(&board, &config, "/D+", 0.2, 0.25);
+    assert_eq!((width, gap, layers), (0.15, 0.12, 0b10 & all));
+    assert_eq!(source, "rule 'bottom'");
+}
+
+/// The skew's meander adds what is needed: as few bumps as hold the
+/// length at most the cap high, as high as needed, `2 n - 1` spacings
+/// long.
+#[test]
+fn a_meander_shape_adds_what_is_needed_with_bumps_no_higher_than_the_cap() {
+    let (board, config) = lowered();
+    let pair = find_pairs(&board, &config).remove(0);
+    let (cap, spacing) = (0.6, 0.4);
+    let added = |shape: &MeanderShape| {
+        shape.count as f64
+            * (polyline_length(&bumps(
+                ([0.0, 0.0], [1.0, 0.0]),
+                [0.0, 1.0],
+                0.0,
+                1,
+                shape.height,
+                spacing,
+            )) - spacing)
+    };
+    for need in [0.1, 1.0, 5.0] {
+        let shape = MeanderShape::of(need, cap, spacing, &pair);
+        assert!(shape.height <= cap + 1.0e-12, "{need}: {}", shape.height);
+        assert!(
+            (added(&shape) - need).abs() < 1.0e-6,
+            "{need}: {}",
+            added(&shape)
+        );
+        assert!((shape.span - (2 * shape.count - 1) as f64 * spacing).abs() < 1.0e-12);
+        assert!(shape.margin >= spacing && shape.margin >= 2.0 * pair.offset());
+    }
+    // One bump while it holds; more where one at the cap does not.
+    assert_eq!(MeanderShape::of(0.1, cap, spacing, &pair).count, 1);
+    assert!(MeanderShape::of(5.0, cap, spacing, &pair).count > 1);
+}
+
+/// A routed link's run starts at the run's start (the stubs' ends beside
+/// it) and runs half the lead straight along the launch's direction; the
+/// route's own stub from the launch goes.
+#[test]
+fn a_links_run_path_starts_and_ends_beside_the_stubs_ends() {
+    let (mut board, config) = lowered();
+    plan_pairs(&mut board, &config);
+    let plan = plan_of(&board).unwrap();
+    let link = &plan.links[0];
+    let [at_a, at_b] = link.launches;
+    let [start_a, start_b] = link.starts;
+    let along = |share: f64| add(at_a, scale(sub(at_b, at_a), share));
+    let (first, second) = (along(1.0 / 3.0), along(2.0 / 3.0));
+    let segment = |start: Point, end: Point| core::Segment {
+        layer: 0,
+        start,
+        end,
+        width: 0.6,
+    };
+    let route = core::NetRoute {
+        segments: vec![
+            segment(at_a, first),
+            segment(first, second),
+            segment(second, at_b),
+        ],
+        vias: Vec::new(),
+    };
+    let path = run_path(&route, link).expect("a path");
+    let points: Vec<Point> = path.iter().map(|(point, _)| *point).collect();
+    let half = |start: Point, at: Point| scale(add(start, at), 0.5);
+    assert_eq!(
+        points,
+        [
+            start_a,
+            half(start_a, at_a),
+            first,
+            second,
+            half(start_b, at_b),
+            start_b
+        ]
+    );
+    assert!(path.iter().all(|(_, layer)| *layer == 0));
+}
+
+/// A stub's repair routes from the pad's terminal, or from the pad merged
+/// into another terminal (its own terminal there).
+#[test]
+fn a_merged_pad_is_its_own_terminal_for_a_stub_repair() {
+    let (mut board, _) = lowered();
+    let net = board
+        .nets
+        .iter()
+        .position(|net| net.name.trim_start_matches('/') == "D+")
+        .unwrap() as core::NetId;
+    let terminal = board.nets[net as usize].terminals[1].clone();
+    let found = pad_terminal(&board, net, terminal.anchor).expect("its terminal");
+    assert_eq!(found.label, terminal.label);
+    assert!(pad_terminal(&board, net, [100.0, 100.0]).is_none());
+    board.nets[net as usize].terminals.remove(1);
+    board.merged_pads.push(core::MergedPad {
+        net,
+        host: 0,
+        pad: terminal.pad,
+        anchor: terminal.anchor,
+        layers: terminal.layers,
+        padstack: false,
+    });
+    let merged = pad_terminal(&board, net, terminal.anchor).expect("the merged pad");
+    assert_eq!(merged.pad, terminal.pad);
+    assert_eq!(merged.anchor, terminal.anchor);
+    assert_eq!(merged.label, board.obstacles[terminal.pad].label);
+    assert!(merged.contact.is_none());
+}
+
+/// A failed link's stub is pruned from its end along the tracks that join
+/// nothing else, through a via that joins one track on another layer.
+#[test]
+fn a_failed_stub_is_pruned_through_its_via() {
+    let mut board = lowered().0;
+    board.obstacles.clear();
+    let segment = |layer: usize, start: Point, end: Point| core::Segment {
+        layer,
+        start,
+        end,
+        width: 0.2,
+    };
+    let via = core::Via {
+        at: [1.0, 0.0],
+        diameter: 0.6,
+        drill: 0.3,
+        span: None,
+    };
+    let mut route = core::NetRoute {
+        segments: vec![
+            segment(0, [0.0, 0.0], [1.0, 0.0]),
+            segment(1, [1.0, 0.0], [2.0, 0.0]),
+        ],
+        vias: vec![via.clone()],
+    };
+    prune_stub(&board, &mut route, 0, ([0.0, 0.0], [0.2, 0.0]), 0.2);
+    assert!(route.segments.is_empty(), "{:?}", route.segments);
+    assert!(route.vias.is_empty());
+    // A via that joins two tracks on the other layer stays, and the chain
+    // stops there.
+    let mut route = core::NetRoute {
+        segments: vec![
+            segment(0, [0.0, 0.0], [1.0, 0.0]),
+            segment(1, [1.0, 0.0], [2.0, 0.0]),
+            segment(1, [1.0, 0.0], [1.0, 1.0]),
+        ],
+        vias: vec![via],
+    };
+    prune_stub(&board, &mut route, 0, ([0.0, 0.0], [0.2, 0.0]), 0.2);
+    assert_eq!(route.segments.len(), 2);
+    assert_eq!(route.vias.len(), 1);
+}

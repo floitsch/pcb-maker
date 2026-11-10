@@ -261,7 +261,10 @@ impl<'a> Finish<'a> {
 /// stubs' ends beside it) to the route's first node past the launch (the
 /// route's own stub to the launch goes), and the same at its end; half the
 /// lead straight along the launch's direction at each end.
-fn run_path(route: &core::NetRoute, plan_link: &LinkPlan) -> Option<Vec<(Point, usize)>> {
+pub(super) fn run_path(
+    route: &core::NetRoute,
+    plan_link: &LinkPlan,
+) -> Option<Vec<(Point, usize)>> {
     let [at_a, at_b] = plan_link.launches;
     let [start_a, start_b] = plan_link.starts;
     link_path(route, at_a, at_b).map(|mut path| {
