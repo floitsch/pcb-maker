@@ -18,12 +18,14 @@ pub mod guidance;
 pub mod initial;
 pub mod legal;
 pub mod orient;
+mod place;
 pub mod problem;
 pub mod skeleton;
 pub mod stacks;
 pub mod view;
 
 pub use global::{Frame, GlobalConfig};
+use place::{relax_level, relaxation_levels};
 pub use problem::{Component, FarOpen, Pin, Point, Pose, Problem, Side};
 
 #[derive(Clone, Debug, Default)]
@@ -213,90 +215,6 @@ pub struct Relaxation {
     pub on_marks: Vec<usize>,
 }
 
-/// Seats the parts of `failed` (no room at this level) where only the
-/// board's marks (`Constraints::yielding`: its own texts and silkscreen
-/// graphics) are in the way: they may lie on them (`on_marks`), the other
-/// parts keep their places. A connector at the edge under its own pin
-/// names (OpenFC, MIDAS-MK1.1) or beside a business card's artwork
-/// (USB_Keypad) takes its spot there at the level it fails, rather than
-/// every part giving up its routing room first.
-fn seat_on_marks(
-    relaxed: &mut Problem,
-    poses: &mut Vec<Pose>,
-    failed: &mut Vec<usize>,
-    pass_work: u64,
-    budget: Option<u64>,
-    debug: bool,
-) {
-    if failed.is_empty() || relaxed.constraints.yielding.is_empty() {
-        return;
-    }
-    let mut trial = relaxed.clone();
-    let mut on_marks = trial.constraints.on_marks.clone();
-    on_marks.extend(failed.iter().copied());
-    on_marks.sort_unstable();
-    on_marks.dedup();
-    trial.constraints.on_marks = on_marks;
-    let keep: Vec<usize> = (0..trial.components.len())
-        .filter(|index| !failed.contains(index))
-        .collect();
-    let mut seated = poses.clone();
-    let seat_mark = mark();
-    let mut again = legal::legalize_keeping(&trial, &mut seated, failed, &keep);
-    let kept_left = again.len();
-    // Still without room (the others took the spots by the marks, where
-    // MIDAS-MK1.1's two 36 mm headers go at the bottom edge): every part
-    // again, those first, the others around them. Not where both an
-    // eighth of the movable parts or more found no room (the level is too
-    // tight for them, which the next level eases) and the passes over
-    // every part (`pass_work` each, the level's full legalization) would
-    // take more than an eighth of the placement's `budget`: on a crowded
-    // panel they took the work of the looser levels that place it
-    // (OpenRX's panel: 55 of 216 parts without room at full halos, a pass
-    // 35 s, 100 s of its 600 s of work at each of the first two levels).
-    // Elsewhere the passes stay (MIDAS-MK1.1: 1 to 10 of 160 parts failed,
-    // a pass 10 s of 200; reCamera: more of fewer parts, cheap passes).
-    let movable = trial
-        .components
-        .iter()
-        .filter(|component| !component.fixed)
-        .count();
-    let many = failed.len() * 8 >= movable;
-    let costly = budget.is_some_and(|budget| STUCK_FIRST_PASSES as u64 * pass_work > budget / 8);
-    if !again.is_empty() && !(many && costly) {
-        let (retry, left) =
-            legal::legalize_stuck_first(&trial, poses, failed, STUCK_FIRST_PASSES, debug);
-        if left.len() < again.len() {
-            seated = retry;
-            again = left;
-        }
-    }
-    phase_line(debug, "legalize on marks", seat_mark);
-    if debug {
-        eprintln!(
-            "placer: on marks: {} failed, {kept_left} left with the others kept, {} in the end",
-            failed.len(),
-            again.len()
-        );
-    }
-    if again.len() < failed.len() {
-        if debug {
-            eprintln!(
-                "placer: {} of {} parts seated on the board's marks",
-                failed.len() - again.len(),
-                failed.len()
-            );
-        }
-        trial
-            .constraints
-            .on_marks
-            .retain(|part| !again.contains(part));
-        *relaxed = trial;
-        *poses = seated;
-        *failed = again;
-    }
-}
-
 impl Relaxation {
     /// Applies the relaxation to `problem`, whose halos are unscaled.
     pub fn apply(&self, problem: &mut Problem) {
@@ -334,14 +252,6 @@ impl Relaxation {
 
 /// Parts with at least this many pins keep their halos one level longer.
 const MANY_PINS: usize = 10;
-
-/// Passes of the legaliser with the parts that found no room first, each
-/// adding the parts the pass before left without room
-/// (`legal::legalize_stuck_first`), at a loosest level (no halo, spacing
-/// or grid left to give) that keeps the placement of the level before,
-/// when a few parts (as many as an eviction takes on) found no room among
-/// the kept ones.
-const STUCK_FIRST_PASSES: usize = 4;
 
 /// Area of the outline polygon.
 fn outline_area(problem: &Problem) -> f64 {
@@ -814,212 +724,6 @@ fn mark() -> Mark {
     )
 }
 
-/// Refinement, edge-copper centring, relation repair and alignment (of
-/// orientations): what
-/// follows legalization.
-fn finish(
-    problem: &Problem,
-    poses: &mut [Pose],
-    passes: usize,
-    groups: Option<&groups::BusGroups>,
-    debug: bool,
-) {
-    let refine_mark = mark();
-    // Escape demand: one state through the refinements, its measured
-    // correction taken now and every so many kept moves.
-    let mut escape = problem.escape.as_deref().map(|escape| {
-        let mut state = escape::EscapeState::new(problem, escape, poses, |_| true);
-        state.measure_from_now(poses);
-        state
-    });
-    // Ratsnest crossings: one state through the refinements.
-    let mut crossings = problem
-        .crossings
-        .as_deref()
-        .filter(|crossings| crossings.refine)
-        .map(|crossings| crossings::CrossingState::new(problem, crossings, poses));
-    let crossings_before = crossings.as_ref().map(|state| state.total());
-    legal::refine_with(
-        problem,
-        poses,
-        passes,
-        escape.as_mut(),
-        crossings.as_mut(),
-        groups,
-    );
-    phase_line(debug, "refine", refine_mark);
-    let repair_mark = mark();
-    legal::center_edge_copper(problem, poses);
-    // Moving one part can break a relation repaired before; repeat while
-    // it helps.
-    for _ in 0..5 {
-        if legal::repair_relations(problem, poses) == 0 {
-            break;
-        }
-        legal::refine_with(
-            problem,
-            poses,
-            passes,
-            escape.as_mut(),
-            crossings.as_mut(),
-            groups,
-        );
-    }
-    // Parts of a kind turned alike where it costs next to nothing.
-    legal::align_orientations(problem, poses, 0.5);
-    // A pair's series parts facing the pair's two ends.
-    if !problem.constraints.facing.is_empty() {
-        let faces = facing::face(problem, poses);
-        if debug {
-            eprintln!(
-                "placer: pair rows: {} turned to face their pairs' ends, {} without room to",
-                faces.turned, faces.held
-            );
-        }
-    }
-    phase_line(debug, "repair and align", repair_mark);
-    if let Some(state) = &escape {
-        eprintln!(
-            "placer: escape demand: {} measurements, {} kept moves",
-            state.measurements,
-            state.kept_moves()
-        );
-    }
-    if debug && let (Some(state), Some(before)) = (crossings.as_mut(), crossings_before) {
-        // The line's count is not the placement's work: booked, it made a
-        // run with PCB_PLACER_DEBUG place otherwise than one without (its
-        // seeds' work, so the race's batches and the seeds kept).
-        let counted = work();
-        state.resync(poses);
-        add_work_back(work() - counted);
-        eprintln!(
-            "placer: ratsnest crossings {before} -> {} in the refinement",
-            state.total()
-        );
-    }
-}
-
-/// A relaxation level of `place`: halo scale, spacing scale, grid, edge
-/// inset, tight bodies, edge copper, edge margin, and the factor on the
-/// halos of parts with fewer than `MANY_PINS` pins.
-type Level = (f64, f64, f64, bool, bool, bool, f64, f64);
-
-/// The relaxation levels a placement walks down, loosest comfort first,
-/// and the index of the last, where courtyards may touch
-/// (`Constraints::courtyard_spacing`).
-fn relaxation_levels(problem: &Problem) -> (Vec<Level>, usize) {
-    // The last level also snaps to a finer grid: on small, crowded boards
-    // the regular grid leaves no legal spot where a finer one does.
-    let fine = problem.grid.min(0.1);
-    // Then bodies may come closer to the edge, as far as their copper
-    // allows (the full margin is room for routing too). Last, where the
-    // board's rules let courtyards overlap: bodies without the courtyard's
-    // margin.
-    let inset = problem
-        .components
-        .iter()
-        .any(|component| component.edge_inset > 0.0);
-    let tight = problem
-        .components
-        .iter()
-        .any(|component| component.tight.is_some());
-    // Halos go in steps: halved, then only the many-pin parts' (whose
-    // escapes need the room most), then all. The last number is the factor
-    // on the other parts' halos.
-    let mut levels = vec![
-        (1.0, 1.0, problem.grid, false, false, 1.0),
-        (0.5, 1.0, problem.grid, false, false, 1.0),
-        (0.5, 1.0, problem.grid, false, false, 0.0),
-        (0.0, 1.0, problem.grid, false, false, 0.0),
-        (0.0, 0.0, problem.grid, false, false, 0.0),
-        (0.0, 0.0, fine, false, false, 0.0),
-    ];
-    if inset {
-        levels.push((0.0, 0.0, fine, true, false, 0.0));
-    }
-    if tight {
-        levels.push((0.0, 0.0, fine, true, true, 0.0));
-    }
-    // Then bodies keep only the rules' copper-to-edge clearance from the
-    // edge (a narrow board whose parts' copper barely fits). Last, parts
-    // held at an edge only need their copper on the board (a card edge in
-    // its tab).
-    let rule_margin = (problem.constraints.copper_edge + 0.05).min(problem.edge_margin);
-    let mut levels: Vec<Level> = levels
-        .into_iter()
-        .map(|(halo, spacing, grid, inset, tight, small)| {
-            (
-                halo,
-                spacing,
-                grid,
-                inset,
-                tight,
-                false,
-                problem.edge_margin,
-                small,
-            )
-        })
-        .collect();
-    if rule_margin < problem.edge_margin {
-        levels.push((0.0, 0.0, fine, true, tight, false, rule_margin, 0.0));
-    }
-    if !problem.constraints.edges.is_empty() {
-        levels.push((0.0, 0.0, fine, true, tight, true, rule_margin, 0.0));
-    }
-    // Last, courtyards may touch where the copper inside them keeps the
-    // clearance: how designers pack a crowded side.
-    let courtyard_level = levels.len();
-    {
-        let last = *levels.last().expect("levels");
-        levels.push(last);
-    }
-    (levels, courtyard_level)
-}
-
-/// Whether level `level` judges by KiCad's legality
-/// (`Constraints::pad_clearance`): the last with `kicad_last_level`.
-fn kicad_level(config: &Config, level: usize, courtyard_level: usize) -> bool {
-    config.kicad_last_level && level == courtyard_level
-}
-
-/// The problem at level `level` of `relaxation_levels`: its halos,
-/// spacing, grid and bodies.
-fn relax_level(
-    problem: &Problem,
-    config: &Config,
-    level: usize,
-    courtyard_level: usize,
-    (halo_scale, spacing_scale, grid, inset, tight, edge_copper, edge_rule, small_factor): Level,
-) -> Problem {
-    let mut relaxed = problem.clone();
-    relaxed.grid = grid;
-    relaxed.spacing = (relaxed.spacing * spacing_scale).max(relaxed.min_spacing);
-    relaxed.constraints.edge_copper = edge_copper;
-    relaxed.constraints.courtyard_spacing = level == courtyard_level;
-    // KiCad's legality where the spacing is the rules' least, or at the
-    // last level.
-    if kicad_level(config, level, courtyard_level) {
-        relaxed.constraints.courtyard_spacing = true;
-        relaxed.constraints.pad_clearance = true;
-        relaxed.pass_marks();
-    }
-    relaxed.far_side_pads_only = tight && config.overlap_far_side_pads;
-    relaxed.edge_margin = relaxed.edge_margin.min(edge_rule);
-    for component in &mut relaxed.components {
-        component.halo *= halo_scale;
-        if component.pins.len() < MANY_PINS {
-            component.halo *= small_factor;
-        }
-        if !inset {
-            component.edge_inset = 0.0;
-        }
-        if tight {
-            component.use_tight_body();
-        }
-    }
-    relaxed
-}
-
 /// One relaxation level as `level_problems` gives it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LevelShape {
@@ -1097,626 +801,22 @@ pub fn first_fitting_level(problem: &Problem, config: &Config) -> usize {
         .unwrap_or(count - 1)
 }
 
+/// Places `problem`'s movable parts: the halos fitted to the board, the
+/// global placement, the walk down the relaxation levels until every part
+/// has room, then the refinement of the best level's placement (the stages
+/// in `place/`).
 pub fn place(problem: &Problem, config: &Config) -> Placement {
-    let (mut fitted, fit_scale) = fit_halos(problem, config.maximum_utilization);
-    fitted.constraints.link_pairs();
-    let wirelength_initial = fitted.wirelength(&fitted.poses);
-    if config.orientation_search {
-        orient::canonical_start(&mut fitted);
-    }
-    // A diagnostic start: its parts at its poses, angles included (a
-    // panel's copy or a sub-board is a problem of its own: none there).
-    let start = config
-        .start
-        .as_deref()
-        .filter(|start| start.poses.len() == fitted.components.len());
-    if let Some(start) = start {
-        for index in 0..fitted.components.len() {
-            let all = start.stage != StartStage::Global;
-            if !fitted.components[index].fixed && (all || start.parts[index]) {
-                fitted.poses[index] = start.poses[index];
-            }
-        }
-    }
-    // The stages a diagnostic start skips.
-    let skip_global = start.is_some_and(|start| start.stage != StartStage::Global);
-    let skip_anneal =
-        config.skip_anneal || start.is_some_and(|start| start.stage == StartStage::Legalize);
-    let problem = &fitted;
-    let debug = std::env::var_os("PCB_PLACER_DEBUG").is_some();
-    let started = std::time::Instant::now();
-    let work_started = work();
-    let stop_at_work = config.work_limit.map(|limit| work_started + limit);
-    let mut anneal_config = config.anneal.clone();
-    anneal_config.stop_at_work = stop_at_work.or(anneal_config.stop_at_work);
-    // Bus groups: found once, on the fitted problem (the levels change
-    // halos and spacing, not nets).
-    let bus_groups = config.bus_groups.as_ref().map(|settings| {
-        let groups = std::sync::Arc::new(groups::BusGroups::detect(problem, settings));
-        if debug {
-            let banks: Vec<String> = groups
-                .groups
-                .iter()
-                .filter(|group| group.kind == groups::Kind::Bank)
-                .map(|group| {
-                    group
-                        .chain
-                        .iter()
-                        .map(|part| problem.components[*part].name.as_str())
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                })
-                .collect();
-            eprintln!(
-                "placer: bus groups: {} banks [{}], {} clusters",
-                banks.len(),
-                banks.join("; "),
-                groups.groups.len() - banks.len()
-            );
-        }
-        groups
-    });
-    anneal_config.bus_groups = bus_groups.clone();
-    let out_of_budget = || {
-        config
-            .anneal
-            .deadline
-            .is_some_and(|deadline| std::time::Instant::now() >= deadline)
-            || anneal_config
-                .stop_at_work
-                .is_some_and(|stop| work() >= stop)
-    };
+    let fitted = place::prepare(problem, config);
+    let wirelength_initial = fitted.wirelength_initial;
+    let placing = place::Placing::new(&fitted, config);
     // The passes check the budget inside too (a part without room
     // searched the whole board at every level: urchin on 80 x 40 mm took
     // 11, 10 and 8 s of a 10 s budget in its first level's passes).
-    let _stop = StopGuard::set(anneal_config.stop_at_work);
-    let global_mark = mark();
-    let global = match start {
-        Some(start) if start.stage == StartStage::Global => {
-            let mut warm = config.global.clone();
-            warm.warm = Some(std::sync::Arc::new(start.parts.clone()));
-            global::global_place(problem, &warm)
-        }
-        _ if skip_global => global::GlobalResult {
-            poses: problem.poses.clone(),
-            frames: Vec::new(),
-            iterations: 0,
-            overflow: 0.0,
-            start: problem.poses.clone(),
-            history: Vec::new(),
-            stacks: Vec::new(),
-        },
-        _ => global::global_place(problem, &config.global),
-    };
-    phase_line(debug, "global", global_mark);
-    if debug {
-        eprintln!("placer: global {:.1}s", started.elapsed().as_secs_f64());
-    }
-    let mut global_poses = global.poses;
-    let global_start = global.start;
-    let global_history = global.history;
-    // Bus groups: the banks' order and arrangement (`groups::arrange`).
-    if let Some(groups) = bus_groups
-        .as_deref()
-        .filter(|groups| groups.settings.arrange && !skip_global)
-    {
-        let arrange_mark = mark();
-        let arranged = groups::arrange(problem, groups, &mut global_poses);
-        phase_line(debug, "arrange", arrange_mark);
-        if debug {
-            eprintln!(
-                "placer: arrange: {} banks, {} arranged, cost {:.0} -> {:.0}",
-                arranged.banks, arranged.taken, arranged.cost_before, arranged.cost_after
-            );
-        }
-    }
-    let wirelength_global = problem.wirelength(&global_poses);
-    let mut frames = global.frames;
-
-    // Crowded boards cannot afford the full comfort margins: give up halos,
-    // then the spacing, before giving up on a part.
-    let mut best: Option<(Vec<usize>, Vec<Pose>, Problem)> = None;
-    // The last level also snaps to a finer grid (`relaxation_levels`).
-    let fine = problem.grid.min(0.1);
-    let (levels, courtyard_level) = relaxation_levels(problem);
-    let mut relaxation = None;
-    // The level `relaxation` is of.
-    let mut best_level = 0;
-    // The work of the last level's full legalization: what a pass over
-    // every part costs (`seat_on_marks`).
-    let mut pass_work = 0;
-    // The annealed poses the best placement was legalized from.
-    let mut best_annealed: Option<Vec<Pose>> = None;
-    // The grid and bodies the last anneal ran with.
-    let mut annealed_shape: Option<(f64, bool)> = None;
-    let level_count = levels.len();
-    // The problem at a level: its halos, spacing, grid and bodies.
-    let relax =
-        |level: usize, shape: Level| relax_level(problem, config, level, courtyard_level, shape);
-    // No packing fits the parts even at the loosest level (the last): the
-    // movable bodies need more area than a side has, or more than strips
-    // of the board can hold (`strips_overfull`). Then no level can place
-    // them all, and the placer says so at once instead of annealing and
-    // legalizing at every level in vain. Exact: a board that can be placed
-    // never takes this way.
-    let hopeless = {
-        let last = relax(level_count - 1, *levels.last().expect("levels"));
-        side_overfull(&last, false) || strips_overfull(&last)
-    };
-    let mut overfull_sides = false;
-    // Where the levels go on to when work runs short (`skip_to_tight`):
-    // the first level with tight bodies, or without them the first with
-    // no spacing on the fine grid; and the work the last level that ran
-    // took.
-    let first_tight = levels.iter().position(|level| level.4).or_else(|| {
-        levels
-            .iter()
-            .position(|level| level.1 == 0.0 && level.2 == fine && level.2 < problem.grid)
-    });
-    let mut last_level_work: Option<u64> = None;
-    let mut skipping_to_tight = false;
-    let mut walk: Vec<(usize, Vec<usize>, u64)> = Vec::new();
-    for (
-        level,
-        (halo_scale, spacing_scale, grid, inset, tight, edge_copper, edge_rule, small_factor),
-    ) in levels.into_iter().enumerate()
-    {
-        // From `first_level` on (the race over skeletons: the passives
-        // from the held skeleton's level).
-        if level < config.first_level.min(level_count - 1) {
-            continue;
-        }
-        // Past the caller's deadline the best placement so far stands.
-        if best.is_some() && out_of_budget() {
-            break;
-        }
-        // Many parts still without room and too little work left to try
-        // every level before the tight bodies: on to them (OpenESC's
-        // panel: 27 of 398 parts without room at the spacing level, each
-        // looser grid and edge level 250-330 s of the 600, and the tight
-        // level, which places it, never came). Where the rules keep
-        // courtyards apart, on to the fine grid without spacing (the
-        // laptop's power board: 35 parts without room after the halo
-        // levels, placed on the fine grid with 4000 s, refused with 600).
-        if !skipping_to_tight
-            && let (Some(first_tight), Some(level_work), Some(stop), Some((failed, _, _))) =
-                (first_tight, last_level_work, stop_at_work, best.as_ref())
-            && level < first_tight
-            && skip_to_tight(
-                failed.len(),
-                problem.components.len(),
-                stop.saturating_sub(work()),
-                level_work,
-                first_tight - level,
-            )
-        {
-            skipping_to_tight = true;
-            if debug {
-                eprintln!(
-                    "placer: {} parts without room, {:.0} s of work left, a level {:.0} s: on to level {first_tight}",
-                    failed.len(),
-                    stop.saturating_sub(work()) as f64 / work_per_second(),
-                    level_work as f64 / work_per_second()
-                );
-            }
-        }
-        if skipping_to_tight && first_tight.is_some_and(|first| level < first) {
-            continue;
-        }
-        let level_mark = work();
-        if grid == fine && fine == problem.grid && spacing_scale == 0.0 && !inset && best.is_some()
-        {
-            // Same as the previous level.
-            continue;
-        }
-        let relaxed = relax(
-            level,
-            (
-                halo_scale,
-                spacing_scale,
-                grid,
-                inset,
-                tight,
-                edge_copper,
-                edge_rule,
-                small_factor,
-            ),
-        );
-        // Bodies that need more room than a side has cannot all be placed
-        // at this level: on to a looser one (OpenESC's boards, packed with
-        // overlapping courtyards, fit only with tight bodies; every level
-        // before them annealed and legalized in vain, 1-4 minutes each).
-        if level + 1 < level_count && (hopeless || overfull(&relaxed)) {
-            if debug {
-                eprintln!(
-                    "placer: level halo {halo_scale} (small {small_factor}) spacing {spacing_scale} grid {grid} inset {inset} tight {tight}: bodies need more room than a side has"
-                );
-            }
-            continue;
-        }
-        // Even the last level's bodies need more area than a side has
-        // (every level before was overfull too, so none ran): no packing
-        // places them all. A fast no: the parts are seated near where the
-        // global placement put them as far as there is room, without an
-        // anneal, and the passes after it stop at once (urchin's 80 parts
-        // on 80 x 40 mm took more than ten minutes before).
-        if hopeless {
-            if debug {
-                eprintln!(
-                    "placer: the last level is overfull too: no packing fits, the parts are seated where there is room"
-                );
-            }
-            overfull_sides = true;
-            STOP.with(|stop| stop.set(Some(work())));
-            // On the regular grid: the hurried search reaches 15 mm there.
-            let mut relaxed = relaxed;
-            relaxed.grid = problem.grid;
-            let mut poses = global_poses.clone();
-            let failed = legal::legalize(&relaxed, &mut poses);
-            walk.push((level, failed.clone(), work() - work_started));
-            best_level = level;
-            relaxation = Some(Relaxation {
-                spacing: relaxed.spacing,
-                grid: relaxed.grid,
-                halo_scale: fit_scale[1] * halo_scale,
-                small_halo_scale: fit_scale[0] * halo_scale * small_factor,
-                edge_inset: inset,
-                tight,
-                edge_copper,
-                edge_rule,
-                courtyard_spacing: level == courtyard_level,
-                pad_clearance: kicad_level(config, level, courtyard_level),
-                halos: None,
-                on_marks: relaxed.constraints.on_marks.clone(),
-            });
-            best = Some((failed, poses, relaxed));
-            break;
-        }
-        let level_started = std::time::Instant::now();
-        // Every level is looser than the one before: what was legal there
-        // stays legal. First only the parts that failed look for room.
-        let mut relaxed = relaxed;
-        if let Some((known_failed, known_poses, known_relaxed)) = best.as_ref()
-            && !known_failed.is_empty()
-        {
-            // The parts the level before seated on marks lie there still.
-            relaxed.constraints.on_marks = known_relaxed.constraints.on_marks.clone();
-            let mut kept = known_poses.clone();
-            let keep: Vec<usize> = (0..relaxed.components.len())
-                .filter(|index| !known_failed.contains(index))
-                .collect();
-            let keeping_mark = mark();
-            let mut failed = legal::legalize_keeping(&relaxed, &mut kept, known_failed, &keep);
-            phase_line(debug, "legalize keeping", keeping_mark);
-            if !failed.is_empty() && failed.len() <= (problem.components.len() / 50).max(3) {
-                let mut evicted = kept.clone();
-                let evict_mark = mark();
-                let again = legal::evict_for(&relaxed, &mut evicted, &failed);
-                phase_line(debug, "evict", evict_mark);
-                if again.len() < failed.len() {
-                    if debug {
-                        eprintln!(
-                            "placer: eviction seated {} of {} parts",
-                            failed.len() - again.len(),
-                            failed.len()
-                        );
-                    }
-                    kept = evicted;
-                    failed = again;
-                }
-            }
-            // Still without room, with no halo, spacing or grid left to
-            // give (only the edge and courtyard levels remain): the
-            // level's own pass with those parts first, from the anneal
-            // that gave the kept placement (the kept parts may have to
-            // move: MIDAS-MK1's J105 needs J103's spot, J103 J108's, and
-            // J108 a spot it has only once bodies may reach past the edge).
-            if !failed.is_empty()
-                && halo_scale == 0.0
-                && spacing_scale == 0.0
-                && grid == fine
-                && failed.len() <= (problem.components.len() / 50).max(3)
-                && !out_of_work(0)
-                && let Some(annealed) = best_annealed.as_ref()
-            {
-                let retry_mark = mark();
-                let (retry, again) = legal::legalize_stuck_first(
-                    &relaxed,
-                    annealed,
-                    &failed,
-                    STUCK_FIRST_PASSES,
-                    debug,
-                );
-                phase_line(debug, "legalize first", retry_mark);
-                if again.len() < failed.len() {
-                    kept = retry;
-                    failed = again;
-                }
-            }
-            seat_on_marks(
-                &mut relaxed,
-                &mut kept,
-                &mut failed,
-                pass_work,
-                config.work_limit,
-                debug,
-            );
-            if debug {
-                eprintln!(
-                    "placer: level halo {halo_scale} (small {small_factor}) spacing {spacing_scale} grid {grid} inset {inset} tight {tight}: kept placement, {:.1}s, {} failed",
-                    level_started.elapsed().as_secs_f64(),
-                    failed.len()
-                );
-            }
-            walk.push((level, failed.clone(), work() - work_started));
-            if failed.len() < known_failed.len() {
-                best_level = level;
-                relaxation = Some(Relaxation {
-                    spacing: relaxed.spacing,
-                    grid,
-                    halo_scale: fit_scale[1] * halo_scale,
-                    small_halo_scale: fit_scale[0] * halo_scale * small_factor,
-                    edge_inset: inset,
-                    tight,
-                    edge_copper,
-                    edge_rule,
-                    courtyard_spacing: level == courtyard_level,
-                    pad_clearance: kicad_level(config, level, courtyard_level),
-                    halos: None,
-                    on_marks: relaxed.constraints.on_marks.clone(),
-                });
-                let done = failed.is_empty();
-                best = Some((failed, kept, relaxed.clone()));
-                // On a finer grid or with tighter bodies, a fresh anneal
-                // may still beat the kept placement, whose last parts sit
-                // wherever room was left (OpenESC 30x30: 1504 mm legal
-                // against 881 for another seed's anneal).
-                if done && (annealed_shape == Some((grid, tight)) || out_of_budget()) {
-                    break;
-                }
-            }
-        }
-        // A few parts still without room: the looser levels are what they
-        // need, not another full anneal at each one (katia: four parts
-        // failed at every level, 40-160 s each, and the deadline came
-        // before the levels that might seat them).
-        // A level with a finer grid or tighter bodies is a new problem,
-        // though: its anneal seats what the coarser levels could not
-        // (OpenESC's mini: 2-4 parts without room at the regular grid, all
-        // seated by the anneal on the fine grid).
-        if let Some((known_failed, _, _)) = best.as_ref()
-            && !known_failed.is_empty()
-            && known_failed.len() <= (problem.components.len() / 50).max(3)
-            && annealed_shape == Some((grid, tight))
-        {
-            continue;
-        }
-        annealed_shape = Some((grid, tight));
-        // A fresh placement: no part lies on a mark yet.
-        relaxed.constraints.on_marks.clear();
-        let mut poses = global_poses.clone();
-        let level_started = std::time::Instant::now();
-        let anneal_mark = mark();
-        if !skip_anneal {
-            anneal::anneal(&relaxed, &mut poses, &anneal_config);
-            // A pair's series parts turned to face the pair's ends before
-            // the legaliser seats them (`facing`; the refinement's turn
-            // finds no room where neighbours sit tight).
-            facing::turn_to_face(&mut relaxed, &mut poses);
-        }
-        phase_line(debug, "anneal", anneal_mark);
-        let annealed = poses.clone();
-        let annealed_for_trace = annealed.clone();
-        let anneal_seconds = level_started.elapsed().as_secs_f64();
-        let legalize_mark = mark();
-        let mut failed = legal::legalize(&relaxed, &mut poses);
-        pass_work = work() - legalize_mark.1;
-        phase_line(debug, "legalize", legalize_mark);
-        if debug {
-            eprintln!(
-                "placer: level halo {halo_scale} (small {small_factor}) spacing {spacing_scale} grid {grid} inset {inset} tight {tight}: wirelength global {:.0}, annealed {:.0}, legalized {:.0}; anneal {anneal_seconds:.1}s, legalize {:.1}s, {} failed, work {} ({:.0}/s overall)",
-                problem.wirelength(&global_poses),
-                problem.wirelength(&annealed),
-                problem.wirelength(&poses),
-                level_started.elapsed().as_secs_f64() - anneal_seconds,
-                failed.len(),
-                work() - work_started,
-                (work() - work_started) as f64 / started.elapsed().as_secs_f64().max(1.0e-3)
-            );
-        }
-        // The parts that found no room go first in a second pass (not past
-        // the work budget).
-        if !failed.is_empty() && !out_of_work(0) {
-            let mut retry = annealed;
-            let retry_mark = mark();
-            let again = legal::legalize_first(&relaxed, &mut retry, &failed);
-            phase_line(debug, "legalize first", retry_mark);
-            if again.len() < failed.len() {
-                poses = retry;
-                failed = again;
-            }
-        }
-        // A few still without room: take a spot from movable parts and find
-        // those new ones.
-        if !failed.is_empty() && failed.len() <= (problem.components.len() / 50).max(3) {
-            let mut evicted = poses.clone();
-            let evict_mark = mark();
-            let again = legal::evict_for(&relaxed, &mut evicted, &failed);
-            phase_line(debug, "evict", evict_mark);
-            if again.len() < failed.len() {
-                if debug {
-                    eprintln!(
-                        "placer: eviction seated {} of {} parts",
-                        failed.len() - again.len(),
-                        failed.len()
-                    );
-                }
-                poses = evicted;
-                failed = again;
-            }
-        }
-        seat_on_marks(
-            &mut relaxed,
-            &mut poses,
-            &mut failed,
-            pass_work,
-            config.work_limit,
-            debug,
-        );
-        walk.push((level, failed.clone(), work() - work_started));
-        let better = best.as_ref().is_none_or(|(unplaced, kept, _)| {
-            failed.len() < unplaced.len()
-                || (failed.len() == unplaced.len()
-                    && problem.wirelength(&poses) < problem.wirelength(kept))
-        });
-        let done = failed.is_empty();
-        if better {
-            best_level = level;
-            relaxation = Some(Relaxation {
-                spacing: relaxed.spacing,
-                grid,
-                halo_scale: fit_scale[1] * halo_scale,
-                small_halo_scale: fit_scale[0] * halo_scale * small_factor,
-                edge_inset: inset,
-                tight,
-                edge_copper,
-                edge_rule,
-                courtyard_spacing: level == courtyard_level,
-                pad_clearance: kicad_level(config, level, courtyard_level),
-                halos: None,
-                on_marks: relaxed.constraints.on_marks.clone(),
-            });
-            best = Some((failed, poses, relaxed));
-            best_annealed = Some(annealed_for_trace);
-        }
-        last_level_work = Some(work() - level_mark);
-        if done {
-            break;
-        }
-    }
-    // Parts still without room when the budget ended the levels (the
-    // fast no of an overfull board, a deadline): those the marks alone
-    // keep out lie on them (hurried past the budget, as every pass is).
-    if let Some((failed, poses, relaxed)) = best.as_mut()
-        && !failed.is_empty()
-    {
-        let before = failed.len();
-        seat_on_marks(relaxed, poses, failed, pass_work, config.work_limit, debug);
-        if failed.len() < before
-            && let Some(relaxation) = relaxation.as_mut()
-        {
-            relaxation.on_marks = relaxed.constraints.on_marks.clone();
-        }
-    }
-    let (unplaced, mut poses, relaxed) = best.expect("at least one relaxation level ran");
-    let wirelength_legal = problem.wirelength(&poses);
-    let mut stage_poses = vec![("start", global_start), ("global", global_poses.clone())];
-    if let Some(annealed) = best_annealed {
-        stage_poses.push(("annealed", annealed));
-    }
-    stage_poses.push(("legal", poses.clone()));
-    frames.push(Frame {
-        iteration: global.iterations + 1,
-        overflow: global.overflow,
-        wirelength: wirelength_legal,
-        poses: poses.clone(),
-    });
-    let finishing = std::time::Instant::now();
-    finish(
-        &relaxed,
-        &mut poses,
-        config.refine_passes,
-        bus_groups.as_deref(),
-        debug,
-    );
-    if debug {
-        eprintln!(
-            "placer: refinement and relation repair {:.1}s",
-            finishing.elapsed().as_secs_f64()
-        );
-    }
-    // Pads without a way out: the router's test of the placement, and
-    // the moves that open the pads other parts close.
-    let exits = config.pad_exits.as_ref().and_then(|exits| {
-        let exits_mark = mark();
-        let before = work();
-        let mut outcome = exits::repair(&relaxed, &mut poses, &unplaced, exits);
-        // Its work is the outcome's, not the seed's: the caller charges it
-        // to the clock beside the seeds' (`ExitOutcome::work`), so that
-        // the seeds a race keeps do not depend on the switch.
-        let spent = work() - before;
-        add_work_back(spent);
-        if let Some(outcome) = outcome.as_mut() {
-            outcome.work = spent;
-        }
-        if debug && let Some(outcome) = &outcome {
-            eprintln!(
-                "placer: pad exits: {} closed pads, {} moves ({} candidates), {} still closed",
-                outcome.closed_before,
-                outcome.moves.len(),
-                outcome.tried,
-                outcome.closed.len()
-            );
-        }
-        phase_line(debug, "pad exits", exits_mark);
-        outcome
-    });
-    let problem = &relaxed;
-    let wirelength_final = problem.wirelength(&poses);
-    frames.push(Frame {
-        iteration: global.iterations + 2,
-        overflow: global.overflow,
-        wirelength: wirelength_final,
-        poses: poses.clone(),
-    });
-    problem.sync_followers(&mut poses);
-    stage_poses.push(("final", poses.clone()));
-    let illegal = legal::illegal_components(problem, &poses);
-    if debug {
-        for &index in &illegal {
-            let mut met: Vec<String> = Vec::new();
-            if !legal::is_legal(problem, &poses, index, poses[index], std::iter::empty()) {
-                met.push("outline or hard constraint".into());
-            }
-            for other in 0..problem.components.len() {
-                if other != index
-                    && let Some(kind) =
-                        legal::conflict_kind(problem, &poses, index, poses[index], other)
-                {
-                    met.push(format!("{} {kind}", problem.components[other].name));
-                }
-            }
-            eprintln!(
-                "placer: illegal {} at {:?}: {}",
-                problem.components[index].name,
-                poses[index],
-                met.join(", ")
-            );
-        }
-    }
-    let constraints = constraints::report(problem, &poses);
-    Placement {
-        poses,
-        frames,
-        global_iterations: global.iterations,
-        global_overflow: global.overflow,
-        wirelength_initial,
-        wirelength_global,
-        wirelength_legal,
-        wirelength_final,
-        unplaced,
-        illegal,
-        constraints,
-        relaxation: relaxation.expect("at least one relaxation level ran"),
-        work: work() - work_started,
-        stage_poses,
-        global_histories: vec![("global", global_history)],
-        overfull: overfull_sides,
-        exits,
-        level: best_level,
-        skeleton: None,
-        walk,
-    }
+    let _stop = StopGuard::set(placing.anneal_config.stop_at_work);
+    let global = placing.global_stage();
+    let wirelength_global = fitted.problem.wirelength(&global.poses);
+    let walk = placing.walk_levels(&global.poses);
+    placing.conclude(walk, global, wirelength_initial, wirelength_global)
 }
 
 #[cfg(test)]
@@ -1980,6 +1080,45 @@ mod start_tests {
         // No anneal: the legaliser's input is the start, and keeps it.
         assert_eq!(stage(&placement, "annealed"), &spread[..]);
         assert_eq!(stage(&placement, "legal"), &spread[..]);
+    }
+
+    /// `place`'s first stage: a global start's named parts and a later
+    /// start's every movable part begin at the start's poses (a fixed part
+    /// keeps its own), and the stages the start skips are skipped; a start
+    /// for another problem is none.
+    #[test]
+    fn the_preparation_takes_a_starts_poses_and_skips_its_stages() {
+        let (problem, spread) = board();
+        let mut moved = spread.clone();
+        moved[8].position = [1.0, 1.0];
+        let parts: Vec<bool> = (0..10).map(|i| i % 2 == 0).collect();
+        let expect = [
+            (StartStage::Global, false, false),
+            (StartStage::Anneal, true, false),
+            (StartStage::Legalize, true, true),
+        ];
+        for (stage_name, skip_global, skip_anneal) in expect {
+            let config = started(stage_name, &moved, parts.clone());
+            let fitted = place::prepare(&problem, &config);
+            let placing = place::Placing::new(&fitted, &config);
+            assert_eq!(
+                (placing.skip_global, placing.skip_anneal),
+                (skip_global, skip_anneal),
+                "{stage_name:?}"
+            );
+            for index in 0..8 {
+                if parts[index] || stage_name != StartStage::Global {
+                    assert_eq!(fitted.problem.poses[index], spread[index], "{index}");
+                } else {
+                    assert_ne!(fitted.problem.poses[index], spread[index], "{index}");
+                }
+            }
+            assert_eq!(fitted.problem.poses[8], problem.poses[8]);
+        }
+        let config = started(StartStage::Legalize, &moved[..9], vec![true; 9]);
+        let fitted = place::prepare(&problem, &config);
+        let placing = place::Placing::new(&fitted, &config);
+        assert!(fitted.start.is_none() && !placing.skip_global && !placing.skip_anneal);
     }
 
     /// Without the anneal the legaliser seats the global placement's
