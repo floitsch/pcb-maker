@@ -591,6 +591,7 @@ pub fn resolve_project_rules(
         connection_rules,
         pair_classes,
         net_facts,
+        keys,
     } = assign_nets(
         nets,
         &classes,
@@ -625,10 +626,10 @@ pub fn resolve_project_rules(
     let pair_facts = net_facts.clone();
     let mut pair_custom_rules: Vec<dru::Rule> = Vec::new();
     if let Some(rules) = read_custom_rules(&dru_path, &mut resolved.report) {
-        let board = board_facts(net_facts, &pcb, pad_kinds, &resolved, &net_names);
+        let board = board_facts(net_facts, &keys, &pcb, pad_kinds, &resolved);
         let lowered = dru::lower(&rules, &board, &severities);
         let board_minimum = setup.minimum("min_track_width").max(floor.unwrap_or(0.0));
-        apply_lowered(&mut resolved, lowered, &board, &net_names, board_minimum);
+        apply_lowered(&mut resolved, lowered, &board, &keys, board_minimum);
         pair_custom_rules = rules;
     }
     let Resolved {
@@ -642,25 +643,25 @@ pub fn resolve_project_rules(
 
     let diff_pair_rules = diff_pair_rules(
         &pair_facts,
+        &keys,
         &pair_classes,
         &pair_custom_rules,
         &copper_layer_names(&pcb),
-        |name: &str| connection_rules.get(net_names.normalize(name)).cloned(),
-        |name: &str| net_names.normalize(name).to_string(),
+        |key: &str| connection_rules.get(key).cloned(),
         setup.minimum("min_track_width").max(floor.unwrap_or(0.0)),
     );
     let length_rules = length_rules(
         &pair_facts,
+        &keys,
         &pair_custom_rules,
         &copper_layer_names(&pcb),
-        |name: &str| net_names.normalize(name).to_string(),
         &severities,
     );
     let track_disallowed = track_disallowed(
         &pair_facts,
+        &keys,
         &pair_custom_rules,
         &copper_layer_names(&pcb),
-        |name: &str| net_names.normalize(name).to_string(),
         &severities,
         &mut report,
     );
@@ -1040,10 +1041,10 @@ impl<'a> Assignments<'a> {
         }
     }
 
-    /// The names of the classes a net (`text`, as KiCad reads its name) is
+    /// The names of the classes a net (`text` and `key`, `key_and_text`) is
     /// assigned to, each once, in the order found: by name, by its class's
-    /// list, by pattern.
-    fn class_names(&self, text: &str, net_names: &NetNames) -> Vec<String> {
+    /// list (by its text, else its key's), by pattern.
+    fn class_names(&self, text: &str, key: &str) -> Vec<String> {
         let mut names: Vec<String> = Vec::new();
         let mut add = |name: &str| {
             if !names.iter().any(|known| known == name) {
@@ -1062,7 +1063,7 @@ impl<'a> Assignments<'a> {
         if let Some(name) = self
             .listed
             .get(text)
-            .or_else(|| self.listed.get(net_names.normalize(text)))
+            .or_else(|| self.listed.get(unescape(key).as_ref()))
         {
             add(name);
         }
@@ -1086,6 +1087,23 @@ struct NetAssignment {
     /// Per net with pads, in the board's order of names: its name and
     /// classes as the custom rules' conditions see them.
     net_facts: Vec<dru::NetFacts>,
+    /// Per net of `net_facts`: its key (`key_and_text`).
+    keys: Vec<String>,
+}
+
+/// A net's two names, made once from its name in the board (`raw`, the
+/// atom's text): its key, as the lowering and every map of the router's
+/// config name it (the board's spelling with its escapes, `A\"B`, less
+/// the hierarchical slash, `NetNames::normalize`), and its text, as KiCad
+/// shows it and the project's JSON and custom rules name it (`A"B`,
+/// `unescape`). Until 2026-11-10 the custom rules' step looked the
+/// rules up by the text: a net with a backslash or a quote panicked
+/// (pinguz97_Zynq-SoM's `ZYNQ_PS_MIO8\VM1`) or missed its custom rules.
+fn key_and_text(raw: &str, net_names: &NetNames) -> (String, String) {
+    (
+        net_names.normalize(raw).to_string(),
+        unescape(raw).into_owned(),
+    )
 }
 
 /// Gives every net with pads its classes, highest priority first
@@ -1103,12 +1121,10 @@ fn assign_nets(
     let mut pair_classes: Vec<PairClass> = Vec::new();
     let default_spec = classes.spec("Default");
     let mut net_facts = Vec::new();
+    let mut keys = Vec::new();
     for raw in nets {
-        // The name as KiCad reads it: the board's atom keeps its escapes
-        // (`A\"B`), the project's JSON and the custom rules hold the
-        // text (`A"B`).
-        let text = unescape(&raw);
-        let names = assignments.class_names(&text, net_names);
+        let (key, text) = key_and_text(&raw, net_names);
+        let names = assignments.class_names(&text, &key);
         let mut net_classes: Vec<&ClassSpec> =
             names.iter().filter_map(|name| classes.spec(name)).collect();
         net_classes.sort_by_key(|spec| spec.priority);
@@ -1118,7 +1134,7 @@ fn assign_nets(
             classes.resolve(&net_classes)
         };
         net_facts.push(dru::NetFacts {
-            name: text.to_string(),
+            name: text,
             classes: if net_classes.is_empty() {
                 vec!["Default".to_string()]
             } else {
@@ -1127,7 +1143,7 @@ fn assign_nets(
             diff_pair: None,
         });
         report.net_classes.insert(
-            net_names.normalize(&raw).to_string(),
+            key.clone(),
             net_facts
                 .last()
                 .map(|net: &dru::NetFacts| net.classes.clone())
@@ -1146,12 +1162,14 @@ fn assign_nets(
                 .first()
                 .map_or_else(|| "Default".to_string(), |spec| spec.name.clone()),
         });
-        connection_rules.insert(net_names.normalize(&raw).to_string(), rules);
+        connection_rules.insert(key.clone(), rules);
+        keys.push(key);
     }
     NetAssignment {
         connection_rules,
         pair_classes,
         net_facts,
+        keys,
     }
 }
 
@@ -1253,18 +1271,27 @@ fn read_custom_rules(
 }
 
 /// What the custom rules' lowering needs of the board: its nets with
-/// pads (`net_facts`) and their rules so far, its copper layers and kinds
-/// of pad, the board-wide clearances and neck width so far, its areas.
+/// pads (`net_facts`) and their rules so far (by their `keys`), its
+/// copper layers and kinds of pad, the board-wide clearances and neck
+/// width so far, its areas.
 fn board_facts(
     net_facts: Vec<dru::NetFacts>,
+    keys: &[String],
     pcb: &Expr,
     pad_kinds: BTreeSet<dru::Kind>,
     resolved: &Resolved,
-    net_names: &NetNames,
 ) -> dru::BoardFacts {
-    let current = net_facts
+    // Every net of `keys` has its rules (`assign_nets`); one without would
+    // have Default's.
+    let current = keys
         .iter()
-        .map(|net| resolved.connection_rules[net_names.normalize(&net.name)].clone())
+        .map(|key| {
+            resolved
+                .connection_rules
+                .get(key)
+                .unwrap_or(&resolved.default_rules)
+                .clone()
+        })
         .collect();
     dru::BoardFacts {
         nets: net_facts,
@@ -1285,21 +1312,19 @@ fn board_facts(
 /// Folds the lowered custom rules into the resolution: the nets' and the
 /// default rules (`apply_custom`), the via minimums, the board-wide
 /// clearances and widths, the router's per-net width floors, widths per
-/// layer and pair clearances, and the report. `board_minimum`: the
-/// board's minimum track width (with the connection width floor).
+/// layer and pair clearances, and the report, each net by its key (`keys`,
+/// one per net of `board`). `board_minimum`: the board's minimum track
+/// width (with the connection width floor).
 fn apply_lowered(
     resolved: &mut Resolved,
     lowered: dru::Lowered,
     board: &dru::BoardFacts,
-    net_names: &NetNames,
+    keys: &[String],
     board_minimum: f64,
 ) {
-    let key = |index: usize| net_names.normalize(&board.nets[index].name).to_string();
-    for (index, net) in board.nets.iter().enumerate() {
-        if let Some(rules) = resolved
-            .connection_rules
-            .get_mut(net_names.normalize(&net.name))
-        {
+    let key = |index: usize| keys[index].clone();
+    for (index, net) in keys.iter().enumerate() {
+        if let Some(rules) = resolved.connection_rules.get_mut(net) {
             apply_custom(rules, &lowered, Some(index));
         }
     }
@@ -1699,14 +1724,14 @@ pub(crate) fn diff_pair_of(name: &str) -> Option<(String, String, bool)> {
 /// gap where narrower than its clearance, else the clearance).
 fn diff_pair_rules(
     facts: &[dru::NetFacts],
+    keys: &[String],
     classes: &[PairClass],
     rules: &[dru::Rule],
     copper: &[String],
     connection: impl Fn(&str) -> Option<KiCadConnectionRoutingRules>,
-    key: impl Fn(&str) -> String,
     min_width: f64,
 ) -> BTreeMap<String, crate::board_router::KiCadDiffPairRule> {
-    let names: BTreeSet<&str> = facts.iter().map(|net| net.name.as_str()).collect();
+    let names = keys_by_name(facts, keys);
     let pick = |picked: &Option<dru::Picked>, base: f64| match picked {
         Some(picked) => picked.opt.unwrap_or_else(|| {
             base.max(picked.min.unwrap_or(0.0))
@@ -1715,21 +1740,21 @@ fn diff_pair_rules(
         None => base,
     };
     let mut out = BTreeMap::new();
-    for (index, fact) in facts.iter().enumerate() {
+    for (index, (fact, key)) in facts.iter().zip(keys).enumerate() {
         let Some((partner, base, _)) = diff_pair_of(&fact.name) else {
             continue;
         };
-        if !names.contains(partner.as_str()) {
+        let Some(&partner) = names.get(partner.as_str()) else {
             continue;
-        }
-        let Some(current) = connection(&fact.name) else {
+        };
+        let Some(current) = connection(key) else {
             continue;
         };
         let class = &classes[index];
         let mut paired = fact.clone();
         paired.diff_pair = Some(Some(base));
         let mut rule = crate::board_router::KiCadDiffPairRule {
-            partner: key(&partner),
+            partner: partner.to_string(),
             ..Default::default()
         };
         // KiCad's P to N clearance: the class's diff pair gap where it is
@@ -1801,12 +1826,22 @@ fn diff_pair_rules(
                     Some(rule.max_uncoupled.map_or(max, |known: f64| known.min(max)));
             }
         }
-        out.insert(key(&fact.name), rule);
+        out.insert(key.clone(), rule);
     }
     out
 }
 
-/// Per net with one (keyed by `key`), the copper layers (bits in the
+/// Per net of `facts` by its name (as KiCad shows it), its key (`keys`,
+/// one per net): KiCad pairs nets by their names, the router by keys.
+fn keys_by_name<'a>(facts: &'a [dru::NetFacts], keys: &'a [String]) -> BTreeMap<&'a str, &'a str> {
+    facts
+        .iter()
+        .zip(keys)
+        .map(|(fact, key)| (fact.name.as_str(), key.as_str()))
+        .collect()
+}
+
+/// Per net with one (by its key, `keys`), the copper layers (bits in the
 /// router's order, `copper`) where a custom rule surely disallows its
 /// tracks (`(constraint disallow track)`, `dru::track_disallowed`; KiCad's
 /// `inDiffPair()` known, as for the pairs' own layers): every rung of the
@@ -1816,9 +1851,9 @@ fn diff_pair_rules(
 /// pairs' classes kept nets off such layers).
 fn track_disallowed(
     facts: &[dru::NetFacts],
+    keys: &[String],
     rules: &[dru::Rule],
     copper: &[String],
-    key: impl Fn(&str) -> String,
     severities: &BTreeMap<String, String>,
     report: &mut KiCadProjectRulesReport,
 ) -> BTreeMap<String, pcb_router::LayerMask> {
@@ -1848,7 +1883,7 @@ fn track_disallowed(
     let names: BTreeSet<&str> = facts.iter().map(|net| net.name.as_str()).collect();
     // Per rule (index): the nets it closes some layer for.
     let mut closing: BTreeMap<usize, usize> = BTreeMap::new();
-    for fact in facts {
+    for (fact, key) in facts.iter().zip(keys) {
         let mut known = fact.clone();
         known.diff_pair = Some(
             diff_pair_of(&fact.name)
@@ -1869,7 +1904,7 @@ fn track_disallowed(
             *closing.entry(index).or_default() += 1;
         }
         if mask != 0 {
-            out.insert(key(&fact.name), mask);
+            out.insert(key.clone(), mask);
         }
     }
     for (index, nets) in closing {
@@ -1903,9 +1938,9 @@ fn track_disallowed(
 /// lengths (KiCad 10's time-domain `ps`).
 fn length_rules(
     facts: &[dru::NetFacts],
+    keys: &[String],
     rules: &[dru::Rule],
     copper: &[String],
-    key: impl Fn(&str) -> String,
     severities: &BTreeMap<String, String>,
 ) -> Vec<crate::board_router::KiCadLengthRule> {
     use crate::board_router::{KiCadLengthMember, KiCadLengthRule};
@@ -1915,7 +1950,7 @@ fn length_rules(
         if dru::finding_severity(kind, severities) != "error" {
             continue;
         }
-        for fact in facts {
+        for (fact, key) in facts.iter().zip(keys) {
             let mut known = fact.clone();
             known.diff_pair = Some(
                 diff_pair_of(&fact.name)
@@ -1954,7 +1989,7 @@ fn length_rules(
                             }),
                         nets: Vec::new(),
                     });
-                let net = key(&fact.name);
+                let net = key.clone();
                 if group.nets.last().is_none_or(|member| member.net != net) {
                     group.nets.push(KiCadLengthMember {
                         net,
@@ -2506,6 +2541,84 @@ mod tests {
         assert_eq!(width(r#"A\"B"#), 0.5);
         assert_eq!(width(r"C\\D"), 0.6);
         assert_eq!(width("GND"), 0.25);
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn custom_rules_reach_nets_with_a_quote_or_a_backslash() {
+        // The board spells the nets `A\"B`, `/C\\D` and `E\"_P`/`E\"_N`,
+        // the custom rules name their text (`A"B`, `/C\D`): until
+        // 2026-11-10 the rules' step looked the router's rules up by the
+        // text and panicked (pinguz97_Zynq-SoM's `ZYNQ_PS_MIO8\\VM1`).
+        let directory = std::env::temp_dir().join(format!(
+            "pcb-maker-rules-dru-escapes-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let source = r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+              (footprint "a" (at 0 0)
+                (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "A\"B"))
+                (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net "/C\\D"))
+                (pad "3" smd rect (at 4 0) (size 1 1) (layers "F.Cu") (net "E\"_P"))
+                (pad "4" smd rect (at 6 0) (size 1 1) (layers "F.Cu") (net "E\"_N"))
+                (pad "5" smd rect (at 8 0) (size 1 1) (layers "F.Cu") (net "GND"))))"#;
+        let pcb = directory.join("board.kicad_pcb");
+        fs::write(&pcb, source).unwrap();
+        let project = directory.join("board.kicad_pro");
+        fs::write(
+            &project,
+            r#"{"net_settings": {"classes": [
+                  {"name": "Default", "clearance": 0.15, "track_width": 0.2, "via_diameter": 0.6, "via_drill": 0.3}]}}"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("board.kicad_dru"),
+            r#"(version 1)
+(rule "quote" (condition "A.NetName == 'A\"B'") (constraint track_width (min 0.4mm)) (constraint clearance (min 0.3mm)))
+(rule "backslash" (condition "A.NetName == '/C\\\\D'") (constraint track_width (min 0.5mm)))
+(rule "pair" (condition "A.NetName == 'E\"_P' || A.NetName == 'E\"_N'") (constraint diff_pair_gap (opt 0.35mm)))"#,
+        )
+        .unwrap();
+        let config = resolve_project_rules(&project, &pcb).unwrap();
+        let rules = |net: &str| config.connection_rules[net].clone();
+        assert_eq!(
+            (
+                rules(r#"A\"B"#).trace_width_mm,
+                rules(r#"A\"B"#).clearance_mm
+            ),
+            (0.4, 0.3)
+        );
+        assert_eq!(rules(r"C\\D").trace_width_mm, 0.5);
+        assert_eq!(rules("GND").trace_width_mm, 0.2);
+        let floors = &config.net_rules.as_ref().unwrap().width_floor;
+        assert_eq!(
+            *floors,
+            [(r#"A\"B"#.to_string(), 0.4), (r"C\\D".to_string(), 0.5)].into()
+        );
+        let pair = &config.diff_pair_rules[r#"E\"_P"#];
+        assert_eq!(pair.partner, r#"E\"_N"#);
+        assert_eq!(pair.layers[0].1, 0.35);
+        let report = config.project_rules.unwrap();
+        let status: Vec<(&str, &str)> = report
+            .custom_rules
+            .iter()
+            .map(|rule| (rule.rule.as_str(), rule.status.as_str()))
+            .collect();
+        // A pair's gap is the pair's rule above (`diff_pair_rules`), not
+        // the lowering's.
+        assert_eq!(
+            status,
+            [
+                ("quote", "applied"),
+                ("quote", "applied"),
+                ("backslash", "applied"),
+                ("pair", "unmodelled")
+            ]
+        );
+        assert_eq!(
+            report.net_classes.keys().collect::<Vec<_>>(),
+            [r#"A\"B"#, r"C\\D", r#"E\"_N"#, r#"E\"_P"#, "GND"]
+        );
         fs::remove_dir_all(&directory).unwrap();
     }
 
@@ -3066,14 +3179,12 @@ mod tests {
             ]
         }});
         let assignments = Assignments::of_project(&project);
-        let pcb = parse("(kicad_pcb)").unwrap();
-        let names = crate::note_net_names(&pcb);
         assert_eq!(
-            assignments.class_names("VBUS", &names),
+            assignments.class_names("VBUS", "VBUS"),
             ["USB", "Power", "Wide"]
         );
-        assert_eq!(assignments.class_names("SDA", &names), ["I2C"]);
-        assert!(assignments.class_names("GND", &names).is_empty());
+        assert_eq!(assignments.class_names("SDA", "SDA"), ["I2C"]);
+        assert!(assignments.class_names("GND", "GND").is_empty());
     }
 
     #[test]

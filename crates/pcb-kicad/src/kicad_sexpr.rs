@@ -147,7 +147,17 @@ pub(crate) fn string_form(head: &str, value: &str) -> Expr {
 }
 
 pub(crate) fn quote(value: &str) -> String {
-    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+    format!("\"{}\"", escape(value))
+}
+
+/// A text as a file's string spells it, less the quotes (`A"B` is
+/// `A\"B`, `A\B` is `A\\B`): `unescape`'s inverse, for a name from
+/// another file (KiCad's reports, an agent's) to meet a board's.
+pub(crate) fn escape(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains(['\\', '"']) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    std::borrow::Cow::Owned(text.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 pub(crate) fn deterministic_uuid_for(identity: &str) -> String {
@@ -346,9 +356,16 @@ impl Parser<'_> {
 /// A string's text as KiCad reads it: a backslash takes the character
 /// after it as it is (`\"` a quote, `\\` a backslash), as the custom
 /// rules' reader (`project_rules::dru`) and KiCad's DSN lexer read them.
-/// `Expr::atom` keeps the escapes (the writer writes atoms back as read);
-/// compare names from other files (the project's JSON, the custom rules)
-/// with a board's through this.
+///
+/// A net's name inside the tool is the board's spelling: `Expr::atom`
+/// keeps the escapes, and the lowering, the router's config and reports,
+/// the placer and the written board (atoms written back as read, new
+/// copper by `net_expr` with the pads' spelling) all name a net so. The
+/// other files hold the text: the project's JSON, the custom rules,
+/// KiCad's DRC report and a `.kicad_pro` this tool writes. A name from
+/// them meets a board's through this (board to text) or `escape` (text to
+/// board), where it is read: `project_rules::key_and_text` makes both names of
+/// every net once.
 pub(crate) fn unescape(text: &str) -> std::borrow::Cow<'_, str> {
     if !text.contains('\\') {
         return std::borrow::Cow::Borrowed(text);
@@ -613,6 +630,9 @@ mod tests {
         // As the writer quotes them.
         let name = r#"x"y\z"#;
         assert_eq!(unescape(unquote(&quote(name))), name);
+        assert_eq!(unescape(&escape(name)), name);
+        assert_eq!(escape(r#"A"B\C"#), r#"A\"B\\C"#);
+        assert!(matches!(escape("GND"), std::borrow::Cow::Borrowed(_)));
     }
 
     #[test]
