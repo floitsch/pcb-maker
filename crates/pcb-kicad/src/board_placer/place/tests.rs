@@ -2,10 +2,10 @@
 
 //! Unit tests of the placement's stages, each alone.
 
+use super::output::{check_written_pads, write_poses};
 use super::prepare::take_poses;
 use super::report::{placement_hints, repeated_references, unplaced_parts};
 use super::seeds::{rank, sort_by_rank};
-use super::write::{check_written_pads, write_poses};
 use super::*;
 
 /// Two fixed connectors and a resistor between them, on a 40 x 20 board.

@@ -6,31 +6,31 @@
 //! `PlaceContext` (the inputs and the settings resolved for the board)
 //! and the board and its lowering, which the first stages change: the
 //! board read and lowered (`prepare`), placed in pieces where it is a
-//! panel (`pieces`), the routing demand the placer weighs and its
-//! configuration (`setup`), the seeds placed and the best picked
-//! (`seeds`), its poses written and the placed directory (`write`), and
-//! board-placer.json (`report`).
+//! panel (`pieces`), the routing demand the placer weighs (`demand`)
+//! and its configuration (`placer_config`), the seeds placed and the best
+//! picked (`seeds`), its poses written and the placed directory
+//! (`output`), and board-placer.json (`report`). `placer_config` stays
+//! in this file: `tools/config-reference` reads the settings it passes
+//! to the core from the file that holds `place_kicad_board`.
 
 use super::*;
 use pcb_placer as core;
 
+mod demand;
+mod output;
 mod pieces;
 mod prepare;
 mod report;
 mod seeds;
-mod setup;
-#[cfg(test)]
-mod tests;
-mod write;
 
+use self::demand::add_routing_demand;
+use self::output::{WrittenPoses, check_written_pads, write_placed_directory, write_poses};
 use self::pieces::{BoardPieces, place_in_pieces};
 pub(crate) use self::prepare::{PreparedBoard, prepare_board};
 #[cfg(test)]
 pub(crate) use self::report::{placed_count, room_hint};
 use self::report::{placement_report, write_report};
 use self::seeds::{Picked, pick, place_seeds, skeleton_race};
-use self::setup::{add_routing_demand, placer_config};
-use self::write::{WrittenPoses, check_written_pads, write_placed_directory, write_poses};
 
 /// What every stage of a placement reads: the inputs, the settings
 /// resolved for the board (`prepare_board`), what its constraints chose,
@@ -112,3 +112,70 @@ pub fn place_kicad_board(
     write_report(&context, &result)?;
     Ok(result)
 }
+
+/// The placer's configuration for the board: the settings, the work
+/// limit, the warm start, and the router's tests where they are on (the
+/// global guidance, the pad exits).
+fn placer_config(
+    context: &PlaceContext,
+    pcb: &Expr,
+    lowered: &LoweredPlacement,
+) -> Result<core::Config, String> {
+    let config = &context.config;
+    let mut placer_config = core::Config::new();
+    placer_config.global.whitespace_fill = config.whitespace_fill;
+    placer_config.maximum_utilization = config.maximum_utilization;
+    placer_config.global.seed = config.seed;
+    placer_config.anneal.deadline = config.deadline;
+    placer_config.work_limit = config
+        .work_seconds
+        .map(|seconds| (seconds.max(0.0) * core::work_per_second()) as u64);
+    placer_config.overlap_far_side_pads = config.overlap_far_side_pads;
+    placer_config.orientation_search = config.orientation_search;
+    placer_config.bus_groups = config.bus_groups.as_ref().map(KiCadBusGroups::settings);
+    placer_config.kicad_last_level = true;
+    placer_config.start = warm_start(lowered)?.map(std::sync::Arc::new);
+    placer_config.skip_anneal = std::env::var_os("PCB_PLACER_SKIP_ANNEAL").is_some();
+    if let Some(guidance) = &config.global_guidance {
+        let router_config = config.guidance_router.clone().unwrap_or_default();
+        placer_config.anneal.guidance = Some(core::guidance::Guidance {
+            evaluate: guidance::evaluator(
+                pcb,
+                &lowered.references,
+                &router_config,
+                config.keep_board_marks,
+                guidance.threshold,
+            )?,
+            weight: guidance.weight,
+            work_share: guidance.work_share,
+            min_accepted: guidance.min_accepted,
+            bias: guidance.bias,
+        });
+    }
+    // Pads without a way out (`pad_exits`): the router's test after each
+    // seed's placement, with the router's configuration the layout and the
+    // place check give.
+    if let Some(settings) = exits::pad_exits_settings(config) {
+        match &config.guidance_router {
+            Some(router_config) => {
+                placer_config.pad_exits = Some(core::exits::PadExits {
+                    factory: exits::exit_factory(
+                        pcb,
+                        &lowered.references,
+                        router_config,
+                        config.keep_board_marks,
+                    )?,
+                    reach: settings.reach_mm,
+                    candidates: settings.candidates,
+                });
+            }
+            None => eprintln!(
+                "placer: pad exits: no router configuration (the layout and the place check give one): not tested"
+            ),
+        }
+    }
+    Ok(placer_config)
+}
+
+#[cfg(test)]
+mod tests;
