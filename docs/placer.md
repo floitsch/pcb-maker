@@ -8,7 +8,7 @@ them. It has two layers:
   `pcb_placer::place` (`lib.rs`).
 - `crates/pcb-kicad/src/board_placer/` lowers a KiCad board to the core's
   `Problem`, runs several seeds, picks one, writes the placed board and
-  `board-placer.json`. Its entry point is `place_kicad_board` (`place.rs`).
+  `board-placer.json`. Its entry point is `place_kicad_board` (`place/`).
   The layout (`board_layout.rs`) adds the race: it ranks the seeds'
   placements, probes the best ones with the router and routes on with one.
 
@@ -51,7 +51,7 @@ Terms used throughout:
 
 In the order the code runs, for one board:
 
-1. **Prepare and lower** (`prepare_board` in `board_placer/place.rs`,
+1. **Prepare and lower** (`prepare_board` in `board_placer/place/prepare.rs`,
    `lower_placement` in `board_placer/lower/`): read the board in
    canonical order, resolve constraints and the project's rules, build
    bodies, pins, held parts, halos, net weights, obstacles and relations.

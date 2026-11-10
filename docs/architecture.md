@@ -43,7 +43,7 @@ that a later split into crates is expected to follow.
   and `board_router/lower/` (a board to a `pcb_router::Board`, with
   `geometry.rs`, `pour_plan.rs`, `kept.rs`, `config.rs`). `sub_boards` is
   called from both.
-- **The flow.** `board_layout` (`layout_kicad_board`), `board_placer/place.rs`
+- **The flow.** `board_layout` (`layout_kicad_board`), `board_placer/place/`
   (`place_kicad_board`) and `seed_race.rs`, `board_router/route.rs`
   (`route_kicad_board`), `ladder.rs`, `attempt.rs`, `budget.rs`,
   `memory.rs`; `work_rate` (budgets in work, the rate calibration),
@@ -89,7 +89,7 @@ deadline is skipped and reported as cut.
 | # | Stage | Function, file | Hands on |
 | ---: | --- | --- | --- |
 | 1 | Outline sizing (only with an automatic outline) | `size_outline`, board_layout.rs | the outline in the placer config |
-| 2 | Placement | `place_kicad_board`, board_placer/place.rs (below) | `placed/<id>.kicad_pcb`, `board-placer.json`, `KiCadBoardPlacerResult`: the kept poses and the other legal seeds' poses |
+| 2 | Placement | `place_kicad_board`, board_placer/place/ (below) | `placed/<id>.kicad_pcb`, `board-placer.json`, `KiCadBoardPlacerResult`: the kept poses and the other legal seeds' poses |
 | 3 | Pin swaps (with `pin_swaps` or `swappable`) | `swap_kicad_pins_in_place`, pin_swap.rs | the placed board, nets permuted |
 | 4 | Pours and classes added, the placed board lowered again | `add_pour_zones` (board_router/pour_plan.rs), `lower_placement` (board_placer/lower/) | the board as an `Expr`, a `pcb_placer::Problem` for the moves' legality |
 | 5 | Lowering for the router | `core_config` (board_router/route.rs), `lower_for_route` (board_router/diff_pairs.rs, around `lower`) | a `pcb_router::Config` and `pcb_router::Board` |
@@ -164,7 +164,7 @@ router knows which pads a pour joins.
 
 ## The placement
 
-`place_kicad_board` (crates/pcb-kicad/src/board_placer/place.rs):
+`place_kicad_board` (crates/pcb-kicad/src/board_placer/place/):
 `prepare_board` parses the board, resolves the constraints
 (placement_constraints/) and the project rules, applies the outline,
 keepouts and sides, and lowers it (`lower_placement`) to a

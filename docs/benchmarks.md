@@ -183,7 +183,7 @@ the ledger):
 1. Run **five seed pairs**, placer seeds 1, 101, 201, 301, 401 on both
    sides (`--placer '{"seed": N, ...}'`). Seeds lie at least 16 apart: the
    race places seeds N to N + 15 (`config.seed + offset` in
-   `board_placer/place.rs`), so nearer seeds share candidates and are not
+   `board_placer/place/seeds.rs`), so nearer seeds share candidates and are not
    independent draws.
 2. Judge with `placer_ab.py compare --off DIR... --on DIR...` (each
    directory's seed from its `-s<N>`, or `DIR@N`). The statistic is the
