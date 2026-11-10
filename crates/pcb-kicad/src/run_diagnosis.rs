@@ -1065,8 +1065,28 @@ fn explanation(counts: &KiCadNetCounts, pours: bool, capped: bool) -> String {
     parts.join("; ")
 }
 
-/// The diagnosis of a run (`inspect-routing-run`).
-pub fn inspect_routing_run(inspection: &KiCadRunInspection) -> Result<KiCadRunDiagnosis, String> {
+/// A pad named by `--terminal`: its reference, number and net.
+type NamedTerminal = (String, String, String);
+
+/// What `inspect_routing_run` reads from a run before it looks at a net.
+struct RunInputs {
+    files: KiCadRunFiles,
+    /// board-router.json.
+    report: serde_json::Value,
+    verdict: Option<serde_json::Value>,
+    /// KiCad's DRC report: where it was read from and what it holds.
+    drc_path: Option<PathBuf>,
+    drc: Option<serde_json::Value>,
+    config: Option<KiCadBoardRouterConfig>,
+    reference: Option<LoweredBoard>,
+    /// Whose placement the reference's routes are on (with `--reference`).
+    reference_placement: Option<KiCadReferencePlacement>,
+}
+
+/// Reads the run's files, the result board (returned apart: probing its
+/// groups borrows it mutably) and the reference board, in the order their
+/// errors are reported.
+fn read_run_inputs(inspection: &KiCadRunInspection) -> Result<(RunInputs, LoweredBoard), String> {
     let files = run_files(&inspection.run)?;
     let directory = &files.directory;
     let board_id = &files.board_id;
@@ -1082,7 +1102,7 @@ pub fn inspect_routing_run(inspection: &KiCadRunInspection) -> Result<KiCadRunDi
         .clone()
         .or_else(|| Some(directory.join("drc.json")).filter(|path| path.is_file()));
     let drc = drc_path.as_ref().map(|path| read_value(path)).transpose()?;
-    let mut result = LoweredBoard::read(directory, board_id)?;
+    let result = LoweredBoard::read(directory, board_id)?;
     let config = resolve_project_rules(
         &directory.join(format!("{board_id}.kicad_pro")),
         &directory.join(format!("{board_id}.kicad_pcb")),
@@ -1123,36 +1143,62 @@ pub fn inspect_routing_run(inspection: &KiCadRunInspection) -> Result<KiCadRunDi
         )),
         _ => None,
     };
-    let router_nets: BTreeMap<String, serde_json::Value> = report["nets"]
+    let inputs = RunInputs {
+        files,
+        report,
+        verdict,
+        drc_path,
+        drc,
+        config,
+        reference,
+        reference_placement,
+    };
+    Ok((inputs, result))
+}
+
+/// The router's nets of board-router.json by connection name.
+fn router_nets_of(report: &serde_json::Value) -> BTreeMap<String, serde_json::Value> {
+    report["nets"]
         .as_array()
         .into_iter()
         .flatten()
         .filter_map(|net| Some((net["connection"].as_str()?.to_string(), net.clone())))
-        .collect();
+        .collect()
+}
 
-    // The terminal named: its net.
-    let terminal = match &inspection.terminal {
-        Some(text) => {
-            let (reference, number) = text.split_once(':').ok_or_else(|| {
-                crate::verdict::input_error(format!("--terminal {text}: give REF:PAD (U3:52)"))
-            })?;
-            let pad = result
-                .pads
-                .iter()
-                .find(|pad| pad.reference == reference && pad.number == number)
-                .ok_or_else(|| {
-                    crate::verdict::input_error(format!(
-                        "--terminal {text}: no such pad on the board"
-                    ))
-                })?;
-            let net = pad.net.clone().ok_or_else(|| {
-                crate::verdict::input_error(format!("--terminal {text}: the pad has no net"))
-            })?;
-            Some((reference.to_string(), number.to_string(), net))
-        }
-        None => None,
+/// The pad `--terminal` named, with its net.
+fn named_terminal(
+    inspection: &KiCadRunInspection,
+    result: &LoweredBoard,
+) -> Result<Option<NamedTerminal>, String> {
+    let Some(text) = &inspection.terminal else {
+        return Ok(None);
     };
-    let selected: Vec<String> = if let Some((_, _, net)) = &terminal {
+    let (reference, number) = text.split_once(':').ok_or_else(|| {
+        crate::verdict::input_error(format!("--terminal {text}: give REF:PAD (U3:52)"))
+    })?;
+    let pad = result
+        .pads
+        .iter()
+        .find(|pad| pad.reference == reference && pad.number == number)
+        .ok_or_else(|| {
+            crate::verdict::input_error(format!("--terminal {text}: no such pad on the board"))
+        })?;
+    let net = pad.net.clone().ok_or_else(|| {
+        crate::verdict::input_error(format!("--terminal {text}: the pad has no net"))
+    })?;
+    Ok(Some((reference.to_string(), number.to_string(), net)))
+}
+
+/// The nets to inspect: the terminal's, the named one, or every net the
+/// router left open.
+fn selected_nets(
+    inspection: &KiCadRunInspection,
+    result: &LoweredBoard,
+    router_nets: &BTreeMap<String, serde_json::Value>,
+    terminal: &Option<NamedTerminal>,
+) -> Result<Vec<String>, String> {
+    Ok(if let Some((_, _, net)) = terminal {
         vec![net.clone()]
     } else if let Some(net) = &inspection.net {
         let net = result.names.normalize(net).to_string();
@@ -1165,18 +1211,26 @@ pub fn inspect_routing_run(inspection: &KiCadRunInspection) -> Result<KiCadRunDi
     } else {
         router_nets
             .iter()
-            .filter(|(_, net)| {
-                net["status"].as_str() != Some("routed")
-                    && net["terminals"].as_u64().unwrap_or(0) >= 2
-            })
+            .filter(|(_, net)| is_open_net(net))
             .map(|(name, _)| name.clone())
             .collect()
-    };
+    })
+}
 
-    // KiCad's unconnected pairs by net.
+/// Whether the router left the net open: not routed and two terminals or
+/// more.
+fn is_open_net(net: &serde_json::Value) -> bool {
+    net["status"].as_str() != Some("routed") && net["terminals"].as_u64().unwrap_or(0) >= 2
+}
+
+/// KiCad's unconnected pairs by net, and how many name no net.
+fn native_pairs_by_net(
+    drc: Option<&serde_json::Value>,
+    names: &NetNames,
+) -> (BTreeMap<String, Vec<KiCadNativePair>>, usize) {
     let mut native_by_net: BTreeMap<String, Vec<KiCadNativePair>> = BTreeMap::new();
     let mut native_unattributed = 0;
-    if let Some(drc) = &drc {
+    if let Some(drc) = drc {
         for pair in drc["unconnected_items"].as_array().into_iter().flatten() {
             let items: Vec<KiCadNativeItem> = pair["items"]
                 .as_array()
@@ -1196,7 +1250,7 @@ pub fn inspect_routing_run(inspection: &KiCadRunInspection) -> Result<KiCadRunDi
                 .find_map(|item| described_net(&item.description))
             {
                 Some(net) => native_by_net
-                    .entry(result.names.normalize(&net).to_string())
+                    .entry(names.normalize(&net).to_string())
                     .or_default()
                     .push(KiCadNativePair {
                         items,
@@ -1206,229 +1260,302 @@ pub fn inspect_routing_run(inspection: &KiCadRunInspection) -> Result<KiCadRunDi
             }
         }
     }
+    (native_by_net, native_unattributed)
+}
 
-    let native_capped = drc.as_ref().is_some_and(|drc| {
-        drc["unconnected_items"].as_array().map_or(0, Vec::len) >= KICAD_REPORT_CAP
-    });
-    let overrides: Vec<serde_json::Value> = report["rules"]["overrides"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    let hot_spots = linked_hot_spots(&report, &result);
-    let mut nets = Vec::new();
-    for name in &selected {
-        let router = router_nets.get(name);
-        let status = router
-            .and_then(|net| net["status"].as_str())
-            .unwrap_or("not in board-router.json")
-            .to_string();
-        let (components, pour_layers) = match result.net_id(name) {
-            Some(id) => (result.components(id), result.pour_layers(id)),
-            None => (Vec::new(), Vec::new()),
-        };
-        let native_pairs = drc.as_ref().map(|_| {
-            let mut pairs = native_by_net.remove(name).unwrap_or_default();
-            for pair in &mut pairs {
-                pair.components = pair
-                    .items
-                    .iter()
-                    .map(|item| {
-                        components.iter().position(|component| {
-                            component.pads.iter().any(|pad| {
-                                item.uuid.is_some() && pad.uuid == item.uuid
-                                    || distance_squared(pad.at, item.at) < 1.0e-6
-                                        && item.description.starts_with("Pad ")
-                            })
+/// What every net's diagnosis reads: the run, both boards, the router's
+/// report and the arguments.
+struct NetInputs<'a> {
+    run: &'a RunInputs,
+    router_nets: &'a BTreeMap<String, serde_json::Value>,
+    terminal: &'a Option<NamedTerminal>,
+    /// board-router.json's rule overrides.
+    overrides: &'a [serde_json::Value],
+    hot_spots: &'a [serde_json::Value],
+    /// KiCad's report holds as many unconnected items as it keeps.
+    native_capped: bool,
+}
+
+/// KiCad's pairs of the net, each item placed in a group of pads.
+/// `None` without a DRC report; takes the net's pairs out of
+/// `native_by_net`.
+fn net_native_pairs(
+    name: &str,
+    inputs: &NetInputs,
+    result: &mut LoweredBoard,
+    components: &[KiCadInspectedComponent],
+    native_by_net: &mut BTreeMap<String, Vec<KiCadNativePair>>,
+) -> Option<Vec<KiCadNativePair>> {
+    let native_pairs = inputs.run.drc.as_ref().map(|_| {
+        let mut pairs = native_by_net.remove(name).unwrap_or_default();
+        for pair in &mut pairs {
+            pair.components = pair
+                .items
+                .iter()
+                .map(|item| {
+                    components.iter().position(|component| {
+                        component.pads.iter().any(|pad| {
+                            item.uuid.is_some() && pad.uuid == item.uuid
+                                || distance_squared(pad.at, item.at) < 1.0e-6
+                                    && item.description.starts_with("Pad ")
                         })
                     })
-                    .collect();
-            }
-            pairs
-        });
-        // KiCad's items that are a track, an arc or a via: the group of
-        // the copper they lie on.
-        let native_pairs = native_pairs.map(|mut pairs| {
-            let Some(id) = result.net_id(name) else {
-                return pairs;
-            };
-            let mut wanted = Vec::new();
-            for (pair_index, pair) in pairs.iter().enumerate() {
-                for (item_index, item) in pair.items.iter().enumerate() {
-                    if pair.components[item_index].is_some() {
-                        continue;
-                    }
-                    if let Some(layer) = copper_item_layer(&item.description, &result.layers) {
-                        wanted.push(((pair_index, item_index), (item.at, layer)));
-                    }
-                }
-            }
-            let probes: Vec<([f64; 2], Option<usize>)> =
-                wanted.iter().map(|(_, probe)| *probe).collect();
-            let found = result.item_components(id, &probes);
-            for (((pair_index, item_index), _), group) in wanted.into_iter().zip(found) {
-                pairs[pair_index].components[item_index] = group;
-            }
-            pairs
-        });
-        let counts = KiCadNetCounts {
-            router_terminals: router
-                .and_then(|net| net["terminals"].as_u64())
-                .map(|n| n as usize),
-            router_unconnected_terminals: router
-                .and_then(|net| net["unconnected_terminals"].as_u64())
-                .map(|n| n as usize),
-            components: components.len(),
-            missing_links: components.len().saturating_sub(1),
-            native_pairs: native_pairs.as_ref().map(Vec::len),
-            explanation: String::new(),
-        };
-        let counts = KiCadNetCounts {
-            explanation: explanation(&counts, !pour_layers.is_empty(), native_capped),
-            ..counts
-        };
-        let copper = net_copper(&result.pcb, &result.names, name);
-        let rules = inspected_rules(config.as_ref(), name, &overrides, &copper);
-        let reference_route = reference.as_ref().map(|reference| {
-            let copper = net_copper(&reference.pcb, &reference.names, name);
-            let (groups, pour_layers) = reference.net_id(name).map_or((0, Vec::new()), |id| {
-                (reference.components(id).len(), reference.pour_layers(id))
-            });
-            let (connected, connected_reason) = if groups <= 1 {
-                (Some(true), None)
-            } else if pour_layers.is_empty() {
-                (Some(false), None)
-            } else {
-                (
-                    None,
-                    Some(format!(
-                        "its tracks, arcs and vias leave {groups} groups; its zone on {} may join them (zone fill is not modelled here: KiCad's DRC of the reference decides)",
-                        pour_layers.join(", ")
-                    )),
-                )
-            };
-            KiCadReferenceRoute {
-                placement: reference_placement
-                    .as_ref()
-                    .map_or_else(String::new, |placement| placement.placement.clone()),
-                connected,
-                connected_reason,
-                components: groups,
-                pour_layers,
-                copper,
-            }
-        });
-        let pads: Vec<&KiCadInspectedPad> = components
-            .iter()
-            .flat_map(|component| &component.pads)
-            .collect();
-        let hot_spots_near: Vec<serde_json::Value> = hot_spots
-            .iter()
-            .enumerate()
-            .filter_map(|(index, spot)| {
-                let at = [spot["at"][0].as_f64()?, spot["at"][1].as_f64()?];
-                let nearest = pads
-                    .iter()
-                    .map(|pad| distance_squared(pad.at, at).sqrt())
-                    .fold(f64::INFINITY, f64::min);
-                (nearest <= HOT_SPOT_REACH_MM).then(|| {
-                    serde_json::json!({
-                        "hot_spot": index,
-                        "at": spot["at"],
-                        "layer": spot["layer"],
-                        "history": spot["history"],
-                        "nearest_pad_mm": round(nearest),
-                        "conflicted_nets": spot["conflicted_nets"],
-                    })
-                })
-            })
-            .take(5)
-            .collect();
-        let dead_pads: Vec<serde_json::Value> = report["diagnostics"]["dead_pads"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter(|pad| pad["net"].as_str() == Some(name))
-            .cloned()
-            .collect();
-        // A net with a zone: only the groups KiCad's pairs name and the
-        // terminal's (its fill joins the others or not, unmodelled here).
-        let mut components = components;
-        let mut native_pairs = native_pairs;
-        let mut components_omitted = 0;
-        if !pour_layers.is_empty() {
-            let keep: Vec<bool> = (0..components.len())
-                .map(|index| {
-                    native_pairs
-                        .iter()
-                        .flatten()
-                        .any(|pair| pair.components.contains(&Some(index)))
-                        || terminal.as_ref().is_some_and(|(reference, number, _)| {
-                            components[index]
-                                .pads
-                                .iter()
-                                .any(|pad| &pad.reference == reference && &pad.number == number)
-                        })
                 })
                 .collect();
-            let mut renumbered = vec![None; components.len()];
-            let mut next = 0;
-            for (index, kept) in keep.iter().enumerate() {
-                if *kept {
-                    renumbered[index] = Some(next);
-                    next += 1;
-                }
-            }
-            for pair in native_pairs.iter_mut().flatten() {
-                for component in &mut pair.components {
-                    *component = component.and_then(|index| renumbered[index]);
-                }
-            }
-            components_omitted = components.len() - next;
-            let mut index = 0;
-            components.retain(|_| {
-                index += 1;
-                keep[index - 1]
-            });
         }
-        let terminal_entry = terminal.as_ref().map(|(reference, number, _)| {
-            let component = components.iter().position(|component| {
-                component
-                    .pads
-                    .iter()
-                    .any(|pad| &pad.reference == reference && &pad.number == number)
-            });
-            serde_json::json!({
-                "ref": reference,
-                "number": number,
-                "component": component,
-                "in_largest": component.map(|index| components[index].largest),
-            })
-        });
-        nets.push(KiCadNetDiagnosis {
-            net: name.clone(),
-            status,
-            counts,
-            components,
-            components_basis: "the result board's pads, tracks, arcs and vias joined where their copper overlaps on a shared layer (KiCad's connectivity without zone fill)".into(),
-            pour_layers,
-            components_omitted,
-            native_pairs,
-            copper,
-            rules,
-            reference: reference_route,
-            dead_pads,
-            hot_spots_near,
-            terminal: terminal_entry,
-            access: serde_json::json!({"status": "unknown", "reason": "not measured: this command runs no access probe"}),
-            cause: serde_json::json!({"status": "unknown", "reason": "not measured: this command reads the run's outputs; a cause needs a discriminating experiment"}),
-        });
-    }
+        pairs
+    });
+    // KiCad's items that are a track, an arc or a via: the group of
+    // the copper they lie on.
+    native_pairs.map(|mut pairs| {
+        let Some(id) = result.net_id(name) else {
+            return pairs;
+        };
+        let mut wanted = Vec::new();
+        for (pair_index, pair) in pairs.iter().enumerate() {
+            for (item_index, item) in pair.items.iter().enumerate() {
+                if pair.components[item_index].is_some() {
+                    continue;
+                }
+                if let Some(layer) = copper_item_layer(&item.description, &result.layers) {
+                    wanted.push(((pair_index, item_index), (item.at, layer)));
+                }
+            }
+        }
+        let probes: Vec<([f64; 2], Option<usize>)> =
+            wanted.iter().map(|(_, probe)| *probe).collect();
+        let found = result.item_components(id, &probes);
+        for (((pair_index, item_index), _), group) in wanted.into_iter().zip(found) {
+            pairs[pair_index].components[item_index] = group;
+        }
+        pairs
+    })
+}
 
-    let tally = drc.as_ref().map(crate::verdict::tally_drc);
-    let native = match (&drc, &tally) {
+/// The reference board's route of the net: its groups and whether they
+/// join.
+fn reference_route(
+    name: &str,
+    reference: &LoweredBoard,
+    reference_placement: Option<&KiCadReferencePlacement>,
+) -> KiCadReferenceRoute {
+    let copper = net_copper(&reference.pcb, &reference.names, name);
+    let (groups, pour_layers) = reference.net_id(name).map_or((0, Vec::new()), |id| {
+        (reference.components(id).len(), reference.pour_layers(id))
+    });
+    let (connected, connected_reason) = if groups <= 1 {
+        (Some(true), None)
+    } else if pour_layers.is_empty() {
+        (Some(false), None)
+    } else {
+        (
+            None,
+            Some(format!(
+                "its tracks, arcs and vias leave {groups} groups; its zone on {} may join them (zone fill is not modelled here: KiCad's DRC of the reference decides)",
+                pour_layers.join(", ")
+            )),
+        )
+    };
+    KiCadReferenceRoute {
+        placement: reference_placement
+            .map_or_else(String::new, |placement| placement.placement.clone()),
+        connected,
+        connected_reason,
+        components: groups,
+        pour_layers,
+        copper,
+    }
+}
+
+/// The router's hot spots within reach of a pad of the net, at most five.
+fn hot_spots_near(
+    hot_spots: &[serde_json::Value],
+    components: &[KiCadInspectedComponent],
+) -> Vec<serde_json::Value> {
+    let pads: Vec<&KiCadInspectedPad> = components
+        .iter()
+        .flat_map(|component| &component.pads)
+        .collect();
+    hot_spots
+        .iter()
+        .enumerate()
+        .filter_map(|(index, spot)| {
+            let at = [spot["at"][0].as_f64()?, spot["at"][1].as_f64()?];
+            let nearest = pads
+                .iter()
+                .map(|pad| distance_squared(pad.at, at).sqrt())
+                .fold(f64::INFINITY, f64::min);
+            (nearest <= HOT_SPOT_REACH_MM).then(|| {
+                serde_json::json!({
+                    "hot_spot": index,
+                    "at": spot["at"],
+                    "layer": spot["layer"],
+                    "history": spot["history"],
+                    "nearest_pad_mm": round(nearest),
+                    "conflicted_nets": spot["conflicted_nets"],
+                })
+            })
+        })
+        .take(5)
+        .collect()
+}
+
+/// A net with a zone: keeps only the groups KiCad's pairs name and the
+/// terminal's (its fill joins the others or not, unmodelled here), and
+/// renumbers the pairs' groups. Returns how many groups it dropped.
+fn omit_unnamed_groups(
+    components: &mut Vec<KiCadInspectedComponent>,
+    native_pairs: &mut Option<Vec<KiCadNativePair>>,
+    terminal: &Option<NamedTerminal>,
+) -> usize {
+    let keep: Vec<bool> = (0..components.len())
+        .map(|index| {
+            native_pairs
+                .iter()
+                .flatten()
+                .any(|pair| pair.components.contains(&Some(index)))
+                || terminal.as_ref().is_some_and(|(reference, number, _)| {
+                    components[index]
+                        .pads
+                        .iter()
+                        .any(|pad| &pad.reference == reference && &pad.number == number)
+                })
+        })
+        .collect();
+    let mut renumbered = vec![None; components.len()];
+    let mut next = 0;
+    for (index, kept) in keep.iter().enumerate() {
+        if *kept {
+            renumbered[index] = Some(next);
+            next += 1;
+        }
+    }
+    for pair in native_pairs.iter_mut().flatten() {
+        for component in &mut pair.components {
+            *component = component.and_then(|index| renumbered[index]);
+        }
+    }
+    let omitted = components.len() - next;
+    let mut index = 0;
+    components.retain(|_| {
+        index += 1;
+        keep[index - 1]
+    });
+    omitted
+}
+
+/// The group holding the `--terminal` pad.
+fn terminal_entry(
+    terminal: &Option<NamedTerminal>,
+    components: &[KiCadInspectedComponent],
+) -> Option<serde_json::Value> {
+    terminal.as_ref().map(|(reference, number, _)| {
+        let component = components.iter().position(|component| {
+            component
+                .pads
+                .iter()
+                .any(|pad| &pad.reference == reference && &pad.number == number)
+        });
+        serde_json::json!({
+            "ref": reference,
+            "number": number,
+            "component": component,
+            "in_largest": component.map(|index| components[index].largest),
+        })
+    })
+}
+
+/// The diagnosis of one net; takes the net's KiCad pairs out of
+/// `native_by_net`.
+fn diagnose_net(
+    name: &str,
+    inputs: &NetInputs,
+    result: &mut LoweredBoard,
+    native_by_net: &mut BTreeMap<String, Vec<KiCadNativePair>>,
+) -> KiCadNetDiagnosis {
+    let run = inputs.run;
+    let router = inputs.router_nets.get(name);
+    let status = router
+        .and_then(|net| net["status"].as_str())
+        .unwrap_or("not in board-router.json")
+        .to_string();
+    let (components, pour_layers) = match result.net_id(name) {
+        Some(id) => (result.components(id), result.pour_layers(id)),
+        None => (Vec::new(), Vec::new()),
+    };
+    let native_pairs = net_native_pairs(name, inputs, result, &components, native_by_net);
+    let counts = KiCadNetCounts {
+        router_terminals: router
+            .and_then(|net| net["terminals"].as_u64())
+            .map(|n| n as usize),
+        router_unconnected_terminals: router
+            .and_then(|net| net["unconnected_terminals"].as_u64())
+            .map(|n| n as usize),
+        components: components.len(),
+        missing_links: components.len().saturating_sub(1),
+        native_pairs: native_pairs.as_ref().map(Vec::len),
+        explanation: String::new(),
+    };
+    let counts = KiCadNetCounts {
+        explanation: explanation(&counts, !pour_layers.is_empty(), inputs.native_capped),
+        ..counts
+    };
+    let copper = net_copper(&result.pcb, &result.names, name);
+    let rules = inspected_rules(run.config.as_ref(), name, inputs.overrides, &copper);
+    let reference_route = run
+        .reference
+        .as_ref()
+        .map(|reference| reference_route(name, reference, run.reference_placement.as_ref()));
+    let hot_spots_near = hot_spots_near(inputs.hot_spots, &components);
+    let dead_pads: Vec<serde_json::Value> = run.report["diagnostics"]["dead_pads"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|pad| pad["net"].as_str() == Some(name))
+        .cloned()
+        .collect();
+    let mut components = components;
+    let mut native_pairs = native_pairs;
+    let components_omitted = if pour_layers.is_empty() {
+        0
+    } else {
+        omit_unnamed_groups(&mut components, &mut native_pairs, inputs.terminal)
+    };
+    let terminal_entry = terminal_entry(inputs.terminal, &components);
+    KiCadNetDiagnosis {
+        net: name.to_string(),
+        status,
+        counts,
+        components,
+        components_basis: "the result board's pads, tracks, arcs and vias joined where their copper overlaps on a shared layer (KiCad's connectivity without zone fill)".into(),
+        pour_layers,
+        components_omitted,
+        native_pairs,
+        copper,
+        rules,
+        reference: reference_route,
+        dead_pads,
+        hot_spots_near,
+        terminal: terminal_entry,
+        access: serde_json::json!({"status": "unknown", "reason": "not measured: this command runs no access probe"}),
+        cause: serde_json::json!({"status": "unknown", "reason": "not measured: this command reads the run's outputs; a cause needs a discriminating experiment"}),
+    }
+}
+
+/// The checks' `native`: KiCad's own check of the result board.
+fn native_check_block(
+    drc: Option<&serde_json::Value>,
+    drc_path: Option<&Path>,
+    router_nets: &BTreeMap<String, serde_json::Value>,
+    native_by_net: &BTreeMap<String, Vec<KiCadNativePair>>,
+    native_unattributed: usize,
+    native_capped: bool,
+) -> serde_json::Value {
+    let tally = drc.map(crate::verdict::tally_drc);
+    match (drc, &tally) {
         (Some(_), Some(tally)) => serde_json::json!({
             "status": if tally.errors.is_empty() && tally.unconnected == 0 { "passed" } else { "failed" },
-            "report": drc_path.as_ref().map(|path| path.display().to_string()),
+            "report": drc_path.map(|path| path.display().to_string()),
             "unconnected_pairs": tally.unconnected,
             "unconnected_pairs_without_net": native_unattributed,
             "capped": native_capped,
@@ -1445,14 +1572,19 @@ pub fn inspect_routing_run(inspection: &KiCadRunInspection) -> Result<KiCadRunDi
             "status": "not_run",
             "reason": "the run has no drc.json (KiCad's check was skipped); --native-check runs one",
         }),
-    };
-    let open_nets = router_nets
-        .values()
-        .filter(|net| {
-            net["status"].as_str() != Some("routed") && net["terminals"].as_u64().unwrap_or(0) >= 2
-        })
-        .count();
-    let checks = serde_json::json!({
+    }
+}
+
+/// The report's `checks`: the router's counts, KiCad's (`native`), and
+/// this command's groups.
+fn run_checks(
+    report: &serde_json::Value,
+    router_nets: &BTreeMap<String, serde_json::Value>,
+    native: serde_json::Value,
+    nets: &[KiCadNetDiagnosis],
+) -> serde_json::Value {
+    let open_nets = router_nets.values().filter(|net| is_open_net(net)).count();
+    serde_json::json!({
         "router": {
             "routable_connections": report["routable_connections"],
             "routed_connections": report["routed_connections"],
@@ -1467,8 +1599,12 @@ pub fn inspect_routing_run(inspection: &KiCadRunInspection) -> Result<KiCadRunDi
             "missing_links": nets.iter().map(|net| net.counts.missing_links).sum::<usize>(),
             "counted": "this command, on the result board's copper without pours: groups of pads per net inspected and the links missing between them",
         },
-    });
-    let attempts = if report["attempts"].is_array() {
+    })
+}
+
+/// The report's `attempts`: the ladder's ledger, or why there is none.
+fn run_attempts(report: &serde_json::Value) -> serde_json::Value {
+    if report["attempts"].is_array() {
         serde_json::json!({
             "ledger": report["attempts"],
             "selected": report["attempts"]
@@ -1491,33 +1627,81 @@ pub fn inspect_routing_run(inspection: &KiCadRunInspection) -> Result<KiCadRunDi
             "skipped": report["skipped"],
             "cut": report["cut"],
         })
-    };
+    }
+}
+
+/// The report's `run`: which files it read.
+fn run_block(inspection: &KiCadRunInspection, inputs: &RunInputs) -> serde_json::Value {
+    let directory = &inputs.files.directory;
+    let board_id = &inputs.files.board_id;
     let path_text = |path: &Path| {
         std::path::absolute(path)
             .unwrap_or_else(|_| path.to_path_buf())
             .display()
             .to_string()
     };
-    let run = serde_json::json!({
+    serde_json::json!({
         "directory": path_text(&inspection.run),
         "board_id": board_id,
         "board": path_text(&directory.join(format!("{board_id}.kicad_pcb"))),
         "board_sha256": file_sha256(&directory.join(format!("{board_id}.kicad_pcb"))).ok(),
         "report": path_text(&directory.join("board-router.json")),
-        "drc": drc_path.as_deref().map(path_text),
+        "drc": inputs.drc_path.as_deref().map(path_text),
         "reference": inspection.reference.as_deref().map(path_text),
-        "verdict": verdict.as_ref().map(|verdict| serde_json::json!({
+        "verdict": inputs.verdict.as_ref().map(|verdict| serde_json::json!({
             "status": verdict["status"],
             "reason": verdict["reason"],
             "kicad_checked": verdict["kicad_checked"],
         })),
+    })
+}
+
+/// The diagnosis of a run (`inspect-routing-run`).
+pub fn inspect_routing_run(inspection: &KiCadRunInspection) -> Result<KiCadRunDiagnosis, String> {
+    let (mut run, mut result) = read_run_inputs(inspection)?;
+    let router_nets = router_nets_of(&run.report);
+    let terminal = named_terminal(inspection, &result)?;
+    let selected = selected_nets(inspection, &result, &router_nets, &terminal)?;
+    let (mut native_by_net, native_unattributed) =
+        native_pairs_by_net(run.drc.as_ref(), &result.names);
+    let native_capped = run.drc.as_ref().is_some_and(|drc| {
+        drc["unconnected_items"].as_array().map_or(0, Vec::len) >= KICAD_REPORT_CAP
     });
+    let overrides: Vec<serde_json::Value> = run.report["rules"]["overrides"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let hot_spots = linked_hot_spots(&run.report, &result);
+    let nets: Vec<KiCadNetDiagnosis> = {
+        let inputs = NetInputs {
+            run: &run,
+            router_nets: &router_nets,
+            terminal: &terminal,
+            overrides: &overrides,
+            hot_spots: &hot_spots,
+            native_capped,
+        };
+        selected
+            .iter()
+            .map(|name| diagnose_net(name, &inputs, &mut result, &mut native_by_net))
+            .collect()
+    };
+    let native = native_check_block(
+        run.drc.as_ref(),
+        run.drc_path.as_deref(),
+        &router_nets,
+        &native_by_net,
+        native_unattributed,
+        native_capped,
+    );
+    let checks = run_checks(&run.report, &router_nets, native, &nets);
+    let reference_placement = run.reference_placement.take();
     Ok(KiCadRunDiagnosis {
         schema_version: 1,
         units: "mm".into(),
-        run,
+        run: run_block(inspection, &run),
         checks,
-        attempts,
+        attempts: run_attempts(&run.report),
         hot_spots,
         reference: reference_placement,
         nets,
@@ -1769,5 +1953,50 @@ mod tests {
             Some(None)
         );
         assert_eq!(copper_item_layer("Pad 1 [SDA] of U1 on F.Cu", &table), None);
+    }
+
+    fn group(reference: &str, number: &str) -> KiCadInspectedComponent {
+        KiCadInspectedComponent {
+            pads: vec![KiCadInspectedPad {
+                reference: reference.into(),
+                number: number.into(),
+                uuid: None,
+                at: [0.0, 0.0],
+                layers: Vec::new(),
+            }],
+            other: Vec::new(),
+            largest: false,
+        }
+    }
+
+    /// A net with a zone keeps the groups KiCad's pairs name and the
+    /// terminal's, and the pairs' indices follow the groups left.
+    #[test]
+    fn a_zone_net_keeps_the_named_groups_and_renumbers_the_pairs() {
+        let mut components = vec![group("U1", "1"), group("U2", "1"), group("U3", "1")];
+        let pair = |groups: Vec<Option<usize>>| KiCadNativePair {
+            items: Vec::new(),
+            components: groups,
+        };
+        let mut pairs = Some(vec![pair(vec![Some(2), None])]);
+        let terminal = Some(("U1".to_string(), "1".to_string(), "A".to_string()));
+        let omitted = omit_unnamed_groups(&mut components, &mut pairs, &terminal);
+        assert_eq!(omitted, 1);
+        let refs: Vec<&str> = components
+            .iter()
+            .map(|component| component.pads[0].reference.as_str())
+            .collect();
+        assert_eq!(refs, ["U1", "U3"]);
+        assert_eq!(pairs.unwrap()[0].components, [Some(1), None]);
+        let entry = terminal_entry(&terminal, &components).unwrap();
+        assert_eq!(entry["component"], 0);
+    }
+
+    #[test]
+    fn an_open_net_is_unrouted_with_two_terminals_or_more() {
+        let net = |status: &str, terminals: u64| serde_json::json!({"status": status, "terminals": terminals});
+        assert!(is_open_net(&net("partial", 2)));
+        assert!(!is_open_net(&net("routed", 5)));
+        assert!(!is_open_net(&net("partial", 1)));
     }
 }

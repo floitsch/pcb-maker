@@ -758,22 +758,14 @@ fn release_gate(
     }
 }
 
-/// The release of `<directory>/<board_id>.kicad_pcb` into `output` (which
-/// exists): checks, the gate, then the exports (see the module's
-/// comment). Returns the manifest, written as `fab-manifest.json`; with
-/// `released: false` when findings blocked it.
-pub fn fab_kicad_board(
-    directory: &Path,
-    board_id: &str,
-    output: &Path,
+/// The layers to plot: `--layers` (each one the board defines), else the
+/// profile's.
+fn fab_layers(
+    pcb: &Expr,
+    defined: &[String],
     options: &KiCadFabOptions,
-) -> Result<KiCadFabRelease, String> {
-    let board = directory.join(format!("{board_id}.kicad_pcb"));
-    let text = fs::read_to_string(&board)
-        .map_err(|error| format!("failed to read {}: {error}", board.display()))?;
-    let pcb = parse(&text).map_err(input_error)?;
-    let defined = defined_layers(&pcb);
-    let layers = match &options.layers {
+) -> Result<Vec<String>, String> {
+    Ok(match &options.layers {
         Some(layers) => {
             let unknown: Vec<&String> = layers
                 .iter()
@@ -788,14 +780,26 @@ pub fn fab_kicad_board(
             layers.clone()
         }
         // Only layers the board defines: kicad-cli plots no other.
-        None => release_layers(&pcb, options.profile)?
+        None => release_layers(pcb, options.profile)?
             .into_iter()
             .filter(|layer| defined.is_empty() || defined.contains(layer))
             .collect(),
-    };
+    })
+}
+
+/// The manifest before any check: the board's identity, stackup and
+/// controlled impedance; nothing released yet.
+fn starting_manifest(
+    directory: &Path,
+    board_id: &str,
+    board: &Path,
+    pcb: &Expr,
+    layers: Vec<String>,
+    options: &KiCadFabOptions,
+) -> KiCadFabRelease {
     let program = crate::native_report::kicad_cli();
     let program = program.as_os_str();
-    let mut manifest = KiCadFabRelease {
+    KiCadFabRelease {
         schema_version: 1,
         board_id: board_id.into(),
         profile: options.profile,
@@ -803,7 +807,7 @@ pub fn fab_kicad_board(
         released: false,
         drc: KiCadFabDrc::default(),
         erc: None,
-        layers: layers.clone(),
+        layers,
         bom_source: None,
         lcsc_field: None,
         without_lcsc: Vec::new(),
@@ -812,10 +816,10 @@ pub fn fab_kicad_board(
         files: Vec::new(),
         skipped: Vec::new(),
         findings: Vec::new(),
-        stackup: board_stackup(&pcb),
+        stackup: board_stackup(pcb),
         controlled_impedance: crate::resolve_project_rules(
             &directory.join(format!("{board_id}.kicad_pro")),
-            &board,
+            board,
         )
         .ok()
         .and_then(|config| config.project_rules)
@@ -824,81 +828,75 @@ pub fn fab_kicad_board(
             crate::class_view::controlled_impedance(&report, &nets)
         }),
         polarised_parts: Vec::new(),
-    };
-    // The checks: the board's DRC as drc-kicad-board runs it (cached,
-    // without the global libraries, zones refilled), the schematic's ERC.
-    let drc_path = output.join("drc.json");
-    let drc = kicad_drc_report(directory, board_id, &drc_path, true)?;
-    let dru = directory.join(format!("{board_id}.kicad_dru"));
-    // The input's items: with --input, the parts still where its board has
-    // them and its zones and graphics unchanged; else the board judged on
-    // its own, every footprint, zone and board graphic its own (tracks and
-    // vias never are).
-    let input = match &options.input {
-        None => crate::verdict::input_items_of(&pcb, &pcb),
+    }
+}
+
+/// The input's items: with --input, the parts still where its board has
+/// them and its zones and graphics unchanged; else the board judged on
+/// its own, every footprint, zone and board graphic its own (tracks and
+/// vias never are).
+fn release_input(
+    options: &KiCadFabOptions,
+    board_id: &str,
+    pcb: &Expr,
+) -> Result<crate::verdict::KiCadInputItems, String> {
+    Ok(match &options.input {
+        None => crate::verdict::input_items_of(pcb, pcb),
         Some(project) => {
             let path = project.join(format!("{board_id}.kicad_pcb"));
             let text = fs::read_to_string(&path).map_err(|error| {
                 input_error(format!("failed to read {}: {error}", path.display()))
             })?;
-            crate::verdict::input_items_of(&parse(&text).map_err(input_error)?, &pcb)
+            crate::verdict::input_items_of(&parse(&text).map_err(input_error)?, pcb)
         }
-    };
-    manifest.drc = release_gate(
-        &tally_drc(&drc),
-        &dru.display().to_string(),
-        Some(&input),
-        options.input.is_none(),
-    );
-    let schematic = directory.join(format!("{board_id}.kicad_sch"));
-    if schematic.is_file() {
-        let erc_path = output.join("erc.json");
-        run_kicad_report(
-            &[
-                "sch",
-                "erc",
-                "--format",
-                "json",
-                "--severity-all",
-                "--output",
-            ],
-            &erc_path,
-            &schematic,
-        )?;
-        let erc: serde_json::Value = read_json(&erc_path)?;
-        let issues = crate::native_report::erc_design_issues(&erc);
-        let all = erc["sheets"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .flat_map(|sheet| sheet["violations"].as_array().into_iter().flatten())
-            .count();
-        manifest.erc = Some(KiCadFabErc {
-            errors: issues
-                .iter()
-                .filter(|finding| finding["severity"].as_str() == Some("error"))
-                .count(),
-            warnings: issues
-                .iter()
-                .filter(|finding| finding["severity"].as_str() != Some("error"))
-                .count(),
-            library_warnings: all - issues.len(),
-            report: "erc.json".into(),
-        });
-    } else {
-        manifest
-            .skipped
-            .push("ERC, schematic netlist: no schematic beside the board".into());
-    }
-    manifest.findings = finding_lines(&drc, 20, Some(&input));
-    if !manifest.drc.clean && !options.allow_findings {
-        write_manifest(output, &mut manifest)?;
-        return Ok(manifest);
-    }
-    manifest.drc.findings_allowed = !manifest.drc.clean;
-    manifest.released = true;
+    })
+}
 
-    // Gerbers and drill files.
+/// The schematic's ERC, written as `erc.json` in `output`, summarised.
+fn schematic_erc(output: &Path, schematic: &Path) -> Result<KiCadFabErc, String> {
+    let erc_path = output.join("erc.json");
+    run_kicad_report(
+        &[
+            "sch",
+            "erc",
+            "--format",
+            "json",
+            "--severity-all",
+            "--output",
+        ],
+        &erc_path,
+        schematic,
+    )?;
+    let erc: serde_json::Value = read_json(&erc_path)?;
+    let issues = crate::native_report::erc_design_issues(&erc);
+    let all = erc["sheets"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|sheet| sheet["violations"].as_array().into_iter().flatten())
+        .count();
+    Ok(KiCadFabErc {
+        errors: issues
+            .iter()
+            .filter(|finding| finding["severity"].as_str() == Some("error"))
+            .count(),
+        warnings: issues
+            .iter()
+            .filter(|finding| finding["severity"].as_str() != Some("error"))
+            .count(),
+        library_warnings: all - issues.len(),
+        report: "erc.json".into(),
+    })
+}
+
+/// Gerbers and drill files into `output/gerbers`, and the zip of them.
+fn export_gerbers(
+    output: &Path,
+    board: &Path,
+    board_id: &str,
+    layers: &[String],
+    manifest: &mut KiCadFabRelease,
+) -> Result<(), String> {
     let gerbers = output.join("gerbers");
     fs::create_dir_all(&gerbers)
         .map_err(|error| format!("failed to create {}: {error}", gerbers.display()))?;
@@ -964,8 +962,20 @@ pub fn fab_kicad_board(
     }
     write_zip(&output.join(&zip_name), &entries)?;
     manifest.zip = Some(zip_name);
+    Ok(())
+}
 
-    // Placement: kicad-cli's position file, both sides, DNP parts out.
+/// Placement: kicad-cli's position file, both sides, DNP parts out (and
+/// JLCPCB's columns of it); notes the polarised parts. Returns the
+/// `assembly` directory.
+fn export_placement(
+    output: &Path,
+    board: &Path,
+    board_id: &str,
+    pcb: &Expr,
+    profile: KiCadFabProfile,
+    manifest: &mut KiCadFabRelease,
+) -> Result<PathBuf, String> {
     let assembly = output.join("assembly");
     fs::create_dir_all(&assembly)
         .map_err(|error| format!("failed to create {}: {error}", assembly.display()))?;
@@ -989,19 +999,31 @@ pub fn fab_kicad_board(
         "kicad-cli pcb export pos",
     )?;
     manifest.polarised_parts = polarised_parts(
-        &pcb,
+        pcb,
         &position_references(&fs::read_to_string(&positions).unwrap_or_default()),
     );
-    if options.profile == KiCadFabProfile::Jlcpcb {
+    if profile == KiCadFabProfile::Jlcpcb {
         let text = fs::read_to_string(&positions).map_err(|error| error.to_string())?;
         let cpl = assembly.join(format!("{board_id}-cpl-jlcpcb.csv"));
         fs::write(&cpl, jlcpcb_placements(&text))
             .map_err(|error| format!("failed to write {}: {error}", cpl.display()))?;
     }
+    Ok(assembly)
+}
 
-    // The bill of materials: kicad-cli's of the schematic, grouped by
-    // value, footprint and part number; else the board's footprints.
-    let board_bom = crate::fab_export::board_bom(&pcb);
+/// The bill of materials into `assembly`: kicad-cli's of the schematic,
+/// grouped by value, footprint and part number; else the board's
+/// footprints.
+fn export_bom(
+    directory: &Path,
+    assembly: &Path,
+    board_id: &str,
+    pcb: &Expr,
+    schematic: &Path,
+    profile: KiCadFabProfile,
+    manifest: &mut KiCadFabRelease,
+) -> Result<(), String> {
+    let board_bom = crate::fab_export::board_bom(pcb);
     manifest.without_lcsc = board_bom.without_lcsc.clone();
     manifest.without_lcsc_lines = board_bom.lines_without_lcsc;
     let bom = assembly.join(format!("{board_id}-bom.csv"));
@@ -1035,7 +1057,7 @@ pub fn fab_kicad_board(
             ],
             "kicad-cli sch export bom",
         )?;
-        if options.profile == KiCadFabProfile::Jlcpcb {
+        if profile == KiCadFabProfile::Jlcpcb {
             // JLCPCB's columns, each designator listed (no ranges), DNP
             // parts out.
             let jlcpcb = assembly.join(format!("{board_id}-bom-jlcpcb.csv"));
@@ -1076,9 +1098,17 @@ pub fn fab_kicad_board(
             .map_err(|error| format!("failed to write {}: {error}", bom.display()))?;
         manifest.bom_source = Some("board".into());
     }
+    Ok(())
+}
 
-    // Netlists: the board's IPC-D-356 (the fab's electrical test), the
-    // schematic's KiCad netlist.
+/// Netlists: the board's IPC-D-356 (the fab's electrical test), the
+/// schematic's KiCad netlist.
+fn export_netlists(
+    output: &Path,
+    board: &Path,
+    board_id: &str,
+    schematic: &Path,
+) -> Result<(), String> {
     let netlists = output.join("netlist");
     fs::create_dir_all(&netlists)
         .map_err(|error| format!("failed to create {}: {error}", netlists.display()))?;
@@ -1108,9 +1138,18 @@ pub fn fab_kicad_board(
             "kicad-cli sch export netlist",
         )?;
     }
+    Ok(())
+}
 
-    // The 3D model: STEP with the parts' models where KiCad finds them; a
-    // failure is noted, not fatal.
+/// The 3D model: STEP with the parts' models where KiCad finds them; a
+/// failure is noted, not fatal.
+fn export_step(
+    output: &Path,
+    board: &Path,
+    board_id: &str,
+    options: &KiCadFabOptions,
+    manifest: &mut KiCadFabRelease,
+) {
     if options.no_step {
         manifest.skipped.push("STEP: --no-step".into());
     } else {
@@ -1136,6 +1175,74 @@ pub fn fab_kicad_board(
             ));
         }
     }
+}
+
+/// The release of `<directory>/<board_id>.kicad_pcb` into `output` (which
+/// exists): checks, the gate, then the exports (see the module's
+/// comment). Returns the manifest, written as `fab-manifest.json`; with
+/// `released: false` when findings blocked it.
+pub fn fab_kicad_board(
+    directory: &Path,
+    board_id: &str,
+    output: &Path,
+    options: &KiCadFabOptions,
+) -> Result<KiCadFabRelease, String> {
+    let board = directory.join(format!("{board_id}.kicad_pcb"));
+    let text = fs::read_to_string(&board)
+        .map_err(|error| format!("failed to read {}: {error}", board.display()))?;
+    let pcb = parse(&text).map_err(input_error)?;
+    let defined = defined_layers(&pcb);
+    let layers = fab_layers(&pcb, &defined, options)?;
+    let mut manifest =
+        starting_manifest(directory, board_id, &board, &pcb, layers.clone(), options);
+    // The checks: the board's DRC as drc-kicad-board runs it (cached,
+    // without the global libraries, zones refilled), the schematic's ERC.
+    let drc_path = output.join("drc.json");
+    let drc = kicad_drc_report(directory, board_id, &drc_path, true)?;
+    let dru = directory.join(format!("{board_id}.kicad_dru"));
+    let input = release_input(options, board_id, &pcb)?;
+    manifest.drc = release_gate(
+        &tally_drc(&drc),
+        &dru.display().to_string(),
+        Some(&input),
+        options.input.is_none(),
+    );
+    let schematic = directory.join(format!("{board_id}.kicad_sch"));
+    if schematic.is_file() {
+        manifest.erc = Some(schematic_erc(output, &schematic)?);
+    } else {
+        manifest
+            .skipped
+            .push("ERC, schematic netlist: no schematic beside the board".into());
+    }
+    manifest.findings = finding_lines(&drc, 20, Some(&input));
+    if !manifest.drc.clean && !options.allow_findings {
+        write_manifest(output, &mut manifest)?;
+        return Ok(manifest);
+    }
+    manifest.drc.findings_allowed = !manifest.drc.clean;
+    manifest.released = true;
+
+    export_gerbers(output, &board, board_id, &layers, &mut manifest)?;
+    let assembly = export_placement(
+        output,
+        &board,
+        board_id,
+        &pcb,
+        options.profile,
+        &mut manifest,
+    )?;
+    export_bom(
+        directory,
+        &assembly,
+        board_id,
+        &pcb,
+        &schematic,
+        options.profile,
+        &mut manifest,
+    )?;
+    export_netlists(output, &board, board_id, &schematic)?;
+    export_step(output, &board, board_id, options, &mut manifest);
     write_manifest(output, &mut manifest)?;
     Ok(manifest)
 }
@@ -1866,5 +1973,25 @@ mod tests {
             layer("B.Cu", "copper", 0.035),
         ];
         assert_eq!(copper_weight_action(&stackup), None);
+    }
+
+    #[test]
+    fn layers_the_board_does_not_define_are_refused() {
+        let pcb = parse(
+            "(kicad_pcb (layers (0 \"F.Cu\" signal) (31 \"B.Cu\" signal) (44 \"Edge.Cuts\" user)))",
+        )
+        .unwrap();
+        let defined = defined_layers(&pcb);
+        let options = KiCadFabOptions {
+            layers: Some(vec!["F.Cu".into(), "In1.Cu".into()]),
+            ..Default::default()
+        };
+        let error = fab_layers(&pcb, &defined, &options).unwrap_err();
+        assert!(error.contains("\"In1.Cu\""), "{error}");
+        let options = KiCadFabOptions {
+            layers: Some(vec!["F.Cu".into()]),
+            ..Default::default()
+        };
+        assert_eq!(fab_layers(&pcb, &defined, &options).unwrap(), ["F.Cu"]);
     }
 }
