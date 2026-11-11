@@ -58,7 +58,7 @@ In the order the code runs, for one board:
 2. **Panels and cost terms** (`place_kicad_board`): detect copies or
    sub-boards; attach escape demand and ratsnest crossings.
 3. **Seeds** (`race_seeds`, `board_placer/seed_race.rs`): place
-   `placement_seeds` seeds in a pool, each by `pcb_placer::place` (plain),
+   `tuning.placement_seeds` seeds in a pool, each by `pcb_placer::place` (plain),
    `pcb_placer::skeleton::place_skeleton` (the race over skeletons) or the
    panel placers (`panel::place_copies`, `sub_boards::place_sub_boards`).
 4. **Inside `place`** (`pcb-placer/src/lib.rs`; its stages in `place/`: `start.rs`, `levels.rs`, `finish.rs`; the global placement's in `global/`, the anneal's in `anneal/`): fit the halos, start from
@@ -104,7 +104,7 @@ parts held when read (two saves of one design once placed 103 of 130
 parts elsewhere). So every command that places or routes reads the board
 through `canonical_order::parse_board` (footprints by reference, their
 items sorted); the orientation search starts every movable part at the
-first of its sorted angle options (`orientation_search`, on;
+first of its sorted angle options (`tuning.orientation_search`, on;
 `orient::canonical_start`), so an import at 0 degrees and the designer's
 angles place alike; and which seeds run and are kept depends on their work
 alone (`race_seeds`: seed k is kept while the seeds before it used less
@@ -132,39 +132,39 @@ change the board before it is lowered.
   both sides (a hot-swap socket) with that courtyard too. The **tight
   body** (fabrication outline and pads) is used only where the project
   lets courtyards overlap.
-- **Angles.** A movable part may take any quarter turn (`keep_rotation`
+- **Angles.** A movable part may take any quarter turn (`tuning.keep_rotation`
   false) unless a `rotation` constraint restricts it. Only `front` and
   `back` constraints change a part's side.
 - **Held parts.** A part is held when it is locked, has no net, or sits
   where the designer put it on purpose: its body leaves the outline, it
-  reaches within `edge_keep_mm` (3 mm) of a rule area that forbids
+  reaches within `tuning.edge_keep_mm` (3 mm) of a rule area that forbids
   footprints (an antenna module at its keepout), or it is a through-hole
   part with at least four pins (a connector, a header) within
-  `edge_keep_mm` of the outline. `fixed` and `fixed_patterns` add parts,
+  `tuning.edge_keep_mm` of the outline. `fixed` and `fixed_patterns` add parts,
   `free` releases them. The placer, the keepout constraints and the free
   dimension share one decision (`placement_constraints::held_parts`).
 - **Halos.** Each part keeps `ceil(pins / pins_per_halo_track)` tracks of
-  `track_pitch_mm` free around its body (8 pins a track, 0.65 mm), at most
-  `maximum_halo_mm` (4 mm), times `halo_scale` (1);
-  `halo_overrides_mm` replaces the rule per reference. Halos count as body
+  `tuning.track_pitch_mm` free around its body (8 pins a track, 0.65 mm), at most
+  `tuning.maximum_halo_mm` (4 mm), times `tuning.halo_scale` (1);
+  `tuning.halo_overrides_mm` replaces the rule per reference. Halos count as body
   for spacing and density. A PCB routes in the plane it places in, so the
   room for a part's escapes has to be reserved at placement time.
-- **Spacing and grid.** Bodies keep `spacing_mm` (0.5) apart, never less
-  than the largest copper clearance, on a `grid_mm` (0.635) grid,
-  `edge_margin_mm` (0.5) from the outline.
+- **Spacing and grid.** Bodies keep `tuning.spacing_mm` (0.5) apart, never less
+  than the largest copper clearance, on a `tuning.grid_mm` (0.635) grid,
+  `tuning.edge_margin_mm` (0.5) from the outline.
 - **Obstacles.** Cutouts keep copper an edge margin away; bodies may reach
   over them (a connector's pegs). A footprint's own Edge.Cuts loops (a key
   switch's peg holes) move with it (`Component::slots`). Rule areas that
   forbid footprints are obstacles, those forbidding only pads keep copper
   out. Board copper graphics are obstacles; a footprint's own copper and
-  mask graphics are part of its body (`mask_openings`, on: an RF module's
+  mask graphics are part of its body (`tuning.mask_openings`, on: an RF module's
   mask opening once took parts whose pads KiCad flagged as mask bridges).
 - **Footprints without a courtyard.** Two such parts keep the boxes of
   their pads and outlines apart (`Component::courtless`) unless one is at
   most a quarter of the other (a diode under its key switch); against a
   part with a courtyard they block with their pads. Without this, rows of
   courtless key switches interleaved, pads in each other's peg holes.
-  `solid_pin_rows` (on) makes a courtless QFP, SOIC or header block with
+  `tuning.solid_pin_rows` (on) makes a courtless QFP, SOIC or header block with
   its whole pad box.
 
 ### Net weights
@@ -196,7 +196,7 @@ The polish later moves only the parts' own reference and value fields.
 Where the router will put a via in an enclosed BGA pad (the designer's
 vias in its pads, or the router's `via_in_pad`), the via goes through the
 board, and parts on the other side keep off it as off a through-hole pin
-(`via_in_pad_far_side`, on; `far_side_of_vias_in_pads` in `lower.rs`).
+(`tuning.via_in_pad_far_side`, on; `far_side_of_vias_in_pads` in `lower.rs`).
 The same holds for the via sites of a prepared BGA fan-out
 (`far_side_of_fanouts`). A board without such a footprint lowers as
 without the setting.
@@ -306,7 +306,7 @@ the whitespace between them.
 | field | default | meaning |
 | --- | --- | --- |
 | `bins` | 64 | density grid per side |
-| `whitespace_fill` | 0 (a placer.json key) | share of whitespace taken by fillers; 0 spreads the parts, so the spare room lies between them (a 0.6 fill left 20 open on a board where 0 left 11) |
+| `tuning.whitespace_fill` | 0 (a placer.json key) | share of whitespace taken by fillers; 0 spreads the parts, so the spare room lies between them (a 0.6 fill left 20 open on a board where 0 left 11) |
 | `stop_overflow` | 0.04 | stop once the overflow is below this (after 20 iterations) |
 | `max_iterations` | 1500 | cap |
 | `stall_iterations` | 0 (100 under the skeleton race) | stop when the overflow has not fallen below `stall_factor` (0.98) of its least for this many iterations |
@@ -356,7 +356,7 @@ bank's parts are ordinary parts.
 `pcb_placer::place` (`lib.rs`) first fits the halos (`fit_halos`): they
 shrink in eighths, the small parts' first, then those of parts with at
 least `MANY_PINS` (10) pins, until each side's movable bodies, halos and
-spacing take at most `maximum_utilization` (0.6) of the area its held
+spacing take at most `tuning.maximum_utilization` (0.6) of the area its held
 parts leave free. A crowded board cannot afford full halos, and the
 many-pin parts' escapes need the room most. After the canonical angles and
 the global placement it walks the levels from `Config::first_level` until
@@ -367,11 +367,11 @@ The relaxation levels, loosest comfort first (`relaxation_levels`):
 
 | | halos (many-pin / other) | spacing | grid | other |
 | --- | --- | --- | --- | --- |
-| 0 | 1 / 1 | full | `grid_mm` | |
-| 1 | 0.5 / 0.5 | full | `grid_mm` | |
-| 2 | 0.5 / 0 | full | `grid_mm` | |
-| 3 | 0 / 0 | full | `grid_mm` | |
-| 4 | 0 / 0 | copper clearance | `grid_mm` | |
+| 0 | 1 / 1 | full | `tuning.grid_mm` | |
+| 1 | 0.5 / 0.5 | full | `tuning.grid_mm` | |
+| 2 | 0.5 / 0 | full | `tuning.grid_mm` | |
+| 3 | 0 / 0 | full | `tuning.grid_mm` | |
+| 4 | 0 / 0 | copper clearance | `tuning.grid_mm` | |
 | 5 | 0 / 0 | copper clearance | 0.1 mm | |
 | then | | | 0.1 mm | bodies closer to the edge, as far as their copper allows (if any part has an inset) |
 | then | | | 0.1 mm | tight bodies (where the project lets courtyards overlap) |
@@ -477,7 +477,7 @@ the full protocol is pending.
 
 ### Bus-group moves
 
-`bus_groups` (off; `groups.rs`) moves the units a designer places as one:
+`tuning.bus_groups` (off; `groups.rs`) moves the units a designer places as one:
 **banks** (parts of one footprint sharing at least `min_shared` small bus
 nets) and **clusters** (a part with its passives). After the global
 placement each bank takes its best order and arrangement (`arrange`), and
@@ -496,7 +496,7 @@ refinement, which then optimised wirelength only).
 
 ### Escape demand
 
-`escape_demand` (on; `pcb-placer/src/escape.rs`, `escape_fact` in
+`tuning.escape_demand` (on; `pcb-placer/src/escape.rs`, `escape_fact` in
 `board_placer/config.rs`). A pad's net leaves its body through the side
 facing the net's nearest pad on another part; a part's demand on a side is
 the nets leaving there. Two facing bodies form a channel holding the gap
@@ -518,7 +518,7 @@ unconnected fell 7 %; the guard recovered the fixed-heavy boards it lost
 
 ### Ratsnest crossings
 
-`ratsnest_crossings` (on; `pcb-placer/src/crossings.rs`, `crossing_nets`
+`tuning.ratsnest_crossings` (on; `pcb-placer/src/crossings.rs`, `crossing_nets`
 in `board_placer/config.rs`). Per counted net (two pins or more, not
 carried by a pour) the minimum spanning tree of its pins; the cost is the
 number of pairs of tree lines of different nets that cross. On a board of
@@ -541,9 +541,9 @@ cost several times the anneal and left overlaps the legaliser undid.
 
 ## The seeds and the placer's pick
 
-`place_kicad_board` runs `placement_seeds` seeds (3 by default; the layout
-asks for `congestion_candidates`, 16, when it pre-ranks). Seed k uses
-global seed `seed + k` and anneal seed `7 + k`. The seeds are sorted by the
+`place_kicad_board` runs `tuning.placement_seeds` seeds (3 by default; the layout
+asks for `tuning.congestion_candidates`, 16, when it pre-ranks). Seed k uses
+global seed `tuning.seed + k` and anneal seed `7 + k`. The seeds are sorted by the
 placer's key, a tie to the earlier seed:
 
 1. unplaced plus illegal parts;
@@ -614,7 +614,7 @@ seeds, the race kept those, and the board lost its strict pass; from about
 
 All on by default, and no change on a board without pieces or copies:
 `keep_on_pieces` keeps the parts a net joins to held parts on one outline
-piece on that piece; `keep_copies` gives each tabbed copy's parts a region
+piece on that piece; `tuning.keep_copies` gives each tabbed copy's parts a region
 between the copies' held parts (`keep_copies_apart` in `lower.rs`);
 `panel_copies` and `sub_boards` follow.
 
@@ -654,14 +654,14 @@ route). The layout (`layout_kicad_board`, `board_layout.rs`) races:
 
 1. **Pool**: the kept placement and the other legal seeds that miss no
    more constraints, duplicates removed.
-2. **Pre-ranking** (`congestion_score` `"rudy"`, with one router seed and
+2. **Pre-ranking** (`tuning.congestion_score` `"rudy"`, with one router seed and
    no pin swaps; `pre_ranks`, `congestion_rank.rs`): RUDY, each net's
    spanning-tree length times its track pitch spread over its box, summed
    per 16 x 16-node router tile above a quarter of the tile's free
    capacity. With `rank_seeds` the order sums the RUDY and crossings ranks;
    placements at the courtyard level or on marks go last. `"none"` races
    plain seeds.
-3. **Probes**: the best `congestion_probes` (3) are routed side by side
+3. **Probes**: the best `tuning.congestion_probes` (3) are routed side by side
    for the router's `probe_seconds` (75 s of work), all charged to the
    clock; the kept placement's probe starts its first route. To leave the
    final route `RACE_MIN_FINAL_SHARE` (45 %) of the budget, every probe is
@@ -679,7 +679,7 @@ probes past 40 % of the budget, uncharged, cost a board 43 connections.
 
 ### The race ranks its probes by the ripped count
 
-`race_count` (`"ripped"`, the default; `"unfinished"`): after its
+`tuning.race_count` (`"ripped"`, the default; `"unfinished"`): after its
 negotiation, each probe's router strips its nets in conflict of their
 conflicted branches (the hard repair's rip-up without its searches,
 `Router::rip_up_standing`) and counts the board's open terminals; the
@@ -691,7 +691,7 @@ conflicted branches held once ripped, which ranks placements far better
 
 ### The race's route probe
 
-`race_probe` (layout option, off; `{}` for `seeds` 3, `share` 0.08) gives
+`tuning.race_probe` (layout option, off; `{}` for `seeds` 3, `share` 0.08) gives
 each probe `share` of `total_seconds` instead of `probe_seconds`, never
 drops one, and ranks by the probe's open terminals, then unfinished nets,
 then nets in conflict. With `repair` each probe is a whole first route.
@@ -820,13 +820,13 @@ One line each: what it was and why it failed. Code for removed switches is
 in git history. The switches still in the code that stay off (bus groups,
 `decoupling_near`, pair rows, length minima, pad exits, the race's route
 probe) say why in their sections above; so do the density target, the
-greedy legaliser and `whitespace_fill`.
+greedy legaliser and `tuning.whitespace_fill`.
 
 Global placement and start:
 
 - `routing_demand` (October): each net's wire area as charge over its box;
   no change within the seed noise.
-- Crossings in the global placement (`ratsnest_crossings.global`,
+- Crossings in the global placement (`tuning.ratsnest_crossings.global`,
   October): large parts traded places after the global placement; the
   placed board came out the same.
 - Stacks spread into banks at the start only (November): the descent

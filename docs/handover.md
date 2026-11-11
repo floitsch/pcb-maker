@@ -51,7 +51,7 @@ Off by default, each a setting: blind, buried and micro vias
 (`blind_vias`), differential pairs in a layout (`diff_pairs`; route mode
 turns them on where the project's rules ask for pairs), `pad_exits`,
 `pair_rows`, `length_minima`, `length_reroute`, the topological engine
-(`engine: "topological"`). [config-reference.md](config-reference.md)
+(`tuning.engine: "topological"`). [config-reference.md](config-reference.md)
 has each setting with its doc comment.
 
 ## Benchmarks that count
@@ -533,7 +533,7 @@ Switches and experiment hooks (change the result):
 - `PCB_ROUTER_DIFF_PAIRS_RETURN_VIAS`: differential pairs: `0` turns off the return vias of the reference net (GND) beside a coupled run's vias, `1` turns them on (default on; the settings' `diff_pair_return_vias` wins; docs/router.md, "Return vias").
 - `PCB_ROUTER_LENGTH_MATCHING`: turns the length and skew rules' meanders off (0) or on (1) where the settings name none (`length_matching`; unset, on): a net shorter than a custom rule's `length` minimum, or further than a `skew` maximum below the longest net of its rule, gets a meander on a straight track of its route, written as a KiCad tuning pattern (in route mode and on a layout's own routes), and the verdict's `lengths` reports each such net; a net over a `length` maximum is routed again the short way where the nets in its way can go round (off: none of it; docs/router.md, "Length and skew rules").
 - `PCB_ROUTER_SEED`: `N`: perturbs the net order and seeds the history with noise, so that one board routes many ways.
-- `PCB_NARROW_RESERVE`: `share`: the share of the ladder's first attempt's work kept back for the narrow-signal step (wins over the router setting `narrow_reserve_share`; default 0.75).
+- `PCB_NARROW_RESERVE`: `share`: the share of the ladder's first attempt's work kept back for the narrow-signal step (wins over the router setting `tuning.narrow_reserve_share`; default 0.75).
 - `PCB_WALL_STRETCH_MAX`: `cap`: the most the wall-clock guards stretch for pinned rates faster than the machine measured (the pinned rate over the measured; default 4, 1: no stretch, the guards before 2026-10-21).
 - `PCB_LADDER_LINES_PROBE`: `0`: route mode's ladder does not probe its leader's rung once more with lattice lines at the pin rows where the leader's probe leaves pads unfinished at rows the regular lattice misses; the trigger after the leader's run alone decides (as before 2026-11-08's "The rows decided at the probes"; for A/B on one binary).
 - `PCB_LAYOUT_LINES_PROBE`: `0`: a layout decides no lattice lines at the pin rows itself (the layout before 2026-11-08's "A layout's rows decided by its probe's open pads"; for A/B on one binary); `race`: only at the kept placement's probe; `ladder`: only at the final ladder's probes; unset: both (the router setting `pin_lines` and `PCB_ROUTER_PIN_LINES` win over it).
@@ -563,7 +563,7 @@ Diagnostics (stderr unless said; the result does not change):
 - `PCB_ROUTER_FINGERPRINT_ALL`: with `PCB_ROUTER_FINGERPRINT`, also hashes every occupancy map and pour mask into each fingerprint.
 - `PCB_ROUTER_MEM_PROFILE`: the memory profile: the resident size's highs every 10 ms, the live heap, the phases and every live router's parts, the peak at the end (`mem-profile:` lines; docs/profiling.md, "Memory").
 - `PCB_ROUTER_POUR_TRACE`: per pour analysis its counts, modelled work and wall time (calibrating the pour work constants).
-- `PCB_ROUTER_SEVER_TRACE`: per refresh of what a cut severs of the pours (`pour_integrity`) its nodes, wall time and marked nodes per layer (calibrating `SEVER_NODE_NANOS`).
+- `PCB_ROUTER_SEVER_TRACE`: per refresh of what a cut severs of the pours (`tuning.pour_integrity`) its nodes, wall time and marked nodes per layer (calibrating `SEVER_NODE_NANOS`).
 - `PCB_ROUTER_BUILD_TRACE`: per router build and per lowering their counts, modelled work and wall time (calibrating the build and lowering work constants).
 - `PCB_ROUTER_POUR_DUMP`: `<dir>`: writes the pour maps at each finish.
 - `PCB_ROUTER_SEARCH_RATE`: the search times itself for the `profile rate:` line (calibrating `REFERENCE_EXPANSIONS_PER_SECOND`).

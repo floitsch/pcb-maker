@@ -86,7 +86,7 @@ Useful options of run.py: `--only NAME...` (a subset), `--route-from DIR`
 without the placement), `--splice-from LOG` (run only `--only`'s boards
 and copy the other rows from a log, marked spliced), `--reuse DIR` (a
 layout whose placement digest matches a stored one skips its routing),
-`--placer '{"seed": N}'` and `--layout '{...}'` (settings), `--budget-scale`,
+`--placer '{"tuning": {"seed": N}}'` and `--layout '{...}'` (settings; the keys of a `tuning` group merge one by one with the task's), `--budget-scale`,
 `--dry-run` (the start order and each board's memory declaration).
 
 `compare.py` prints, over the boards in both runs, better / same / worse
@@ -181,8 +181,8 @@ layout mode at the task budgets (tasks v7, pinned rates, 3 x 2, through
 the ledger):
 
 1. Run **five seed pairs**, placer seeds 1, 101, 201, 301, 401 on both
-   sides (`--placer '{"seed": N, ...}'`). Seeds lie at least 16 apart: the
-   race places seeds N to N + 15 (`config.seed + offset` in
+   sides (`--placer '{"tuning": {"seed": N}, ...}'`). Seeds lie at least 16 apart: the
+   race places seeds N to N + 15 (`config.tuning.seed + offset` in
    `board_placer/place/seeds.rs`), so nearer seeds share candidates and are not
    independent draws.
 2. Judge with `placer_ab.py compare --off DIR... --on DIR...` (each
