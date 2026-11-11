@@ -779,6 +779,61 @@ impl Router {
             // relief's nodes are cleared (the probe measures the reliefs
             // itself): +x, -x, +y, -y.
             let tip_beyond = gap + fill::KICAD_MAX_ERROR + probe.spoke_half_width(layer);
+            // Every spoke KiCad draws on the layer before it tests their
+            // ends (its `thermalSpokes`): the thermal pads' (`rings`) and
+            // the vias', each as (anchor, direction, tip, half width).
+            let mut drawn: Vec<(crate::geometry::Point, crate::geometry::Point, f64, f64)> =
+                Vec::new();
+            for (pad, _) in &rings[layer] {
+                let anchor = self.board.nets[net as usize]
+                    .terminals
+                    .iter()
+                    .find(|terminal| terminal.pad == *pad)
+                    .map(|terminal| terminal.anchor)
+                    .or_else(|| {
+                        self.board
+                            .merged_pads
+                            .iter()
+                            .find(|merged| merged.pad == *pad)
+                            .map(|merged| merged.anchor)
+                    });
+                let Some(anchor) = anchor else {
+                    continue;
+                };
+                let (_, from, geometry, minor) = self.spoke_geometry(*pad, anchor, tip_beyond);
+                let width = bridge.min(minor);
+                if width + 1.0e-9 < 2.0 * half {
+                    continue;
+                }
+                for (direction, _, tip) in geometry {
+                    drawn.push((from, direction, tip, width / 2.0));
+                }
+            }
+            const AXES: [crate::geometry::Point; 4] =
+                [[1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]];
+            for (at, radius) in vias {
+                let width = bridge.min(2.0 * radius);
+                if width + 1.0e-9 >= 2.0 * half {
+                    for direction in AXES {
+                        drawn.push((*at, direction, radius + tip_beyond, width / 2.0));
+                    }
+                }
+            }
+            // Whether `end`, a spoke's of the via at `at`, lies in another
+            // item's spoke (KiCad's second test: `PointInside` of any other
+            // spoke; capybully's neighbour le_chiffre: a via's spoke ending
+            // in C7.2's spoke towards it).
+            let in_other_spoke = |at: crate::geometry::Point, end: crate::geometry::Point| {
+                drawn.iter().any(|(from, direction, tip, half_width)| {
+                    if crate::geometry::distance(*from, at) < 1.0e-6 {
+                        return false;
+                    }
+                    let offset = [end[0] - from[0], end[1] - from[1]];
+                    let along = offset[0] * direction[0] + offset[1] * direction[1];
+                    let across = (offset[0] * direction[1] - offset[1] * direction[0]).abs();
+                    along >= -1.0e-6 && along <= tip + 1.0e-6 && across <= half_width + 1.0e-6
+                })
+            };
             let kept: Vec<[bool; 4]> = vias
                 .iter()
                 .map(|(at, radius)| {
@@ -788,13 +843,11 @@ impl Router {
                     if width + 1.0e-9 < 2.0 * half {
                         return kept;
                     }
-                    for (slot, direction) in [[1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]]
-                        .into_iter()
-                        .enumerate()
-                    {
+                    for (slot, direction) in AXES.into_iter().enumerate() {
                         let along = radius + tip_beyond;
                         let end = [at[0] + direction[0] * along, at[1] + direction[1] * along];
-                        kept[slot] = probe.spoke_end_lands(layer, end, direction);
+                        kept[slot] = probe.spoke_end_lands(layer, end, direction)
+                            || in_other_spoke(*at, end);
                     }
                     kept
                 })

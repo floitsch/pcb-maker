@@ -324,3 +324,39 @@ fn fill_touching_a_merged_solid_pad_joins_its_terminal() {
     // In the measurement the second strip is solid by its own setting.
     assert!(joined(&router_of(&board, true), 0, 1));
 }
+
+#[test]
+fn a_vias_spoke_ending_in_another_items_spoke_is_kept() {
+    // le_chiffre's GND vias in a hatched zone of a 1.3 mm web, whose
+    // spokes end 0.655 mm past the gap (beyond the via's own ring): a
+    // via's +x spoke ends in the relief of the thermal pad P.2 beside it,
+    // in no fill, but inside P.2's -x spoke. KiCad keeps a spoke whose end lies in another spoke
+    // (fillCopperZone's second test), so the corridor between them holds
+    // fill; without P.2 the via's spoke lands in the open fill all the
+    // same.
+    let board = |pad: bool| {
+        let mut obstacles = vec![
+            copper(rect([2.0, 2.0], [0.5, 0.5]), 0, "P.1"),
+            copper(circle([5.0, 5.0], 0.3), 0, "existing via"),
+        ];
+        let mut terminals = vec![terminal(0, [2.0, 2.0], "P.1")];
+        if pad {
+            obstacles.push(copper(rect([7.0, 5.0], [0.25, 0.25]), 0, "P.2"));
+            terminals.push(terminal(2, [7.0, 5.0], "P.2"));
+        }
+        let web = Hatch {
+            thickness: 1.3,
+            gap: 0.5,
+            ..hatch()
+        };
+        one_net_board(obstacles, terminals, pour(Some(web), Vec::new()))
+    };
+    for pad in [true, false] {
+        let router = router_of(&board(pad), false);
+        let (pours, _, _) = router.analyze_pours(0);
+        let label = |at: [f64; 2]| pours.label[0][router.grid.nearest_node(at).unwrap()];
+        assert_ne!(label([5.7, 5.0]), 0, "pad {pad}");
+        // Off the corridor the relief holds no fill.
+        assert_eq!(label([5.55, 5.55]), 0, "pad {pad}");
+    }
+}
