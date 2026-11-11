@@ -19,6 +19,30 @@ use crate::{
     overfull, phase_line, side_overfull, skip_to_tight, strips_overfull, work, work_per_second,
 };
 
+/// The parts of `failed` held at an edge, still without room after the
+/// eviction: the parts held at that edge packed along it
+/// (`legal::compact_edges`), kept where that seats some.
+fn compact_edges(relaxed: &Problem, poses: &mut Vec<Pose>, failed: &mut Vec<usize>, debug: bool) {
+    if failed.is_empty() {
+        return;
+    }
+    let mut packed = poses.clone();
+    let pack_mark = mark();
+    let again = legal::compact_edges(relaxed, &mut packed, failed);
+    if again.len() < failed.len() {
+        phase_line(debug, "pack edges", pack_mark);
+        if debug {
+            eprintln!(
+                "placer: packing along the edges seated {} of {} parts",
+                failed.len() - again.len(),
+                failed.len()
+            );
+        }
+        *poses = packed;
+        *failed = again;
+    }
+}
+
 /// Seats the parts of `failed` (no room at this level) where only the
 /// board's marks (`Constraints::yielding`: its own texts and silkscreen
 /// graphics) are in the way: they may lie on them (`on_marks`), the other
@@ -552,6 +576,7 @@ impl Walk {
                     kept = evicted;
                     failed = again;
                 }
+                compact_edges(relaxed, &mut kept, &mut failed, debug);
             }
             // Still without room, with no halo, spacing or grid left to
             // give (only the edge and courtyard levels remain): the
@@ -721,6 +746,7 @@ impl Walk {
                 poses = evicted;
                 failed = again;
             }
+            compact_edges(&relaxed, &mut poses, &mut failed, debug);
         }
         seat_on_marks(
             &mut relaxed,

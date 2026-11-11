@@ -402,14 +402,17 @@ coupled loop's) keeps to its rules (`Relaxation::apply`).
 (`legal::legalize`). Parts that found no room go first in a second pass
 (`legalize_first`); a few still without room (at most a fiftieth of the
 parts, three at least) take a spot from movable parts, which find new ones
-(`evict_for`); the rest may lie on the board's marks (`seat_on_marks`).
+(`evict_for`); a part held at an edge still without room has the parts
+held at that edge packed along it (`compact_edges`, below); the rest may
+lie on the board's marks (`seat_on_marks`).
 
 **A looser level keeps what the level before placed**: what was legal
 stays legal, so only the parts without room look for a spot
-(`legalize_keeping`), then eviction, then (at the edge and courtyard
-levels, where nothing else is left to give) up to four passes with the
-stuck parts first from the anneal that gave the kept placement
-(`legalize_stuck_first`, `STUCK_FIRST_PASSES`). A level with a finer grid
+(`legalize_keeping`), then eviction and the packing along edges, then
+(at the edge and courtyard levels, where nothing else is left to give)
+up to four passes with the stuck parts first from the anneal that gave
+the kept placement (`legalize_stuck_first`, `STUCK_FIRST_PASSES`). A
+level with a finer grid
 or tighter bodies is a new problem and gets a fresh anneal too, which may
 beat the kept placement.
 
@@ -445,6 +448,28 @@ body by the level's rules, hard constraints kept), looking up to 2 mm
 farther for fewer crossings (`CROSSING_REACH`) and paying escape-demand
 overflow. On a fine grid it searches only near the part's wanted spot.
 `legal::conflict_kind` says why two parts may not touch.
+
+### Packing along an edge
+
+The eviction moves one part at a time: a part held at an edge whose room
+is taken by the others held there finds none, though the edge has room
+for all once they slide (the molecules' panels: four 17.5 mm connectors
+on a 76.2 mm edge, 6.2 mm to spare, the first seated 5.5 mm from the
+edge's end and the fourth without room; the board had no result).
+`legal::compact_edges` takes, for each part held at an edge and still
+without room, the movable parts held at that edge whose bodies may meet
+it, in their order along it (its own spot among them, else the nearest
+slot in that order that packs: the 7x5 molecule's J9 belongs on the
+wave's lowest segment, before the others), and packs them
+along the edge: each keeps its angle and its distance from the edge and
+takes the legal spot nearest its own between the one before and the
+latest that leaves room for the ones after (a packing from the end gives
+that), so the earlier ones slide only as far as the later need. Where
+the parts do not fit in that order nothing moves, and the attempt books
+no work (`add_work_back`): a part held at an edge is without room at
+some level on 20-odd of the sweep's boards, and a failed attempt booked
+shifted every later budget decision there for nothing. So a board places
+as before unless the packing seats a part.
 
 ### The legality model against KiCad
 
@@ -939,3 +964,8 @@ Race and measurement:
   part keeps off it until the last level.
 - The spectral solve is a direct O(n³) cosine transform on 64 bins; an FFT
   matters only for boards with thousands of parts.
+- The packing along an edge keeps the parts' order there and packs one
+  side's parts held at one edge; parts held by no edge constraint (a
+  connector the lowering holds where it is) stay where they are, and a
+  part that would need another order, another side or another edge
+  stays without room.
