@@ -460,10 +460,10 @@ pub(super) fn pad_exits(
 /// corridor, or hugging the cut edge beyond the graphic: KiCad's clearance
 /// findings against the graphic). Its cells (of 0.02 mm) within the
 /// clearance of a wall and within the corridor grown by it, and wholly
-/// beyond the track's reach of the axis (`EXIT_MARGIN` and its half width)
-/// of every corridor of `strips` (the corridors on its layer, so that one
-/// fence never closes another's axis): a keepout its track's copper may
-/// touch, not enter. Points within the clearance of the walls outside the
+/// beyond the track's reach (`EXIT_MARGIN` and its half width) of the
+/// crossing part of the axis (`crossed`) of every corridor of `strips`
+/// (the corridors on its layer, so that one fence never closes another's
+/// axis): a keepout its track's copper may touch, not enter. Points within the clearance of the walls outside the
 /// corridor are kept from the track by what is left of the walls already.
 pub(super) fn exit_fence(
     exit: &Exit,
@@ -491,7 +491,7 @@ pub(super) fn exit_fence(
                 let axis = core::geometry::point_segment_distance(point, exit.start, exit.end);
                 axis < reach + half_diagonal
                     && strips.iter().all(|strip| {
-                        core::geometry::point_segment_distance(point, strip.start, strip.end)
+                        core::geometry::point_segment_distance(point, strip.start, crossed(strip))
                             >= EXIT_MARGIN + strip.half_width + half_diagonal
                     })
                     && walls
@@ -518,6 +518,22 @@ pub(super) fn exit_fence(
         1 => parts.pop(),
         _ => Some(core::Shape::Union { parts }),
     }
+}
+
+/// Where `exit`'s axis has left the walls with its track's clearance: its
+/// end less `EXIT_MARGIN` (`pad_exits`). Beyond it the track keeps its
+/// clearance like any other: the fence spares only the crossing.
+fn crossed(exit: &Exit) -> [f64; 2] {
+    let along = [exit.end[0] - exit.start[0], exit.end[1] - exit.start[1]];
+    let length = along[0].hypot(along[1]);
+    if length <= EXIT_MARGIN {
+        return exit.start;
+    }
+    let scale = (length - EXIT_MARGIN) / length;
+    [
+        exit.start[0] + along[0] * scale,
+        exit.start[1] + along[1] * scale,
+    ]
 }
 
 /// `shape` less the corridors `cuts` (start, end, radius): its cells (of
