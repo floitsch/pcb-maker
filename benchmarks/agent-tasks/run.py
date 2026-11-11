@@ -1058,9 +1058,12 @@ VIA_IN_PAD_BINARIES = {}
 
 # How long score-kicad-board may take on one board before the harness gives
 # up on it (the score recorded as missing, `score_missing`): ten times the
-# slowest board measured. Until 2026-11-10 there was no limit, and one
-# designer's board (ZeyBack, 5353 pours) ran 54 minutes and stalled a run.
-SCORE_TIMEOUT_SECONDS = 300
+# slowest board measured (2026-11-10: about 47 CPU s on the 109 designer
+# boards, the nightly's 159 routed ones, the 46 expansion and the 56
+# held-out boards; 45 s Keel, 24 s ZeyBack). Until then there was no limit,
+# and one designer's board (ZeyBack, 5353 pours) ran 54 minutes and stalled
+# a run.
+SCORE_TIMEOUT_SECONDS = 500
 
 
 def bounded_score(binary, directory, board_id, row, side):
