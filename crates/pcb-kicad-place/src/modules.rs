@@ -655,14 +655,14 @@ fn seeded_partition<'a>(
         }
     }
     // The seeds: parts that stay where they are, parts held in one module.
-    for part in 0..footprints {
+    for (part, allowed) in allowed.iter().enumerate() {
         let component = &problem.components[part];
         if !with_pins(part) {
             continue;
         }
         if component.fixed {
             result.module[part] = module_of_part(modules, component, problem.poses[part]);
-        } else if let Some(set) = &allowed[part]
+        } else if let Some(set) = allowed
             && set.len() == 1
         {
             result.module[part] = set.iter().next().copied();
@@ -707,7 +707,7 @@ fn seeded_partition<'a>(
         .iter()
         .map(|a| [a * MOST_FILL, a * MOST_FILL])
         .collect();
-    for part in 0..footprints {
+    for (part, area) in area.iter().enumerate() {
         // Every part that stays where it is takes room, pins or not.
         if problem.components[part].fixed
             && let Some(module) =
@@ -716,7 +716,7 @@ fn seeded_partition<'a>(
                 })
         {
             for side in 0..2 {
-                room[module][side] -= area[part][side];
+                room[module][side] -= area[side];
             }
         }
     }
@@ -1112,9 +1112,9 @@ pub fn describe_modules(
         }
     }
     let mut designer_module = truth.clone();
-    for part in 0..footprints {
+    for (part, module) in designer_module.iter_mut().enumerate() {
         if problem.components[part].fixed {
-            designer_module[part] = assignment.module[part];
+            *module = assignment.module[part];
         }
     }
     let measured = evaluate(&modules, problem, footprints, &lowered.poured, &truth);
@@ -1139,4 +1139,124 @@ pub fn describe_modules(
         }),
     );
     Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::board_placer::{KiCadBoardPlacerConfig, lower_placement};
+
+    /// Two halves of 19.5 x 20 mm joined by a tab 4 mm wide, with three
+    /// 0.5 mm holes across it 1.5 mm apart (two gaps of 1 mm, one track
+    /// each, as protoesp's): J1 on the left, J2 on the right; U1 joins J1
+    /// by two nets, U2 joins J2 by two, X joins U1 and U2. `holes`: the
+    /// perforation's footprint, or none.
+    fn halves(holes: bool) -> Expr {
+        let bite = if holes {
+            r#"(footprint "mouse" (layer "F.Cu") (at 20 10)
+                (pad "" np_thru_hole circle (at 0 -1.5) (size 0.5 0.5) (drill 0.5) (layers "*.Cu" "*.Mask"))
+                (pad "" np_thru_hole circle (at 0 0) (size 0.5 0.5) (drill 0.5) (layers "*.Cu" "*.Mask"))
+                (pad "" np_thru_hole circle (at 0 1.5) (size 0.5 0.5) (drill 0.5) (layers "*.Cu" "*.Mask")))"#
+        } else {
+            ""
+        };
+        let part = |reference: &str, x: f64, nets: [(usize, &str); 3]| {
+            format!(
+                r#"(footprint "SOIC" (layer "F.Cu") (at {x} 10) (property "Reference" "{reference}")
+                (fp_rect (start -2 -2) (end 2 2) (layer "F.CrtYd"))
+                (pad "1" smd rect (at -1 0) (size 0.6 0.7) (layers "F.Cu") (net {} "{}"))
+                (pad "2" smd rect (at 0 0) (size 0.6 0.7) (layers "F.Cu") (net {} "{}"))
+                (pad "3" smd rect (at 1 0) (size 0.6 0.7) (layers "F.Cu") (net {} "{}")))"#,
+                nets[0].0, nets[0].1, nets[1].0, nets[1].1, nets[2].0, nets[2].1
+            )
+        };
+        let text = format!(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+            (net 0 "") (net 1 "A1") (net 2 "A2") (net 3 "B1") (net 4 "B2") (net 5 "X") (net 6 "GND")
+            (gr_poly (pts (xy 0 0) (xy 19.5 0) (xy 19.5 8) (xy 20.5 8) (xy 20.5 0) (xy 40 0)
+                (xy 40 20) (xy 20.5 20) (xy 20.5 12) (xy 19.5 12) (xy 19.5 20) (xy 0 20))
+                (layer "Edge.Cuts"))
+            {bite}
+            {}
+            {}
+            {}
+            {})"#,
+            part("J1", 5.0, [(1, "A1"), (2, "A2"), (6, "GND")]),
+            part("J2", 35.0, [(3, "B1"), (4, "B2"), (6, "GND")]),
+            // Both start stacked on the right half.
+            part("U1", 30.0, [(1, "A1"), (2, "A2"), (5, "X")]),
+            part("U2", 30.0, [(3, "B1"), (4, "B2"), (5, "X")]),
+        );
+        crate::kicad_sexpr::parse(&text).unwrap()
+    }
+
+    fn lowered(pcb: &Expr) -> crate::board_placer::LoweredPlacement {
+        let config = KiCadBoardPlacerConfig {
+            fixed: vec!["J1".into(), "J2".into()],
+            ..KiCadBoardPlacerConfig::default()
+        };
+        lower_placement(pcb, &config).unwrap()
+    }
+
+    #[test]
+    fn a_perforated_tab_between_two_halves_makes_two_modules() {
+        let pcb = halves(true);
+        // A mouse bite's pitch does not chain holes 1.5 mm apart: the
+        // panel's pieces see one board.
+        let loops = crate::outline::board_loops(&pcb).unwrap();
+        assert!(
+            Pieces::of_loops(&loops.piece_loops, &loops.cutouts, &Cuts::of_board(&pcb)).is_none()
+        );
+        let modules = detect(&pcb).unwrap().expect("two modules");
+        assert_eq!(modules.count(), 2);
+        assert_eq!(modules.kind, "perforations");
+        // One tab, two gaps of 1 mm: two tracks.
+        assert_eq!(modules.tabs, vec![(0, 1, 2)]);
+        let left = modules.module_at([5.0, 10.0]).unwrap();
+        let right = modules.module_at([35.0, 10.0]).unwrap();
+        assert_ne!(left, right);
+        // Without the holes the tab is board: one module.
+        assert!(detect(&halves(false)).unwrap().is_none());
+    }
+
+    #[test]
+    fn the_partition_puts_each_part_with_the_fixed_part_it_shares_nets_with() {
+        let pcb = halves(true);
+        let modules = detect(&pcb).unwrap().unwrap();
+        let mut lowered = lowered(&pcb);
+        let index = |name: &str| {
+            lowered
+                .references
+                .iter()
+                .position(|reference| reference == name)
+                .unwrap()
+        };
+        let (u1, u2) = (index("U1"), index("U2"));
+        let left = modules.module_at([5.0, 10.0]);
+        let right = modules.module_at([35.0, 10.0]);
+        let assignment = assign(&modules, &lowered.problem, 5, &lowered.poured);
+        assert_eq!(assignment.module[u1], left);
+        assert_eq!(assignment.module[u2], right);
+        // X alone crosses the tab.
+        assert_eq!(assignment.crossings, 1);
+        assert_eq!(assignment.tab_crossings, 1);
+        assert_eq!(assignment.overflow, 0);
+        // Held: each in its module's box, as a region the tool gave.
+        let report = hold_in_modules(&pcb, &mut lowered.problem, 5, &lowered.poured)
+            .unwrap()
+            .unwrap();
+        assert_eq!(report.held, 2);
+        let constraints = &lowered.problem.constraints;
+        for (part, module) in [(u1, left), (u2, right)] {
+            let region = constraints
+                .regions
+                .iter()
+                .find(|(held, _)| *held == part)
+                .map(|(_, region)| *region)
+                .unwrap();
+            assert_eq!(region, modules.boxes[module.unwrap()]);
+            assert!(constraints.automatic_regions.contains(&part));
+        }
+        assert!(constraints.starts.is_empty());
+    }
 }
