@@ -207,7 +207,9 @@ an off switch; a fresh-agent trial every few days.
    settings. Necks and gaps are repaired after the route with KiCad's
    own fill. Starved thermals are the only failure on a few complete
    boards; `solid_starved_thermals` (on) connects such a pad solid where
-   KiCad finds the board better for it, in one round only.
+   KiCad finds the board better for it, in one round only. Pads the model
+   calls connected and KiCad does not: `experiments/pour-fidelity/agreement.py`
+   counts them (router.md, "Thermal spokes as KiCad counts them").
 10. **The near misses.** Of the 39 boards the sweep fails, 18 are within
     five connections and five errors of clean. The list changes nightly;
     a diagnosis takes the night's list (`summary.md`, `diff-sweep.txt`).
