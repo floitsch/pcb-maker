@@ -114,6 +114,10 @@ def prepare(binary, out, cache, directory):
         if done.returncode != 0:
             print(f"dump failed {directory}: {done.stderr.strip()[-300:]}", file=sys.stderr)
             return None
+        # Only the terminals are read: the pour maps (a few bytes a lattice
+        # node, per net and layer) would fill the disk over a census.
+        for path in glob.glob(os.path.join(dump, "*.pour")):
+            os.remove(path)
     terminals = ours(dump)
     # The model names a net without the sheet path's leading `/`.
     nets = sorted({name for terminal in terminals for name in (terminal["net"], "/" + terminal["net"])})
