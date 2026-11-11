@@ -107,7 +107,7 @@ pub(crate) fn directory_from_env() -> Option<PathBuf> {
 }
 
 /// `program version`, asked once per program and process.
-pub(crate) fn tool_version(program: &OsStr) -> Option<String> {
+pub fn tool_version(program: &OsStr) -> Option<String> {
     static VERSIONS: OnceLock<Mutex<HashMap<OsString, Option<String>>>> = OnceLock::new();
     let versions = VERSIONS.get_or_init(Default::default);
     if let Some(version) = versions.lock().ok()?.get(program) {

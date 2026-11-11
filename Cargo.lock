@@ -174,12 +174,27 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "pcb-global",
+ "pcb-kicad-check",
  "pcb-kicad-file",
  "pcb-placer",
  "pcb-router",
  "pcb-topo",
  "rayon",
  "regex-lite",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "pcb-kicad-check"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "pcb-kicad-file",
+ "pcb-placer",
+ "pcb-router",
+ "rayon",
  "serde",
  "serde_json",
  "sha2",

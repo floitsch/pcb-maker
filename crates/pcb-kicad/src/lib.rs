@@ -13,9 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
-    env,
-    fs::{self, OpenOptions},
-    io::Write,
+    env, fs,
     path::{Path, PathBuf},
     process::Command,
     time::{Instant, SystemTime, UNIX_EPOCH},
@@ -25,25 +23,26 @@ pub use connection_rules::KiCadConnectionRoutingRules;
 pub use corridors_fact::{KiCadCorridors, KiCadSearchCount, KiCadSearchKinds};
 // The KiCad files, their geometry and how a run exits (pcb-kicad-file).
 use pcb_kicad_file::{
-    board_stats, canonical_order, check_repairs, connection_rules, copper_emit, copper_geometry,
-    corridors_fact, exit, flip, fs_util, geometry, kicad_nets, kicad_sexpr, local_clearance,
-    outline, outline_pieces, part_motion,
+    board_stats, canonical_order, connection_rules, copper_emit, copper_geometry, corridors_fact,
+    exit, flip, fs_util, geometry, kicad_nets, kicad_sexpr, local_clearance, outline,
+    outline_pieces, part_motion,
 };
-mod native_report;
 mod necks;
 pub use necks::{NeckRepair, repair_kicad_necks};
 mod check_work;
-mod drc_cache;
-mod kicad_config;
+// KiCad's checks and the machine (pcb-kicad-check).
 pub use drc_cache::{DrcCacheCounts, drc_cache_counts};
 pub use fs_util::write_atomically;
+pub use pcb_kicad_check::ledger;
+use pcb_kicad_check::{
+    drc_cache, kicad_config, native_report, proc_memory, verification, work_rate,
+};
 mod silkscreen;
-mod verification_preview;
 pub use native_report::{
     KICAD_REQUIREMENT, check_kicad_cli, erc_design_issues, is_erc_library_warning,
     is_library_metadata_warning,
 };
-use native_report::{ReportKind, remove_if_present, run_kicad_report, validate_report};
+use native_report::{remove_if_present, run_kicad_report};
 pub use silkscreen::repair_kicad_silkscreen;
 mod board_layout;
 mod congestion_rank;
@@ -75,7 +74,6 @@ pub use verdict::{
     set_build_version, split_findings, tally_drc, unreferenced_apart, wall_cuts,
     with_input_observations,
 };
-mod work_rate;
 pub use work_rate::{
     KiCadMeasuredRate, KiCadWorkRate, WORK_RATE_VARIABLE, calibrate as calibrate_work_rate,
     calibrate_reference_by_default, measure as measure_work_rate, parse_work_rate, work_rate,
@@ -123,13 +121,11 @@ pub use placement_constraints::{
 };
 pub use placement_room::{KiCadRoom, TARGET_UTILIZATION, noted_room};
 pub mod free_dimension;
-pub mod ledger;
 pub use free_dimension::{
     KiCadFreeDimension, KiCadFreeDimensionPlan, KiCadFreeDimensionRun, KiCadFreeDimensionSearch,
     KiCadFreeDimensionStep,
 };
 mod pin_swap;
-mod proc_memory;
 pub use pin_swap::{
     KiCadPinChange, KiCadPinSwapConfig, KiCadPinSwapEstimate, KiCadPinSwapResult, KiCadPinSwapSpec,
     read_pin_swap_spec, swap_kicad_pins, swap_kicad_pins_in_place,
@@ -179,12 +175,11 @@ pub use copper_emit::{
     SupplementalVia, write_kicad_board_without_copper,
 };
 use copper_geometry::*;
+pub use fs_util::check_board_id;
+use fs_util::*;
 use geometry::*;
 use kicad_nets::*;
 use kicad_sexpr::*;
-mod verification;
-pub use fs_util::check_board_id;
-use fs_util::*;
 pub use verification::{
     KICAD_VERIFICATION_CACHE_ENV, KICAD_VERIFICATION_CACHE_EVENTS_ENV,
     KiCadVerificationCacheStatus, KiCadVerificationCacheTrace, VerificationReport,

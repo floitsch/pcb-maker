@@ -1,0 +1,24 @@
+[package]
+name = "pcb-kicad-check"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "KiCad's own checks through kicad-cli, their cache and reports, and the machine they run on: the memory ledger and the work rate"
+publish = false
+
+[dependencies]
+pcb-kicad-file = { path = "../pcb-kicad-file" }
+pcb-placer = { path = "../pcb-placer" }
+pcb-router = { path = "../pcb-router" }
+rayon = "1"
+serde = { version = "1.0", features = ["derive"] }
+# Candidate coordinates must parse identically in standalone library consumers
+# and the main executable, without relying on workspace feature unification.
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
+sha2 = "0.10"
+
+[target.'cfg(unix)'.dependencies]
+# kicad-cli dies with the router (prctl PR_SET_PDEATHSIG, Linux only);
+# RLIMIT_AS bounds the ledger's processes (getrlimit, every Unix: the
+# macOS release build needs it).
+libc = "0.2"

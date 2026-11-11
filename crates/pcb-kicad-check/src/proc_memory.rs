@@ -7,7 +7,7 @@
 use std::fs;
 
 /// The process's resident size now, in megabytes (Linux; elsewhere 0).
-pub(crate) fn resident_mb() -> f64 {
+pub fn resident_mb() -> f64 {
     status_field("VmRSS:").unwrap_or(0.0)
 }
 
@@ -27,12 +27,12 @@ pub(crate) fn memory_available_mb() -> Option<f64> {
 }
 
 /// A field of /proc/self/status in megabytes (Linux; elsewhere None).
-pub(crate) fn status_field(name: &str) -> Option<f64> {
+pub fn status_field(name: &str) -> Option<f64> {
     kilobytes_field(&fs::read_to_string("/proc/self/status").ok()?, name)
 }
 
 /// The value of a `Name: N kB` line of a /proc file, in megabytes.
-pub(crate) fn kilobytes_field(text: &str, name: &str) -> Option<f64> {
+pub fn kilobytes_field(text: &str, name: &str) -> Option<f64> {
     text.lines()
         .find(|line| line.starts_with(name))?
         .split_whitespace()
@@ -45,6 +45,6 @@ pub(crate) fn kilobytes_field(text: &str, name: &str) -> Option<f64> {
 /// The machine's memory, in megabytes: a fixed share of it decides what
 /// the ladder may attempt, so that the attempts do not depend on what else
 /// runs (the memory available decides only how many run at once).
-pub(crate) fn memory_total_mb() -> Option<f64> {
+pub fn memory_total_mb() -> Option<f64> {
     kilobytes_field(&fs::read_to_string("/proc/meminfo").ok()?, "MemTotal:")
 }

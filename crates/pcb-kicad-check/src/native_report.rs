@@ -205,7 +205,7 @@ pub(super) fn validate_report(
     validate().map_err(|error| format!("invalid {kind:?} report for {}: {error}", input.display()))
 }
 
-pub(super) fn remove_if_present(path: &Path) -> Result<(), String> {
+pub fn remove_if_present(path: &Path) -> Result<(), String> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -270,7 +270,7 @@ fn old_kicad_warning(version: &str) -> Option<String> {
 /// KiCad that is not on the PATH, such as macOS's
 /// `/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli`), else
 /// `kicad-cli` on the PATH.
-pub(crate) fn kicad_cli() -> std::ffi::OsString {
+pub fn kicad_cli() -> std::ffi::OsString {
     std::env::var_os("PCB_KICAD_CLI")
         .filter(|program| !program.is_empty())
         .unwrap_or_else(|| "kicad-cli".into())
@@ -319,7 +319,7 @@ static KICAD_NANOS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64:
 
 /// kicad-cli's reports and saves in this process (the DRC cache's answers
 /// among them) and their wall seconds, summed over threads.
-pub(crate) fn kicad_totals() -> (u64, f64) {
+pub fn kicad_totals() -> (u64, f64) {
     use std::sync::atomic::Ordering::Relaxed;
     (
         KICAD_CALLS.load(Relaxed),
@@ -334,11 +334,7 @@ fn note_kicad(started: std::time::Instant) {
     KICAD_NANOS.fetch_add(started.elapsed().as_nanos() as u64, Relaxed);
 }
 
-pub(super) fn run_kicad_report(
-    arguments: &[&str],
-    output: &Path,
-    input: &Path,
-) -> Result<(), String> {
+pub fn run_kicad_report(arguments: &[&str], output: &Path, input: &Path) -> Result<(), String> {
     let started = std::time::Instant::now();
     let result = run_kicad_report_untimed(arguments, output, input);
     note_kicad(started);
@@ -499,7 +495,7 @@ fn run_report_command_cached(
 /// teardrops) and saves the board in place: KiCad's own fill, for checks
 /// that need its geometry (`necks`). Not cached: the cache keeps reports,
 /// not boards. The report goes to `report`.
-pub(super) fn run_kicad_save_board(board: &Path, report: &Path) -> Result<(), String> {
+pub fn run_kicad_save_board(board: &Path, report: &Path) -> Result<(), String> {
     let started = std::time::Instant::now();
     let result = run_kicad_save_board_untimed(board, report);
     note_kicad(started);
@@ -538,7 +534,7 @@ fn run_kicad_save_board_untimed(board: &Path, report: &Path) -> Result<(), Strin
 
 /// How a kicad-cli run that outlived `report_timeout` is reported (the
 /// verdict's next action names `PCB_KICAD_TIMEOUT` on it).
-pub(crate) const KICAD_TIMEOUT_MESSAGE: &str = "kicad-cli timed out after";
+pub const KICAD_TIMEOUT_MESSAGE: &str = "kicad-cli timed out after";
 
 /// Seconds a kicad-cli report may take (`PCB_KICAD_TIMEOUT`, default 900):
 /// a zone refill on 0xCB's panel never finished, and the hung process

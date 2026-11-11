@@ -10,7 +10,7 @@
 #
 # Every mode runs:
 #   - the unit and integration tests of every crate of the workspace
-#     (pcb-router, pcb-kicad-file, pcb-kicad, pcb-placer, pcb-global,
+#     (pcb-router, pcb-kicad-file, pcb-kicad-check, pcb-kicad, pcb-placer, pcb-global,
 #     pcb-topo, tools/config-reference) and the root binary's own unit tests;
 #   - the root package's CLI tests: exit codes, native verification, the
 #     router's fingerprints at 1 and 4 threads, the generated config
@@ -72,7 +72,7 @@ if [ "$mode" = fast ]; then
   placer=()
   step cargo test --release -p pcb-placer --lib --test orientation
 fi
-step cargo test --release -p pcb-router -p pcb-kicad-file -p pcb-kicad -p pcb-global ${placer[@]+"${placer[@]}"} \
+step cargo test --release -p pcb-router -p pcb-kicad-file -p pcb-kicad-check -p pcb-kicad -p pcb-global ${placer[@]+"${placer[@]}"} \
   -p pcb-topo -p config-reference
 step cargo test --release -p pcb-maker --bins --test cli_exit_codes ${walkthrough[@]+"${walkthrough[@]}"} \
   --test native_verification --test router_fingerprint --test config_reference --test hostile_inputs --test fixtures

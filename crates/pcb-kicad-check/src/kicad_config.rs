@@ -104,7 +104,7 @@ pub(crate) fn erc_config_home(program: &OsStr, input: &Path) -> Option<PathBuf> 
 
 /// Points `command`, a kicad-cli DRC of `input`, at the configuration
 /// without libraries when [`drc_config_home`] gives one.
-pub(crate) fn configure_drc(command: &mut std::process::Command, program: &OsStr, input: &Path) {
+pub fn configure_drc(command: &mut std::process::Command, program: &OsStr, input: &Path) {
     if let Some(home) = drc_config_home(program, input) {
         command.env("KICAD_CONFIG_HOME", home);
     }
