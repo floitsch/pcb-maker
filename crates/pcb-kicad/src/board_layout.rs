@@ -11,15 +11,19 @@
 //! board is verified natively once.
 
 use super::*;
-use crate::board_placer::{largest_clearance, lower_placement, write_footprint_pose};
+use crate::board_placer::{PLACEMENT_SHARE, lower_placement};
+use crate::board_router::largest_clearance;
 use crate::board_router::{
     LayerTable, add_pour_zones, core_config, emit_routes, finish_routed_board, lower_for_route,
     planned_pours, pours,
 };
+use crate::canonical_order::footprint_items;
+use crate::labels::without_copper_texts;
 use crate::pin_swap::{KiCadPinSwapComponent, KiCadPinSwapGroup};
 use crate::placement_constraints::{
     KiCadConstraintStatus, constraint_report, default_area_factor, resolve_constraints,
 };
+use pcb_kicad_file::footprint_bodies::write_footprint_pose;
 use pcb_placer as placer;
 use pcb_router as core;
 
@@ -420,8 +424,8 @@ fn swappable_spec(pcb: &Expr, swappable: &[KiCadSwappable]) -> Result<KiCadPinSw
             let function = form_atom(pad, "pinfunction", 1).unwrap_or("");
             let matches = |patterns: &[String]| {
                 patterns.iter().any(|pattern| {
-                    board_placer::glob_matches(pattern, number)
-                        || board_placer::glob_matches(pattern, function)
+                    kicad_nets::glob_matches(pattern, number)
+                        || kicad_nets::glob_matches(pattern, function)
                 })
             };
             if matches(&entry.pins)
@@ -630,7 +634,7 @@ pub const DEFAULT_WALL_GUARD: f64 = 2.0;
 /// would cut every layout before its work ends: it is an input error.
 pub fn wall_guard_seconds(total_seconds: f64, wall_guard: f64) -> Result<f64, String> {
     if !(wall_guard.is_finite() && wall_guard >= 1.0) {
-        return Err(crate::verdict::input_error(format!(
+        return Err(crate::exit::input_error(format!(
             "wall_guard {wall_guard}: the wall-clock guard is a factor of total_seconds of at least 1"
         )));
     }
@@ -847,47 +851,6 @@ fn body_congestion(
         }
     }
     if nodes > 0 { total / nodes as f64 } else { 0.0 }
-}
-
-pub(crate) fn footprint_items(pcb: &mut Expr) -> Result<Vec<&mut Expr>, String> {
-    let Expr::List(items) = pcb else {
-        return Err("PCB root is not a list".into());
-    };
-    Ok(items
-        .iter_mut()
-        .filter(|item| item.head() == Some("footprint"))
-        .collect())
-}
-
-/// Places and routes `<source>/<board_id>.kicad_pcb`. The placement goes to
-/// `output/placed`, the final routed board to `output/result`.
-/// The board the layout routes: with its copper texts where the input put
-/// them (`keep`: `keep_board_marks`, obstacles to the router as to KiCad),
-/// or else without them: decoration that moves off the copper afterwards
-/// (`labels`), not obstacles at their old spots (before 2026-10-21).
-pub(crate) fn without_copper_texts(pcb: &Expr, keep: bool) -> Expr {
-    let Expr::List(items) = pcb else {
-        return pcb.clone();
-    };
-    if keep {
-        return pcb.clone();
-    }
-    // Exposed-copper artwork (a copper text with its mask twin) is not
-    // moved afterwards, so it stays an obstacle here (Quanta75: routes
-    // under its 7 mm logo, 11 bridges and a short).
-    let twins = crate::labels::mask_twins(pcb);
-    Expr::List(
-        items
-            .iter()
-            .filter(|item| {
-                !(item.head() == Some("gr_text")
-                    && form_atom(item, "layer", 1).is_some_and(|layer| {
-                        layer.ends_with(".Cu") && !crate::labels::has_mask_twin(&twins, item, layer)
-                    }))
-            })
-            .cloned()
-            .collect(),
-    )
 }
 
 /// The open count past which a board the narrow-signal step applies to
@@ -1167,11 +1130,6 @@ fn placement_digest(
     format!("{:x}", hash.finalize())
 }
 
-/// The placement's share of a layout's budget: 40 % of `total_seconds`
-/// (the race after it leaves the final route `RACE_MIN_FINAL_SHARE` at
-/// least).
-pub const PLACEMENT_SHARE: f64 = 0.4;
-
 pub fn placement_budget(config: &KiCadBoardLayoutConfig) -> f64 {
     PLACEMENT_SHARE * config.total_seconds.max(0.0)
 }
@@ -1190,8 +1148,8 @@ pub fn layout_placer_config(
     router_config: &KiCadBoardRouterConfig,
     source_directory: &Path,
 ) -> Result<KiCadBoardPlacerConfig, String> {
-    let mut placer_config = resolve_constraints(&config.placer, source_directory)
-        .map_err(crate::verdict::input_error)?;
+    let mut placer_config =
+        resolve_constraints(&config.placer, source_directory).map_err(crate::exit::input_error)?;
     // Bodies keep at least the largest copper clearance apart.
     if placer_config.copper_clearance_mm.is_none() {
         placer_config.copper_clearance_mm = Some(largest_clearance(router_config));
@@ -1253,7 +1211,7 @@ pub fn layout_placer_config(
 /// really fall (a move on OpenAirScope negotiated 64 iterations at 15
 /// conflicted nets, 200-350 s a move). The final ladder routes the kept
 /// placement with the full patience.
-pub(crate) fn race_core_config(router_config: &KiCadBoardRouterConfig) -> core::Config {
+pub fn race_core_config(router_config: &KiCadBoardRouterConfig) -> core::Config {
     let mut core_config = core_config(router_config);
     if router_config.stall_drop.is_none() {
         core_config.stall_drop = 0.1;
@@ -1310,7 +1268,7 @@ pub fn placement_check_config(
         let text = fs::read_to_string(&board)
             .map_err(|error| format!("failed to read {}: {error}", board.display()))?;
         with_classes = crate::net_classes::with_net_classes(router_config, &parse(&text)?)
-            .map_err(crate::verdict::input_error)?;
+            .map_err(crate::exit::input_error)?;
         &with_classes
     };
     let mut placer_config = layout_placer_config(config, router_config, source_directory)?;
@@ -1391,7 +1349,7 @@ fn race_lines_probe(
     let mut lines_config = config.clone();
     lines_config.pin_lines = core::pin_lines::Lines::Exits;
     crate::ledger::reserve_at_least(
-        crate::board_router::resident_mb() + router_mb,
+        crate::proc_memory::resident_mb() + router_mb,
         "the race's probe with lines at the pin rows",
     );
     let mut router = core::router::Router::new(board, &lines_config);
@@ -1791,7 +1749,7 @@ mod budget_tests {
         // Below 1 the guard would cut every layout before its work ends.
         for bad in [0.9, 0.0, -1.0, f64::NAN, f64::INFINITY] {
             let error = wall_guard_seconds(40.0, bad).unwrap_err();
-            assert!(crate::verdict::is_input_error(&error), "{error}");
+            assert!(crate::exit::is_input_error(&error), "{error}");
         }
         // A layout config names it; the default fills it in.
         let config: KiCadBoardLayoutConfig =

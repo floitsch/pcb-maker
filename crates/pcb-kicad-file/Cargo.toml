@@ -1,0 +1,16 @@
+[package]
+name = "pcb-kicad-file"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "KiCad's files as data: the S-expression tree, nets, pad and outline geometry, copper written back"
+publish = false
+
+[dependencies]
+pcb-placer = { path = "../pcb-placer" }
+pcb-router = { path = "../pcb-router" }
+serde = { version = "1.0", features = ["derive"] }
+# Candidate coordinates must parse identically in standalone library consumers
+# and the main executable, without relying on workspace feature unification.
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
+sha2 = "0.10"

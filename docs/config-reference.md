@@ -46,7 +46,7 @@ The environment variables are indexed in the hand-over
 
 ## Router settings
 
-The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` resolves it from the project's `.kicad_pro`; a file's keys replace what `auto` would give only where a file sets them, `connection_rules` and `default_rules` together as the classes; docs/router.md). Unknown keys are rejected. `unset` options take the default the doc comment names, mostly the router core's (the next table). Source: `KiCadBoardRouterConfig` in [crates/pcb-kicad/src/board_router/config.rs](../crates/pcb-kicad/src/board_router/config.rs).
+The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` resolves it from the project's `.kicad_pro`; a file's keys replace what `auto` would give only where a file sets them, `connection_rules` and `default_rules` together as the classes; docs/router.md). Unknown keys are rejected. `unset` options take the default the doc comment names, mostly the router core's (the next table). Source: `KiCadBoardRouterConfig` in [crates/pcb-kicad-route/src/board_router/config.rs](../crates/pcb-kicad-route/src/board_router/config.rs).
 
 | Key | Type | Default | Docs | Description |
 |---|---|---|---|---|
@@ -162,7 +162,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 
 ## Router settings: topological
 
-The `topological` object of the router settings (the `engine: "topological"` engine). Source: `KiCadTopologicalConfig` in [crates/pcb-kicad/src/board_router/config.rs](../crates/pcb-kicad/src/board_router/config.rs).
+The `topological` object of the router settings (the `engine: "topological"` engine). Source: `KiCadTopologicalConfig` in [crates/pcb-kicad-route/src/board_router/config.rs](../crates/pcb-kicad-route/src/board_router/config.rs).
 
 | Key | Type | Default | Docs | Description |
 |---|---|---|---|---|
@@ -177,7 +177,7 @@ The `topological` object of the router settings (the `engine: "topological"` eng
 
 ## Router settings: pin_swap
 
-The `pin_swap` object of the router and the layout settings (the pin-swap estimate, docs/pin-swap.md). Source: `KiCadPinSwapConfig` in [crates/pcb-kicad/src/pin_swap.rs](../crates/pcb-kicad/src/pin_swap.rs).
+The `pin_swap` object of the router and the layout settings (the pin-swap estimate, docs/pin-swap.md). Source: `KiCadPinSwapConfig` in [crates/pcb-kicad-route/src/pin_swap.rs](../crates/pcb-kicad-route/src/pin_swap.rs).
 
 | Key | Type | Default | Docs | Description |
 |---|---|---|---|---|
@@ -189,7 +189,7 @@ The `pin_swap` object of the router and the layout settings (the pin-swap estima
 
 ## Router settings: add_pours entries
 
-One entry of `add_pours`. Source: `KiCadPourRequest` in [crates/pcb-kicad/src/board_router/pour_plan.rs](../crates/pcb-kicad/src/board_router/pour_plan.rs).
+One entry of `add_pours`. Source: `KiCadPourRequest` in [crates/pcb-kicad-route/src/board_router/pour_plan.rs](../crates/pcb-kicad-route/src/board_router/pour_plan.rs).
 
 | Key | Type | Default | Docs | Description |
 |---|---|---|---|---|
@@ -201,7 +201,7 @@ One entry of `add_pours`. Source: `KiCadPourRequest` in [crates/pcb-kicad/src/bo
 
 ## Router settings: net_classes entries
 
-One entry of `net_classes`. Source: `KiCadNetClassRequest` in [crates/pcb-kicad/src/net_classes.rs](../crates/pcb-kicad/src/net_classes.rs).
+One entry of `net_classes`. Source: `KiCadNetClassRequest` in [crates/pcb-kicad-route/src/net_classes.rs](../crates/pcb-kicad-route/src/net_classes.rs).
 
 | Key | Type | Default | Docs | Description |
 |---|---|---|---|---|
@@ -214,7 +214,7 @@ One entry of `net_classes`. Source: `KiCadNetClassRequest` in [crates/pcb-kicad/
 
 ## Router settings: connection rules
 
-The value of `default_rules` and of each `connection_rules` entry. Source: `KiCadConnectionRoutingRules` in [crates/pcb-kicad/src/connection_rules.rs](../crates/pcb-kicad/src/connection_rules.rs).
+The value of `default_rules` and of each `connection_rules` entry. Source: `KiCadConnectionRoutingRules` in [crates/pcb-kicad-file/src/connection_rules.rs](../crates/pcb-kicad-file/src/connection_rules.rs).
 
 | Key | Type | Default | Docs | Description |
 |---|---|---|---|---|
@@ -225,7 +225,7 @@ The value of `default_rules` and of each `connection_rules` entry. Source: `KiCa
 
 ## Router report: rules
 
-Not a setting: the `rules` object of the router's report (`board-router.json`), what the router made of the project's rules. Source: `KiCadRulesSummary` in [crates/pcb-kicad/src/board_router/result.rs](../crates/pcb-kicad/src/board_router/result.rs).
+Not a setting: the `rules` object of the router's report (`board-router.json`), what the router made of the project's rules. Source: `KiCadRulesSummary` in [crates/pcb-kicad-route/src/board_router/result.rs](../crates/pcb-kicad-route/src/board_router/result.rs).
 
 | Key | Type | Description |
 |---|---|---|
@@ -239,7 +239,7 @@ Not a setting: the `rules` object of the router's report (`board-router.json`), 
 
 ## Router report: rules from the project
 
-The fields `project` flattens into `rules`; each is left out when empty. Source: `KiCadProjectRulesReport` in [crates/pcb-kicad/src/project_rules.rs](../crates/pcb-kicad/src/project_rules.rs).
+The fields `project` flattens into `rules`; each is left out when empty. Source: `KiCadProjectRulesReport` in [crates/pcb-kicad-route/src/project_rules.rs](../crates/pcb-kicad-route/src/project_rules.rs).
 
 | Key | Type | Description |
 |---|---|---|
@@ -266,7 +266,7 @@ The fields `project` flattens into `rules`; each is left out when empty. Source:
 
 ## Router report: custom_rules entries
 
-One constraint of one rule of the project's `.kicad_dru`. Source: `KiCadCustomRuleReport` in [crates/pcb-kicad/src/project_rules/dru.rs](../crates/pcb-kicad/src/project_rules/dru.rs).
+One constraint of one rule of the project's `.kicad_dru`. Source: `KiCadCustomRuleReport` in [crates/pcb-kicad-route/src/project_rules/dru.rs](../crates/pcb-kicad-route/src/project_rules/dru.rs).
 
 | Key | Type | Description |
 |---|---|---|
@@ -358,7 +358,7 @@ One constraint of one rule of the project's `.kicad_dru`. Source: `KiCadCustomRu
 
 ## Placer settings
 
-The placer config file of `place-kicad-board`, and the `placer` object of the layout settings. Unknown keys are rejected; a missing key takes its default. Source: `KiCadBoardPlacerConfig` in [crates/pcb-kicad/src/board_placer/config.rs](../crates/pcb-kicad/src/board_placer/config.rs).
+The placer config file of `place-kicad-board`, and the `placer` object of the layout settings. Unknown keys are rejected; a missing key takes its default. Source: `KiCadBoardPlacerConfig` in [crates/pcb-kicad-place/src/board_placer/config.rs](../crates/pcb-kicad-place/src/board_placer/config.rs).
 
 | Key | Type | Default | Docs | Description |
 |---|---|---|---|---|

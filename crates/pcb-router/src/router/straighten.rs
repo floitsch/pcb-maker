@@ -18,7 +18,7 @@
 //! the hard search judges it, against all other copper. A shortest path
 //! is never longer, the ends and vias of every branch stay where they
 //! were, so the net's connections and via count do not change.
-//! `crates/pcb-kicad/src/aesthetics.rs` counts bends and stair-steps by
+//! `crates/pcb-kicad-route/src/aesthetics.rs` counts bends and stair-steps by
 //! the same rule on the board's tracks.
 
 use super::*;

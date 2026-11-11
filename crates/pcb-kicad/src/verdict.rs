@@ -22,21 +22,11 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
-/// The run finished and its result is complete.
-pub const EXIT_COMPLETE: u8 = 0;
-/// The run finished; the result is written but incomplete (connections
-/// open, new DRC errors, constraints missed, parts unplaced).
-pub const EXIT_INCOMPLETE: u8 = 1;
-/// Bad arguments or input (missing or unreadable files, invalid JSON,
-/// unknown keys or parts, an output directory that exists).
-pub const EXIT_USAGE: u8 = 2;
-/// The result is incomplete and the wall clock, not the work, cut the run
-/// short: it depends on the machine's load.
-pub const EXIT_CUT: u8 = 3;
-/// An internal error or a panic.
-pub const EXIT_INTERNAL: u8 = 4;
+use crate::board_router::{KiCadStarvedPad, starved_pad};
+use crate::exit::{
+    EXIT_COMPLETE, EXIT_CUT, EXIT_INCOMPLETE, EXIT_INTERNAL, EXIT_USAGE, noted_input_actions,
+};
 
 /// DRC finding types that do not count against a result, as the
 /// benchmarks' `COSMETIC` pattern.
@@ -1472,41 +1462,6 @@ pub struct KiCadRunFacts {
     pub solid_starved: Option<crate::board_router::KiCadSolidStarved>,
 }
 
-/// A pad KiCad finds short of thermal spokes, for the verdict's line.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct KiCadStarvedPad {
-    /// `REF.NUMBER` (`U1.57`), as `solid_starved.pads` names pads.
-    pub pad: String,
-    pub layer: String,
-    pub advice: String,
-}
-
-/// A starved thermal of `diagnostics.starved_thermals` for the verdict's
-/// line: its pad as `REF.NUMBER`, the name `solid_starved.pads` gives it
-/// (a pad KiCad names without a number, "Pad [GND] of M12", as KiCad
-/// names it).
-pub(crate) fn starved_pad(finding: &crate::board_router::KiCadStarvedThermal) -> KiCadStarvedPad {
-    let pad = crate::board_router::solid_pads_of_findings(std::slice::from_ref(finding))
-        .first()
-        .filter(|pad| !pad.number.is_empty() && !pad.number.contains(['[', ' ']))
-        .map_or_else(
-            || {
-                finding
-                    .pad
-                    .split(" on ")
-                    .next()
-                    .unwrap_or(&finding.pad)
-                    .to_string()
-            },
-            |pad| format!("{}.{}", pad.reference, pad.number),
-        );
-    KiCadStarvedPad {
-        pad,
-        layer: finding.layer.clone(),
-        advice: finding.advice.clone(),
-    }
-}
-
 /// A part near a hot spot: its reference, its side (`front`, `back`) and
 /// the distance from the hot spot's point to what of it lies on the hot
 /// spot's layer: its pads there (a through-hole pad on every layer), and
@@ -1746,14 +1701,14 @@ pub fn hot_spot_note(
         let outer_pads = |name: &str| {
             name == "*.Cu" || (outer.is_some() && name == "F&B.Cu") || name == spot.layer
         };
-        let pads = crate::placement_constraints::pad_boxes(footprint).unwrap_or_default();
+        let pads = crate::footprint_bodies::pad_boxes(footprint).unwrap_or_default();
         let mut distance = pads
             .iter()
             .filter(|(_, layers, ..)| layers.iter().any(|layer| outer_pads(layer)))
             .map(|(bounds, ..)| to(*bounds))
             .fold(f64::INFINITY, f64::min);
         if outer == Some(side)
-            && let Ok(Some(body)) = crate::placement_constraints::part_box(footprint)
+            && let Ok(Some(body)) = crate::footprint_bodies::part_box(footprint)
         {
             distance = distance.min(to(body));
         }
@@ -1912,7 +1867,7 @@ fn fine_rows(note: &KiCadHotSpotNote, board: &crate::Expr) -> Vec<(String, f64)>
         if !parts.contains(reference.as_str()) {
             continue;
         }
-        let Ok(pads) = crate::placement_constraints::pad_boxes(footprint) else {
+        let Ok(pads) = crate::footprint_bodies::pad_boxes(footprint) else {
             continue;
         };
         let centers: Vec<[f64; 2]> = pads
@@ -1991,7 +1946,7 @@ fn skeleton_budget_action(facts: &KiCadRunFacts) -> Option<String> {
         "the placement ran without the race over skeletons (skeleton_race: {:.0} s of placement work a seed, under its min_work_seconds {:.0} s; every seed plain): a layout with total_seconds {:.0} or more (the default 1500) places by skeleton, another placement to try against these open connections",
         race.work_seconds.unwrap_or(0.0),
         race.min_work_seconds,
-        (race.min_work_seconds / crate::board_layout::PLACEMENT_SHARE).ceil()
+        (race.min_work_seconds / crate::board_placer::PLACEMENT_SHARE).ceil()
     ))
 }
 
@@ -4883,56 +4838,6 @@ pub fn wall_cuts() -> Vec<String> {
     pcb_router::router::wall_cuts()
 }
 
-/// Errors marked as the input's fault (`input_error`), for the exit code.
-static INPUT_ERRORS: Mutex<Vec<String>> = Mutex::new(Vec::new());
-
-/// Marks `message` as an error in the input (an unknown part in the
-/// constraints, a board that does not parse): the command exits with
-/// `EXIT_USAGE`, not as an internal error.
-pub fn input_error(message: impl Into<String>) -> String {
-    let message = message.into();
-    if let Ok(mut errors) = INPUT_ERRORS.lock() {
-        errors.push(message.clone());
-    }
-    message
-}
-
-/// What the input's error asks of the agent, noted where the error is
-/// found (`note_input_action`), for the verdict's next_actions.
-static INPUT_ACTIONS: Mutex<Vec<String>> = Mutex::new(Vec::new());
-
-/// Notes an action that fixes an input error about to be returned (the
-/// outline's extent and the pitch of a lattice that does not fit): an
-/// input error's verdict (`error_verdict`) lists it first.
-pub fn note_input_action(action: impl Into<String>) {
-    if let Ok(mut actions) = INPUT_ACTIONS.lock() {
-        let action = action.into();
-        if !actions.contains(&action) {
-            actions.push(action);
-        }
-    }
-}
-
-/// The actions noted for input errors so far (`note_input_action`).
-pub fn noted_input_actions() -> Vec<String> {
-    INPUT_ACTIONS
-        .lock()
-        .map(|actions| actions.clone())
-        .unwrap_or_default()
-}
-
-/// Whether `error` is, or wraps, a message marked by `input_error`.
-pub fn is_input_error(error: &str) -> bool {
-    INPUT_ERRORS
-        .lock()
-        .map(|errors| {
-            errors
-                .iter()
-                .any(|message| !message.is_empty() && error.contains(message.as_str()))
-        })
-        .unwrap_or(false)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -7385,13 +7290,6 @@ mod tests {
         .map(|status| status.exit_code())
         .collect();
         assert_eq!(codes, vec![0, 1, 2, 3, 4, 1]);
-    }
-
-    #[test]
-    fn marked_input_errors_are_recognised_when_wrapped() {
-        let message = input_error("constraint names unknown part \"U99\"");
-        assert!(is_input_error(&format!("placement: {message}")));
-        assert!(!is_input_error("kicad-cli failed with exit status 1"));
     }
 
     #[test]

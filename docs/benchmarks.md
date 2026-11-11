@@ -279,7 +279,7 @@ run.py admits each board by the same ledger. `pcb-maker ledger` lists
 who holds and who waits; `--lock` still takes the exclusive tier lock
 (`build/quick-tier.lock`) for a wall or CPU measurement that must not
 share the machine. The rules are the same in
-`crates/pcb-kicad/src/ledger.rs` and `benchmarks/harness_common.py`.
+`crates/pcb-kicad-check/src/ledger.rs` and `benchmarks/harness_common.py`.
 
 - **Capacity**: MemTotal less the memory outside the ledger (the median
   of the headroom samples of the last six hours when they are fresh: at

@@ -115,7 +115,7 @@ pub(super) fn prepare<'a>(
     // The search over sizes is the command's (each size a layout of its
     // own): a layout at one size has none.
     if config.free_dimension.is_some() {
-        return Err(crate::verdict::input_error(
+        return Err(crate::exit::input_error(
             "free_dimension: the layout-kicad-board command searches the sizes; a single layout takes none",
         ));
     }
@@ -133,7 +133,7 @@ pub(super) fn prepare<'a>(
         let text = fs::read_to_string(&board)
             .map_err(|error| format!("failed to read {}: {error}", board.display()))?;
         with_classes = crate::net_classes::with_net_classes(router_config, &parse(&text)?)
-            .map_err(crate::verdict::input_error)?;
+            .map_err(crate::exit::input_error)?;
         &with_classes
     };
     let check_seconds = kicad_check_seconds(source_directory, board_id, router_config)?;

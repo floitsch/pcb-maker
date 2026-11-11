@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 //! Research and measurement commands: the memory ledger, the inspectors,
-//! the probes and the calibration, mostly over `pcb_kicad::lab`. Each takes
+//! the probes and the calibration, mostly over `pcb_kicad_lab`. Each takes
 //! the arguments after its name.
 
 use std::path::Path;
@@ -318,7 +318,7 @@ pub(crate) fn cmd_legality_kicad_board(mut arguments: Arguments) -> Result<(), S
             _ => return Err(usage.into()),
         }
     }
-    let report = pcb_kicad::lab::legality_kicad_board(
+    let report = pcb_kicad_lab::legality_kicad_board(
         Path::new(&directory),
         &board_id,
         &config,
@@ -359,7 +359,7 @@ pub(crate) fn cmd_ablate_kicad_placement(mut arguments: Arguments) -> Result<(),
     let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
     pcb_kicad::check_board_id(&board_id)?;
     let output = arguments.next().ok_or_else(|| usage.to_string())?;
-    let config: pcb_kicad::lab::KiCadAblationConfig = match arguments.next().as_deref() {
+    let config: pcb_kicad_lab::KiCadAblationConfig = match arguments.next().as_deref() {
         None | Some("default") => Default::default(),
         Some(path) => serde_json::from_str(
             &std::fs::read_to_string(path)
@@ -372,7 +372,7 @@ pub(crate) fn cmd_ablate_kicad_placement(mut arguments: Arguments) -> Result<(),
         return Err(usage.into());
     }
     let router = board_router_config(router_path.as_deref(), &placed, &board_id)?;
-    let report = pcb_kicad::lab::ablate_kicad_placement(
+    let report = pcb_kicad_lab::ablate_kicad_placement(
         Path::new(&designer),
         Path::new(&placed),
         &board_id,
@@ -425,7 +425,7 @@ pub(crate) fn cmd_global_route_kicad_board(mut arguments: Arguments) -> Result<(
         }
     }
     let router = board_router_config(router_path.as_deref(), &source, &board_id)?;
-    let report = pcb_kicad::lab::global_route_kicad_board(
+    let report = pcb_kicad_lab::global_route_kicad_board(
         Path::new(&source),
         &board_id,
         &router,
@@ -457,7 +457,7 @@ pub(crate) fn cmd_probe_trouble_placement(mut arguments: Arguments) -> Result<()
     let usage = research_usage("probe-trouble-placement").unwrap_or_default();
     let board = arguments.next().ok_or_else(|| usage.clone())?;
     let mut router_path = None;
-    let mut config = pcb_kicad::lab::KiCadTroubleProbeConfig::default();
+    let mut config = pcb_kicad_lab::KiCadTroubleProbeConfig::default();
     let mut out = None;
     let number = |name: &str, value: Option<String>| -> Result<f64, String> {
         let value = value.ok_or_else(|| format!("{name}: a value"))?;
@@ -467,22 +467,18 @@ pub(crate) fn cmd_probe_trouble_placement(mut arguments: Arguments) -> Result<()
     };
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
-            "--trouble-from" => config
-                .sources
-                .push(pcb_kicad::lab::KiCadTroubleSource::From(
-                    arguments.next().ok_or_else(|| usage.clone())?.into(),
-                )),
+            "--trouble-from" => config.sources.push(pcb_kicad_lab::KiCadTroubleSource::From(
+                arguments.next().ok_or_else(|| usage.clone())?.into(),
+            )),
             "--trouble" => config
                 .sources
-                .push(pcb_kicad::lab::KiCadTroubleSource::Names(
+                .push(pcb_kicad_lab::KiCadTroubleSource::Names(
                     arguments.next().ok_or_else(|| usage.clone())?.into(),
                 )),
-            "--auto" => config
-                .sources
-                .push(pcb_kicad::lab::KiCadTroubleSource::Auto),
+            "--auto" => config.sources.push(pcb_kicad_lab::KiCadTroubleSource::Auto),
             "--nets" => config.nets = Some(number("--nets", arguments.next())? as usize),
             "--background" => {
-                config.background = pcb_kicad::lab::KiCadTroubleBackground::parse(
+                config.background = pcb_kicad_lab::KiCadTroubleBackground::parse(
                     &arguments.next().ok_or_else(|| usage.clone())?,
                 )?
             }
@@ -522,7 +518,7 @@ pub(crate) fn cmd_probe_trouble_placement(mut arguments: Arguments) -> Result<()
     // One router, about the size the race's probe takes; the
     // watchdog raises it while the ledger has room.
     pcb_kicad::ledger::reserve_at_least(1024.0, "the trouble-maker probe's router");
-    let report = pcb_kicad::lab::probe_trouble_placement(board, &router, &config)?;
+    let report = pcb_kicad_lab::probe_trouble_placement(board, &router, &config)?;
     let text = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
     match out {
         Some(path) => std::fs::write(&path, format!("{text}\n"))
@@ -537,7 +533,7 @@ pub(crate) fn cmd_probe_coarse_placement(mut arguments: Arguments) -> Result<(),
     let usage = research_usage("probe-coarse-placement").unwrap_or_default();
     let board = arguments.next().ok_or_else(|| usage.clone())?;
     let mut router_path = None;
-    let mut config = pcb_kicad::lab::KiCadCoarseProbeConfig::default();
+    let mut config = pcb_kicad_lab::KiCadCoarseProbeConfig::default();
     let mut out = None;
     let number = |name: &str, value: Option<String>| -> Result<f64, String> {
         let value = value.ok_or_else(|| format!("{name}: a value"))?;
@@ -589,7 +585,7 @@ pub(crate) fn cmd_probe_coarse_placement(mut arguments: Arguments) -> Result<(),
         false,
     );
     pcb_kicad::ledger::reserve_at_least(1024.0, "the coarse probe's router");
-    let report = pcb_kicad::lab::probe_coarse_placement(board, &router, &config)?;
+    let report = pcb_kicad_lab::probe_coarse_placement(board, &router, &config)?;
     let text = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
     match out {
         Some(path) => std::fs::write(&path, format!("{text}\n"))

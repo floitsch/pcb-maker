@@ -15,9 +15,9 @@
 //! (docs/handover.md, "Tried and not taken").
 
 use super::*;
-use crate::board_layout::footprint_items;
-use crate::board_placer::write_footprint_pose;
 use crate::board_router::lower;
+use crate::canonical_order::footprint_items;
+use crate::footprint_bodies::write_footprint_pose;
 use pcb_placer as placer;
 use pcb_router as core;
 use pcb_router::geometry::{Point, Shape};
@@ -509,7 +509,7 @@ impl RudyMaps {
 /// edges) above `alpha` times the tiles' free capacity, summed over the
 /// board's tiles on `frame`. Lower is better. `alpha` 0.25 ranked
 /// held-out placements best (fitted 0.2-0.3).
-pub(crate) fn rudy_overflow(board: &Board, frame: &TileFrame, alpha: f32) -> f32 {
+pub fn rudy_overflow(board: &Board, frame: &TileFrame, alpha: f32) -> f32 {
     rasterize(board, frame).overflow(alpha)
 }
 

@@ -21,7 +21,7 @@ file named in the log).
 The measures (per connection: per net of two pads or more, its pads less
 one, the same for any routing of one netlist):
 
-- bends: score-kicad-board's rule (crates/pcb-kicad/src/aesthetics.rs):
+- bends: score-kicad-board's rule (crates/pcb-kicad-route/src/aesthetics.rs):
   paths are a net's segments on one layer between terminals (a pad of the
   net, a via, a junction, a free end); a direction change of 5 degrees or
   more is a turn, turns of one sense less than 1 mm apart summing to at

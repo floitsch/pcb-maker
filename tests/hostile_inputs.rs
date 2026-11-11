@@ -176,7 +176,7 @@ fn a_lattice_the_memory_cannot_hold_is_refused_before_it_is_allocated() {
     // The retry with a fixed board takes the same output directory.
     fs::copy(
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("crates/pcb-kicad/tests/fixtures/plated-branch.kicad_pcb"),
+            .join("crates/pcb-kicad-route/tests/fixtures/plated-branch.kicad_pcb"),
         project.join("t.kicad_pcb"),
     )
     .unwrap();

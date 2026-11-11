@@ -5,7 +5,7 @@
 //! the outline and the copper layers.
 
 use super::*;
-use crate::board_placer::local_body;
+use crate::footprint_bodies::local_body;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct KiCadBoardDescription {
@@ -523,7 +523,7 @@ pub fn describe_kicad_board(
                 .unwrap_or("")
                 .to_string(),
             at,
-            side: if crate::board_placer::on_back(footprint) {
+            side: if crate::footprint_bodies::on_back(footprint) {
                 "back"
             } else {
                 "front"

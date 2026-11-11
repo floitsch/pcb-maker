@@ -387,9 +387,9 @@ fn probe_placements(
 ) -> (RaceProbes, f64) {
     let ripped = ripped_asked && !repair;
     crate::mem_profile::phase("race probes");
-    let before_mb = crate::board_router::resident_mb();
+    let before_mb = crate::proc_memory::resident_mb();
     let first = core::router::Router::new(boards[0], core_config);
-    let router_mb = (crate::board_router::resident_mb() - before_mb).max(1.0);
+    let router_mb = (crate::proc_memory::resident_mb() - before_mb).max(1.0);
     let side_by_side = crate::board_router::memory_mb()
         .map_or(1, |(_, available)| {
             (available * 0.5 / (router_mb * 1.5)) as usize
@@ -526,11 +526,11 @@ fn ripped_count(
     cost: &mut KiCadRaceRippedCost,
 ) -> (usize, usize) {
     crate::ledger::reserve_at_least(
-        crate::board_router::resident_mb() + router_mb,
+        crate::proc_memory::resident_mb() + router_mb,
         "the race's ripped count",
     );
     crate::mem_profile::phase("race ripped count");
-    let before_mb = crate::board_router::resident_mb();
+    let before_mb = crate::proc_memory::resident_mb();
     let started = std::time::Instant::now();
     // The probe's router ripped in place and put back:
     // what it saves to go back to is a fraction of a copy.
@@ -538,7 +538,7 @@ fn ripped_count(
     cost.copy_seconds += started.elapsed().as_secs_f64();
     cost.copy_mb = cost
         .copy_mb
-        .max(crate::board_router::resident_mb() - before_mb);
+        .max(crate::proc_memory::resident_mb() - before_mb);
     let started = std::time::Instant::now();
     let (nets, standing) = router.rip_up_standing();
     router.restore_after_rip_up(saved);

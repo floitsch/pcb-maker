@@ -9,6 +9,12 @@ description = "A placer and router for KiCad boards, driven by agents"
 members = [
     ".",
     "crates/pcb-kicad",
+    "crates/pcb-kicad-file",
+    "crates/pcb-kicad-check",
+    "crates/pcb-kicad-route",
+    "crates/pcb-kicad-place",
+    "crates/pcb-kicad-import",
+    "crates/pcb-kicad-lab",
     "crates/pcb-placer",
     "crates/pcb-router",
     "crates/pcb-global",
@@ -20,6 +26,8 @@ resolver = "3"
 [dependencies]
 pcb-global = { path = "crates/pcb-global" }
 pcb-kicad = { path = "crates/pcb-kicad" }
+pcb-kicad-import = { path = "crates/pcb-kicad-import" }
+pcb-kicad-lab = { path = "crates/pcb-kicad-lab" }
 serde = "1.0"
 serde_json = { version = "1.0", features = ["float_roundtrip"] }
 

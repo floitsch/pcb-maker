@@ -78,7 +78,7 @@ Every budget is work: search expansions at `expansions_per_second` and placer
 units. Where the rates are pinned (`PCB_WORK_RATE`, as every tier and run.py
 pin them at the reference's 3.15e6 and 150e6), a faster binary does the same
 work in less CPU. Where they are measured (`calibrate` in
-crates/pcb-kicad/src/work_rate.rs), the rate is the reference's scaled by a
+crates/pcb-kicad-check/src/work_rate.rs), the rate is the reference's scaled by a
 canned search's speed against `REFERENCE_CANNED_EXPANSIONS_PER_SECOND` (6.9e6):
 a router change that speeds up the canned search raises the measured rate, and
 an unpinned run spends the saving on more search, with other results. The

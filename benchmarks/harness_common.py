@@ -226,7 +226,7 @@ def run_group(command, timeout=None, **options):
     return completed
 
 
-# The machine's memory ledger (crates/pcb-kicad/src/ledger.rs: the same
+# The machine's memory ledger (crates/pcb-kicad-check/src/ledger.rs: the same
 # file and rules). Every route, layout and KiCad check of a binary since
 # x1590 reserves its memory in it before it allocates, and the harnesses
 # admit a board against it: the sum of the live reservations and the
@@ -236,7 +236,7 @@ def run_group(command, timeout=None, **options):
 # admitted together grew into each other (two OOM rounds).
 LEDGER_MARGIN_MB = 6144.0
 
-# The drain (crates/pcb-kicad/src/ledger.rs, `drain_allows`, since
+# The drain (crates/pcb-kicad-check/src/ledger.rs, `drain_allows`, since
 # 2026-10-25): how long the first waiter waits before newer requests are
 # held to what leaves it its room (an entry's `drain_after`, run.py's
 # --ledger-drain-after), and the nightly's priority (run.py's
@@ -583,7 +583,7 @@ def oldest_waiter(reservations):
 
 
 def order_allows(others, megabytes, since, capacity_mb, own_pid=None, priority=None):
-    """Ordered admission (crates/pcb-kicad/src/ledger.rs, `order_allows`:
+    """Ordered admission (crates/pcb-kicad-check/src/ledger.rs, `order_allows`:
     the same rule): whether a new request of `megabytes`, waiting since
     `since` (now when it has not waited), may be admitted beside `others`
     (the live reservations but its own) without passing the request that
@@ -617,7 +617,7 @@ def order_allows(others, megabytes, since, capacity_mb, own_pid=None, priority=N
 
 def drained_for(others, since, now, own_pid=None, priority=None, capacity_mb=None, available_mb=None):
     """The waiter a new request (waiting since `since`, `priority`) is held
-    to a drain for at `now` (crates/pcb-kicad/src/ledger.rs, `drained_for`):
+    to a drain for at `now` (crates/pcb-kicad-check/src/ledger.rs, `drained_for`):
     the first waiter, when it comes before the request and the ledger
     drains for it (drain_state: it has waited its `drain_after`, default
     DEFAULT_DRAIN_AFTER_SECONDS, the nightly's at once, and the ledger
@@ -645,7 +645,7 @@ DRAINS = ("drains", "past bound")
 
 def drain_state(waiter, others, now, capacity_mb=None, available_mb=None):
     """Whether the ledger drains for `waiter` beside `others` at `now`
-    (crates/pcb-kicad/src/ledger.rs, `drain_state`: the same rule, since
+    (crates/pcb-kicad-check/src/ledger.rs, `drain_state`: the same rule, since
     2026-10-26), and why not: ("not yet", None) before its `drain_after`;
     ("stale", seconds) when its entry was last rewritten (`refreshed`) more
     than STALE_AFTER_SECONDS ago (absent: unknown, live); ("cannot start", room) when, with every
@@ -695,7 +695,7 @@ def describe_drain(state):
 
 
 def drain_allows(waiter, others, megabytes, capacity_mb, available_mb, expected_end=None, small_mb=SMALL_REQUEST_MB):
-    """The drain (crates/pcb-kicad/src/ledger.rs, `drain_allows`: the same
+    """The drain (crates/pcb-kicad-check/src/ledger.rs, `drain_allows`: the same
     rule, since 2026-10-25): whether a new request of `megabytes`, expected
     to end at `expected_end` (None: unknown), may go beside `others` while
     the ledger drains for `waiter`. Only if after it the waiter's room
@@ -744,7 +744,7 @@ def _waiter_room(waiter, rest, capacity_mb, available_mb, megabytes=0.0, freed_m
 
 def blocked_by_large(waiter, others, capacity_mb, available_mb, small_mb=SMALL_REQUEST_MB):
     """Whether `waiter` cannot fit before a run larger than
-    SMALL_REQUEST_MB ends (crates/pcb-kicad/src/ledger.rs,
+    SMALL_REQUEST_MB ends (crates/pcb-kicad-check/src/ledger.rs,
     `blocked_by_large`: the same rule): such a run holds memory, and with
     every smaller run gone the waiter's room (_waiter_room: the capacity,
     and the memory available, each with the smaller runs' megabytes back)
@@ -941,8 +941,8 @@ def admit(ledger, megabytes, label, min_free_mb=0.0, poll_seconds=15.0, log=None
             withdraw(ledger, label, since)
 
 
-# The floor from measured headroom (since 2026-10-27; crates/pcb-kicad/src/
-# ledger.rs, `measured_floor_mb`: the same rule). A harness's floor
+# The floor from measured headroom (since 2026-10-27;
+# crates/pcb-kicad-check/src/ledger.rs, `measured_floor_mb`: the same rule). A harness's floor
 # (run.py's --min-free-gb) keeps MemAvailable, less what the reservations
 # still grow by, above it after a board's expected peak: it is the room
 # for what the ledger does not count, the memory outside the ledger (the

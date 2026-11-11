@@ -109,7 +109,7 @@ DEFAULT_TIMEOUT_SECONDS = 1800
 WALL_GUARD = 2.0
 # With the rates pinned, a binary stretches its wall-clock guards by the
 # pinned rate over the one it measured at its start, at most this much
-# (pcb-kicad's MAX_WALL_STRETCH, or PCB_WALL_STRETCH_MAX where that is a
+# (pcb-kicad-check's MAX_WALL_STRETCH, or PCB_WALL_STRETCH_MAX where that is a
 # number of at least 1: wall_stretch_max; docs/router.md, "Determinism and
 # the wall clock"): the harness's timeouts allow for it.
 WALL_STRETCH_MAX = 4.0

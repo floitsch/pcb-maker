@@ -6,7 +6,7 @@ them. It has two layers:
 - `crates/pcb-placer` is the core. It knows bodies, pins, nets, an outline
   and constraints, and nothing about KiCad. Its entry point is
   `pcb_placer::place` (`lib.rs`).
-- `crates/pcb-kicad/src/board_placer/` lowers a KiCad board to the core's
+- `crates/pcb-kicad-place/src/board_placer/` lowers a KiCad board to the core's
   `Problem`, runs several seeds, picks one, writes the placed board and
   `board-placer.json`. Its entry point is `place_kicad_board` (`place/`).
   The layout (`board_layout.rs`) adds the race: it ranks the seeds'
@@ -125,7 +125,7 @@ change the board before it is lowered.
 `pcb_placer::Problem` (`problem.rs`):
 
 - **Bodies.** A body is the courtyard and pad extent, a box or a disc
-  (`local_body`, `bodies.rs`). A part whose courtyard covers little of
+  (`local_body`, `footprint_bodies.rs`). A part whose courtyard covers little of
   that box is **hollow** and blocks with its pads and courtyard pieces
   only (others may sit inside a shield's outline). A through-hole part
   blocks the far side with its holes and pads, a part with a courtyard on
@@ -635,11 +635,11 @@ connectors and the designer's overhangs (`sub_boards::keep_off_frames`).
 
 A panel of different boards shares net names (GND, the sheets' nets)
 though no copper joins its boards; placed as one, its parts interleave and
-the router joins same-named nets across the tabs. `sub_boards`
-(`sub_boards.rs`) cuts the outline at necks narrower than 2 mm, mouse-bite
-rows and V-cuts, assigns each part a sub-board (from held parts, the
-`--reference` board, and nets), splits same-named nets per piece for the
-router, and keeps parts off tabs and frames.
+the router joins same-named nets across the tabs. `outline_pieces.rs`
+cuts the outline at necks narrower than 2 mm, mouse-bite rows and V-cuts
+and splits same-named nets per piece for the router; `sub_boards.rs`
+assigns each part a sub-board (from held parts, the `--reference` board,
+and nets) and keeps parts off tabs and frames.
 `sub_boards::place_sub_boards` places each sub-board alone in its region
 with a budget share by its parts (its own fullness decides its levels),
 then the unassigned parts. With every part stacked and no `--reference`,
