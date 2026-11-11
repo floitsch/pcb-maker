@@ -81,7 +81,8 @@ pub(super) fn take_poses(pcb: &mut Expr, from: &Expr) -> Result<usize, String> {
 /// constraints and the project's rules into `config`, applies the outline,
 /// keepout and side constraints, and lowers the board: everything
 /// `place_kicad_board` does before it places (also the legality census,
-/// `lab::legality_kicad_board`, which takes the poses of `poses_from`).
+/// `pcb_kicad_lab::legality_kicad_board`, which takes the poses of
+/// `poses_from`).
 pub fn prepare_board(
     source_directory: &Path,
     board_id: &str,
