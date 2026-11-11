@@ -1,0 +1,28 @@
+[package]
+name = "pcb-kicad-route-place"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "A KiCad board routed and placed: the project's rules, the lowering to pcb-router's and pcb-placer's problems, the route and place flows and their features"
+publish = false
+
+[dependencies]
+pcb-global = { path = "../pcb-global" }
+pcb-kicad-check = { path = "../pcb-kicad-check" }
+pcb-kicad-file = { path = "../pcb-kicad-file" }
+pcb-placer = { path = "../pcb-placer" }
+pcb-router = { path = "../pcb-router" }
+pcb-topo = { path = "../pcb-topo" }
+rayon = "1"
+# Net class patterns are regular expressions as well as wildcards.
+regex-lite = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+# Candidate coordinates must parse identically in standalone library consumers
+# and the main executable, without relying on workspace feature unification.
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
+sha2 = "0.10"
+
+[target.'cfg(unix)'.dependencies]
+# glibc's malloc tuned for the router's maps (mallopt) and RLIMIT_AS read
+# (getrlimit, every Unix: the macOS release build needs it), board_router/memory.rs.
+libc = "0.2"

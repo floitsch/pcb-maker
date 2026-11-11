@@ -934,16 +934,16 @@ where
 }
 
 fn tables(root: &Path) -> Result<Vec<Table>, String> {
-    let router_file = "crates/pcb-kicad/src/board_router/config.rs";
-    let placer_file = "crates/pcb-kicad/src/board_placer/config.rs";
+    let router_file = "crates/pcb-kicad-route-place/src/board_router/config.rs";
+    let placer_file = "crates/pcb-kicad-route-place/src/board_placer/config.rs";
     let layout_file = "crates/pcb-kicad/src/board_layout.rs";
     let core_router_file = "crates/pcb-router/src/router/config.rs";
     let core_placer_file = "crates/pcb-placer/src/lib.rs";
     let global_file = "crates/pcb-placer/src/global.rs";
     let anneal_file = "crates/pcb-placer/src/anneal.rs";
-    let pin_swap_file = "crates/pcb-kicad/src/pin_swap.rs";
-    let pour_file = "crates/pcb-kicad/src/board_router/pour_plan.rs";
-    let class_file = "crates/pcb-kicad/src/net_classes.rs";
+    let pin_swap_file = "crates/pcb-kicad-route-place/src/pin_swap.rs";
+    let pour_file = "crates/pcb-kicad-route-place/src/board_router/pour_plan.rs";
+    let class_file = "crates/pcb-kicad-route-place/src/net_classes.rs";
     let rules_file = "crates/pcb-kicad-file/src/connection_rules.rs";
 
     let router = json_defaults::<pcb_kicad::KiCadBoardRouterConfig>()?;
@@ -956,13 +956,17 @@ fn tables(root: &Path) -> Result<Vec<Table>, String> {
     let pin_swap = nested(&router, "pin_swap");
 
     // Which settings reach the core configs.
-    let core_config_file = find_file(root, "crates/pcb-kicad/src", "fn core_config(")?;
+    let core_config_file = find_file(root, "crates/pcb-kicad-route-place/src", "fn core_config(")?;
     let router_sources = assignments(
         &read(root, &core_config_file)?,
         "fn core_config(",
         "router_config",
     )?;
-    let place_file = find_file(root, "crates/pcb-kicad/src", "pub fn place_kicad_board(")?;
+    let place_file = find_file(
+        root,
+        "crates/pcb-kicad-route-place/src",
+        "pub fn place_kicad_board(",
+    )?;
     let placer_sources = assignments(
         &read(root, &place_file)?,
         "let mut placer_config = core::Config::new();",
@@ -1047,10 +1051,10 @@ fn tables(root: &Path) -> Result<Vec<Table>, String> {
             title: "Router report: rules",
             prefix: "rules.",
             intro: "Not a setting: the `rules` object of the router's report (`board-router.json`), what the router made of the project's rules.",
-            file: "crates/pcb-kicad/src/board_router/result.rs",
+            file: "crates/pcb-kicad-route-place/src/board_router/result.rs",
             name: "KiCadRulesSummary",
             fields: parse(
-                "crates/pcb-kicad/src/board_router/result.rs",
+                "crates/pcb-kicad-route-place/src/board_router/result.rs",
                 "KiCadRulesSummary",
             )?,
             defaults: Defaults::Entry,
@@ -1060,10 +1064,10 @@ fn tables(root: &Path) -> Result<Vec<Table>, String> {
             title: "Router report: rules from the project",
             prefix: "rules.",
             intro: "The fields `project` flattens into `rules`; each is left out when empty.",
-            file: "crates/pcb-kicad/src/project_rules.rs",
+            file: "crates/pcb-kicad-route-place/src/project_rules.rs",
             name: "KiCadProjectRulesReport",
             fields: parse(
-                "crates/pcb-kicad/src/project_rules.rs",
+                "crates/pcb-kicad-route-place/src/project_rules.rs",
                 "KiCadProjectRulesReport",
             )?,
             defaults: Defaults::Entry,
@@ -1073,10 +1077,10 @@ fn tables(root: &Path) -> Result<Vec<Table>, String> {
             title: "Router report: custom_rules entries",
             prefix: "rules.custom_rules[].",
             intro: "One constraint of one rule of the project's `.kicad_dru`.",
-            file: "crates/pcb-kicad/src/project_rules/dru.rs",
+            file: "crates/pcb-kicad-route-place/src/project_rules/dru.rs",
             name: "KiCadCustomRuleReport",
             fields: parse(
-                "crates/pcb-kicad/src/project_rules/dru.rs",
+                "crates/pcb-kicad-route-place/src/project_rules/dru.rs",
                 "KiCadCustomRuleReport",
             )?,
             defaults: Defaults::Entry,

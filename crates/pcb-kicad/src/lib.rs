@@ -13,23 +13,26 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
-    env, fs,
+    fs,
     path::{Path, PathBuf},
     process::Command,
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::Instant,
+};
+// The tests' scratch directories.
+#[cfg(test)]
+use std::{
+    env,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 pub use connection_rules::KiCadConnectionRoutingRules;
 pub use corridors_fact::{KiCadCorridors, KiCadSearchCount, KiCadSearchKinds};
 // The KiCad files, their geometry and how a run exits (pcb-kicad-file).
+pub use necks::{NeckRepair, repair_kicad_necks};
 use pcb_kicad_file::{
     board_stats, canonical_order, connection_rules, copper_emit, copper_geometry, corridors_fact,
-    exit, flip, fs_util, geometry, kicad_nets, kicad_sexpr, local_clearance, outline,
-    outline_pieces, part_motion,
+    exit, flip, fs_util, geometry, kicad_nets, kicad_sexpr, outline, outline_pieces,
 };
-mod necks;
-pub use necks::{NeckRepair, repair_kicad_necks};
-mod check_work;
 // KiCad's checks and the machine (pcb-kicad-check).
 pub use drc_cache::{DrcCacheCounts, drc_cache_counts};
 pub use fs_util::write_atomically;
@@ -44,6 +47,11 @@ pub use native_report::{
 };
 use native_report::{remove_if_present, run_kicad_report};
 pub use silkscreen::repair_kicad_silkscreen;
+// A board routed and placed (pcb-kicad-route-place).
+use pcb_kicad_route_place::{
+    board_placer, board_router, check_work, cost, labels, necks, net_classes, pin_swap,
+    placement_constraints, placement_room, project_rules, quality, silk_fields, sub_boards,
+};
 mod board_layout;
 mod congestion_rank;
 pub mod lab;
@@ -52,14 +60,12 @@ pub use board_layout::{
     KiCadRaceProbe, KiCadRaceProbeScore, KiCadRaceReport, KiCadSilkscreenConfig, KiCadSwappable,
     layout_kicad_board, placement_check_config,
 };
-mod board_placer;
 pub use board_placer::{
     KiCadBoardPlacerConfig, KiCadBoardPlacerResult, KiCadClosedPad, KiCadExitMove, KiCadPadExits,
     KiCadPadExitsCensus, KiCadPadExitsReport, KiCadPanelCellClass, KiCadPanelCopiesReport,
     KiCadPanelCopy, KiCadPlacedFootprint, pad_exits_kicad_board, pad_exits_override,
     place_kicad_board,
 };
-mod board_router;
 mod verdict;
 pub use exit::{
     EXIT_COMPLETE, EXIT_CUT, EXIT_INCOMPLETE, EXIT_INTERNAL, EXIT_USAGE, input_error,
@@ -81,16 +87,10 @@ pub use work_rate::{
 mod class_view;
 mod constraints_template;
 mod describe;
-mod net_classes;
-pub use net_classes::KiCadNetClassRequest;
-mod aesthetics;
-mod quality;
-pub use quality::{KiCadDecoupling, KiCadQualityReport, score_kicad_board};
-mod cost;
 pub use cost::{KiCadCost, KiCadFabQuote};
-mod labels;
-mod silk_fields;
 pub use labels::KiCadLabelReport;
+pub use net_classes::KiCadNetClassRequest;
+pub use quality::{KiCadDecoupling, KiCadQualityReport, score_kicad_board};
 pub use silk_fields::KiCadSilkscreenReport;
 mod fab_export;
 pub use fab_export::{KiCadFabExport, export_kicad_fab};
@@ -113,8 +113,6 @@ pub use netlist_import::{
     KiCadNetlistImport, import_kicad_netlist, import_kicad_netlist_from,
     import_kicad_netlist_options, import_kicad_netlist_with,
 };
-mod placement_constraints;
-mod placement_room;
 pub use placement_constraints::{
     KiCadConstraintStatus, KiCadConstraintsSource, KiCadPlacementConstraints, keepout_warnings,
     overlap_warnings, placement_input_warnings, read_placement_constraints,
@@ -125,14 +123,11 @@ pub use free_dimension::{
     KiCadFreeDimension, KiCadFreeDimensionPlan, KiCadFreeDimensionRun, KiCadFreeDimensionSearch,
     KiCadFreeDimensionStep,
 };
-mod pin_swap;
 pub use pin_swap::{
     KiCadPinChange, KiCadPinSwapConfig, KiCadPinSwapEstimate, KiCadPinSwapResult, KiCadPinSwapSpec,
     read_pin_swap_spec, swap_kicad_pins, swap_kicad_pins_in_place,
 };
-mod sub_boards;
 pub use sub_boards::describe_sub_boards;
-mod project_rules;
 mod run_diagnosis;
 pub use board_router::{
     KiCadBoardRouterConfig, KiCadBoardRouterNet, KiCadBoardRouterResult, KiCadBoardRouterViolation,
@@ -152,12 +147,7 @@ pub use run_diagnosis::{
     KiCadRunDiagnosis, KiCadRunFiles, KiCadRunInspection, inspect_routing_run, run_files,
 };
 
-/// Sets the allocator up for the router's large maps (glibc: blocks of a
-/// MiB or more are unmapped when freed; `board_router::configure_malloc`).
-/// Call once, first thing in `main`.
-pub fn configure_allocator() {
-    board_router::configure_malloc();
-}
+pub use pcb_kicad_route_place::configure_allocator;
 
 /// The memory profile (`PCB_ROUTER_MEM_PROFILE`): the counting allocator,
 /// the sampler, the phases (docs/profiling.md, "Memory").
@@ -169,7 +159,6 @@ pub use board_stats::{
     KiCadBoardStatistics, KiCadConnectionSummary, KiCadCopperLayerStatistics,
     KiCadPhysicalCopperStatistics, inspect_kicad_board, inspect_kicad_routable_connections,
 };
-use copper_emit::*;
 pub use copper_emit::{
     KiCadCopperStripReport, KiCadRouteBranch, KiCadRoutePoint, SupplementalSegment,
     SupplementalVia, write_kicad_board_without_copper,
@@ -185,10 +174,3 @@ pub use verification::{
     KiCadVerificationCacheStatus, KiCadVerificationCacheTrace, VerificationReport,
     kicad_verifier_implementation_sha256, verify_materialized_rung,
 };
-
-// The fixture tests on tests/fixtures/f1 that need the crate's insides
-// (under tests/, as test sources: tools/config-reference's index of
-// environment variables leaves out their PCB_UPDATE_GOLDEN).
-#[cfg(test)]
-#[path = "tests/fixtures.rs"]
-mod fixture_tests;

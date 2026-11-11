@@ -11,6 +11,7 @@ members = [
     "crates/pcb-kicad",
     "crates/pcb-kicad-file",
     "crates/pcb-kicad-check",
+    "crates/pcb-kicad-route-place",
     "crates/pcb-placer",
     "crates/pcb-router",
     "crates/pcb-global",

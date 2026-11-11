@@ -43,7 +43,7 @@ fn project(root: &Path) -> PathBuf {
     let project = root.join("project");
     fs::create_dir_all(&project).unwrap();
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("crates/pcb-kicad/tests/fixtures/plated-branch.kicad_pcb");
+        .join("crates/pcb-kicad-route-place/tests/fixtures/plated-branch.kicad_pcb");
     fs::copy(fixture, project.join("t.kicad_pcb")).unwrap();
     project
 }

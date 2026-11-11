@@ -39,7 +39,7 @@ use super::*;
 
 /// A copper zone: where it is among the board's items, its net, priority,
 /// copper layers and outline.
-struct Pour {
+pub struct Pour {
     item: usize,
     /// The zone's uuid, lower case (KiCad's tie between equal priorities).
     uuid: String,
@@ -192,7 +192,7 @@ fn overlap(a: &[[f64; 2]], b: &[[f64; 2]]) -> bool {
     inside(a[0], b) || inside(b[0], a)
 }
 
-fn pours(board: &Expr) -> Vec<Pour> {
+pub fn pours(board: &Expr) -> Vec<Pour> {
     board
         .children()
         .iter()

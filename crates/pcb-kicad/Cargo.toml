@@ -10,6 +10,7 @@ publish = false
 pcb-global = { path = "../pcb-global" }
 pcb-kicad-check = { path = "../pcb-kicad-check" }
 pcb-kicad-file = { path = "../pcb-kicad-file" }
+pcb-kicad-route-place = { path = "../pcb-kicad-route-place" }
 pcb-placer = { path = "../pcb-placer" }
 pcb-router = { path = "../pcb-router" }
 pcb-topo = { path = "../pcb-topo" }
