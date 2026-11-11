@@ -16,6 +16,50 @@ mod joins;
 use free::Fill;
 use joins::{Joins, PourPads, main_piece};
 
+/// KiCad's zone connection of a pad: its own setting, else its
+/// footprint's, else the zone's (`Thermal` here; a solid pour is solid by
+/// its own flag).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::router) enum ZoneConnection {
+    Thermal,
+    Solid,
+    None,
+}
+
+/// The zone connection of pad `pad` (an index into the board's
+/// obstacles) whose terminal label is `label`: by the pad itself where the
+/// lowering gave the per-pad lists (`Board::solid_pad_obstacles`,
+/// `isolated_pad_obstacles`), else by the label (a board not lowered from
+/// KiCad). KiCad resolves the connection per pad, and a label can name
+/// pads of different settings: poly_kybd_split72_left's H5.1, a 6 mm
+/// mounting pad that inherits the zone's thermal relief and eight small
+/// pads around its hole set to solid. By the label the large pad read as
+/// solid: the model let the fill run over it and joined C2_29.2, whose
+/// spoke ends in its relief, to the pour; KiCad left C2_29.2 unconnected.
+pub(in crate::router) fn zone_connection(board: &Board, label: &str, pad: usize) -> ZoneConnection {
+    if board.solid_pad_obstacles.is_empty() && board.isolated_pad_obstacles.is_empty() {
+        let listed = |labels: &[String]| {
+            labels
+                .binary_search_by(|other| other.as_str().cmp(label))
+                .is_ok()
+        };
+        return if listed(&board.isolated_pads) {
+            ZoneConnection::None
+        } else if listed(&board.solid_pads) {
+            ZoneConnection::Solid
+        } else {
+            ZoneConnection::Thermal
+        };
+    }
+    if board.isolated_pad_obstacles.binary_search(&pad).is_ok() {
+        ZoneConnection::None
+    } else if board.solid_pad_obstacles.binary_search(&pad).is_ok() {
+        ZoneConnection::Solid
+    } else {
+        ZoneConnection::Thermal
+    }
+}
+
 impl Router {
     /// Which pour piece every terminal and branch of `net` belongs to.
     /// Returns the pour map, a union-find over `pieces + terminals +
@@ -216,7 +260,8 @@ impl Router {
         // beyond the clearance of the pads beside it, and its island of
         // U2's ground pads as joined to the rest; KiCad's fill keeps them
         // apart and reported them unconnected.
-        let mut touched = self.join_solid_pads(&pads, &pours, &mut joins, &rings, reclaimed);
+        let (mut touched, merged_items) =
+            self.join_solid_pads(&pads, &pours, &mut joins, &rings, reclaimed);
         self.join_branches(state, &mut joins, &branch_pieces, skip, &mut touched);
         let spoke_islands = if self.config.kicad_spokes {
             self.kicad_spokes(
@@ -227,6 +272,7 @@ impl Router {
                 skip,
                 &rings,
                 &branch_pieces,
+                &merged_items,
                 report,
             )
         } else {

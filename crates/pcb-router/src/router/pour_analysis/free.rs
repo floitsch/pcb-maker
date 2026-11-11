@@ -80,7 +80,7 @@ impl Router {
         let rings = self.thermal_ring_pads(net);
         self.cut_thermal_rings(&rings, &mut free);
         self.cut_thermal_rings(&self.isolated_knockouts(net), &mut free);
-        self.cut_via_reliefs(net, &mut free);
+        self.cut_via_reliefs(net, &mut free, &rings, &reclaimed);
         // The net's own tracks are copper of the net, and the fill joins
         // them anywhere, inside a pad's thermal ring too (a plane stub ends
         // in the ring: Castor's U7.3 read as stranded with "1 branch, 0

@@ -11,6 +11,7 @@
 //! two's count) and `drc` (pass three: what KiCad's DRC adds per pad and
 //! per zone).
 
+use super::pour_analysis::{ZoneConnection, zone_connection};
 use super::*;
 
 mod draw;
@@ -73,22 +74,21 @@ impl<'a> SpokeNet<'a> {
         }
     }
 
-    /// Whether `terminal`'s pad connects to no zone (the lowering's
-    /// per label).
-    fn isolated(&self, terminal: usize) -> bool {
-        self.board
-            .isolated_pads
-            .binary_search(&self.description.terminals[terminal].label)
-            .is_ok()
+    /// KiCad's zone connection of `terminal`'s own pad (per pad,
+    /// `zone_connection`).
+    fn connection(&self, terminal: usize) -> ZoneConnection {
+        let terminal = &self.description.terminals[terminal];
+        zone_connection(self.board, &terminal.label, terminal.pad)
     }
 
-    /// Whether `terminal`'s pad connects to its zones solidly (the
-    /// lowering's per label).
+    /// Whether `terminal`'s pad connects to no zone.
+    fn isolated(&self, terminal: usize) -> bool {
+        self.connection(terminal) == ZoneConnection::None
+    }
+
+    /// Whether `terminal`'s pad connects to its zones solidly.
     fn solid_pad(&self, terminal: usize) -> bool {
-        self.board
-            .solid_pads
-            .binary_search(&self.description.terminals[terminal].label)
-            .is_ok()
+        self.connection(terminal) == ZoneConnection::Solid
     }
 
     /// The pour map's piece at node `cell` on `layer`; 0 for none.
@@ -184,13 +184,18 @@ impl Router {
         skip: &dyn Fn(usize) -> bool,
         rings: &[Vec<(usize, f64)>],
         branch_pieces: &[Vec<(u32, usize)>],
+        merged_items: &[u32],
         report: Option<&mut Vec<SpokeRecord>>,
     ) -> Vec<(usize, usize)> {
         let model = SpokeNet::new(self, net, pours, skip);
         // Items per piece (KiCad's CN_ZONE_LAYER::HasSingleConnection):
-        // each branch with a node in it, each pad joined solidly, and each
-        // pad whose spoke lands in it.
+        // each branch with a node in it, each pad joined solidly (a pad
+        // merged into a terminal too: `merged_items`, once per pad and
+        // piece), and each pad whose spoke lands in it.
         let mut items = self.piece_items(&model, branch_pieces);
+        for piece in merged_items {
+            *items.entry(*piece).or_default() += 1;
+        }
         let probe = fill::FillProbe::new(self, net, rings);
         // Per layer, the net's zones KiCad fills there when there are
         // several.
