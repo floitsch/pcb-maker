@@ -261,7 +261,9 @@ the pad's net wide enough for its class's track, the graphic cut back
 around them, every via kept off the whole graphic, the net's pours kept
 out of the corridors. A graphic over pads of two nets gives each walled pad
 exits of its own net, never one near the other net's pad, and stays no
-net's between them. Pads with a free point change nothing. The run then
+net's between them. Pads with a free point change nothing, nor does a
+pad another item's copper of its net already joins (the keyboard's C10.2
+over its antenna's feed). The run then
 leaves one finding per connected walled pad, a track against the graphic,
 which KiCad reports as the designer's board has it.
 

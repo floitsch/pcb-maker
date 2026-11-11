@@ -212,8 +212,8 @@ an off switch; a fresh-agent trial every few days.
     five connections and five errors of clean. The list changes nightly;
     a diagnosis takes the night's list (`summary.md`, `diff-sweep.txt`).
     Pads walled by their own footprint's copper (antennas, a microphone's
-    ring: osprey, WLED_Matrix, Batch_1, reCamera, the laptop keyboard,
-    nrf24_remote) get fenced exits since 2026-11-11 (router.md, "A pad
+    ring: osprey, WLED_Matrix, Batch_1, reCamera, nrf24_remote) get
+    fenced exits since 2026-11-11 (router.md, "A pad
     walled by its own footprint's copper"); KiCad reports every such
     connection as a track against the graphic, as on the designers'
     boards, and the verdict and run.py's strict rule still count it as the
