@@ -1,0 +1,19 @@
+[package]
+name = "pcb-kicad-import"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "A KiCad schematic's netlist imported into a new board, with starter constraints and layout settings"
+publish = false
+
+[dependencies]
+pcb-kicad-check = { path = "../pcb-kicad-check" }
+pcb-kicad-file = { path = "../pcb-kicad-file" }
+pcb-kicad-route-place = { path = "../pcb-kicad-route-place" }
+pcb-placer = { path = "../pcb-placer" }
+pcb-router = { path = "../pcb-router" }
+serde = { version = "1.0", features = ["derive"] }
+# Candidate coordinates must parse identically in standalone library consumers
+# and the main executable, without relying on workspace feature unification.
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
+sha2 = "0.10"

@@ -2,7 +2,7 @@
 
 //! The flow docs/agents.md documents, end to end, as an agent runs it on a
 //! new design: a KiCad project with a schematic (urchin, a split keyboard,
-//! MIT; `crates/pcb-kicad/tests/fixtures/urchin`), imported with
+//! MIT; `crates/pcb-kicad-import/tests/fixtures/urchin`), imported with
 //! `import-kicad-netlist`, constraints written (outline, rows of keys,
 //! regions, `near` to a key of a row, `relative`, `edge`), checked with
 //! `place-kicad-board` (a region too small first, then a board without
@@ -181,7 +181,8 @@ fn the_documented_flow_lays_out_a_keyboard_from_its_schematic() {
     let root = scratch();
     let design = root.join("design");
     copy_tree(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/pcb-kicad/tests/fixtures/urchin"),
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("crates/pcb-kicad-import/tests/fixtures/urchin"),
         &design,
     );
     let project = root.join("project");
@@ -543,7 +544,8 @@ fn the_keyboard_lays_out_on_an_l_and_on_a_board_with_round_corners_and_cutouts()
     let root = scratch();
     let design = root.join("design");
     copy_tree(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/pcb-kicad/tests/fixtures/urchin"),
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("crates/pcb-kicad-import/tests/fixtures/urchin"),
         &design,
     );
     let project = root.join("project");
@@ -694,7 +696,8 @@ fn the_starter_constraints_of_the_key_matrix_lay_out_the_keyboard() {
     let root = scratch();
     let design = root.join("design");
     copy_tree(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/pcb-kicad/tests/fixtures/urchin"),
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("crates/pcb-kicad-import/tests/fixtures/urchin"),
         &design,
     );
     let project = root.join("project");

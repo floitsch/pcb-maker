@@ -225,7 +225,7 @@ pub(crate) fn cmd_import_kicad_netlist(mut arguments: Arguments) -> Result<(), S
             _ => return Err(usage.into()),
         }
     }
-    let report = pcb_kicad::import_kicad_netlist_options(
+    let report = pcb_kicad_import::import_kicad_netlist_options(
         Path::new(&input),
         Path::new(&output),
         &board_id,
@@ -301,7 +301,7 @@ pub(crate) fn cmd_describe_kicad_board(mut arguments: Arguments) -> Result<(), S
     pcb_kicad::check_board_id(&board_id)?;
     let description = pcb_kicad::describe_kicad_board(Path::new(&directory), &board_id)?;
     if let Some(file) = template {
-        let constraints = pcb_kicad::constraints_template(Path::new(&directory), &board_id)?;
+        let constraints = pcb_kicad_import::constraints_template(Path::new(&directory), &board_id)?;
         fs::write(
             &file,
             serde_json::to_string_pretty(&constraints).map_err(|error| error.to_string())? + "\n",

@@ -37,9 +37,7 @@ use pcb_kicad_file::{
 pub use drc_cache::{DrcCacheCounts, drc_cache_counts};
 pub use fs_util::write_atomically;
 pub use pcb_kicad_check::ledger;
-use pcb_kicad_check::{
-    drc_cache, kicad_config, native_report, proc_memory, verification, work_rate,
-};
+use pcb_kicad_check::{drc_cache, native_report, proc_memory, verification, work_rate};
 mod silkscreen;
 pub use native_report::{
     KICAD_REQUIREMENT, check_kicad_cli, erc_design_issues, is_erc_library_warning,
@@ -85,7 +83,6 @@ pub use work_rate::{
     calibrate_reference_by_default, measure as measure_work_rate, parse_work_rate, work_rate,
 };
 mod class_view;
-mod constraints_template;
 mod describe;
 pub use cost::{KiCadCost, KiCadFabQuote};
 pub use labels::KiCadLabelReport;
@@ -95,23 +92,14 @@ pub use silk_fields::KiCadSilkscreenReport;
 mod fab_export;
 pub use fab_export::{KiCadFabExport, export_kicad_fab};
 mod fab_release;
-pub use fab_release::{
-    KiCadFabDrc, KiCadFabErc, KiCadFabFile, KiCadFabOptions, KiCadFabProfile, KiCadFabRelease,
-    KiCadFabVerdictLines, fab_kicad_board, fab_verdict_lines,
-};
-mod board_footprints;
-mod key_matrix;
-pub use key_matrix::{KiCadStarterHalf, KiCadStarterReport};
-mod netlist_import;
 pub use class_view::{
     KiCadClassLayer, KiCadClassLayers, KiCadClassRow, KiCadControlledImpedance, KiCadDesignerWidth,
     note_designer_class_layers, note_designer_widths,
 };
-pub use constraints_template::constraints_template;
 pub use describe::{KiCadBoardDescription, KiCadSwapCandidate, describe_kicad_board};
-pub use netlist_import::{
-    KiCadNetlistImport, import_kicad_netlist, import_kicad_netlist_from,
-    import_kicad_netlist_options, import_kicad_netlist_with,
+pub use fab_release::{
+    KiCadFabDrc, KiCadFabErc, KiCadFabFile, KiCadFabOptions, KiCadFabProfile, KiCadFabRelease,
+    KiCadFabVerdictLines, fab_kicad_board, fab_verdict_lines,
 };
 pub use placement_constraints::{
     KiCadConstraintStatus, KiCadConstraintsSource, KiCadPlacementConstraints, keepout_warnings,

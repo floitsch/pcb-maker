@@ -213,6 +213,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "pcb-kicad-import"
+version = "0.1.0"
+dependencies = [
+ "pcb-kicad-check",
+ "pcb-kicad-file",
+ "pcb-kicad-route-place",
+ "pcb-placer",
+ "pcb-router",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "pcb-kicad-route-place"
 version = "0.1.0"
 dependencies = [
@@ -237,6 +251,7 @@ dependencies = [
  "config-reference",
  "pcb-global",
  "pcb-kicad",
+ "pcb-kicad-import",
  "serde",
  "serde_json",
 ]

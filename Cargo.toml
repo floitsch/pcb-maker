@@ -12,6 +12,7 @@ members = [
     "crates/pcb-kicad-file",
     "crates/pcb-kicad-check",
     "crates/pcb-kicad-route-place",
+    "crates/pcb-kicad-import",
     "crates/pcb-placer",
     "crates/pcb-router",
     "crates/pcb-global",
@@ -23,6 +24,7 @@ resolver = "3"
 [dependencies]
 pcb-global = { path = "crates/pcb-global" }
 pcb-kicad = { path = "crates/pcb-kicad" }
+pcb-kicad-import = { path = "crates/pcb-kicad-import" }
 serde = "1.0"
 serde_json = { version = "1.0", features = ["float_roundtrip"] }
 
