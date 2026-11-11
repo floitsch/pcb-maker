@@ -24,8 +24,9 @@
 //! The placer side builds on the router side's lowering (layer table,
 //! router config, pours); the router side reads `quality`'s net-name
 //! heuristics and `quality` reads the placer's part bodies, which is why
-//! the two sides are one crate (docs/architecture.md). The layout flow,
-//! the verdict and the reports sit above, in pcb-kicad.
+//! the two sides are one crate (docs/architecture.md says what the cut
+//! between them moves). The layout flow, the verdict and the reports sit
+//! above, in pcb-kicad.
 
 use serde::{Deserialize, Serialize};
 use std::{

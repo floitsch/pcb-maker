@@ -85,11 +85,15 @@ compiler holds it.
   the placer's lowering builds on the router's (the layer table, the
   router config, pours, BGA array rooms, length rules), and the router's
   lowering reads `quality`'s net-name heuristics (`ground`, `rail_name`)
-  and its vias-in-pads census, while `quality` reads the placer's part
-  bodies (`connector_mouth`, `local_body`). Splitting them needs those
-  heuristics and the via-in-pad census moved out of quality.rs to the
-  router side, and `glob_matches`, `outline_corner` and `part_box` moved
-  down; nothing else crosses from the router side to the placer side.
+  and its census of vias in pads (on quality's part model), while
+  `quality` reads the placer's part bodies (`connector_mouth`,
+  `local_body`, `on_back`). The cut that separates them moves the
+  footprint bodies (`board_placer/bodies.rs`,
+  with `pad_boxes`, `part_box` and `courtyard_box`) down to
+  pcb-kicad-file, `glob_matches` and `outline_corner` down to it too,
+  and `largest_clearance` to the router config; `quality` stays with the
+  router side and two of its paths change. Nothing else crosses from the
+  router side to the placer side.
 - **pcb-kicad** (`crates/pcb-kicad/src/`). `board_layout`
   (`layout_kicad_board`, its stages in `board_layout/`),
   `congestion_rank` (the race's RUDY pre-ranking), `free_dimension`;
