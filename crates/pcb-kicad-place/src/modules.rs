@@ -378,69 +378,6 @@ fn side_area(component: &core::Component) -> [f64; 2] {
     }
 }
 
-/// Per module and side, its area that no component held where it is (a
-/// part that stays, a copper mark, a keepout; not a silkscreen mark KiCad
-/// lets a part cover: `passable_marks`) covers with its body:
-/// sampled on a grid of at least 0.5 mm, at most about 200 000 points.
-fn free_area(modules: &BoardModules, problem: &core::Problem, footprints: usize) -> Vec<[f64; 2]> {
-    let mut taken: [Vec<[f64; 4]>; 2] = [Vec::new(), Vec::new()];
-    let passable: BTreeSet<usize> = problem.constraints.passable_marks.iter().copied().collect();
-    for (index, component) in problem.components.iter().enumerate() {
-        // The silkscreen marks KiCad lets a part cover are no obstacle.
-        if !component.fixed || (index >= footprints && passable.contains(&index)) {
-            continue;
-        }
-        let pose = problem.poses[index];
-        let (center, half) = (component.center(pose), component.half_extent(pose.angle));
-        let b = [
-            center[0] - half[0],
-            center[1] - half[1],
-            center[0] + half[0],
-            center[1] + half[1],
-        ];
-        let [front, back] = side_area(component).map(|a| a > 0.0);
-        if front {
-            taken[0].push(b);
-        }
-        if back {
-            taken[1].push(b);
-        }
-    }
-    let total: f64 = modules
-        .boxes
-        .iter()
-        .map(|b| (b[2] - b[0]) * (b[3] - b[1]))
-        .sum();
-    let step = (total / 200_000.0).sqrt().max(0.5);
-    modules
-        .boxes
-        .iter()
-        .enumerate()
-        .map(|(module, b)| {
-            let mut free = [0usize; 2];
-            let mut y = b[1] + step / 2.0;
-            while y < b[3] {
-                let mut x = b[0] + step / 2.0;
-                while x < b[2] {
-                    if modules.module_at([x, y]) == Some(module) {
-                        for (side, boxes) in taken.iter().enumerate() {
-                            if !boxes
-                                .iter()
-                                .any(|t| x >= t[0] && x <= t[2] && y >= t[1] && y <= t[3])
-                            {
-                                free[side] += 1;
-                            }
-                        }
-                    }
-                    x += step;
-                }
-                y += step;
-            }
-            free.map(|count| count as f64 * step * step)
-        })
-        .collect()
-}
-
 /// The partition's state: the assignment, each counted net's pins per
 /// module, each module's load per side and each tab's tracks.
 struct Partition<'a> {
@@ -821,12 +758,29 @@ fn seeded_partition<'a>(
     let area: Vec<[f64; 2]> = (0..footprints)
         .map(|part| side_area(&problem.components[part]))
         .collect();
-    // Each module's room: a share of the area its fixed parts and marks
-    // leave free.
-    let room: Vec<[f64; 2]> = free_area(modules, problem, footprints)
+    // Each module's room: a share of its area, less the bodies of the
+    // parts that stay where they are (pins or not). Counting the board's
+    // marks too (texts cover most of protoesp's small modules, where the
+    // designer puts parts over them) moved parts out of the small modules
+    // and left more open: 12, 16, 11, 13, 8 at the first route against 6,
+    // 6, 5, 11, 3 without them.
+    let mut room: Vec<[f64; 2]> = modules
+        .areas
         .iter()
-        .map(|free| [free[0] * MOST_FILL, free[1] * MOST_FILL])
+        .map(|a| [a * MOST_FILL, a * MOST_FILL])
         .collect();
+    for (part, area) in area.iter().enumerate() {
+        if problem.components[part].fixed
+            && let Some(module) =
+                result.module.get(part).copied().flatten().or_else(|| {
+                    modules.module_at(problem.components[part].center(problem.poses[part]))
+                })
+        {
+            for side in 0..2 {
+                room[module][side] -= area[side];
+            }
+        }
+    }
     let mut partition = Partition {
         modules,
         trees: Trees::new(modules),
@@ -1014,7 +968,9 @@ pub struct KiCadModulesReport {
 /// (protoesp's CN36, held at the bottom edge, found no place on its
 /// module's stretch of it), or one too large for its module's box, stays
 /// as it is; no part gets a start (a start names a passive, and the race
-/// then has no skeleton). None where the board has no modules.
+/// then has no skeleton). Where it holds any part, the board's copper
+/// texts no longer yield (`Constraints::yielding`). None where the board
+/// has no modules.
 pub(crate) fn hold_in_modules(
     pcb: &Expr,
     problem: &mut core::Problem,
@@ -1069,6 +1025,23 @@ pub(crate) fn hold_in_modules(
         problem.constraints.regions.push((part, region));
         problem.constraints.automatic_regions.insert(part);
         report.held += 1;
+    }
+    if report.held > 0 {
+        // A text on copper never yields here: held in its module, a part that
+        // finds no room seats on the board's marks (`on_marks`), and a pad on
+        // a copper text is a clearance error (protoesp's "I'm a bitmask!" took
+        // a connector's pads at four seeds of five).
+        let copper_texts: BTreeSet<usize> = problem
+            .components
+            .iter()
+            .enumerate()
+            .filter(|(_, component)| component.name == "copper text")
+            .map(|(index, _)| index)
+            .collect();
+        problem
+            .constraints
+            .yielding
+            .retain(|index| !copper_texts.contains(index));
     }
     Ok(Some(report))
 }
