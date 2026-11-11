@@ -61,7 +61,7 @@ In the order the code runs, for one board:
    `placement_seeds` seeds in a pool, each by `pcb_placer::place` (plain),
    `pcb_placer::skeleton::place_skeleton` (the race over skeletons) or the
    panel placers (`panel::place_copies`, `sub_boards::place_sub_boards`).
-4. **Inside `place`** (`pcb-placer/src/lib.rs`): fit the halos, start from
+4. **Inside `place`** (`pcb-placer/src/lib.rs`; its stages in `place/`: `start.rs`, `levels.rs`, `finish.rs`; the global placement's in `global/`, the anneal's in `anneal/`): fit the halos, start from
    canonical angles, global placement (`global.rs`, from the netlist start
    in `initial.rs`), walk the relaxation levels (anneal in `anneal.rs`,
    legaliser in `legal.rs`), then refine, repair relations and align the
