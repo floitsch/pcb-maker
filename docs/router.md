@@ -410,7 +410,7 @@ A zone covering at least a tenth of the board is a *pour* (`POUR_SHARE`,
 their pours or route as tracks. Connected, a pad inside its pour joins it;
 a pour-net pad off its pour gets a stub and a via to the nearest free pour
 node. `PourMap::build` (`pcb-router/src/pour.rs`) labels the pieces where
-the pour's brush fits; `router/pour_analysis.rs` names the main piece.
+the pour's brush fits; `router/pour_analysis/` names the main piece.
 Other nets pay `plane_cut_cost` on a pour, scaled by the layer's coverage
 relative to the least covered layer. An *exclusive* rung (`exclusive_planes`) keeps one
 inner plane (two from six layers) free of other nets' tracks. `add_pours` adds
