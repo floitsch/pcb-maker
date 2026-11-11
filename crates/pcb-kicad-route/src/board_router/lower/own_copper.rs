@@ -788,13 +788,22 @@ mod tests {
     /// corridor is 0.4 mm wide each side) and the ids of the nets `/A`,
     /// `/B`.
     fn lowered(items: &str) -> (Builder, Option<core::NetId>, Option<core::NetId>) {
-        lowered_beside(items, "")
+        lowered_with(items, "", None)
     }
 
-    /// `lowered` with `beside` among the board's items.
     fn lowered_beside(
         items: &str,
         beside: &str,
+    ) -> (Builder, Option<core::NetId>, Option<core::NetId>) {
+        lowered_with(items, beside, None)
+    }
+
+    /// `lowered` with `beside` among the board's items and the setting
+    /// `walled_pad_exits` at `exits`.
+    fn lowered_with(
+        items: &str,
+        beside: &str,
+        exits: Option<bool>,
     ) -> (Builder, Option<core::NetId>, Option<core::NetId>) {
         let pcb = parse(&format!(
             r#"(kicad_pcb (version 20240108)
@@ -814,6 +823,7 @@ mod tests {
                 via_size_mm: 0.6,
                 via_drill_mm: 0.3,
             }),
+            walled_pad_exits: exits,
             ..KiCadBoardRouterConfig::default()
         };
         let ctx = Context::new(&pcb, &config, true).unwrap();
@@ -967,6 +977,26 @@ mod tests {
         assert_eq!(graphics.len(), 2);
         assert!(graphics.iter().all(|graphic| graphic.net.is_none()
             && matches!(&graphic.shape, core::Shape::Polygon { points } if points.len() == 4)));
+    }
+
+    #[test]
+    fn with_walled_pad_exits_off_a_walled_pad_stays_walled() {
+        let items = format!(
+            "{} {}",
+            poly(-0.4, -0.4, 1.5, 0.4),
+            pad("1", [0.0, 0.0], "/A")
+        );
+        let (builder, _, _) = lowered_with(&items, "", Some(false));
+        assert!(exits(&builder).is_empty());
+        assert!(builder.walled_pads.is_empty());
+        assert!(matches!(
+            graphic(&builder).shape,
+            core::Shape::Polygon { .. }
+        ));
+        let (builder, _, _) = lowered_with(&items, "", Some(true));
+        assert_eq!(builder.walled_pads.len(), 1);
+        assert_eq!(builder.walled_pads[0].pad, "1");
+        assert_eq!(builder.walled_pads[0].touching, ["1"]);
     }
 
     #[test]
