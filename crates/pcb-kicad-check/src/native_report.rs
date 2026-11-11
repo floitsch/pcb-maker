@@ -473,11 +473,14 @@ fn run_report_command_cached(
     if let Some(home) = config_home {
         command.env("KICAD_CONFIG_HOME", home);
     }
-    let (status, transcript) = run_bounded(&mut command, &temporary.0)?;
-    if !status.success() {
-        return Err(format!("kicad-cli failed with {status}: {transcript}"));
-    }
-    let report = super::read_json(&fresh)?;
+    let report = with_one_rerun(|| {
+        remove_if_present(&fresh)?;
+        let (status, transcript) = run_bounded(&mut command, &temporary.0)?;
+        if !status.success() {
+            return Err(format!("kicad-cli failed with {status}: {transcript}"));
+        }
+        Ok(read_kicad_report(&fresh))
+    })?;
     validate_report(&report, kind, input)?;
     if let Some(cache) = &cache {
         match fs::read(&fresh) {
@@ -491,6 +494,72 @@ fn run_report_command_cached(
             output.display()
         )
     })
+}
+
+/// kicad-cli's JSON report at `path`, after a run that exited 0. KiCad
+/// writes its reports without checking the write (`DRC_REPORT::
+/// WriteJsonReport` returns true whatever happened, and kicad-cli prints
+/// "Saved DRC Report" and exits 0): on a full disk the report is empty, cut
+/// short or missing. A shared `/tmp` that other runs fill for a moment did
+/// that to a netlist import's pad check (2026-11-11). The error names the
+/// file, says what was there and how much space was free beside it.
+pub fn read_kicad_report(path: &Path) -> Result<Value, String> {
+    let (what, detail) = match fs::read(path) {
+        Ok(bytes) => match serde_json::from_slice(&bytes) {
+            Ok(report) => return Ok(report),
+            Err(error) if bytes.is_empty() => ("is empty".to_string(), error.to_string()),
+            Err(error) => (
+                format!("does not parse ({} bytes)", bytes.len()),
+                error.to_string(),
+            ),
+        },
+        Err(error) => ("could not be read".to_string(), error.to_string()),
+    };
+    let free = path
+        .parent()
+        .and_then(free_megabytes)
+        .map(|megabytes| format!("; {megabytes:.0} MB free there now"))
+        .unwrap_or_default();
+    Err(format!(
+        "kicad-cli exited 0 but its report {} {what}: {detail} (KiCad does not check that \
+         its report was written: a full disk leaves it empty or cut short{free})",
+        path.display()
+    ))
+}
+
+/// Runs `run` (a kicad-cli report: Err when kicad-cli failed, else the
+/// report as [`read_kicad_report`] read it) and once more when the report
+/// did not read: a disk that was full for a moment rarely is twice.
+pub fn with_one_rerun(
+    mut run: impl FnMut() -> Result<Result<Value, String>, String>,
+) -> Result<Value, String> {
+    match run()? {
+        Ok(report) => Ok(report),
+        Err(error) => {
+            eprintln!("kicad check: {error}; running kicad-cli once more");
+            run()?
+        }
+    }
+}
+
+/// Free space in megabytes on the file system holding `directory`.
+#[cfg(unix)]
+fn free_megabytes(directory: &Path) -> Option<f64> {
+    use std::os::unix::ffi::OsStrExt;
+    let name = std::ffi::CString::new(directory.as_os_str().as_bytes()).ok()?;
+    let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: `name` is NUL-terminated and `stat` is written by statvfs
+    // before it is read, which happens only when the call succeeded.
+    if unsafe { libc::statvfs(name.as_ptr(), stat.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    let stat = unsafe { stat.assume_init() };
+    Some(stat.f_bavail as f64 * stat.f_frsize as f64 / 1e6)
+}
+
+#[cfg(not(unix))]
+fn free_megabytes(_directory: &Path) -> Option<f64> {
+    None
 }
 
 /// Refills the zones of `board` with kicad-cli's DRC (which also rebuilds
@@ -826,6 +895,72 @@ mod tests {
                     .is_dir())
             );
         }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_report_kicad_left_empty_runs_kicad_again_and_is_named_when_it_stays_empty() {
+        // KiCad on a full disk: "Saved DRC Report", exit 0, an empty file.
+        let directory = ReportDirectory::new(&std::env::temp_dir()).unwrap();
+        let output = directory.0.join("drc.json");
+        let runs = directory.0.join("runs");
+        let valid = report(ReportKind::Drc);
+        let empty_first = format!(
+            "echo run >> {runs}\nif [ \"$(wc -l < {runs})\" -lt 2 ]; then\n  \
+             while [ \"$1\" != --output ]; do shift; done\n  : > \"$2\"\n  exit 0\nfi\n{}",
+            write_report_script(&valid, 0),
+            runs = runs.display()
+        );
+        let always_empty = format!(
+            "echo run >> {}\nwhile [ \"$1\" != --output ]; do shift; done\n: > \"$2\"\nexit 0",
+            runs.display()
+        );
+        let run = |body: &str| {
+            let _ = fs::remove_file(&runs);
+            let cli = fake_cli(&directory.0, body);
+            let result = run_report_command(
+                cli.as_os_str(),
+                &["pcb", "drc", "--output"],
+                &output,
+                Path::new("board.kicad_pcb"),
+            );
+            let kicad_runs = fs::read_to_string(&runs).unwrap().lines().count();
+            (result, kicad_runs)
+        };
+        let (result, kicad_runs) = run(&empty_first);
+        assert_eq!((result, kicad_runs), (Ok(()), 2));
+        assert_eq!(super::super::read_json(&output).unwrap(), valid);
+        let (result, kicad_runs) = run(&always_empty);
+        let error = result.unwrap_err();
+        assert_eq!(kicad_runs, 2, "once more, not more");
+        assert!(
+            error.contains("report.json is empty") && error.contains("full disk"),
+            "{error}"
+        );
+        assert!(!output.exists());
+    }
+
+    #[test]
+    fn a_report_that_does_not_read_names_its_file_and_what_was_there() {
+        let directory = ReportDirectory::new(&std::env::temp_dir()).unwrap();
+        let path = directory.0.join("drc.json");
+        let error = |contents: Option<&str>| {
+            let _ = fs::remove_file(&path);
+            if let Some(contents) = contents {
+                fs::write(&path, contents).unwrap();
+            }
+            read_kicad_report(&path).unwrap_err()
+        };
+        let empty = error(Some(""));
+        assert!(
+            empty.contains(&format!("{} is empty", path.display())),
+            "{empty}"
+        );
+        assert!(empty.contains("MB free there now"), "{empty}");
+        assert!(error(Some("{\"violations\": [")).contains("does not parse (16 bytes)"));
+        assert!(error(None).contains("could not be read"));
+        fs::write(&path, "{\"violations\": []}").unwrap();
+        assert_eq!(read_kicad_report(&path).unwrap(), json!({"violations": []}));
     }
 
     #[test]
