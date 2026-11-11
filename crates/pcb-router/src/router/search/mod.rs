@@ -16,8 +16,6 @@ use super::*;
 mod expand;
 mod guide;
 mod setup;
-#[cfg(test)]
-mod tests;
 
 use guide::Guide;
 
@@ -374,3 +372,6 @@ impl Router {
         true
     }
 }
+
+#[cfg(test)]
+mod tests;
