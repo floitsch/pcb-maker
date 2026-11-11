@@ -42,7 +42,7 @@ The environment variables are indexed in the hand-over
 | [Layout settings: race_probe](#layout-settings-race_probe) | 3 | 3 | 0 | 3 | 3 |
 | [Placer core](#placer-core) | 13 | - | 0 | 13 | - |
 | [Placer core: global](#placer-core-global) | 14 | - | 0 | 14 | - |
-| [Placer core: anneal](#placer-core-anneal) | 8 | - | 0 | 8 | - |
+| [Placer core: anneal](#placer-core-anneal) | 7 | - | 0 | 7 | - |
 
 ## Router settings
 
@@ -543,5 +543,4 @@ The `race_probe` object of the layout settings (off when absent, `{}` for the de
 | `anneal.seed` | `u64` | `7` | - | Seed of the annealer's moves. |
 | `anneal.deadline` | `Option<std::time::Instant>` | unset | `deadline` | No further stage starts after this wall-clock time. |
 | `anneal.stop_at_work` | `Option<u64>` | unset | - | No further stage starts once this thread's `crate::work()` reaches this count. |
-| `anneal.guidance` | `Option<crate::guidance::Guidance>` | unset | - | The global route inside the anneal (`crate::guidance`, an experiment): off (`None`) by default. |
 | `anneal.bus_groups` | `Option<std::sync::Arc<crate::groups::BusGroups>>` | unset | - | Bus-group moves (`crate::groups`, `Config::bus_groups`): after each stage, groups of parts move, turn, trade places and reorder as units, judged with the crossings of their nets. Off (`None`) by default. |

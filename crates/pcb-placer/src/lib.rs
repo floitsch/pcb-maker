@@ -14,7 +14,6 @@ pub mod exits;
 pub mod facing;
 pub mod global;
 pub mod groups;
-pub mod guidance;
 pub mod initial;
 pub mod legal;
 pub mod orient;

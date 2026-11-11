@@ -15,27 +15,12 @@ use crate::constraints;
 use crate::problem::Pose;
 
 impl Run<'_> {
-    /// One move: a part drawn (by the guidance's attribution where it has
-    /// one, else at random), then a swap of it, a turn or a shift, judged.
-    /// `done` is the anneal's work so far, this stage's moves included.
-    /// Returns the move's work besides what the overlap sums book.
-    pub(super) fn step(&mut self, done: u64) -> u64 {
+    /// One move: a part drawn at random, then a swap of it, a turn or a
+    /// shift, judged. Returns the move's work besides what the overlap
+    /// sums book.
+    pub(super) fn step(&mut self) -> u64 {
         self.tally.moves += 1;
-        if let Some(guide) = self.guide.as_mut()
-            && guide.due(done + self.state.work.get())
-        {
-            guide.evaluate(&mut self.state, &self.movable);
-        }
-        let index = match self
-            .guide
-            .as_ref()
-            .and_then(|guide| guide.cumulative.as_ref())
-        {
-            Some(cumulative) if self.random.next() < self.guide.as_ref().unwrap().bias => {
-                self.movable[crate::guidance::pick(cumulative, self.random.next())]
-            }
-            _ => self.movable[self.random.below(self.movable.len())],
-        };
+        let index = self.movable[self.random.below(self.movable.len())];
         // A bank's members move with their bank (`Settings::rigid_banks`).
         if self.rigid.get(index) == Some(&true) {
             return 0;
@@ -118,9 +103,6 @@ impl Run<'_> {
             state.set_rect(other, saved.1);
         } else {
             self.state.keep_lengths(&nets, &self.terms);
-            if let Some(guide) = self.guide.as_mut() {
-                guide.accepted += 1;
-            }
         }
         work
     }
@@ -190,9 +172,6 @@ impl Run<'_> {
             let incident = std::mem::take(&mut state.incident[index]);
             state.keep_lengths(&incident, &self.terms);
             state.incident[index] = incident;
-            if let Some(guide) = self.guide.as_mut() {
-                guide.accepted += 1;
-            }
         }
     }
 

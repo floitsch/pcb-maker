@@ -40,9 +40,6 @@ pub struct AnnealConfig {
     /// No further stage starts once this thread's `crate::work()` reaches
     /// this count.
     pub stop_at_work: Option<u64>,
-    /// The global route inside the anneal (`crate::guidance`, an
-    /// experiment): off (`None`) by default.
-    pub guidance: Option<crate::guidance::Guidance>,
     /// Bus-group moves (`crate::groups`, `Config::bus_groups`): after each
     /// stage, groups of parts move, turn, trade places and reorder as
     /// units, judged with the crossings of their nets. Off (`None`) by
@@ -59,7 +56,6 @@ impl Default for AnnealConfig {
             seed: 7,
             deadline: None,
             stop_at_work: None,
-            guidance: None,
             bus_groups: None,
         }
     }
@@ -226,10 +222,8 @@ struct State<'a> {
     reaches: Vec<f64>,
     /// The marks and obstacles of the constraints by part (`PairFlags`).
     flags: PairFlags,
-    /// The last global route's overflow field (`AnnealConfig::guidance`).
-    field: Option<crate::guidance::Prepared>,
-    /// Per net, its term of `wirelength` at the poses and the field of
-    /// now (`refresh_lengths`, `keep_lengths`): a move's wirelength before
+    /// Per net, its term of `wirelength` at the poses of now
+    /// (`refresh_lengths`, `keep_lengths`): a move's wirelength before
     /// it is the sum of these, without turning every pin of its nets again
     /// (the before half of the anneal's wirelength, 3 to 7 % of a
     /// placement's instructions, 2026-10-28).
@@ -912,7 +906,7 @@ impl State<'_> {
     }
 
     /// A net's term of the wirelength at the poses of now: its weighted
-    /// half perimeter, guided by the field.
+    /// half perimeter.
     fn net_length(&self, net: usize) -> f64 {
         let pins = &self.members[net];
         if pins.len() < 2 {
@@ -933,11 +927,7 @@ impl State<'_> {
             bounds[3] = bounds[3].max(at[1]);
         }
         let length = (bounds[2] - bounds[0]) + (bounds[3] - bounds[1]);
-        let guided = match &self.field {
-            Some(field) => 1.0 + field.weight * field.mean(bounds),
-            None => 1.0,
-        };
-        self.problem.net_weights[net] * length * guided
+        self.problem.net_weights[net] * length
     }
 
     fn wirelength(&self, nets: &[usize]) -> f64 {
@@ -946,7 +936,7 @@ impl State<'_> {
 
     /// `wirelength` from the cached terms (`lengths`): the same sum of the
     /// same values in the same order, so the same bits, as long as every
-    /// change of the poses or the field since went through
+    /// change of the poses since went through
     /// `refresh_lengths` or `keep_lengths`.
     fn cached_wirelength(&self, nets: &[usize]) -> f64 {
         let cached: f64 = nets.iter().map(|net| self.lengths[*net]).sum();
@@ -977,7 +967,7 @@ impl State<'_> {
         }
     }
 
-    /// Every net's term again (the start, a new field, moves made outside
+    /// Every net's term again (the start, moves made outside
     /// the single moves and swaps).
     fn refresh_lengths(&mut self) {
         self.lengths = (0..self.members.len())
@@ -1045,7 +1035,6 @@ fn build_state<'a>(problem: &'a Problem, poses: &[Pose]) -> State<'a> {
         skip_far: true,
         reaches: Vec::new(),
         flags: PairFlags::new(problem),
-        field: None,
         lengths: Vec::new(),
         relations: constraints::PartRelations::new(problem),
         check_lengths: crate::checking(),
@@ -1681,87 +1670,6 @@ fn group_batch(
         }
     }
     work
-}
-
-/// The anneal's side of `AnnealConfig::guidance`.
-struct Guide<'a> {
-    guidance: &'a crate::guidance::Guidance,
-    bias: f64,
-    /// Over the movable parts, for draws by attribution.
-    cumulative: Option<Vec<f64>>,
-    accepted: usize,
-    evaluations: usize,
-    work: u64,
-    last_work: u64,
-    first_overflow: f64,
-    last_overflow: f64,
-}
-
-impl<'a> Guide<'a> {
-    fn new(guidance: &'a crate::guidance::Guidance, state: &mut State, movable: &[usize]) -> Self {
-        let mut guide = Self {
-            guidance,
-            bias: guidance.bias,
-            cumulative: None,
-            accepted: 0,
-            evaluations: 0,
-            work: 0,
-            last_work: 0,
-            first_overflow: f64::NAN,
-            last_overflow: f64::NAN,
-        };
-        guide.evaluate(state, movable);
-        guide
-    }
-
-    /// Whether another evaluation is due, `anneal_work` done so far.
-    fn due(&self, anneal_work: u64) -> bool {
-        self.accepted >= self.guidance.min_accepted.max(1)
-            && (self.work + self.last_work) as f64 <= self.guidance.work_share * anneal_work as f64
-    }
-
-    fn evaluate(&mut self, state: &mut State, movable: &[usize]) {
-        self.accepted = 0;
-        let Some(field) = (self.guidance.evaluate)(&state.poses) else {
-            // Nothing to go by: the plain anneal from here.
-            state.field = None;
-            state.refresh_lengths();
-            self.cumulative = None;
-            self.last_work = u64::MAX / 4;
-            return;
-        };
-        crate::add_work(field.work);
-        self.work += field.work;
-        self.last_work = field.work;
-        self.evaluations += 1;
-        if self.first_overflow.is_nan() {
-            self.first_overflow = field.total_overflow;
-        }
-        self.last_overflow = field.total_overflow;
-        state.field = crate::guidance::Prepared::new(&field, self.guidance.weight);
-        state.refresh_lengths();
-        self.cumulative = crate::guidance::cumulative(&field, movable);
-    }
-
-    /// One evaluation of the result, for the trace.
-    fn finish(&mut self, state: &mut State, anneal_work: u64) {
-        let Some(field) = (self.guidance.evaluate)(&state.poses) else {
-            return;
-        };
-        crate::add_work(field.work);
-        self.work += field.work;
-        // The excess at the guidance's threshold, as the evaluator counts it.
-        eprintln!(
-            "guidance: {} evaluations, total overflow {:.0} first, {:.0} last, {:.0} annealed; work {:.1} s of the anneal's {:.1} s",
-            self.evaluations,
-            self.first_overflow,
-            self.last_overflow,
-            field.total_overflow,
-            self.work as f64 / crate::work_per_second(),
-            anneal_work as f64 / crate::work_per_second(),
-        );
-        state.field = None;
-    }
 }
 
 #[cfg(test)]

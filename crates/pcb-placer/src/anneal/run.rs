@@ -10,8 +10,7 @@
 //! (`Run::finish`).
 
 use super::{
-    AnnealConfig, GroupStep, GroupTally, Guide, Random, State, TERM_SHARE, Tally, group_batch,
-    peers,
+    AnnealConfig, GroupStep, GroupTally, Random, State, TERM_SHARE, Tally, group_batch, peers,
 };
 use crate::constraints;
 use crate::crossings::{CrossingState, Crossings};
@@ -157,8 +156,8 @@ impl Schedule {
 }
 
 /// What the anneal's moves read and update: the state, the parts and their
-/// move work, the random numbers, the crossings term, the guidance, the
-/// bus groups and the schedule.
+/// move work, the random numbers, the crossings term, the bus groups and
+/// the schedule.
 pub(super) struct Run<'a> {
     pub(super) state: State<'a>,
     pub(super) movable: Vec<usize>,
@@ -173,8 +172,6 @@ pub(super) struct Run<'a> {
     /// its share (`TERM_SHARE`).
     pub(super) crossings: Option<CrossingState<'a>>,
     pub(super) tally: Tally,
-    /// The global route's guidance (`AnnealConfig::guidance`).
-    pub(super) guide: Option<Guide<'a>>,
     /// A move's nets' wirelength terms after it (`wirelength_terms`).
     pub(super) terms: Vec<f64>,
     pub(super) schedule: Schedule,
@@ -196,7 +193,7 @@ impl<'a> Run<'a> {
     /// the anneal with `group_fact` their count.
     pub(super) fn new(
         config: &'a AnnealConfig,
-        mut state: State<'a>,
+        state: State<'a>,
         movable: Vec<usize>,
         move_work: Vec<u64>,
         fact: Option<&'a Crossings>,
@@ -220,12 +217,6 @@ impl<'a> Run<'a> {
         let work_before = crate::work();
         let random = Random(config.seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
         let schedule = Schedule::new(problem, state.bounds, config);
-        // The global route's guidance: evaluated now and again whenever its
-        // work stays within its share of the anneal's.
-        let guide = config
-            .guidance
-            .as_ref()
-            .map(|guidance| Guide::new(guidance, &mut state, &movable));
         let group_crossings =
             group_fact.map(|fact| CrossingState::new(problem, fact, &state.poses));
         let rigid: Vec<bool> = match groups.filter(|groups| groups.settings.rigid_banks) {
@@ -255,7 +246,6 @@ impl<'a> Run<'a> {
             random,
             crossings,
             tally,
-            guide,
             terms: Vec::new(),
             schedule,
             groups,
@@ -288,7 +278,7 @@ impl<'a> Run<'a> {
     fn stage(&mut self, config: &AnnealConfig, stage: usize) {
         let mut work = 0;
         for _ in 0..config.moves_per_part * self.movable.len() {
-            work += self.step(self.anneal_work + work);
+            work += self.step();
         }
         if let Some(groups) = self.groups {
             work += group_batch(
@@ -332,13 +322,10 @@ impl<'a> Run<'a> {
         }
     }
 
-    /// The end: the guidance's last evaluation and the debug lines; the
+    /// The end: the debug lines; the
     /// poses into `poses`. Returns the remaining overlap area (the movable
     /// parts' overlaps summed and halved).
-    pub(super) fn finish(mut self, poses: &mut Vec<Pose>) -> f64 {
-        if let Some(guide) = self.guide.as_mut() {
-            guide.finish(&mut self.state, self.anneal_work);
-        }
+    pub(super) fn finish(self, poses: &mut Vec<Pose>) -> f64 {
         if self.groups.is_some() && std::env::var_os("PCB_PLACER_DEBUG").is_some() {
             let group_tally = &self.group_tally;
             eprintln!(
