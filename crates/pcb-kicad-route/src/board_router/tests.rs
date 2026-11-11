@@ -333,6 +333,44 @@ mod pour_request_tests {
     }
 
     #[test]
+    fn a_zero_mask_web_reaches_as_far_as_none() {
+        // KiCad reads a missing `solder_mask_min_width` as 0 and writes none
+        // for 0 (older versions wrote the 0): both are one rule, no reach
+        // past the opening, as a pad's aperture has (`pad_mask_reach`).
+        let opening_clearance = |setup: &str| {
+            let pcb = parse(&format!(
+                r#"(kicad_pcb
+                  (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user) (39 "F.Mask" user) (38 "B.Mask" user))
+                  (setup {setup})
+                  (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+                  (footprint "a" (at 12 5)
+                    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "/A"))
+                    (pad "2" smd rect (at 4 0) (size 1 1) (layers "F.Cu") (net "/A")))
+                  (gr_rect (start 4 4) (end 6 6) (stroke (width 0) (type solid)) (fill yes) (layer "F.Mask")))"#
+            ))
+            .unwrap();
+            let config = KiCadBoardRouterConfig {
+                default_rules: Some(KiCadConnectionRoutingRules {
+                    trace_width_mm: 0.2,
+                    clearance_mm: 0.2,
+                    via_size_mm: 0.6,
+                    via_drill_mm: 0.3,
+                }),
+                ..KiCadBoardRouterConfig::default()
+            };
+            let board = lower(&pcb, &config, false).unwrap().board;
+            board
+                .obstacles
+                .iter()
+                .find(|obstacle| obstacle.label.starts_with("solder mask opening"))
+                .unwrap()
+                .clearance
+        };
+        assert_eq!(opening_clearance(""), 0.0);
+        assert_eq!(opening_clearance("(solder_mask_min_width 0)"), 0.0);
+    }
+
+    #[test]
     fn mask_openings_keep_the_solder_mask_to_copper_clearance_and_their_expansion() {
         // KiCad's bridge test: copper within the project's solder-mask-to-
         // copper clearance plus the aperture's expansion (a graphic's own

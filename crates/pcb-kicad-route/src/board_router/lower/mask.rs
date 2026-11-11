@@ -34,12 +34,12 @@ impl Builder {
         // KiCad's bridge test drops mask slivers under the minimum web
         // width: copper of another net within half of it of an opening is
         // exposed (link: a track 0.025 mm from an F.Mask polygon bridged it
-        // to GND with a 0.1 mm minimum; at 0.07 mm it did not).
-        let mask_reach = ctx
-            .pcb
-            .child("setup")
-            .and_then(|setup| form_f64(setup, "solder_mask_min_width", 1).ok())
-            .map_or(0.0, |width| width / 2.0 + 0.01);
+        // to GND with a 0.1 mm minimum; at 0.07 mm it did not). A zero web
+        // is no web: KiCad reads a missing one as 0 and its bridge test
+        // gives a covered track no reach past the opening at 0 (a track
+        // 0.0005 mm from a mask rectangle or disc did not bridge, KiCad
+        // 10.0.7); the reach is the pads' (`MaskRules::pad_mask_reach`).
+        let mask_reach = ctx.mask.pad_mask_reach;
         // KiCad's bridge test (DRC_TEST_PROVIDER_SOLDER_MASK, KiCad 10)
         // exposes copper within the project's solder-mask-to-copper
         // clearance plus the aperture's expansion, and never less than the
