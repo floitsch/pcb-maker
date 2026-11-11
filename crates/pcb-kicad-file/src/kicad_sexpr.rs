@@ -6,34 +6,34 @@
 use super::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Expr {
+pub enum Expr {
     Atom(String),
     List(Vec<Expr>),
 }
 
 impl Expr {
-    pub(crate) fn head(&self) -> Option<&str> {
+    pub fn head(&self) -> Option<&str> {
         match self {
             Self::List(items) => items.first().and_then(Self::atom),
             Self::Atom(_) => None,
         }
     }
 
-    pub(crate) fn atom(&self) -> Option<&str> {
+    pub fn atom(&self) -> Option<&str> {
         match self {
             Self::Atom(atom) => Some(unquote(atom)),
             Self::List(_) => None,
         }
     }
 
-    pub(crate) fn child(&self, head: &str) -> Option<&Expr> {
+    pub fn child(&self, head: &str) -> Option<&Expr> {
         match self {
             Self::List(items) => items.iter().find(|item| item.head() == Some(head)),
             Self::Atom(_) => None,
         }
     }
 
-    pub(crate) fn children(&self) -> &[Expr] {
+    pub fn children(&self) -> &[Expr] {
         match self {
             Self::List(items) => items,
             Self::Atom(_) => &[],
@@ -41,7 +41,7 @@ impl Expr {
     }
 }
 
-pub(crate) fn set_form_at(node: &mut Expr, at: [f64; 3]) -> Result<(), String> {
+pub fn set_form_at(node: &mut Expr, at: [f64; 3]) -> Result<(), String> {
     let Expr::List(items) = node else {
         return Err("cannot set at form on an atom".into());
     };
@@ -58,7 +58,7 @@ pub(crate) fn set_form_at(node: &mut Expr, at: [f64; 3]) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn expression_coordinate(node: &Expr, index: usize, label: &str) -> Result<f64, String> {
+pub fn expression_coordinate(node: &Expr, index: usize, label: &str) -> Result<f64, String> {
     finite_number(
         node.children()
             .get(index)
@@ -74,7 +74,7 @@ pub(crate) fn expression_coordinate(node: &Expr, index: usize, label: &str) -> R
 /// lattice's sizing (`usize::MAX + 1`) and a rule area's sort (a panic).
 /// Every coordinate the readers take from a form goes through here
 /// (`form_f64`, `expression_coordinate`).
-pub(crate) fn finite_number(text: &str, label: &str) -> Result<f64, String> {
+pub fn finite_number(text: &str, label: &str) -> Result<f64, String> {
     let value = text
         .parse::<f64>()
         .map_err(|error| format!("invalid {label}: {error}"))?;
@@ -87,11 +87,11 @@ pub(crate) fn finite_number(text: &str, label: &str) -> Result<f64, String> {
     }
 }
 
-pub(crate) fn form_atom<'a>(node: &'a Expr, head: &str, index: usize) -> Option<&'a str> {
+pub fn form_atom<'a>(node: &'a Expr, head: &str, index: usize) -> Option<&'a str> {
     node.child(head)?.children().get(index)?.atom()
 }
 
-pub(crate) fn form_f64(node: &Expr, head: &str, index: usize) -> Result<f64, String> {
+pub fn form_f64(node: &Expr, head: &str, index: usize) -> Result<f64, String> {
     let text = form_atom(node, head, index)
         .ok_or_else(|| format!("{head} form is missing coordinate {index}"))?;
     match text.parse::<f64>() {
@@ -114,11 +114,11 @@ fn item_name(node: &Expr) -> String {
     }
 }
 
-pub(crate) fn form_xy(node: &Expr, head: &str) -> Result<[f64; 2], String> {
+pub fn form_xy(node: &Expr, head: &str) -> Result<[f64; 2], String> {
     Ok([form_f64(node, head, 1)?, form_f64(node, head, 2)?])
 }
 
-pub(crate) fn form_at(node: &Expr) -> Result<[f64; 3], String> {
+pub fn form_at(node: &Expr) -> Result<[f64; 3], String> {
     let at = node
         .child("at")
         .ok_or_else(|| "copper item has no at form".to_string())?;
@@ -146,21 +146,21 @@ pub(crate) fn string_form(head: &str, value: &str) -> Expr {
     Expr::List(vec![Expr::Atom(head.into()), Expr::Atom(quote(value))])
 }
 
-pub(crate) fn quote(value: &str) -> String {
+pub fn quote(value: &str) -> String {
     format!("\"{}\"", escape(value))
 }
 
 /// A text as a file's string spells it, less the quotes (`A"B` is
 /// `A\"B`, `A\B` is `A\\B`): `unescape`'s inverse, for a name from
 /// another file (KiCad's reports, an agent's) to meet a board's.
-pub(crate) fn escape(text: &str) -> std::borrow::Cow<'_, str> {
+pub fn escape(text: &str) -> std::borrow::Cow<'_, str> {
     if !text.contains(['\\', '"']) {
         return std::borrow::Cow::Borrowed(text);
     }
     std::borrow::Cow::Owned(text.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
-pub(crate) fn deterministic_uuid_for(identity: &str) -> String {
+pub fn deterministic_uuid_for(identity: &str) -> String {
     let digest = Sha256::digest(identity);
     let mut bytes = [0_u8; 16];
     bytes.copy_from_slice(&digest[..16]);
@@ -187,14 +187,14 @@ pub(crate) fn deterministic_uuid_for(identity: &str) -> String {
     )
 }
 
-pub(crate) fn count_head(root: &Expr, head: &str) -> usize {
+pub fn count_head(root: &Expr, head: &str) -> usize {
     root.children()
         .iter()
         .filter(|item| item.head() == Some(head))
         .count()
 }
 
-pub(crate) fn root_head(items: &[Expr]) -> Option<&str> {
+pub fn root_head(items: &[Expr]) -> Option<&str> {
     items.first()?.atom()
 }
 
@@ -205,14 +205,14 @@ pub(crate) fn root_head(items: &[Expr]) -> Option<&str> {
 /// this depth, on any thread. A file nested deeper is refused as the
 /// input's error: until 2026-10-21 a few hundred thousand "(" overflowed
 /// the stack (SIGSEGV, no verdict).
-pub(crate) const MAX_NESTING: usize = 1000;
+pub const MAX_NESTING: usize = 1000;
 
 /// Parses a KiCad S-expression file. Its errors are the input's
 /// (`exit::input_error`): a file that does not parse or nests deeper
 /// than `MAX_NESTING`. Numbers are read where they are used, and refused
 /// there when they are not finite (`finite_number`): a word such as `inf` is a
 /// KiCad 5 name or a tstamp as often as a number.
-pub(crate) fn parse(source: &str) -> Result<Expr, String> {
+pub fn parse(source: &str) -> Result<Expr, String> {
     let mut parser = Parser { source, offset: 0 };
     let expression = parser.expression().map_err(crate::exit::input_error)?;
     parser.whitespace();
@@ -366,7 +366,7 @@ impl Parser<'_> {
 /// them meets a board's through this (board to text) or `escape` (text to
 /// board), where it is read: `project_rules::key_and_text` makes both names of
 /// every net once.
-pub(crate) fn unescape(text: &str) -> std::borrow::Cow<'_, str> {
+pub fn unescape(text: &str) -> std::borrow::Cow<'_, str> {
     if !text.contains('\\') {
         return std::borrow::Cow::Borrowed(text);
     }
@@ -389,7 +389,7 @@ pub(crate) fn unescape(text: &str) -> std::borrow::Cow<'_, str> {
 /// (a damaged library file, a hostile board) is refused where it is
 /// read, before code that writes the name (`items[1]`) or reads the
 /// items after it.
-pub(crate) fn footprint_form_error(form: &Expr) -> Option<String> {
+pub fn footprint_form_error(form: &Expr) -> Option<String> {
     match form.children() {
         [_, Expr::Atom(_), ..] => None,
         [] | [_] => Some("a footprint form without its name".into()),
@@ -407,7 +407,7 @@ fn unquote(atom: &str) -> &str {
 /// courtyard graphics in KiCad's save order, which KiCad chains them in
 /// ([`canonical_order::source_order`]); the same whatever order the board
 /// was read in.
-pub(crate) fn encode(expression: &Expr) -> String {
+pub fn encode(expression: &Expr) -> String {
     let mut output = String::new();
     encode_into(expression, &mut output, true);
     output
@@ -415,7 +415,7 @@ pub(crate) fn encode(expression: &Expr) -> String {
 
 /// The text of `expression` as it is held, footprint graphics in the
 /// canonical order (for keys and digests).
-pub(crate) fn encode_canonical(expression: &Expr) -> String {
+pub fn encode_canonical(expression: &Expr) -> String {
     let mut output = String::new();
     encode_into(expression, &mut output, false);
     output
@@ -486,6 +486,19 @@ fn encode_into<'a>(expression: &'a Expr, output: &mut String, source_order: bool
     }
 }
 
+/// The expressions (atoms and lists) of a parsed board file.
+pub fn expression_count(pcb: &Expr) -> u64 {
+    // A stack of the lists still to count, not recursion; atoms are
+    // counted with their list.
+    let (mut count, mut pending) = (1, vec![pcb]);
+    while let Some(list) = pending.pop() {
+        let items = list.children();
+        count += items.len() as u64;
+        pending.extend(items.iter().filter(|item| matches!(item, Expr::List(_))));
+    }
+    count
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -550,10 +563,7 @@ mod tests {
         let text = nested_board(MAX_NESTING);
         let mut board = parse(&text).unwrap();
         assert_eq!(parse(&encode(&board)).unwrap(), board);
-        assert_eq!(
-            crate::board_router::expression_count(&board),
-            16 + 2 * (MAX_NESTING as u64 - 2)
-        );
+        assert_eq!(expression_count(&board), 16 + 2 * (MAX_NESTING as u64 - 2));
         let mut nets = BTreeSet::new();
         collect_named_nets(&board, &NetNames::default(), &mut nets);
         assert_eq!(nets.into_iter().collect::<Vec<_>>(), ["GND"]);

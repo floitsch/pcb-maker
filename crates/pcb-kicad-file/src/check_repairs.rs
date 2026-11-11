@@ -307,7 +307,7 @@ pub(crate) fn drop_null_edges(board: &mut Expr) -> usize {
 
 /// The repairs of the board file `path` (module documentation), each
 /// said in a line; the file is rewritten only when one applies.
-pub(crate) fn repair_file(path: &Path) -> Result<Vec<String>, String> {
+pub fn repair_file(path: &Path) -> Result<Vec<String>, String> {
     let text = fs::read_to_string(path)
         .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
     let mut board = parse(&text)?;

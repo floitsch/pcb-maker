@@ -4,19 +4,19 @@
 
 use super::*;
 
-pub(crate) fn file_sha256(path: &Path) -> Result<String, String> {
+pub fn file_sha256(path: &Path) -> Result<String, String> {
     let contents =
         fs::read(path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
     Ok(format!("{:x}", Sha256::digest(contents)))
 }
 
-pub(crate) fn write_typed_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
+pub fn write_typed_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
     let serialized = serde_json::to_string_pretty(value).map_err(|error| error.to_string())?;
     fs::write(path, format!("{serialized}\n"))
         .map_err(|error| format!("failed to write {}: {error}", path.display()))
 }
 
-pub(crate) fn read_typed_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, String> {
+pub fn read_typed_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, String> {
     let source = fs::read_to_string(path)
         .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
     serde_json::from_str(&source)
@@ -29,7 +29,7 @@ pub(crate) fn read_typed_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Resu
 /// Names from files and arguments (a board id, a footprint library's
 /// nickname, a footprint's name) pass this before they are joined to a
 /// directory, so that a hostile board cannot make a path outside it.
-pub(crate) fn file_name_error(part: &str) -> Option<&'static str> {
+pub fn file_name_error(part: &str) -> Option<&'static str> {
     if part.is_empty() {
         Some("is empty")
     } else if part == "." || part == ".." {
@@ -70,7 +70,7 @@ const LIBRARY_DEPTH: usize = 8;
 /// note (the board does not need it: its footprints are in it). Until
 /// 2026-10-21 such a table copied the project into its own output, again
 /// and again, until the path grew too long.
-pub(crate) fn copy_library_tree(
+pub fn copy_library_tree(
     from: &Path,
     to: &Path,
     project: &Path,
@@ -150,7 +150,7 @@ fn copy_library_entries(from: &Path, to: &Path, output: &Path, depth: usize) -> 
     Ok(())
 }
 
-pub(crate) fn copy_directory_tree(source: &Path, destination: &Path) -> Result<(), String> {
+pub fn copy_directory_tree(source: &Path, destination: &Path) -> Result<(), String> {
     if destination.exists() {
         return Err(format!(
             "refusing to overwrite KiCad action artifact {}",
@@ -209,7 +209,7 @@ fn copy_directory_entries(source: &Path, destination: &Path, root: &Path) -> Res
     Ok(())
 }
 
-pub(crate) fn read_json(path: &Path) -> Result<serde_json::Value, String> {
+pub fn read_json(path: &Path) -> Result<serde_json::Value, String> {
     let source = fs::read_to_string(path)
         .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
     serde_json::from_str(&source)
@@ -217,7 +217,7 @@ pub(crate) fn read_json(path: &Path) -> Result<serde_json::Value, String> {
 }
 
 /// A unique name for a temporary file next to `path`.
-pub(crate) fn temporary_next_to(path: &Path) -> PathBuf {
+pub fn temporary_next_to(path: &Path) -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let nonce = SystemTime::now()

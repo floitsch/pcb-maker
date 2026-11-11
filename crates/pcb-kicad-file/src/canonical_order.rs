@@ -146,7 +146,7 @@ fn save_key(item: &Expr) -> (u8, Vec<f64>, String) {
 }
 
 /// Parses a `.kicad_pcb` text and sorts it ([`canonical_order`]).
-pub(crate) fn parse_board(text: &str) -> Result<Expr, String> {
+pub fn parse_board(text: &str) -> Result<Expr, String> {
     let mut pcb = parse(text)?;
     canonical_order(&mut pcb);
     Ok(pcb)
@@ -155,7 +155,7 @@ pub(crate) fn parse_board(text: &str) -> Result<Expr, String> {
 /// Compares two strings in natural order: runs of digits by value (`R2`
 /// before `R10`, `01` with `1`), other runs by bytes, a digit run before
 /// another; equal by that, the bytes decide (so the order is total).
-pub(crate) fn natural_cmp(a: &str, b: &str) -> Ordering {
+pub fn natural_cmp(a: &str, b: &str) -> Ordering {
     fn runs(text: &str) -> Vec<&str> {
         let mut runs = Vec::new();
         let mut start = 0;

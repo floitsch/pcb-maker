@@ -9,6 +9,7 @@ description = "A placer and router for KiCad boards, driven by agents"
 members = [
     ".",
     "crates/pcb-kicad",
+    "crates/pcb-kicad-file",
     "crates/pcb-placer",
     "crates/pcb-router",
     "crates/pcb-global",

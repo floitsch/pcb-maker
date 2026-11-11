@@ -202,7 +202,7 @@ pub fn inspect_kicad_routable_connections(
         .collect())
 }
 
-pub(crate) fn board_statistics(pcb: &Expr) -> Result<KiCadBoardStatistics, String> {
+pub fn board_statistics(pcb: &Expr) -> Result<KiCadBoardStatistics, String> {
     let mut stored_segment_length_mm = 0.0;
     for item in pcb
         .children()
@@ -243,7 +243,7 @@ pub(crate) fn board_statistics(pcb: &Expr) -> Result<KiCadBoardStatistics, Strin
     })
 }
 
-pub(crate) fn is_rule_area(zone: &Expr) -> bool {
+pub fn is_rule_area(zone: &Expr) -> bool {
     zone.head() == Some("zone") && zone.child("keepout").is_some()
 }
 
@@ -679,7 +679,7 @@ pub(crate) fn board_outline_area(pcb: &Expr) -> Result<Option<f64>, String> {
 
 /// The tracks of `pcb` per net (as the router names it) and copper layer:
 /// their length, mm (an arc by its two chords through its midpoint).
-pub(crate) fn track_lengths(pcb: &Expr) -> BTreeMap<String, BTreeMap<String, f64>> {
+pub fn track_lengths(pcb: &Expr) -> BTreeMap<String, BTreeMap<String, f64>> {
     let names = NetNames::of(pcb);
     let point = |item: &Expr, key: &str| -> Option<[f64; 2]> {
         let form = item.child(key)?;
@@ -915,7 +915,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let directory = env::temp_dir().join(format!(
+        let directory = std::env::temp_dir().join(format!(
             "pcb-maker-connection-inventory-{}-{nonce}",
             std::process::id()
         ));

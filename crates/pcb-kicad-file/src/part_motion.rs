@@ -15,7 +15,7 @@ use std::collections::HashMap;
 /// What a part owns on the lowered board: its obstacles and its
 /// terminals (net, terminal).
 #[derive(Clone, Debug, Default)]
-pub(crate) struct PartCopper {
+pub struct PartCopper {
     obstacles: Vec<usize>,
     terminals: Vec<(usize, usize)>,
 }
@@ -29,7 +29,7 @@ fn owner(label: &str, index: &HashMap<String, usize>) -> Option<usize> {
 }
 
 /// Each part's copper on `board` (the parts by `index`, `parts` of them).
-pub(crate) fn part_copper(
+pub fn part_copper(
     board: &core::Board,
     index: &HashMap<String, usize>,
     parts: usize,
@@ -104,7 +104,7 @@ fn union(a: Option<Aabb>, b: Aabb) -> Aabb {
 /// Applies `moved` parts' motions to `board` in place (obstacles and
 /// terminal anchors); returns the area touched before and after and the
 /// nets with a terminal on them.
-pub(crate) fn apply(
+pub fn apply(
     board: &mut core::Board,
     copper: &[PartCopper],
     old: &[placer::Pose],

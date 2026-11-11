@@ -118,7 +118,7 @@ pub fn write_kicad_board_without_copper(
     })
 }
 
-pub(crate) fn supplemental_via_expr(via: &SupplementalVia) -> Expr {
+pub fn supplemental_via_expr(via: &SupplementalVia) -> Expr {
     let mut identity = format!(
         "pcb-maker:supplemental-via:{}:{:.9}:{:.9}:{:.9}:{:.9}:{}:{}",
         via.connection, via.at[0], via.at[1], via.size, via.drill, via.layers[0], via.layers[1]
@@ -158,7 +158,7 @@ pub(crate) fn supplemental_via_expr(via: &SupplementalVia) -> Expr {
 /// A via in a pad (the via-in-pad rule's): a supplemental via, filled and
 /// capped (KiCad's via protection, IPC-4761 type VII), as the fab makes a
 /// via in a pad.
-pub(crate) fn pad_via_expr(via: &SupplementalVia) -> Expr {
+pub fn pad_via_expr(via: &SupplementalVia) -> Expr {
     let identity = format!(
         "pcb-maker:pad-via:{}:{:.9}:{:.9}:{:.9}:{:.9}",
         via.connection, via.at[0], via.at[1], via.size, via.drill
@@ -180,7 +180,7 @@ pub(crate) fn pad_via_expr(via: &SupplementalVia) -> Expr {
     Expr::List(items)
 }
 
-pub(crate) fn supplemental_segment_expr(segment: &SupplementalSegment) -> Expr {
+pub fn supplemental_segment_expr(segment: &SupplementalSegment) -> Expr {
     let identity = format!(
         "pcb-maker:supplemental:{}:{:.9}:{:.9}:{:.9}:{:.9}:{:.9}:{}",
         segment.connection,
@@ -218,7 +218,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let directory = env::temp_dir().join(format!(
+        let directory = std::env::temp_dir().join(format!(
             "pcb-maker-strip-copper-{}-{nonce}",
             std::process::id()
         ));

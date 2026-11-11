@@ -214,7 +214,7 @@ One entry of `net_classes`. Source: `KiCadNetClassRequest` in [crates/pcb-kicad/
 
 ## Router settings: connection rules
 
-The value of `default_rules` and of each `connection_rules` entry. Source: `KiCadConnectionRoutingRules` in [crates/pcb-kicad/src/connection_rules.rs](../crates/pcb-kicad/src/connection_rules.rs).
+The value of `default_rules` and of each `connection_rules` entry. Source: `KiCadConnectionRoutingRules` in [crates/pcb-kicad-file/src/connection_rules.rs](../crates/pcb-kicad-file/src/connection_rules.rs).
 
 | Key | Type | Default | Docs | Description |
 |---|---|---|---|---|

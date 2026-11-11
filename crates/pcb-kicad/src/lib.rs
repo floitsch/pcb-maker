@@ -21,11 +21,14 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
-mod connection_rules;
-mod corridors_fact;
 pub use connection_rules::KiCadConnectionRoutingRules;
 pub use corridors_fact::{KiCadCorridors, KiCadSearchCount, KiCadSearchKinds};
-mod local_clearance;
+// The KiCad files, their geometry and how a run exits (pcb-kicad-file).
+use pcb_kicad_file::{
+    board_stats, canonical_order, check_repairs, connection_rules, copper_emit, copper_geometry,
+    corridors_fact, exit, flip, fs_util, geometry, kicad_nets, kicad_sexpr, local_clearance,
+    outline, outline_pieces, part_motion,
+};
 mod native_report;
 mod necks;
 pub use necks::{NeckRepair, repair_kicad_necks};
@@ -34,11 +37,6 @@ mod drc_cache;
 mod kicad_config;
 pub use drc_cache::{DrcCacheCounts, drc_cache_counts};
 pub use fs_util::write_atomically;
-mod check_repairs;
-mod electrical_terminals;
-#[cfg(test)]
-mod geometry_queries;
-mod roundrect_pad;
 mod silkscreen;
 mod verification_preview;
 pub use native_report::{
@@ -50,14 +48,12 @@ pub use silkscreen::repair_kicad_silkscreen;
 mod board_layout;
 mod congestion_rank;
 pub mod lab;
-mod part_motion;
 pub use board_layout::{
     KiCadBoardLayoutConfig, KiCadBoardLayoutMove, KiCadBoardLayoutResult, KiCadOutlineTrial,
     KiCadRaceProbe, KiCadRaceProbeScore, KiCadRaceReport, KiCadSilkscreenConfig, KiCadSwappable,
     layout_kicad_board, placement_check_config,
 };
 mod board_placer;
-mod canonical_order;
 pub use board_placer::{
     KiCadBoardPlacerConfig, KiCadBoardPlacerResult, KiCadClosedPad, KiCadExitMove, KiCadPadExits,
     KiCadPadExitsCensus, KiCadPadExitsReport, KiCadPanelCellClass, KiCadPanelCopiesReport,
@@ -65,7 +61,6 @@ pub use board_placer::{
     place_kicad_board,
 };
 mod board_router;
-mod exit;
 mod verdict;
 pub use exit::{
     EXIT_COMPLETE, EXIT_CUT, EXIT_INCOMPLETE, EXIT_INTERNAL, EXIT_USAGE, input_error,
@@ -88,7 +83,6 @@ pub use work_rate::{
 mod class_view;
 mod constraints_template;
 mod describe;
-mod flip;
 mod net_classes;
 pub use net_classes::KiCadNetClassRequest;
 mod aesthetics;
@@ -130,7 +124,6 @@ pub use placement_constraints::{
 pub use placement_room::{KiCadRoom, TARGET_UTILIZATION, noted_room};
 pub mod free_dimension;
 pub mod ledger;
-mod outline;
 pub use free_dimension::{
     KiCadFreeDimension, KiCadFreeDimensionPlan, KiCadFreeDimensionRun, KiCadFreeDimensionSearch,
     KiCadFreeDimensionStep,
@@ -141,7 +134,6 @@ pub use pin_swap::{
     KiCadPinChange, KiCadPinSwapConfig, KiCadPinSwapEstimate, KiCadPinSwapResult, KiCadPinSwapSpec,
     read_pin_swap_spec, swap_kicad_pins, swap_kicad_pins_in_place,
 };
-mod outline_pieces;
 mod sub_boards;
 pub use sub_boards::describe_sub_boards;
 mod project_rules;
@@ -176,37 +168,28 @@ pub fn configure_allocator() {
 pub use pcb_router::mem_profile;
 
 // Split out of lib.rs on 2026-10-21.
-mod kicad_sexpr;
-use kicad_sexpr::*;
-mod kicad_nets;
-use kicad_nets::*;
-mod geometry;
-use geometry::*;
-mod copper_geometry;
-use copper_geometry::*;
-mod copper_emit;
-use copper_emit::*;
-pub use copper_emit::{
-    KiCadCopperStripReport, KiCadRouteBranch, KiCadRoutePoint, SupplementalSegment,
-    SupplementalVia, write_kicad_board_without_copper,
-};
-mod route_graph;
-use route_graph::*;
-mod board_stats;
 use board_stats::*;
 pub use board_stats::{
     KiCadBoardStatistics, KiCadConnectionSummary, KiCadCopperLayerStatistics,
     KiCadPhysicalCopperStatistics, inspect_kicad_board, inspect_kicad_routable_connections,
 };
+use copper_emit::*;
+pub use copper_emit::{
+    KiCadCopperStripReport, KiCadRouteBranch, KiCadRoutePoint, SupplementalSegment,
+    SupplementalVia, write_kicad_board_without_copper,
+};
+use copper_geometry::*;
+use geometry::*;
+use kicad_nets::*;
+use kicad_sexpr::*;
 mod verification;
+pub use fs_util::check_board_id;
+use fs_util::*;
 pub use verification::{
     KICAD_VERIFICATION_CACHE_ENV, KICAD_VERIFICATION_CACHE_EVENTS_ENV,
     KiCadVerificationCacheStatus, KiCadVerificationCacheTrace, VerificationReport,
     kicad_verifier_implementation_sha256, verify_materialized_rung,
 };
-mod fs_util;
-pub use fs_util::check_board_id;
-use fs_util::*;
 
 // The fixture tests on tests/fixtures/f1 that need the crate's insides
 // (under tests/, as test sources: tools/config-reference's index of

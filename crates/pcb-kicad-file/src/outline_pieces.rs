@@ -35,7 +35,7 @@ use pcb_router as core;
 /// distance: OpenRX's second copy holds its crystal X301 within 1.25 mm
 /// of the right edge, where the first copy's frame would come).
 #[derive(Clone, Debug, Default)]
-pub(crate) struct CopyFrames {
+pub struct CopyFrames {
     pub transforms: Vec<(f64, [f64; 2])>,
     pub within: Vec<[f64; 4]>,
     pub held: Vec<Vec<[f64; 4]>>,
@@ -73,7 +73,7 @@ impl CopyFrames {
     }
 }
 
-pub(crate) fn clip_box(a: [f64; 4], b: [f64; 4]) -> [f64; 4] {
+pub fn clip_box(a: [f64; 4], b: [f64; 4]) -> [f64; 4] {
     [
         a[0].max(b[0]),
         a[1].max(b[1]),
@@ -106,7 +106,7 @@ const COPPER_BLOCK_MM: f64 = 0.25;
 /// it (mm): a row of mouse bites breaks along its holes, its edge rough
 /// (the keepout then reaches about 1.6 mm from the row's centre line,
 /// 1.4 mm from 0.5 mm holes' edges).
-pub(crate) const TAB_MARGIN_MM: f64 = 1.5;
+pub const TAB_MARGIN_MM: f64 = 1.5;
 
 /// Frames and rails together take at most this share of the area of the
 /// pieces parts lie on (the ULK panels' frames: about a sixth).
@@ -147,7 +147,7 @@ const V_CUT_LABEL_REACH_MM: f64 = 10.0;
 /// footprints with no other pad), and V-cut lines (a graphic line on a
 /// user layer with a "V-CUT" or "V-SCORE" label at one end).
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct Cuts {
+pub struct Cuts {
     /// The mouse bites' holes: centre and radius.
     pub holes: Vec<([f64; 2], f64)>,
     /// The V-cut lines.
@@ -158,7 +158,7 @@ pub(crate) struct Cuts {
 
 impl Cuts {
     /// The mouse bites and V-cuts of a KiCad board (`Cuts`).
-    pub(crate) fn of_board(pcb: &Expr) -> Cuts {
+    pub fn of_board(pcb: &Expr) -> Cuts {
         let mut holes: Vec<([f64; 2], f64)> = Vec::new();
         for footprint in pcb
             .children()
@@ -372,7 +372,7 @@ fn cut_line_tabs(
 /// The outline's pieces without its tabs (module comment): a raster of
 /// the board, each cell labelled with its piece.
 #[derive(Clone, Debug)]
-pub(crate) struct Pieces {
+pub struct Pieces {
     origin: [f64; 2],
     cell: f64,
     columns: usize,
@@ -397,7 +397,7 @@ pub(crate) struct Pieces {
 impl Pieces {
     /// The pieces of a board's outline, or None where it has fewer than
     /// two.
-    pub(crate) fn of_board(pcb: &Expr) -> Result<Option<Pieces>, String> {
+    pub fn of_board(pcb: &Expr) -> Result<Option<Pieces>, String> {
         let loops = outline::board_loops(pcb)?;
         Ok(Pieces::of_loops(
             &loops.piece_loops,
@@ -408,7 +408,7 @@ impl Pieces {
 
     /// The pieces of the area inside `loops` (even-odd with `cutouts`),
     /// less the mouse bites' holes and the V-cut lines of `cuts`.
-    pub(crate) fn of_loops(
+    pub fn of_loops(
         loops: &[Vec<[f64; 2]>],
         cutouts: &[Vec<[f64; 2]>],
         cuts: &Cuts,
@@ -782,7 +782,7 @@ impl Pieces {
         })
     }
 
-    pub(crate) fn count(&self) -> usize {
+    pub fn count(&self) -> usize {
         self.boxes.len()
     }
 
@@ -791,7 +791,7 @@ impl Pieces {
     /// references: the PolyKybd molecules' cells side by side, cut apart
     /// along straight lines, no neck between them). A point lies on the
     /// first box that holds it; there are no tabs.
-    pub(crate) fn of_boxes(boxes: Vec<[f64; 4]>) -> Pieces {
+    pub fn of_boxes(boxes: Vec<[f64; 4]>) -> Pieces {
         Pieces {
             origin: [0.0, 0.0],
             cell: 1.0,
@@ -822,7 +822,7 @@ impl Pieces {
     }
 
     /// The piece `point` lies on; None off the board, on a tab or a neck.
-    pub(crate) fn piece_at(&self, point: [f64; 2]) -> Option<usize> {
+    pub fn piece_at(&self, point: [f64; 2]) -> Option<usize> {
         if self.boxed() {
             return self.boxes.iter().position(|b| {
                 point[0] >= b[0] && point[0] <= b[2] && point[1] >= b[1] && point[1] <= b[3]
@@ -867,7 +867,7 @@ impl Pieces {
     }
 
     /// Whether `point` lies on the board but on no piece (a tab).
-    pub(crate) fn between(&self, point: [f64; 2]) -> bool {
+    pub fn between(&self, point: [f64; 2]) -> bool {
         self.cell_of(point)
             .is_some_and(|cell| self.inside[cell] && self.labels[cell] == NONE)
     }
@@ -875,7 +875,7 @@ impl Pieces {
     /// Where a box lies: `Some(Some(piece))` wholly on one piece (its
     /// corners and centre), `Some(None)` off the board, None on a tab or
     /// over two pieces.
-    pub(crate) fn piece_of_box(&self, b: [f64; 4]) -> Option<Option<usize>> {
+    pub fn piece_of_box(&self, b: [f64; 4]) -> Option<Option<usize>> {
         let points = [
             [(b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0],
             [b[0], b[1]],
@@ -907,14 +907,14 @@ impl Pieces {
     /// such cell of the board reaches is kept out whole), the blocks of
     /// one row joined into runs and equal runs of consecutive rows into
     /// one box. None on pieces that are boxes (`of_boxes`).
-    pub(crate) fn keepouts(&self, frames: &[bool], margin: f64) -> Vec<[f64; 4]> {
+    pub fn keepouts(&self, frames: &[bool], margin: f64) -> Vec<[f64; 4]> {
         self.mask_boxes(&self.kept_mask(frames, margin), KEEPOUT_BLOCK_MM)
     }
 
     /// The tabs and the frames themselves (`keepouts` not grown), in
     /// blocks of `COPPER_BLOCK_MM`: what a connector reaching over the
     /// keepouts keeps its copper off.
-    pub(crate) fn copper(&self, frames: &[bool]) -> Vec<[f64; 4]> {
+    pub fn copper(&self, frames: &[bool]) -> Vec<[f64; 4]> {
         self.mask_boxes(&self.kept_mask(frames, 0.0), COPPER_BLOCK_MM)
     }
 
@@ -929,7 +929,7 @@ impl Pieces {
     /// cells within no copy's surroundings (the frames beyond) are boxes
     /// of their own. Within a copy's held bands (`CopyFrames::held`) it
     /// keeps its own keepouts only.
-    pub(crate) fn copies_keepouts(
+    pub fn copies_keepouts(
         &self,
         frames: &[bool],
         copies: &CopyFrames,
@@ -1120,7 +1120,7 @@ impl Pieces {
     /// most `MOST_FRAME_SHARE` of the occupied pieces' area (else a
     /// board whose parts are all movable would lose its room: nothing is
     /// a frame).
-    pub(crate) fn frames(&self, occupied: &BTreeSet<usize>) -> Vec<bool> {
+    pub fn frames(&self, occupied: &BTreeSet<usize>) -> Vec<bool> {
         let none = vec![false; self.count()];
         if occupied.is_empty() || self.boxed() {
             return none;
@@ -1150,7 +1150,7 @@ impl Pieces {
     /// the area, the full width; its halves 0.38 each). Reported, not
     /// kept off: the placer keeps parts off frames only where parts tell
     /// them (`frames`).
-    pub(crate) fn outline_frames(&self) -> Vec<bool> {
+    pub fn outline_frames(&self) -> Vec<bool> {
         let none = vec![false; self.count()];
         if self.count() < 2 || self.boxed() {
             return none;
@@ -1306,7 +1306,7 @@ fn polygon_box(points: &[[f64; 2]]) -> [f64; 4] {
 }
 
 /// `polygon` clipped to `region` (Sutherland and Hodgman).
-pub(crate) fn clip(polygon: &[[f64; 2]], region: [f64; 4]) -> Vec<[f64; 2]> {
+pub fn clip(polygon: &[[f64; 2]], region: [f64; 4]) -> Vec<[f64; 2]> {
     let mut points = polygon.to_vec();
     for (axis, bound, keep_below) in [
         (0, region[0], false),
@@ -1351,11 +1351,11 @@ pub(crate) fn clip(polygon: &[[f64; 2]], region: [f64; 4]) -> Vec<[f64; 2]> {
 /// The router's refusal of an incremental update to a board of other nets
 /// (`Router::update`): a part moved to another sub-board splits its nets
 /// differently.
-pub(crate) const OTHER_NETS: &str = "incremental update needs the same nets and rules";
+pub const OTHER_NETS: &str = "incremental update needs the same nets and rules";
 
 /// What `split_router_nets` did: the nets split and into how many.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct NetSplit {
+pub struct NetSplit {
     /// Per net split: its name and the pieces it was split into.
     pub nets: Vec<(String, usize)>,
     /// Nets with pads on two pieces that stay one net, by why: a pad on a
@@ -1372,7 +1372,7 @@ pub(crate) struct NetSplit {
 /// of the same name and class (the writer names copper by the net's name,
 /// so KiCad sees one net again). Its pours are cut to each piece's box.
 /// Nothing changes on a board of one piece.
-pub(crate) fn split_router_nets(
+pub fn split_router_nets(
     board: &mut core::Board,
     pieces: &Pieces,
     only: Option<&BTreeSet<String>>,
@@ -1582,7 +1582,7 @@ enum Place {
 /// a tab or from one piece to another. Each with the number of pieces
 /// its pads lie on. Pours do not join (KiCad's fill decides: where it
 /// joins two pieces, KiCad reports nothing across them).
-pub(crate) fn board_split_nets(pcb: &Expr, pieces: &Pieces) -> BTreeMap<String, usize> {
+pub fn board_split_nets(pcb: &Expr, pieces: &Pieces) -> BTreeMap<String, usize> {
     let codes = crate::kicad_nets::net_codes(pcb);
     let mut on: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
     let mut joined: BTreeSet<String> = BTreeSet::new();
@@ -1708,7 +1708,7 @@ static DESIGNED: std::sync::Mutex<Option<BTreeSet<String>>> = std::sync::Mutex::
 /// puts the parts of other nets where it would: that a net lies on two
 /// boards in the result says nothing of the design, and its items across
 /// them count.
-pub(crate) fn note_designed(nets: Option<BTreeSet<String>>) {
+pub fn note_designed(nets: Option<BTreeSet<String>>) {
     if let Ok(mut designed) = DESIGNED.lock() {
         *designed = nets;
     }
@@ -1722,7 +1722,7 @@ static CELLS: std::sync::Mutex<Option<Vec<[f64; 4]>>> = std::sync::Mutex::new(No
 
 /// Notes a panel's cells (None: none): the nets of `note_designed` are
 /// split per cell and their items across cells excused, as on pieces.
-pub(crate) fn note_cells(cells: Option<Vec<[f64; 4]>>) {
+pub fn note_cells(cells: Option<Vec<[f64; 4]>>) {
     if let Ok(mut noted) = CELLS.lock() {
         *noted = cells;
     }
@@ -1730,7 +1730,7 @@ pub(crate) fn note_cells(cells: Option<Vec<[f64; 4]>>) {
 
 /// The cells and the designed nets noted for this process, where both
 /// are.
-pub(crate) fn noted_cells() -> Option<(Pieces, BTreeSet<String>)> {
+pub fn noted_cells() -> Option<(Pieces, BTreeSet<String>)> {
     let cells = CELLS.lock().ok()?.clone()?;
     let designed = DESIGNED.lock().ok()?.clone()?;
     Some((Pieces::of_boxes(cells), designed))
@@ -1738,7 +1738,7 @@ pub(crate) fn noted_cells() -> Option<(Pieces, BTreeSet<String>)> {
 
 /// The nets with pads of two footprints of one reference (the second half
 /// of `designed_nets`), by the board's names.
-pub(crate) fn repeated_reference_nets(pcb: &Expr) -> BTreeSet<String> {
+pub fn repeated_reference_nets(pcb: &Expr) -> BTreeSet<String> {
     let codes = crate::kicad_nets::net_codes(pcb);
     let mut on: BTreeMap<String, BTreeMap<String, BTreeSet<usize>>> = BTreeMap::new();
     for (index, footprint) in pcb
@@ -1770,7 +1770,7 @@ pub(crate) fn repeated_reference_nets(pcb: &Expr) -> BTreeSet<String> {
 
 /// The key of a DRC report's unconnected items that KiCad's check judged
 /// per sub-board does not count (`excuse_across`).
-pub(crate) const ACROSS_KEY: &str = "unconnected_across_sub_boards";
+pub const ACROSS_KEY: &str = "unconnected_across_sub_boards";
 
 /// KiCad's check judged per sub-board: in a DRC report of `pcb`, the
 /// unconnected items of a net the sub-boards split (`board_split_nets`)
@@ -1781,7 +1781,7 @@ pub(crate) const ACROSS_KEY: &str = "unconnected_across_sub_boards";
 /// KiCad's ratsnest put across the pieces (an island within a piece left
 /// open: its edge may end on the other piece), stay. Returns how many
 /// moved.
-pub(crate) fn excuse_across(
+pub fn excuse_across(
     report: &mut serde_json::Value,
     pcb: &Expr,
     pieces: &Pieces,
@@ -1864,7 +1864,7 @@ const KICAD_REPORT_CAP: usize = 499;
 
 /// Set in a DRC report whose unconnected items reached KiCad's cap before
 /// `excuse_across` moved some: the items left are at least that many.
-pub(crate) const CAPPED_KEY: &str = "unconnected_items_capped";
+pub const CAPPED_KEY: &str = "unconnected_items_capped";
 
 /// The net a DRC item's description names (`Pad 2 [GND] of C1 on F.Cu`).
 fn described_net(description: &str) -> Option<String> {
@@ -1878,7 +1878,7 @@ fn described_net(description: &str) -> Option<String> {
 /// place: read only when the report has unconnected items and the
 /// board's outline has two pieces or more. The report keeps KiCad's other
 /// fields as they are.
-pub(crate) fn excuse_across_file(report: &Path, board: &Path) -> Result<usize, String> {
+pub fn excuse_across_file(report: &Path, board: &Path) -> Result<usize, String> {
     let text = fs::read_to_string(report)
         .map_err(|error| format!("failed to read {}: {error}", report.display()))?;
     let mut value: serde_json::Value =
@@ -1919,7 +1919,7 @@ static PIECES_CACHE: std::sync::Mutex<Option<(u64, Option<std::sync::Arc<Pieces>
 
 impl Pieces {
     /// `of_loops`, remembered for the last outline.
-    pub(crate) fn of_loops_cached(
+    pub fn of_loops_cached(
         loops: &[Vec<[f64; 2]>],
         cutouts: &[Vec<[f64; 2]>],
         cuts: &Cuts,

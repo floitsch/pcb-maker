@@ -443,16 +443,18 @@ fn verify_materialized_rung_cached(
 pub fn kicad_verifier_implementation_sha256() -> String {
     let mut hash = Sha256::new();
     hash.update(b"pcb-maker-kicad-verifier-implementation-v1");
-    // lib.rs held all of these until 2026-10-21.
+    // lib.rs held all of these until 2026-10-21; the crate's root and the
+    // modules below it were one crate until 2026-11-11.
     hash.update(include_bytes!("lib.rs"));
-    hash.update(include_bytes!("kicad_sexpr.rs"));
-    hash.update(include_bytes!("kicad_nets.rs"));
+    hash.update(include_bytes!("../../pcb-kicad-file/src/lib.rs"));
+    hash.update(include_bytes!("../../pcb-kicad-file/src/kicad_sexpr.rs"));
+    hash.update(include_bytes!("../../pcb-kicad-file/src/kicad_nets.rs"));
     hash.update(include_bytes!("verification.rs"));
-    hash.update(include_bytes!("fs_util.rs"));
+    hash.update(include_bytes!("../../pcb-kicad-file/src/fs_util.rs"));
     hash.update(include_bytes!("native_report.rs"));
     // sub_boards.rs held outline_pieces.rs (its DRC excuse) until
     // 2026-11-11.
-    hash.update(include_bytes!("outline_pieces.rs"));
+    hash.update(include_bytes!("../../pcb-kicad-file/src/outline_pieces.rs"));
     hash.update(include_bytes!("sub_boards.rs"));
     hash.update(include_bytes!("../../../Cargo.lock"));
     format!("{:x}", hash.finalize())

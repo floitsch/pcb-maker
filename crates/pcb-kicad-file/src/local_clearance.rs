@@ -6,7 +6,7 @@
 
 use super::{Expr, form_f64};
 
-pub(super) fn pad_clearance(pad: &Expr, footprint: &Expr) -> Result<f64, String> {
+pub fn pad_clearance(pad: &Expr, footprint: &Expr) -> Result<f64, String> {
     // KiCad 9+: an explicit pad zero overrides the footprint; an absent pad
     // value inherits it. See the native manual's pad clearance overrides:
     // https://docs.kicad.org/10.0/en/pcbnew/pcbnew.html

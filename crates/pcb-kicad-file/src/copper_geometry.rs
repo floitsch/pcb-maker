@@ -17,7 +17,7 @@ pub(crate) fn board_outline(pcb: &Expr) -> Result<Option<BoardOutline>, String> 
 
 /// `board_outline`, with the lowering's reason when there is none (the
 /// router refuses such a board with the same message).
-pub(crate) fn board_outline_checked(pcb: &Expr) -> Result<BoardOutline, String> {
+pub fn board_outline_checked(pcb: &Expr) -> Result<BoardOutline, String> {
     if let Some(outline) = simple_board_outline(pcb)? {
         return Ok(outline);
     }
@@ -118,9 +118,9 @@ fn simple_board_outline(pcb: &Expr) -> Result<Option<BoardOutline>, String> {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct BoardOutline {
+pub struct BoardOutline {
     pub(crate) points: Vec<[f64; 2]>,
-    pub(crate) bounds: [f64; 4],
+    pub bounds: [f64; 4],
 }
 
 impl BoardOutline {
@@ -175,7 +175,7 @@ impl BoardOutline {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub(crate) enum ObstacleGeometry {
+pub enum ObstacleGeometry {
     Circle {
         center: [f64; 2],
         radius: f64,
@@ -201,7 +201,7 @@ pub(crate) enum ObstacleGeometry {
 impl ObstacleGeometry {
     /// The router's shape of this copper (the lowering's obstacles, and
     /// score-kicad-board's vias in pads: one measure of a pad's copper).
-    pub(crate) fn router_shape(&self) -> pcb_router::geometry::Shape {
+    pub fn router_shape(&self) -> pcb_router::geometry::Shape {
         use pcb_router::geometry::Shape;
         match self {
             Self::Circle { center, radius } => Shape::Circle {
@@ -229,9 +229,9 @@ impl ObstacleGeometry {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct GeometryAabb {
-    pub(crate) minimum: [f64; 2],
-    pub(crate) maximum: [f64; 2],
+pub struct GeometryAabb {
+    pub minimum: [f64; 2],
+    pub maximum: [f64; 2],
 }
 
 impl GeometryAabb {
@@ -250,7 +250,7 @@ impl GeometryAabb {
 }
 
 impl ObstacleGeometry {
-    pub(crate) fn aabb(&self) -> GeometryAabb {
+    pub fn aabb(&self) -> GeometryAabb {
         match self {
             Self::Circle { center, radius } => GeometryAabb {
                 minimum: [center[0] - radius, center[1] - radius],
@@ -311,7 +311,7 @@ fn polygon_aabb(points: &[[f64; 2]]) -> GeometryAabb {
 /// with the inside cut out). Each hole is joined to the outline by a slit
 /// between their closest vertices, walked in and out again, which the
 /// even-odd point test and the edge distances treat as the ring it is.
-pub(crate) fn rule_area_polygon_points(zone: &Expr) -> Result<Vec<[f64; 2]>, String> {
+pub fn rule_area_polygon_points(zone: &Expr) -> Result<Vec<[f64; 2]>, String> {
     let mut polygons: Vec<Vec<[f64; 2]>> = Vec::new();
     for polygon in zone
         .children()
@@ -382,13 +382,13 @@ pub(crate) fn rule_area_polygon_points(zone: &Expr) -> Result<Vec<[f64; 2]>, Str
     Ok(outline)
 }
 
-pub(crate) struct LoweredPad {
-    pub(crate) center: [f64; 2],
-    pub(crate) geometry: ObstacleGeometry,
+pub struct LoweredPad {
+    pub center: [f64; 2],
+    pub geometry: ObstacleGeometry,
 }
 
 /// Board-space copper of one footprint pad, as KiCad's effective shape.
-pub(crate) fn lower_pad(pad: &Expr, footprint_at: [f64; 3]) -> Result<LoweredPad, String> {
+pub fn lower_pad(pad: &Expr, footprint_at: [f64; 3]) -> Result<LoweredPad, String> {
     let pad_at = form_at(pad)?;
     // KiCad's board coordinates have Y pointing down: positive footprint
     // angles therefore rotate local pad coordinates clockwise.
@@ -480,7 +480,7 @@ pub(crate) fn lower_pad(pad: &Expr, footprint_at: [f64; 3]) -> Result<LoweredPad
 /// spoke templates over this copper's bounding box (zone_filler.cpp,
 /// buildThermalSpokes: a dummy pad at the origin, orientation 0, no
 /// offset).
-pub(crate) fn custom_pad_local_geometry(pad: &Expr) -> Result<ObstacleGeometry, String> {
+pub fn custom_pad_local_geometry(pad: &Expr) -> Result<ObstacleGeometry, String> {
     let size = form_xy(pad, "size")?;
     let anchor = ObstacleGeometry::Rectangle {
         center: [0.0, 0.0],
@@ -690,7 +690,7 @@ pub(crate) fn pad_copper_layers(pad: &Expr) -> [bool; 2] {
     ]
 }
 
-pub(crate) fn copper_layer_index(layer: &str) -> Option<usize> {
+pub fn copper_layer_index(layer: &str) -> Option<usize> {
     match layer {
         "F.Cu" => Some(0),
         "B.Cu" => Some(1),

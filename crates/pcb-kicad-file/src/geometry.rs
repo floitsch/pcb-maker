@@ -2,7 +2,7 @@
 
 //! Plane geometry shared by the board readers.
 
-pub(crate) fn point_in_polygon(point: [f64; 2], polygon: &[[f64; 2]]) -> bool {
+pub fn point_in_polygon(point: [f64; 2], polygon: &[[f64; 2]]) -> bool {
     let mut inside = false;
     let mut previous = polygon.len() - 1;
     for current in 0..polygon.len() {
@@ -25,11 +25,11 @@ pub(crate) fn point_in_polygon(point: [f64; 2], polygon: &[[f64; 2]]) -> bool {
 /// The sine and cosine of an angle in degrees, exact for quarter turns
 /// (`pcb_router::geometry::degrees_sin_cos`): one angle written 180 or
 /// -180, 270 or -90 by two saves lowers alike.
-pub(crate) fn quarter_sin_cos(degrees: f64) -> (f64, f64) {
+pub fn quarter_sin_cos(degrees: f64) -> (f64, f64) {
     pcb_router::geometry::degrees_sin_cos(degrees)
 }
 
-pub(crate) fn rotate_vector(vector: [f64; 2], degrees: f64) -> [f64; 2] {
+pub fn rotate_vector(vector: [f64; 2], degrees: f64) -> [f64; 2] {
     let (sine, cosine) = quarter_sin_cos(degrees);
     [
         vector[0] * cosine - vector[1] * sine,
@@ -37,15 +37,11 @@ pub(crate) fn rotate_vector(vector: [f64; 2], degrees: f64) -> [f64; 2] {
     ]
 }
 
-pub(crate) fn distance_squared(left: [f64; 2], right: [f64; 2]) -> f64 {
+pub fn distance_squared(left: [f64; 2], right: [f64; 2]) -> f64 {
     (left[0] - right[0]).powi(2) + (left[1] - right[1]).powi(2)
 }
 
-pub(crate) fn point_segment_distance_squared(
-    point: [f64; 2],
-    start: [f64; 2],
-    end: [f64; 2],
-) -> f64 {
+pub fn point_segment_distance_squared(point: [f64; 2], start: [f64; 2], end: [f64; 2]) -> f64 {
     let segment = [end[0] - start[0], end[1] - start[1]];
     let length_squared = segment[0].powi(2) + segment[1].powi(2);
     if length_squared <= f64::EPSILON {

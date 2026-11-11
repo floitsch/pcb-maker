@@ -944,7 +944,7 @@ fn tables(root: &Path) -> Result<Vec<Table>, String> {
     let pin_swap_file = "crates/pcb-kicad/src/pin_swap.rs";
     let pour_file = "crates/pcb-kicad/src/board_router/pour_plan.rs";
     let class_file = "crates/pcb-kicad/src/net_classes.rs";
-    let rules_file = "crates/pcb-kicad/src/connection_rules.rs";
+    let rules_file = "crates/pcb-kicad-file/src/connection_rules.rs";
 
     let router = json_defaults::<pcb_kicad::KiCadBoardRouterConfig>()?;
     let layout = json_defaults::<pcb_kicad::KiCadBoardLayoutConfig>()?;

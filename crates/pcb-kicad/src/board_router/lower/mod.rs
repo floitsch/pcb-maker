@@ -75,19 +75,6 @@ static LOWER_WORK_NANOS: std::sync::atomic::AtomicU64 = std::sync::atomic::Atomi
 /// work charged").
 pub(crate) const LOWERING_EXPRESSION_NANOS: f64 = 26.0;
 
-/// The expressions (atoms and lists) of a parsed board file.
-pub(crate) fn expression_count(pcb: &Expr) -> u64 {
-    // A stack of the lists still to count, not recursion; atoms are
-    // counted with their list.
-    let (mut count, mut pending) = (1, vec![pcb]);
-    while let Some(list) = pending.pop() {
-        let items = list.children();
-        count += items.len() as u64;
-        pending.extend(items.iter().filter(|item| matches!(item, Expr::List(_))));
-    }
-    count
-}
-
 /// The work of one lowering of `pcb`, modelled, in seconds at this
 /// process's rate (the reference's nanoseconds scaled as the pour
 /// model's are).

@@ -27,7 +27,7 @@ pub(crate) fn collect_named_nets(root: &Expr, names: &NetNames, named_nets: &mut
 /// Connection IDs omit one hierarchical slash, but native net names do not.
 /// Pads identify the exact spelling to use for emitted/retained copper. Reject
 /// aliases with two distinct pad nets rather than silently shorting them.
-pub(crate) fn unambiguous_pad_net_names(pcb: &Expr) -> Result<BTreeMap<String, Expr>, String> {
+pub fn unambiguous_pad_net_names(pcb: &Expr) -> Result<BTreeMap<String, Expr>, String> {
     let net_names = note_net_names(pcb);
     let mut names: BTreeMap<String, Expr> = BTreeMap::new();
     for footprint in pcb
@@ -65,7 +65,7 @@ pub(crate) fn unambiguous_pad_net_names(pcb: &Expr) -> Result<BTreeMap<String, E
     Ok(names)
 }
 
-pub(crate) fn canonicalize_copper_net_names(pcb: &mut Expr, names: &BTreeMap<String, Expr>) {
+pub fn canonicalize_copper_net_names(pcb: &mut Expr, names: &BTreeMap<String, Expr>) {
     let Expr::List(items) = pcb else {
         return;
     };
@@ -111,14 +111,14 @@ pub(crate) fn canonicalize_copper_net_names(pcb: &mut Expr, names: &BTreeMap<Str
 /// that join two pads or more (a reversible footprint's duplicate pad
 /// numbers on both sides: KiCad wants them connected).
 #[derive(Clone, Debug, Default)]
-pub(crate) struct NetNames {
+pub struct NetNames {
     bare: std::collections::HashSet<String>,
     jumpers: std::collections::HashSet<String>,
 }
 
 impl NetNames {
     /// The facts of `pcb`'s nets.
-    pub(crate) fn of(pcb: &Expr) -> NetNames {
+    pub fn of(pcb: &Expr) -> NetNames {
         // The net table; a KiCad 10 board has none (its items name their
         // nets), so the pads' names too.
         let table = pcb
@@ -161,7 +161,7 @@ impl NetNames {
 
     /// A pad's or an item's net name as a connection: without the
     /// hierarchical slash unless the board has a bare net of that name.
-    pub(crate) fn normalize<'a>(&self, net: &'a str) -> &'a str {
+    pub fn normalize<'a>(&self, net: &'a str) -> &'a str {
         match net.strip_prefix('/') {
             Some(bare) if !self.bare.contains(bare) => bare,
             _ => net,
@@ -172,7 +172,7 @@ impl NetNames {
     /// net named by a number is a net like any other (`net_name_from_form`
     /// tells a code from a name); an `unconnected-(...)` net is a single
     /// pin unless two pads share it.
-    pub(crate) fn routable(&self, raw: &str) -> bool {
+    pub fn routable(&self, raw: &str) -> bool {
         !raw.is_empty()
             && (!raw
                 .rsplit('/')
@@ -210,7 +210,7 @@ thread_local! {
 
 /// Notes `pcb`'s `NetNames` for `normalize_net` and `written_net_name`
 /// on this thread, and returns them.
-pub(crate) fn note_net_names(pcb: &Expr) -> NetNames {
+pub fn note_net_names(pcb: &Expr) -> NetNames {
     let names = NetNames::of(pcb);
     NET_NAMES.with(|noted| *noted.borrow_mut() = Some(names.clone()));
     names
@@ -231,16 +231,16 @@ fn with_noted<T>(read: impl FnOnce(&NetNames) -> T) -> T {
 }
 
 /// `NetNames::written` of the noted board.
-pub(crate) fn written_net_name(connection: &str) -> String {
+pub fn written_net_name(connection: &str) -> String {
     with_noted(|names| names.written(connection))
 }
 
 /// `NetNames::normalize` of the noted board.
-pub(crate) fn normalize_net(net: &str) -> &str {
+pub fn normalize_net(net: &str) -> &str {
     with_noted(|names| names.normalize(net))
 }
 
-pub(crate) fn node_net(node: &Expr) -> Option<&str> {
+pub fn node_net(node: &Expr) -> Option<&str> {
     net_name_from_form(node.child("net")?)
 }
 
@@ -253,7 +253,7 @@ pub(crate) fn net_expr(name: &str) -> Expr {
 
 /// A footprint's reference: KiCad 8 and later write it as a property,
 /// KiCad 6 and 7 as `(fp_text reference "R1" ...)`.
-pub(crate) fn footprint_reference(node: &Expr) -> Option<String> {
+pub fn footprint_reference(node: &Expr) -> Option<String> {
     node.children().iter().find_map(|item| {
         let kind = item.children().get(1)?.atom()?;
         match item.head()? {
@@ -267,7 +267,7 @@ pub(crate) fn footprint_reference(node: &Expr) -> Option<String> {
 /// A footprint's own identity: its `uuid` (KiCad 8 on) or `tstamp` (KiCad
 /// 5 to 7), which stays with it when it moves and tells apart footprints
 /// that share a reference (a panel's copies).
-pub(crate) fn footprint_uuid(node: &Expr) -> Option<String> {
+pub fn footprint_uuid(node: &Expr) -> Option<String> {
     node.children().iter().find_map(|item| match item.head()? {
         "uuid" | "tstamp" => Some(item.children().get(1)?.atom()?.to_string()),
         _ => None,
@@ -300,7 +300,7 @@ pub(crate) fn net_name_field(node: &Expr) -> Option<&Expr> {
 
 /// The board's net table, code to name (KiCad 9 and before; a KiCad 10
 /// board has none).
-pub(crate) fn net_codes(pcb: &Expr) -> BTreeMap<String, String> {
+pub fn net_codes(pcb: &Expr) -> BTreeMap<String, String> {
     pcb.children()
         .iter()
         .filter(|item| item.head() == Some("net") && item.children().len() >= 3)
@@ -315,7 +315,7 @@ pub(crate) fn net_codes(pcb: &Expr) -> BTreeMap<String, String> {
 
 /// The net an item names, by name or (KiCad 9 and before: segments, vias,
 /// graphics, `(net 2)`) by its code in `codes` (`net_codes`).
-pub(crate) fn item_net<'a>(node: &'a Expr, codes: &'a BTreeMap<String, String>) -> Option<&'a str> {
+pub fn item_net<'a>(node: &'a Expr, codes: &'a BTreeMap<String, String>) -> Option<&'a str> {
     node_net(node).or_else(|| {
         let fields = node.child("net")?.children();
         match fields {

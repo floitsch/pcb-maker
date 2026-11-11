@@ -7,7 +7,7 @@
 use super::*;
 use std::collections::HashMap;
 
-pub(super) struct BoardLoops {
+pub struct BoardLoops {
     pub outline: Vec<[f64; 2]>,
     pub cutouts: Vec<Vec<[f64; 2]>>,
     /// Bounding boxes ([min x, min y, max x, max y]) of the board's pieces,
@@ -66,11 +66,11 @@ fn check_extent(pieces: &[[f64; 4]]) -> Result<(), String> {
 }
 
 /// Longest chord error accepted when flattening arcs.
-pub(super) const ARC_TOLERANCE: f64 = 0.005;
+pub const ARC_TOLERANCE: f64 = 0.005;
 
 /// The points a line, rectangle or arc passes through, an arc flattened
 /// (its start, middle and end alone miss its bulge): for extents.
-pub(super) fn outline_points(item: &Expr) -> Result<Vec<[f64; 2]>, String> {
+pub fn outline_points(item: &Expr) -> Result<Vec<[f64; 2]>, String> {
     if item.child("start").is_some() && item.child("mid").is_some() && item.child("end").is_some() {
         return Ok(arc_points(
             form_xy(item, "start")?,
@@ -89,7 +89,7 @@ pub(super) fn outline_points(item: &Expr) -> Result<Vec<[f64; 2]>, String> {
 
 /// A full circle as a closed chain of points, the first repeated last
 /// (chords within `ARC_TOLERANCE`, as `arc_points`).
-pub(super) fn circle_points(center: [f64; 2], radius: f64) -> Vec<[f64; 2]> {
+pub fn circle_points(center: [f64; 2], radius: f64) -> Vec<[f64; 2]> {
     let at = |dx: f64, dy: f64| [center[0] + dx, center[1] + dy];
     let mut points = arc_points(at(radius, 0.0), at(0.0, radius), at(-radius, 0.0));
     points.pop();
@@ -103,7 +103,7 @@ pub(super) fn circle_points(center: [f64; 2], radius: f64) -> Vec<[f64; 2]> {
 
 /// A polygon's corners from its `pts`: `xy` points and `arc` entries (a
 /// polygon with rounded sides, KiCad 7 on), flattened as `arc_points` does.
-pub(super) fn pts_points(item: &Expr) -> Result<Vec<[f64; 2]>, String> {
+pub fn pts_points(item: &Expr) -> Result<Vec<[f64; 2]>, String> {
     let mut points: Vec<[f64; 2]> = Vec::new();
     for point in item
         .child("pts")
@@ -194,7 +194,7 @@ fn closed_arc(start: [f64; 2], end: [f64; 2]) -> bool {
     distance_squared(start, end).sqrt() < 1.0e-6
 }
 
-pub(super) fn arc_points(start: [f64; 2], mid: [f64; 2], end: [f64; 2]) -> Vec<[f64; 2]> {
+pub fn arc_points(start: [f64; 2], mid: [f64; 2], end: [f64; 2]) -> Vec<[f64; 2]> {
     // An arc ending where it starts is a whole circle to KiCad, `mid`
     // across from `start` (cnlohr's tadpoleswadge: MK1's ring pad, a custom
     // pad's `(gr_arc (start 0 0) (mid 2.25 0) (end 0 0))`, shorted a track
@@ -528,7 +528,7 @@ fn chain_pieces(
     Ok(chained)
 }
 
-pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
+pub fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
     let mut loops: Vec<Vec<[f64; 2]>> = Vec::new();
     let mut open: Vec<Vec<[f64; 2]>> = Vec::new();
     // Whether each loop and open piece is the board's own graphics.

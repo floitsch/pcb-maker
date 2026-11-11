@@ -11,7 +11,7 @@
 use super::*;
 
 /// Flips `footprint` about its origin to the other side of the board.
-pub(super) fn flip_footprint(footprint: &mut Expr) -> Result<(), String> {
+pub fn flip_footprint(footprint: &mut Expr) -> Result<(), String> {
     let origin = form_at(footprint)?;
     let Expr::List(items) = footprint else {
         return Err("footprint is not a list".into());

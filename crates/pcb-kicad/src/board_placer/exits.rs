@@ -91,7 +91,7 @@ pub struct KiCadPadExitsReport {
 }
 
 /// Reference nanoseconds a lowering for the test takes per expression of
-/// the board (`board_router::expression_count`): the census's lowerings of
+/// the board (`kicad_sexpr::expression_count`): the census's lowerings of
 /// the night's placements of 2026-11-04 after the process's first (whose
 /// one-time costs other lowerings of the layout pay), 80 to 270 ns on the
 /// pour boards, beside the router's 26 ns model of route mode's lowerings.
@@ -99,7 +99,7 @@ const LOWERING_EXPRESSION_NANOS: f64 = 100.0;
 
 /// A session's lowering of `base`, in placement units.
 fn lowering_units(base: &Expr) -> u64 {
-    (crate::board_router::expression_count(base) as f64 * LOWERING_EXPRESSION_NANOS / 1.0e9
+    (crate::kicad_sexpr::expression_count(base) as f64 * LOWERING_EXPRESSION_NANOS / 1.0e9
         * pcb_router::router::reference_time_scale()
         * core::work_per_second()) as u64
 }
@@ -390,7 +390,7 @@ pub fn pad_exits_kicad_board(
         eprintln!(
             "pad exits counts: {:?} lowering_expressions {} obstacles {} cpu_new {new_seconds:.4} cpu_probe {probe_seconds:.4} cpu_lower {lower_seconds:.4} cpu_base {base_seconds:.4}",
             probe.counts(),
-            crate::board_router::expression_count(&base),
+            crate::kicad_sexpr::expression_count(&base),
             board.obstacles.len(),
         );
     }
