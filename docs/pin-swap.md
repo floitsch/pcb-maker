@@ -21,7 +21,7 @@ pcb-maker swap-kicad-pins <source-directory> <board-id> <output-directory> <pin-
 - Paths are relative to the source directory. The chosen assignment is
   recorded in `board-router.json` / `board-layout.json` under `pin_swaps`.
 
-Code: `crates/pcb-kicad-route-place/src/pin_swap.rs`. Pin swapping is opt-in: on the
+Code: `crates/pcb-kicad-route/src/pin_swap.rs`. Pin swapping is opt-in: on the
 breadboard fence boards it cut the ratsnest's crossings by 15 to 30 % but
 did not finish more nets, because which nets stall at the MCU's escape ring
 changes with any input and a straight-line estimate cannot see it.

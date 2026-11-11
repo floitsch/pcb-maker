@@ -6,7 +6,7 @@ them. It has two layers:
 - `crates/pcb-placer` is the core. It knows bodies, pins, nets, an outline
   and constraints, and nothing about KiCad. Its entry point is
   `pcb_placer::place` (`lib.rs`).
-- `crates/pcb-kicad-route-place/src/board_placer/` lowers a KiCad board to the core's
+- `crates/pcb-kicad-place/src/board_placer/` lowers a KiCad board to the core's
   `Problem`, runs several seeds, picks one, writes the placed board and
   `board-placer.json`. Its entry point is `place_kicad_board` (`place/`).
   The layout (`board_layout.rs`) adds the race: it ranks the seeds'
@@ -125,7 +125,7 @@ change the board before it is lowered.
 `pcb_placer::Problem` (`problem.rs`):
 
 - **Bodies.** A body is the courtyard and pad extent, a box or a disc
-  (`local_body`, `bodies.rs`). A part whose courtyard covers little of
+  (`local_body`, `footprint_bodies.rs`). A part whose courtyard covers little of
   that box is **hollow** and blocks with its pads and courtyard pieces
   only (others may sit inside a shield's outline). A through-hole part
   blocks the far side with its holes and pads, a part with a courtyard on

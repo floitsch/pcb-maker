@@ -347,10 +347,10 @@ more); `tests/fixtures/f2/layout.json` lays it out with a free edge.
 `tests/fixtures.rs` routes and lays them out through the binary against
 golden files in `tests/fixtures/golden` (fingerprints at 1 and 4
 threads, the rules end to end, KiCad's connectivity);
-`crates/pcb-kicad-route-place/src/tests/fixtures.rs` checks the lowering against a
+`crates/pcb-kicad-route/src/tests/fixtures.rs` checks the lowering against a
 golden table. A behaviour change shows as a golden diff:
 `PCB_UPDATE_GOLDEN=1 cargo test --release -p pcb-maker --test fixtures`
-(and `-p pcb-kicad-route-place fixture_tests`) rewrites them, to commit with the
+(and `-p pcb-kicad-route fixture_tests`) rewrites them, to commit with the
 change; the KiCad goldens need kicad-cli 10.0.7.
 
 ### What a package measures
@@ -409,7 +409,7 @@ CPU pairs reserve for both sides at once and start both inside it
 | --- | --- |
 | Current state, open problems, how to work | this file |
 | The code's map: crates, stages, files | [architecture.md](architecture.md) |
-| The KiCad side's crates, bottom up | `crates/pcb-kicad-file` (KiCad's files as data), `pcb-kicad-check` (kicad-cli, the DRC cache, the ledger, the work rate), `pcb-kicad-route-place` (rules, lowering, the route and place flows), `pcb-kicad` (the layout, the verdict, the reports), beside it `pcb-kicad-import`, on top `pcb-kicad-lab`; each `lib.rs` says what it holds |
+| The KiCad side's crates, bottom up | `crates/pcb-kicad-file` (KiCad's files as data), `pcb-kicad-check` (kicad-cli, the DRC cache, the ledger, the work rate), `pcb-kicad-route` (rules, the router side, quality), `pcb-kicad-place` (the placer side), `pcb-kicad` (the layout, the verdict, the reports), beside it `pcb-kicad-import`, on top `pcb-kicad-lab`; each `lib.rs` says what it holds |
 | Every setting with its default | [config-reference.md](config-reference.md) (generated: `cargo run -p config-reference`) |
 | The agent contract | [agents.md](agents.md), [constraints.md](constraints.md), [skills/pcb-maker/SKILL.md](../skills/pcb-maker/SKILL.md) |
 | Design notes | [router.md](router.md), [placer.md](placer.md), [global-route.md](global-route.md), [pin-swap.md](pin-swap.md), [profiling.md](profiling.md) |

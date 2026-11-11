@@ -359,7 +359,8 @@ benchmarks/github/freerouting.py build/freerouting --ours      # both routers, h
 | `crates/pcb-placer` | the electrostatic placer, annealer, legaliser and playback |
 | `crates/pcb-kicad-file` | KiCad's files as data: the S-expression tree, nets, pad and outline geometry, copper written back |
 | `crates/pcb-kicad-check` | KiCad's own checks through kicad-cli, their cache and reports; the memory ledger and the work rate |
-| `crates/pcb-kicad-route-place` | a KiCad board routed and placed: project rules, the lowering to the router and the placer, the route and place flows and their features |
+| `crates/pcb-kicad-route` | a KiCad board routed: project rules, the lowering to the router, the route flow and its features, the quality report |
+| `crates/pcb-kicad-place` | a KiCad board placed: the lowering to the placer, the place flow, constraints, panels, labels |
 | `crates/pcb-kicad` | the layout flow (`layout-kicad-board`), the verdict and the other commands' reports; the API the binary uses |
 | `crates/pcb-kicad-import` | `import-kicad-netlist` and its starter files |
 | `crates/pcb-kicad-lab` | the measurement tools the research commands run |

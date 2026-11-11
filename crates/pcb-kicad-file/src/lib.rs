@@ -34,6 +34,7 @@ pub mod corridors_fact;
 pub mod electrical_terminals;
 pub mod exit;
 pub mod flip;
+pub mod footprint_bodies;
 pub mod fs_util;
 pub mod geometry;
 #[cfg(test)]

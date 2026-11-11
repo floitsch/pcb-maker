@@ -12,8 +12,9 @@
 //!
 //! The crates below, each depending only on those below it:
 //! pcb-kicad-file (KiCad's files as data), pcb-kicad-check (KiCad's
-//! checks, the memory ledger, the work rate) and pcb-kicad-route-place (a
-//! board routed and placed). This crate re-exports what the binary uses
+//! checks, the memory ledger, the work rate), pcb-kicad-route (a board
+//! routed) and pcb-kicad-place (a board placed, on the router side's
+//! lowering). This crate re-exports what the binary uses
 //! of them, so that `src/` reads one API; the netlist import
 //! (pcb-kicad-import) and the measurement tools (pcb-kicad-lab, which
 //! uses this crate) are named directly. docs/architecture.md has the map.
@@ -57,8 +58,8 @@ use geometry::*;
 use kicad_nets::*;
 use kicad_sexpr::*;
 use pcb_kicad_file::{
-    board_stats, canonical_order, connection_rules, copper_emit, corridors_fact, exit, fs_util,
-    geometry, kicad_nets, kicad_sexpr, outline, outline_pieces,
+    board_stats, canonical_order, connection_rules, copper_emit, corridors_fact, exit,
+    footprint_bodies, fs_util, geometry, kicad_nets, kicad_sexpr, outline, outline_pieces,
 };
 
 // KiCad's checks and the machine (pcb-kicad-check).
@@ -80,13 +81,7 @@ pub use work_rate::{
     calibrate_reference_by_default, measure as measure_work_rate, parse_work_rate, work_rate,
 };
 
-// A board routed and placed (pcb-kicad-route-place).
-pub use board_placer::{
-    KiCadBoardPlacerConfig, KiCadBoardPlacerResult, KiCadClosedPad, KiCadExitMove, KiCadPadExits,
-    KiCadPadExitsCensus, KiCadPadExitsReport, KiCadPanelCellClass, KiCadPanelCopiesReport,
-    KiCadPanelCopy, KiCadPlacedFootprint, pad_exits_kicad_board, pad_exits_override,
-    place_kicad_board,
-};
+// A board routed (pcb-kicad-route).
 pub use board_router::{
     KiCadBoardRouterConfig, KiCadBoardRouterNet, KiCadBoardRouterResult, KiCadBoardRouterViolation,
     KiCadClosedPads, KiCadDiffPair, KiCadDiffPairRule, KiCadDiffPairs, KiCadExistingTracks,
@@ -98,13 +93,11 @@ pub use board_router::{
     write_kicad_board_without_tracks_except,
 };
 pub use cost::{KiCadCost, KiCadFabQuote};
-pub use labels::KiCadLabelReport;
 pub use necks::{NeckRepair, repair_kicad_necks};
 pub use net_classes::KiCadNetClassRequest;
-pub use pcb_kicad_route_place::configure_allocator;
-use pcb_kicad_route_place::{
-    board_placer, board_router, check_work, cost, labels, necks, net_classes, pin_swap,
-    placement_constraints, placement_room, project_rules, quality, silk_fields, sub_boards,
+pub use pcb_kicad_route::configure_allocator;
+use pcb_kicad_route::{
+    board_router, check_work, cost, necks, net_classes, pin_swap, project_rules, quality,
 };
 /// The memory profile (`PCB_ROUTER_MEM_PROFILE`): the counting allocator,
 /// the sampler, the phases (docs/profiling.md, "Memory").
@@ -113,16 +106,28 @@ pub use pin_swap::{
     KiCadPinChange, KiCadPinSwapConfig, KiCadPinSwapEstimate, KiCadPinSwapResult, KiCadPinSwapSpec,
     read_pin_swap_spec, swap_kicad_pins, swap_kicad_pins_in_place,
 };
-pub use placement_constraints::{
-    KiCadConstraintStatus, KiCadConstraintsSource, KiCadPlacementConstraints, keepout_warnings,
-    overlap_warnings, placement_input_warnings, read_placement_constraints,
-};
-pub use placement_room::{KiCadRoom, TARGET_UTILIZATION, noted_room};
 pub use project_rules::{
     KiCadLayerGeometryRule, KiCadProjectMinimums, KiCadRuleOverride, preflight_overrides,
     resolve_project_rules, router_config_over_project,
 };
 pub use quality::{KiCadDecoupling, KiCadQualityReport, score_kicad_board};
+
+// A board placed (pcb-kicad-place).
+pub use board_placer::{
+    KiCadBoardPlacerConfig, KiCadBoardPlacerResult, KiCadClosedPad, KiCadExitMove, KiCadPadExits,
+    KiCadPadExitsCensus, KiCadPadExitsReport, KiCadPanelCellClass, KiCadPanelCopiesReport,
+    KiCadPanelCopy, KiCadPlacedFootprint, pad_exits_kicad_board, pad_exits_override,
+    place_kicad_board,
+};
+pub use labels::KiCadLabelReport;
+use pcb_kicad_place::{
+    board_placer, labels, placement_constraints, placement_room, silk_fields, sub_boards,
+};
+pub use placement_constraints::{
+    KiCadConstraintStatus, KiCadConstraintsSource, KiCadPlacementConstraints, keepout_warnings,
+    overlap_warnings, placement_input_warnings, read_placement_constraints,
+};
+pub use placement_room::{KiCadRoom, TARGET_UTILIZATION, noted_room};
 pub use silk_fields::KiCadSilkscreenReport;
 pub use sub_boards::describe_sub_boards;
 

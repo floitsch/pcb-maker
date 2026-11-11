@@ -1701,14 +1701,14 @@ pub fn hot_spot_note(
         let outer_pads = |name: &str| {
             name == "*.Cu" || (outer.is_some() && name == "F&B.Cu") || name == spot.layer
         };
-        let pads = crate::placement_constraints::pad_boxes(footprint).unwrap_or_default();
+        let pads = crate::footprint_bodies::pad_boxes(footprint).unwrap_or_default();
         let mut distance = pads
             .iter()
             .filter(|(_, layers, ..)| layers.iter().any(|layer| outer_pads(layer)))
             .map(|(bounds, ..)| to(*bounds))
             .fold(f64::INFINITY, f64::min);
         if outer == Some(side)
-            && let Ok(Some(body)) = crate::placement_constraints::part_box(footprint)
+            && let Ok(Some(body)) = crate::footprint_bodies::part_box(footprint)
         {
             distance = distance.min(to(body));
         }
@@ -1867,7 +1867,7 @@ fn fine_rows(note: &KiCadHotSpotNote, board: &crate::Expr) -> Vec<(String, f64)>
         if !parts.contains(reference.as_str()) {
             continue;
         }
-        let Ok(pads) = crate::placement_constraints::pad_boxes(footprint) else {
+        let Ok(pads) = crate::footprint_bodies::pad_boxes(footprint) else {
             continue;
         };
         let centers: Vec<[f64; 2]> = pads

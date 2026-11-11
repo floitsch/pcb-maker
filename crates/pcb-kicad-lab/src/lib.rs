@@ -45,16 +45,17 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-// The KiCad files (pcb-kicad-file), KiCad's checks (pcb-kicad-check), a
-// board routed and placed (pcb-kicad-route-place) and the layout
-// (pcb-kicad).
+// The KiCad files (pcb-kicad-file), a board routed (pcb-kicad-route) and
+// placed (pcb-kicad-place), and the layout (pcb-kicad).
 use pcb_kicad::{board_layout, congestion_rank};
 use pcb_kicad_file::corridors_fact::{KiCadCorridors, KiCadSearchKinds};
+use pcb_kicad_file::footprint_bodies::graphic_box;
 use pcb_kicad_file::{
     board_stats::*, copper_geometry::*, fs_util::*, kicad_nets::*, kicad_sexpr::*,
 };
 use pcb_kicad_file::{canonical_order, flip, fs_util, kicad_nets, outline};
-use pcb_kicad_route_place::*;
+use pcb_kicad_place::*;
+use pcb_kicad_route::*;
 
 mod coarse_probe;
 mod footprint_links;

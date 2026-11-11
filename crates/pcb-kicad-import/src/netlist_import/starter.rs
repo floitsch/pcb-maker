@@ -39,7 +39,7 @@ pub(super) fn edge_entries(board: &Expr) -> Result<(Vec<serde_json::Value>, Vec<
             continue;
         }
         let mut edge = serde_json::json!({"part": reference, "edge": "any", "flush": true});
-        if crate::board_placer::connector_mouth(footprint)?.is_some() {
+        if crate::footprint_bodies::connector_mouth(footprint)?.is_some() {
             edge["opening_outwards"] = true.into();
         }
         edges.push(edge);

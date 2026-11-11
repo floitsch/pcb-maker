@@ -24,15 +24,15 @@ use std::{
 };
 
 // The KiCad files (pcb-kicad-file), KiCad's checks (pcb-kicad-check) and
-// a board routed and placed (pcb-kicad-route-place).
+// a board routed (pcb-kicad-route) and placed (pcb-kicad-place).
 use pcb_kicad_check::native_report::KICAD_REQUIREMENT;
 use pcb_kicad_check::{kicad_config, ledger, native_report};
-use pcb_kicad_file::{canonical_order, exit, flip, geometry, outline};
+use pcb_kicad_file::{canonical_order, exit, flip, footprint_bodies, geometry, outline};
 use pcb_kicad_file::{fs_util::*, geometry::*, kicad_nets::*, kicad_sexpr::*};
-use pcb_kicad_route_place::resolve_project_rules;
+use pcb_kicad_place::placement_constraints;
 #[cfg(test)]
-use pcb_kicad_route_place::{KiCadPlacementConstraints, read_placement_constraints};
-use pcb_kicad_route_place::{board_placer, placement_constraints, project_rules, quality};
+use pcb_kicad_place::{KiCadPlacementConstraints, read_placement_constraints};
+use pcb_kicad_route::{board_router, project_rules, quality, resolve_project_rules};
 
 pub mod board_footprints;
 pub mod constraints_template;

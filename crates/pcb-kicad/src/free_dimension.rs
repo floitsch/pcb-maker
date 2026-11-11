@@ -474,7 +474,7 @@ impl KiCadFreeDimensionPlan {
                     if moves {
                         let mut position = [at[0], at[1]];
                         position[axis] += shift;
-                        if crate::board_placer::write_footprint_pose(
+                        if crate::footprint_bodies::write_footprint_pose(
                             item,
                             pcb_placer::problem::Pose {
                                 position,
@@ -977,7 +977,7 @@ fn edge_points(item: &Expr) -> Result<Vec<[f64; 2]>, String> {
 /// The board box of a footprint's body (courtyard and pads), if it has one.
 fn footprint_box(footprint: &Expr) -> Option<Box4> {
     let at = form_at(footprint).ok()?;
-    let (center, size, _) = crate::board_placer::local_body(footprint).ok()?;
+    let (center, size, _) = crate::footprint_bodies::local_body(footprint).ok()?;
     if !(size[0] > 0.0 && size[1] > 0.0) {
         return None;
     }

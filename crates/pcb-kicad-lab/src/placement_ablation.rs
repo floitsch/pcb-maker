@@ -25,12 +25,13 @@
 
 use crate::board_placer::{
     KiCadBoardPlacerConfig, attribution, courtyards_may_overlap, holes_in_courtyards_error,
-    largest_clearance, lower_placement, reference_index, silk_over_parts_error,
-    write_footprint_pose,
+    lower_placement, reference_index, silk_over_parts_error,
 };
+use crate::board_router::largest_clearance;
 use crate::canonical_order::footprint_items;
 use crate::placement_constraints::{KiCadConstraintsSource, resolve_constraints};
 use crate::*;
+use pcb_kicad_file::footprint_bodies::write_footprint_pose;
 use pcb_placer as placer;
 use pcb_placer::escape;
 

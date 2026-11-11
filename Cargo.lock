@@ -176,7 +176,8 @@ dependencies = [
  "pcb-global",
  "pcb-kicad-check",
  "pcb-kicad-file",
- "pcb-kicad-route-place",
+ "pcb-kicad-place",
+ "pcb-kicad-route",
  "pcb-placer",
  "pcb-router",
  "pcb-topo",
@@ -218,7 +219,8 @@ version = "0.1.0"
 dependencies = [
  "pcb-kicad-check",
  "pcb-kicad-file",
- "pcb-kicad-route-place",
+ "pcb-kicad-place",
+ "pcb-kicad-route",
  "pcb-placer",
  "pcb-router",
  "serde",
@@ -233,7 +235,8 @@ dependencies = [
  "pcb-global",
  "pcb-kicad",
  "pcb-kicad-file",
- "pcb-kicad-route-place",
+ "pcb-kicad-place",
+ "pcb-kicad-route",
  "pcb-placer",
  "pcb-router",
  "rayon",
@@ -243,7 +246,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "pcb-kicad-route-place"
+name = "pcb-kicad-place"
+version = "0.1.0"
+dependencies = [
+ "pcb-global",
+ "pcb-kicad-check",
+ "pcb-kicad-file",
+ "pcb-kicad-route",
+ "pcb-placer",
+ "pcb-router",
+ "pcb-topo",
+ "rayon",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "pcb-kicad-route"
 version = "0.1.0"
 dependencies = [
  "libc",

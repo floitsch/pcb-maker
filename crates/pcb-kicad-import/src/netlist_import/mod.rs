@@ -7,7 +7,7 @@
 //! an automatic outline takes it from there.
 
 use super::*;
-use crate::board_placer::edge_connector;
+use crate::footprint_bodies::edge_connector;
 
 mod added_parts;
 mod clearances;

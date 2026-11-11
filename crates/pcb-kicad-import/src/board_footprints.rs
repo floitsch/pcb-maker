@@ -401,7 +401,7 @@ pub(crate) fn body_size(footprint: &Expr) -> Option<([f64; 2], usize)> {
         posed(footprint, [0.0; 3]).ok()?
     };
     let footprint = &footprint;
-    let (_, size, _) = crate::board_placer::local_body(footprint).ok()?;
+    let (_, size, _) = crate::footprint_bodies::local_body(footprint).ok()?;
     let pads = footprint
         .children()
         .iter()

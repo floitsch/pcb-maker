@@ -6,7 +6,7 @@ The router turns a placed KiCad board into a routed one. It is two crates:
   search, the repairs, the pour model and the exact verifier. Its input is
   a `pcb_router::Board` (`board.rs`), its output a `RoutingResult` of
   branches per net. `router/` has one file per part of `impl Router`.
-- `crates/pcb-kicad-route-place/src/board_router/` is the KiCad side: it lowers a
+- `crates/pcb-kicad-route/src/board_router/` is the KiCad side: it lowers a
   `.kicad_pcb` and its project rules into a `Board`, runs the attempt
   ladder, writes the copper into the board, runs KiCad's checks and writes
   `board-router.json`.
@@ -62,7 +62,7 @@ does not fit memory is an input error. The board is read in canonical order
 
 ### Project rules
 
-`crates/pcb-kicad-route-place/src/project_rules.rs` and `project_rules/dru.rs` read the
+`crates/pcb-kicad-route/src/project_rules.rs` and `project_rules/dru.rs` read the
 `.kicad_pro` and `.kicad_dru`.
 
 - Board-setup minimums the project omits take KiCad's defaults
@@ -472,7 +472,7 @@ designer's thermal relief for a clean check.
 
 KiCad's refill makes necks the model does not know (hatched thermal rings,
 borders around teardrops). When the final check reports `connection_width`
-errors, `repair_connection_width` (`crates/pcb-kicad-route-place/src/necks.rs`, via
+errors, `repair_connection_width` (`crates/pcb-kicad-route/src/necks.rs`, via
 `repair_necks`) has kicad-cli refill a copy, finds narrow passages on a
 4 µm raster and lays minimum-width tracks across them, kept while necks
 drop and nothing else gets worse; skipped past the deadline or without
@@ -848,7 +848,7 @@ router's copper taut where the verifier accepts it (`pcb_topo::tighten`):
 
 ## What the routes look like
 
-`crates/pcb-kicad-route-place/src/aesthetics.rs` (`score-kicad-board`'s `aesthetics`)
+`crates/pcb-kicad-route/src/aesthetics.rs` (`score-kicad-board`'s `aesthetics`)
 counts bends, stair-steps and pin-row crossings;
 `experiments/aesthetics/census.py` adds bundling, jogs, detour and spacing.
 On complete designer-tier boards the router has fewer vias (×0.58), less

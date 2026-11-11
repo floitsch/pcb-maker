@@ -94,7 +94,7 @@ counts by category.
 
 What a reviewer sees first on an autorouted board: traces that "snake
 through SMD pins" and bend "in many small steps". score-kicad-board's
-`aesthetics` (crates/pcb-kicad-route-place/src/aesthetics.rs) counts both, the same
+`aesthetics` (crates/pcb-kicad-route/src/aesthetics.rs) counts both, the same
 way on the designer's board and on ours:
 
 - **Paths**: chains of a net's segments on one layer between terminals

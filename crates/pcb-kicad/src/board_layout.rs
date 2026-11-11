@@ -11,9 +11,8 @@
 //! board is verified natively once.
 
 use super::*;
-use crate::board_placer::{
-    PLACEMENT_SHARE, largest_clearance, lower_placement, write_footprint_pose,
-};
+use crate::board_placer::{PLACEMENT_SHARE, lower_placement};
+use crate::board_router::largest_clearance;
 use crate::board_router::{
     LayerTable, add_pour_zones, core_config, emit_routes, finish_routed_board, lower_for_route,
     planned_pours, pours,
@@ -24,6 +23,7 @@ use crate::pin_swap::{KiCadPinSwapComponent, KiCadPinSwapGroup};
 use crate::placement_constraints::{
     KiCadConstraintStatus, constraint_report, default_area_factor, resolve_constraints,
 };
+use pcb_kicad_file::footprint_bodies::write_footprint_pose;
 use pcb_placer as placer;
 use pcb_router as core;
 
@@ -424,8 +424,8 @@ fn swappable_spec(pcb: &Expr, swappable: &[KiCadSwappable]) -> Result<KiCadPinSw
             let function = form_atom(pad, "pinfunction", 1).unwrap_or("");
             let matches = |patterns: &[String]| {
                 patterns.iter().any(|pattern| {
-                    board_placer::glob_matches(pattern, number)
-                        || board_placer::glob_matches(pattern, function)
+                    kicad_nets::glob_matches(pattern, number)
+                        || kicad_nets::glob_matches(pattern, function)
                 })
             };
             if matches(&entry.pins)

@@ -82,7 +82,7 @@ fn parts_of(pcb: &Expr) -> Result<Vec<Part>, String> {
             at,
             pads,
             value,
-            body: crate::placement_constraints::part_box(footprint)?,
+            body: crate::footprint_bodies::part_box(footprint)?,
         });
     }
     Ok(parts)
@@ -626,13 +626,13 @@ pub fn constraints_template(directory: &Path, board_id: &str) -> Result<serde_js
         if !wired {
             continue;
         }
-        if !crate::board_placer::edge_connector(&part.name) {
+        if !crate::footprint_bodies::edge_connector(&part.name) {
             if matches!(prefix(&part.reference), "J" | "P" | "CN" | "CON" | "USB") {
                 other_connectors.push(part.reference.clone());
             }
             continue;
         }
-        let mouth = crate::board_placer::connector_mouth(footprint)?;
+        let mouth = crate::footprint_bodies::connector_mouth(footprint)?;
         let facing = mouth.map(|mouth| edge_of(crate::geometry::rotate_vector(mouth, -part.at[2])));
         let near = match (has_placement, bounds, part.body) {
             (true, Some(bounds), Some(body)) => near_edges(bounds, body, 3.0),
@@ -641,7 +641,7 @@ pub fn constraints_template(directory: &Path, board_id: &str) -> Result<serde_js
         // At a corner, the side its courtyard reaches farthest beyond its
         // pads towards (an overhanging receptacle's shell), else the
         // nearest.
-        let sides = crate::board_placer::connector_sides(footprint)?;
+        let sides = crate::footprint_bodies::connector_sides(footprint)?;
         let reach = |edge: &str| {
             sides.map_or(0.0, |sides| {
                 sides
@@ -847,7 +847,7 @@ pub fn constraints_template(directory: &Path, board_id: &str) -> Result<serde_js
     // The copper clearance two lines of a bank keep (the project's
     // largest, as the placer keeps it).
     let clearance = crate::resolve_project_rules(&path.with_extension("kicad_pro"), &path)
-        .map(|config| crate::board_placer::largest_clearance(&config))
+        .map(|config| crate::board_router::largest_clearance(&config))
         .ok()
         .filter(|clearance| *clearance > 0.0)
         .unwrap_or(BANK_GAP);
@@ -933,7 +933,7 @@ fn banks(
             .copied()
             .find(|index| parts[*index].reference == references[0])
             .unwrap_or(members[0]);
-        let pads = crate::placement_constraints::pad_boxes(footprints[leader])?;
+        let pads = crate::footprint_bodies::pad_boxes(footprints[leader])?;
         let Some(span) = pads.iter().map(|(bounds, ..)| *bounds).reduce(|a, b| {
             [
                 a[0].min(b[0]),

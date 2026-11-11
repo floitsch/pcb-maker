@@ -15,9 +15,9 @@
 //! (docs/handover.md, "Tried and not taken").
 
 use super::*;
-use crate::board_placer::write_footprint_pose;
 use crate::board_router::lower;
 use crate::canonical_order::footprint_items;
+use crate::footprint_bodies::write_footprint_pose;
 use pcb_placer as placer;
 use pcb_router as core;
 use pcb_router::geometry::{Point, Shape};

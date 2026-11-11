@@ -458,9 +458,7 @@ pub fn kicad_verifier_implementation_sha256() -> String {
     // sub_boards.rs held outline_pieces.rs (its DRC excuse) until
     // 2026-11-11.
     hash.update(include_bytes!("../../pcb-kicad-file/src/outline_pieces.rs"));
-    hash.update(include_bytes!(
-        "../../pcb-kicad-route-place/src/sub_boards.rs"
-    ));
+    hash.update(include_bytes!("../../pcb-kicad-place/src/sub_boards.rs"));
     hash.update(include_bytes!("../../../Cargo.lock"));
     format!("{:x}", hash.finalize())
 }

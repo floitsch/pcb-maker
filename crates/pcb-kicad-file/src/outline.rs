@@ -766,6 +766,15 @@ pub fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
     })
 }
 
+pub fn outline_corner(pcb: &Expr) -> Result<[f64; 2], String> {
+    Ok(board_loops(pcb)?
+        .outline
+        .iter()
+        .fold([f64::INFINITY, f64::INFINITY], |corner, point| {
+            [corner[0].min(point[0]), corner[1].min(point[1])]
+        }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
