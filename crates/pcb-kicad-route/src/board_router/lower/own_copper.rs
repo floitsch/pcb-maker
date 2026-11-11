@@ -48,8 +48,9 @@
 //! against the meander). The lowering keeps every such graphic copper of no
 //! net, as KiCad does, and gives a walled pad exits as the designer's
 //! track takes them (`Builder::own_copper_exits`): straight corridors from
-//! the pad's centre through the graphic, copper of the pad's net, wide
-//! enough for the track of its class with its clearance from the rest, and
+//! the pad's centre through the graphic, the graphic's copper inside them
+//! copper of the pad's net (`exit_copper`), wide enough for the track of
+//! its class with its clearance from the rest, and
 //! fenced (`exit_fence`) so that the track crosses the graphic along the
 //! corridor's axis and keeps its clearance from the graphic everywhere
 //! else. The graphic outside the corridors stays copper of no net, every
@@ -207,7 +208,7 @@ impl Builder {
         // Each corridor's fence, from the graphics as they are: the
         // corridor lets its track through the graphic along its axis, not
         // beside it.
-        let fences: Vec<Option<core::Shape>> = exits
+        let fences: Vec<(Option<core::Shape>, Option<core::Shape>)> = exits
             .iter()
             .map(|exit| {
                 let walls: Vec<&core::Shape> = footprint
@@ -221,7 +222,7 @@ impl Builder {
                     .iter()
                     .filter(|other| other.layer == exit.layer)
                     .collect();
-                exit_fence(exit, &walls, &strips)
+                (exit_fence(exit, &walls, &strips), exit_copper(exit, &walls))
             })
             .collect();
         for &index in &footprint.graphics {
@@ -299,7 +300,7 @@ impl Builder {
                 })
                 .collect();
         }
-        for (exit, fence) in exits.into_iter().zip(fences) {
+        for (exit, (fence, copper)) in exits.into_iter().zip(fences) {
             if let Some(fence) = fence {
                 self.obstacles.push(core::Obstacle {
                     shape: fence,
@@ -314,15 +315,13 @@ impl Builder {
                     label: format!("{} copper exit fence", footprint.reference),
                 });
             }
-            let shape = core::Shape::Capsule {
-                start: exit.start,
-                end: exit.end,
-                radius: exit.radius,
-            };
             self.pour_keepouts.push((
                 1 << exit.layer,
                 capsule_polygon(exit.start, exit.end, exit.radius),
             ));
+            let Some(shape) = copper else {
+                continue;
+            };
             self.obstacles.push(core::Obstacle {
                 shape,
                 layers: 1 << exit.layer,
@@ -678,6 +677,60 @@ pub(super) fn exit_fence(
     }
 }
 
+/// The copper `exit` cuts out of `walls`, as copper of the pad's net: the
+/// cells (of 0.02 mm) within the corridor that may touch a wall (within
+/// half a cell's diagonal), as rectangles per row; None where none does.
+/// Only the graphic's own copper: beyond the graphic the corridor is free
+/// board, which other nets and the net's own pour keep their usual
+/// distance from (the corridor as a whole would let the net's pour touch
+/// copper of the net that overlaps the pad, a connection KiCad's fill does
+/// not make: Batch_1's GND pieces around its antenna's ground pads).
+pub(super) fn exit_copper(exit: &Exit, walls: &[&core::Shape]) -> Option<core::Shape> {
+    let step = 0.02_f64;
+    let half_diagonal = step * std::f64::consts::FRAC_1_SQRT_2;
+    let bounds = core::Shape::Capsule {
+        start: exit.start,
+        end: exit.end,
+        radius: exit.radius,
+    }
+    .aabb();
+    let columns = ((bounds.maximum[0] - bounds.minimum[0]) / step).ceil() as usize;
+    let rows = ((bounds.maximum[1] - bounds.minimum[1]) / step).ceil() as usize;
+    let mut parts: Vec<core::Shape> = Vec::new();
+    for row in 0..rows {
+        let y = bounds.minimum[1] + (row as f64 + 0.5) * step;
+        let mut run: Option<usize> = None;
+        for column in 0..=columns {
+            let kept = column < columns && {
+                let point = [bounds.minimum[0] + (column as f64 + 0.5) * step, y];
+                core::geometry::point_segment_distance(point, exit.start, exit.end)
+                    < exit.radius + half_diagonal
+                    && walls
+                        .iter()
+                        .any(|wall| wall.distance_to_point(point) <= half_diagonal)
+            };
+            match (kept, run) {
+                (true, None) => run = Some(column),
+                (false, Some(first)) => {
+                    let left = bounds.minimum[0] + first as f64 * step;
+                    let right = bounds.minimum[0] + column as f64 * step;
+                    let (top, bottom) = (y - step / 2.0, y + step / 2.0);
+                    parts.push(core::Shape::Polygon {
+                        points: vec![[left, top], [right, top], [right, bottom], [left, bottom]],
+                    });
+                    run = None;
+                }
+                _ => {}
+            }
+        }
+    }
+    match parts.len() {
+        0 => None,
+        1 => parts.pop(),
+        _ => Some(core::Shape::Union { parts }),
+    }
+}
+
 /// Where `exit`'s axis has left the walls with its track's clearance: its
 /// end less `EXIT_MARGIN` (`pad_exits`). Beyond it the track keeps its
 /// clearance like any other: the fence spares only the crossing.
@@ -869,14 +922,20 @@ mod tests {
             .unwrap()
     }
 
+    /// Every walled pad's corridors: start, end, half width.
+    fn corridors(builder: &Builder) -> Vec<([f64; 2], [f64; 2], f64)> {
+        builder
+            .walled_pads
+            .iter()
+            .flat_map(|pad| pad.corridors.iter().copied())
+            .collect()
+    }
+
     /// Whether a track of 0.2 mm along each exit's axis keeps 0.2 mm from
     /// what is left of the graphic.
     fn exits_keep_clear(builder: &Builder) -> bool {
         let rest = &graphic(builder).shape;
-        exits(builder).iter().all(|exit| {
-            let core::Shape::Capsule { start, end, .. } = exit.shape else {
-                return false;
-            };
+        corridors(builder).iter().all(|&(start, end, _)| {
             (0..=20).all(|step| {
                 let t = step as f64 / 20.0;
                 let point = [
@@ -903,14 +962,17 @@ mod tests {
         // diagonal 45 degrees from them; not to the right (1.8 mm).
         assert_eq!(exits.len(), 4);
         assert!(exits.iter().all(|exit| exit.net == a && exit.layers == 1));
-        for exit in &exits {
-            let core::Shape::Capsule { start, end, radius } = exit.shape else {
-                panic!("an exit is a corridor");
-            };
+        let corridors = corridors(&builder);
+        assert_eq!(corridors.len(), 4);
+        for (start, end, radius) in corridors {
             assert_eq!(start, [10.0, 10.0]);
             assert!((radius - 0.4).abs() < 1.0e-9);
             assert!(end[0] <= 10.0 + 1.0e-9, "{end:?}");
         }
+        // The pad's net owns the graphic's copper in a corridor, not the
+        // board beyond the graphic.
+        assert!(exits.iter().any(|exit| exit.shape.contains([10.0, 10.3])));
+        assert!(!exits.iter().any(|exit| exit.shape.contains([10.0, 10.6])));
         // What is left stays copper of no net where it was, cut back
         // around the corridors: the track in each keeps its clearance.
         let rest = graphic(&builder);
@@ -1044,12 +1106,12 @@ mod tests {
             .filter(|obstacle| obstacle.label.starts_with("U1."))
             .collect();
         assert_eq!(pads.len(), 2);
-        for exit in &exits {
-            let core::Shape::Capsule { start, end, radius } = exit.shape else {
-                panic!("an exit is a corridor");
-            };
-            for pad in pads.iter().filter(|pad| pad.net != exit.net) {
-                assert!(pad.shape.distance_to_segment(start, end) >= radius - 1.0e-9);
+        for walled in &builder.walled_pads {
+            let net = builder.net_ids.get(&walled.net).copied();
+            for &(start, end, radius) in &walled.corridors {
+                for pad in pads.iter().filter(|pad| pad.net != net) {
+                    assert!(pad.shape.distance_to_segment(start, end) >= radius - 1.0e-9);
+                }
             }
         }
         let rest = graphic(&builder);
