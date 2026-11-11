@@ -421,6 +421,13 @@ const COMMANDS: &[Command] = &[
         run: lab_commands::cmd_sub_boards_kicad_board,
     },
     Command {
+        name: "modules-kicad-board",
+        usage: Some(
+            "modules-kicad-board <project-dir> <board-id> [layout-config.json|placer-config.json] [--designer <designer.kicad_pcb>]",
+        ),
+        run: lab_commands::cmd_modules_kicad_board,
+    },
+    Command {
         name: "repair-kicad-silkscreen",
         usage: None,
         run: kicad_commands::cmd_repair_kicad_silkscreen,

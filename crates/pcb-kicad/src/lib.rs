@@ -120,6 +120,7 @@ pub use board_placer::{
     place_kicad_board,
 };
 pub use labels::KiCadLabelReport;
+pub use pcb_kicad_place::describe_modules;
 use pcb_kicad_place::{
     board_placer, labels, placement_constraints, placement_room, silk_fields, sub_boards,
 };

@@ -10,7 +10,8 @@
 //!   board marks, pad exits and the global route the escape demand
 //!   measures with.
 //! - `placement_constraints` (constraints.json), `placement_room`,
-//!   `sub_boards` (the placer's half of a panel of different boards).
+//!   `sub_boards` (the placer's half of a panel of different boards),
+//!   `modules` (the breakaway modules of one board).
 //! - `labels` and `silk_fields`: texts moved off copper and silkscreen
 //!   fields placed, after a placement.
 //!
@@ -47,6 +48,7 @@ use pcb_kicad_route::{KiCadViaInPad, KiCadViaInPadEntry};
 
 pub mod board_placer;
 pub mod labels;
+pub mod modules;
 pub mod placement_constraints;
 pub mod placement_room;
 pub mod silk_fields;
@@ -59,6 +61,7 @@ pub use board_placer::{
     place_kicad_board,
 };
 pub use labels::KiCadLabelReport;
+pub use modules::describe_modules;
 pub use placement_constraints::{
     KiCadConstraintStatus, KiCadConstraintsSource, KiCadPlacementConstraints, keepout_warnings,
     overlap_warnings, placement_input_warnings, read_placement_constraints,

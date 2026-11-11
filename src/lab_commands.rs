@@ -400,6 +400,52 @@ pub(crate) fn cmd_sub_boards_kicad_board(mut arguments: Arguments) -> Result<(),
     Ok(())
 }
 
+/// `modules-kicad-board`: a board's breakaway modules and the parts'
+/// assignment to them, without placing it; with `--designer`, against the
+/// designer's board (docs/placer.md, "Modules of one board").
+pub(crate) fn cmd_modules_kicad_board(arguments: Arguments) -> Result<(), String> {
+    let usage = research_usage("modules-kicad-board").unwrap_or_default();
+    let mut positional = Vec::new();
+    let mut designer = None;
+    let mut arguments = arguments;
+    while let Some(argument) = arguments.next() {
+        if argument == "--designer" {
+            designer = Some(arguments.next().ok_or_else(|| usage.clone())?);
+        } else {
+            positional.push(argument);
+        }
+    }
+    if !(2..=3).contains(&positional.len()) {
+        return Err(usage);
+    }
+    // A layout config's placer object, or a placer config.
+    let config: pcb_kicad::KiCadBoardPlacerConfig = match positional.get(2) {
+        Some(path) => {
+            let text = std::fs::read_to_string(path)
+                .map_err(|error| format!("failed to read {path}: {error}"))?;
+            let mut value: serde_json::Value = serde_json::from_str(&text)
+                .map_err(|error| format!("failed to parse {path}: {error}"))?;
+            if let Some(placer) = value.get_mut("placer") {
+                value = placer.take();
+            }
+            serde_json::from_value(value)
+                .map_err(|error| format!("failed to parse {path}: {error}"))?
+        }
+        None => Default::default(),
+    };
+    let report = pcb_kicad::describe_modules(
+        Path::new(&positional[0]),
+        &positional[1],
+        &config,
+        designer.as_deref().map(Path::new),
+    )?;
+    println!(
+        "{}",
+        serde_json::to_string(&report).map_err(|error| error.to_string())?
+    );
+    Ok(())
+}
+
 /// `probe-trouble-placement`: probes how routable the trouble nets of a placement are.
 pub(crate) fn cmd_probe_trouble_placement(mut arguments: Arguments) -> Result<(), String> {
     let usage = research_usage("probe-trouble-placement").unwrap_or_default();

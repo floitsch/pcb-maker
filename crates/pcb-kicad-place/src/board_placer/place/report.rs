@@ -13,6 +13,7 @@ pub(super) fn placement_report(
     pcb: &Expr,
     lowered: &LoweredPlacement,
     sub_boards: Option<crate::sub_boards::KiCadSubBoardsReport>,
+    modules: Option<crate::modules::KiCadModulesReport>,
     picked: Picked,
     written: WrittenPoses,
 ) -> KiCadBoardPlacerResult {
@@ -131,6 +132,7 @@ pub(super) fn placement_report(
         }),
         panel_copies,
         sub_boards,
+        modules,
         pad_exits: placement
             .exits
             .as_ref()

@@ -156,43 +156,139 @@ pub struct Cuts {
     pub rows: usize,
 }
 
-impl Cuts {
-    /// The mouse bites and V-cuts of a KiCad board (`Cuts`).
-    pub fn of_board(pcb: &Expr) -> Cuts {
-        let mut holes: Vec<([f64; 2], f64)> = Vec::new();
-        for footprint in pcb
+/// Two holes of a perforation that separates a board's breakaway modules
+/// lie at most this far apart, centre to centre (mm): wider than a mouse
+/// bite's pitch, so that the gaps a designer leaves for tracks across the
+/// tab (protoesp: 1.5 mm and 2.5 mm between 0.5 mm holes) are part of the
+/// row (`Cuts::perforation`).
+pub const PERFORATION_PITCH_MM: f64 = 3.0;
+
+/// A gap between two neighbouring holes of a perforation
+/// (`Cuts::perforation`): its hole centres and the clear width between
+/// the holes' edges (mm).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PerforationGap {
+    pub ends: [[f64; 2]; 2],
+    pub clear: f64,
+}
+
+/// The holes of the board that may be a mouse bite's: the round
+/// non-plated drills of at most `MOUSE_BITE_DRILL_MM` of footprints with
+/// no other pad, centre and radius.
+fn perforation_holes(pcb: &Expr) -> Vec<([f64; 2], f64)> {
+    let mut holes: Vec<([f64; 2], f64)> = Vec::new();
+    for footprint in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+    {
+        let pads: Vec<&Expr> = footprint
             .children()
             .iter()
-            .filter(|item| item.head() == Some("footprint"))
-        {
-            let pads: Vec<&Expr> = footprint
-                .children()
+            .filter(|child| child.head() == Some("pad"))
+            .collect();
+        if pads.is_empty()
+            || pads
                 .iter()
-                .filter(|child| child.head() == Some("pad"))
-                .collect();
-            if pads.is_empty()
-                || pads
-                    .iter()
-                    .any(|pad| pad.children().get(2).and_then(Expr::atom) != Some("np_thru_hole"))
-            {
+                .any(|pad| pad.children().get(2).and_then(Expr::atom) != Some("np_thru_hole"))
+        {
+            continue;
+        }
+        let Ok(at) = form_at(footprint) else { continue };
+        for pad in pads {
+            // A round drill (`(drill 0.5)`, not `(drill oval ...)`).
+            let Some(drill) = form_atom(pad, "drill", 1).and_then(|text| text.parse::<f64>().ok())
+            else {
+                continue;
+            };
+            if !(drill > 0.0 && drill <= MOUSE_BITE_DRILL_MM) {
                 continue;
             }
-            let Ok(at) = form_at(footprint) else { continue };
-            for pad in pads {
-                // A round drill (`(drill 0.5)`, not `(drill oval ...)`).
-                let Some(drill) =
-                    form_atom(pad, "drill", 1).and_then(|text| text.parse::<f64>().ok())
-                else {
-                    continue;
-                };
-                if !(drill > 0.0 && drill <= MOUSE_BITE_DRILL_MM) {
-                    continue;
+            let Ok(local) = form_at(pad) else { continue };
+            let offset = crate::geometry::rotate_vector([local[0], local[1]], -at[2]);
+            holes.push(([at[0] + offset[0], at[1] + offset[1]], drill / 2.0));
+        }
+    }
+    holes
+}
+
+impl Cuts {
+    /// The perforations of a board chained at `pitch` (centre to centre)
+    /// instead of a mouse bite's: the holes of rows of
+    /// `MOUSE_BITE_HOLES` or more, each row's gaps (the shortest links
+    /// that chain it, a spanning tree) as cut lines, so that the row cuts
+    /// the board whole where tracks may pass between its holes; and the
+    /// gaps themselves. The board's V-cut lines are kept.
+    pub fn perforation(pcb: &Expr, pitch: f64) -> (Cuts, Vec<PerforationGap>) {
+        let holes = perforation_holes(pcb);
+        let mut order: Vec<usize> = (0..holes.len()).collect();
+        order.sort_by(|a, b| {
+            holes[*a].0[0]
+                .total_cmp(&holes[*b].0[0])
+                .then(holes[*a].0[1].total_cmp(&holes[*b].0[1]))
+        });
+        let mut links: Vec<(f64, usize, usize)> = Vec::new();
+        for (index, &a) in order.iter().enumerate() {
+            for &b in &order[index + 1..] {
+                if holes[b].0[0] - holes[a].0[0] > pitch {
+                    break;
                 }
-                let Ok(local) = form_at(pad) else { continue };
-                let offset = crate::geometry::rotate_vector([local[0], local[1]], -at[2]);
-                holes.push(([at[0] + offset[0], at[1] + offset[1]], drill / 2.0));
+                let (pa, pb) = (holes[a].0, holes[b].0);
+                let distance = (pa[0] - pb[0]).hypot(pa[1] - pb[1]);
+                if distance <= pitch {
+                    links.push((distance, a.min(b), a.max(b)));
+                }
             }
         }
+        links.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)).then(x.2.cmp(&y.2)));
+        let mut parent: Vec<usize> = (0..holes.len()).collect();
+        fn root(parent: &mut [usize], mut at: usize) -> usize {
+            while parent[at] != at {
+                parent[at] = parent[parent[at]];
+                at = parent[at];
+            }
+            at
+        }
+        let mut tree: Vec<(f64, usize, usize)> = Vec::new();
+        for (distance, a, b) in links {
+            let (ra, rb) = (root(&mut parent, a), root(&mut parent, b));
+            if ra != rb {
+                parent[ra] = rb;
+                tree.push((distance, a, b));
+            }
+        }
+        let mut sizes: BTreeMap<usize, usize> = BTreeMap::new();
+        for index in 0..holes.len() {
+            *sizes.entry(root(&mut parent, index)).or_default() += 1;
+        }
+        let in_row: Vec<bool> = (0..holes.len())
+            .map(|index| sizes[&root(&mut parent, index)] >= MOUSE_BITE_HOLES)
+            .collect();
+        let gaps: Vec<PerforationGap> = tree
+            .iter()
+            .filter(|(_, a, _)| in_row[*a])
+            .map(|(distance, a, b)| PerforationGap {
+                ends: [holes[*a].0, holes[*b].0],
+                clear: distance - holes[*a].1 - holes[*b].1,
+            })
+            .collect();
+        let rows = sizes
+            .values()
+            .filter(|count| **count >= MOUSE_BITE_HOLES)
+            .count();
+        let mut lines = v_cut_lines(pcb);
+        lines.extend(gaps.iter().map(|gap| gap.ends));
+        let holes = holes
+            .into_iter()
+            .zip(in_row)
+            .filter_map(|(hole, keep)| keep.then_some(hole))
+            .collect();
+        (Cuts { holes, lines, rows }, gaps)
+    }
+
+    /// The mouse bites and V-cuts of a KiCad board (`Cuts`).
+    pub fn of_board(pcb: &Expr) -> Cuts {
+        let holes = perforation_holes(pcb);
         // Rows: holes chained by the pitch, three or more.
         let mut parent: Vec<usize> = (0..holes.len()).collect();
         fn root(parent: &mut [usize], mut at: usize) -> usize {

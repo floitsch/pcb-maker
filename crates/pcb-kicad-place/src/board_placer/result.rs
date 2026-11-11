@@ -268,6 +268,10 @@ pub struct KiCadBoardPlacerResult {
     /// two): absent otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sub_boards: Option<crate::sub_boards::KiCadSubBoardsReport>,
+    /// The breakaway modules of one board (`keep_in_modules` on, two
+    /// modules or more): absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modules: Option<crate::modules::KiCadModulesReport>,
     /// Pads without a way out (`pad_exits`, off by default): the pads of
     /// the kept placement that no straight way leaves on the statics, what
     /// closes each, and the parts the repair moved. Absent when off.
