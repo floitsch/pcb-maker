@@ -8,7 +8,7 @@ use crate::placement_constraints::KiCadAddConstraint;
 
 /// An entry that cannot be carried out: an input error naming the part.
 fn invalid(part: &str, why: String) -> String {
-    crate::verdict::input_error(format!("constraints.json add {part}: {why}"))
+    crate::exit::input_error(format!("constraints.json add {part}: {why}"))
 }
 
 /// A part's footprint in library form, the board's nets of its pads, its
@@ -80,7 +80,7 @@ fn read_additions(output: &Path) -> Result<Option<Vec<KiCadAddConstraint>>, Stri
         return Ok(None);
     };
     let value: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
-        crate::verdict::input_error(format!("invalid constraints {}: {error}", path.display()))
+        crate::exit::input_error(format!("invalid constraints {}: {error}", path.display()))
     })?;
     let Some(entries) = value.get("add") else {
         return Ok(None);
@@ -88,7 +88,7 @@ fn read_additions(output: &Path) -> Result<Option<Vec<KiCadAddConstraint>>, Stri
     serde_json::from_value(entries.clone())
         .map(Some)
         .map_err(|error| {
-            crate::verdict::input_error(format!("invalid add in {}: {error}", path.display()))
+            crate::exit::input_error(format!("invalid add in {}: {error}", path.display()))
         })
 }
 

@@ -119,12 +119,12 @@ fn place_sub_boards(
     let reference = match &config.sub_board_reference {
         Some(path) => {
             let text = fs::read_to_string(path).map_err(|error| {
-                crate::verdict::input_error(format!(
+                crate::exit::input_error(format!(
                     "failed to read the reference board {}: {error}",
                     path.display()
                 ))
             })?;
-            Some(crate::canonical_order::parse_board(&text).map_err(crate::verdict::input_error)?)
+            Some(crate::canonical_order::parse_board(&text).map_err(crate::exit::input_error)?)
         }
         None => None,
     };

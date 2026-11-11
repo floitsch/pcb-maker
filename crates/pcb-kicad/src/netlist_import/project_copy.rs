@@ -21,14 +21,14 @@ pub(super) fn export_schematic(
         .arg(&path)
         .arg(input);
     let result = crate::ledger::kicad_check(|| command.output()).map_err(|error| {
-        crate::verdict::input_error(format!(
+        crate::exit::input_error(format!(
             "kicad-cli did not run ({error}): {}",
             crate::KICAD_REQUIREMENT
         ))
     })?;
     // The schematic KiCad cannot read is the input's fault (exit 2).
     if !result.status.success() {
-        return Err(crate::verdict::input_error(format!(
+        return Err(crate::exit::input_error(format!(
             "kicad-cli sch export netlist failed on {}: {}",
             input.display(),
             String::from_utf8_lossy(&result.stderr)

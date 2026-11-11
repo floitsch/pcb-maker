@@ -91,28 +91,27 @@ pub(crate) fn prepare_board(
     let source_board = source_directory.join(format!("{board_id}.kicad_pcb"));
     // Errors up to the lowering are the input's (`input_error`).
     let source = fs::read_to_string(&source_board).map_err(|error| {
-        crate::verdict::input_error(format!(
+        crate::exit::input_error(format!(
             "failed to read {}: {error}",
             source_board.display()
         ))
     })?;
-    let mut pcb =
-        crate::canonical_order::parse_board(&source).map_err(crate::verdict::input_error)?;
+    let mut pcb = crate::canonical_order::parse_board(&source).map_err(crate::exit::input_error)?;
     if let Some(from) = poses_from {
         take_poses(&mut pcb, from)?;
     }
     let mut config =
-        resolve_constraints(config, source_directory).map_err(crate::verdict::input_error)?;
+        resolve_constraints(config, source_directory).map_err(crate::exit::input_error)?;
     // Parts added by the import (`add`) stay where the entry puts them.
     if let Some(KiCadConstraintsSource::Inline(constraints)) = &mut config.constraints {
         crate::placement_constraints::expand_additions(constraints, &pcb)
-            .map_err(crate::verdict::input_error)?;
+            .map_err(crate::exit::input_error)?;
     }
     take_project_rules(&mut config, source_directory, board_id, &source_board);
     let edges_chosen = choose_any_edges(source_directory, board_id, &mut config)
-        .map_err(crate::verdict::input_error)?;
+        .map_err(crate::exit::input_error)?;
     let (outline_size, keepout_warnings) = apply_board_constraints(&mut pcb, &config)?;
-    let mut lowered = lower_placement(&pcb, &config).map_err(crate::verdict::input_error)?;
+    let mut lowered = lower_placement(&pcb, &config).map_err(crate::exit::input_error)?;
     lowered.constraint_warnings.extend(keepout_warnings);
     Ok(PreparedBoard {
         pcb,
@@ -200,22 +199,22 @@ fn apply_board_constraints(
             .iter()
             .filter(|item| item.head() == Some("footprint"))
         {
-            let (_, size, _) = local_body(footprint).map_err(crate::verdict::input_error)?;
+            let (_, size, _) = local_body(footprint).map_err(crate::exit::input_error)?;
             part_area += (size[0] + config.spacing_mm) * (size[1] + config.spacing_mm);
         }
         outline_size =
-            Some(apply_outline(pcb, outline, part_area).map_err(crate::verdict::input_error)?);
+            Some(apply_outline(pcb, outline, part_area).map_err(crate::exit::input_error)?);
     }
     let mut keepout_warnings = Vec::new();
     if let Some(KiCadConstraintsSource::Inline(constraints)) = &config.constraints {
         let held = if constraints.keepout.is_empty() {
             HeldParts::default()
         } else {
-            held_parts(pcb, config).map_err(crate::verdict::input_error)?
+            held_parts(pcb, config).map_err(crate::exit::input_error)?
         };
-        keepout_warnings = apply_keepouts(pcb, &constraints.keepout, &held)
-            .map_err(crate::verdict::input_error)?;
-        apply_sides(pcb, constraints).map_err(crate::verdict::input_error)?;
+        keepout_warnings =
+            apply_keepouts(pcb, &constraints.keepout, &held).map_err(crate::exit::input_error)?;
+        apply_sides(pcb, constraints).map_err(crate::exit::input_error)?;
     }
     Ok((outline_size, keepout_warnings))
 }

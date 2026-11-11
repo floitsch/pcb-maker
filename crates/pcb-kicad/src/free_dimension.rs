@@ -1521,7 +1521,7 @@ pub fn accept_verdict(verdict: &mut serde_json::Value, accept: &str, size_mm: f6
     let layout_status = verdict["status"].clone();
     let layout_reason = verdict["reason"].as_str().unwrap_or("").to_string();
     verdict["status"] = serde_json::json!("complete");
-    verdict["exit_code"] = serde_json::json!(crate::verdict::EXIT_COMPLETE);
+    verdict["exit_code"] = serde_json::json!(crate::exit::EXIT_COMPLETE);
     verdict["reason"] = serde_json::json!(format!(
         "complete by the free dimension's accept {accept:?} at {} mm; the layout's own verdict: {layout_reason}",
         format_mm(size_mm)

@@ -1705,7 +1705,7 @@ fn hold(base_mb: f64, extra_mb: f64, why: &str) {
                     }
                     eprintln!("error: {message}");
                     release();
-                    std::process::exit(crate::EXIT_INTERNAL as i32);
+                    std::process::exit(crate::exit::EXIT_INTERNAL as i32);
                 }
                 std::thread::sleep(WAIT_POLL);
             }
@@ -2021,7 +2021,7 @@ fn exceeded(resident: f64, base: f64, waited: Option<(Instant, String)>) -> ! {
     }
     eprintln!("error: {message}");
     release();
-    std::process::exit(crate::EXIT_INTERNAL as i32);
+    std::process::exit(crate::exit::EXIT_INTERNAL as i32);
 }
 
 /// The memory available a harness's measured floor keeps beside every

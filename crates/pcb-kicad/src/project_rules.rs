@@ -1496,7 +1496,7 @@ pub fn router_config_over_project(
     // work unless the file allows them, reported either way.
     let overrides = preflight_overrides(&named, &config, &project);
     if !overrides.is_empty() && !config.allow_below_project_minimum {
-        return Err(crate::verdict::input_error(format!(
+        return Err(crate::exit::input_error(format!(
             "the router config asks for less than the project's rules: {}; KiCad's DRC holds the board to the project's (change the project's board setup or net classes), or set \"allow_below_project_minimum\": true to route with them anyway (the verdict then warns)",
             overrides
                 .iter()
@@ -3002,7 +3002,7 @@ mod tests {
         let error =
             router_config_over_project(narrow.clone(), resolve_project_rules(&project, &pcb))
                 .unwrap_err();
-        assert!(crate::verdict::is_input_error(&error), "{error}");
+        assert!(crate::exit::is_input_error(&error), "{error}");
         for part in [
             "net_classes[Narrow] asks for track width 0.15 mm below the project's 0.2 mm (board.design_settings.rules.min_track_width",
             "net_classes[Narrow] asks for clearance 0.15 mm below the project's 0.2 mm (board.design_settings.rules.min_clearance",

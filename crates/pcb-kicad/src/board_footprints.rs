@@ -60,16 +60,16 @@ pub(crate) enum Found {
 impl BoardFootprints {
     pub fn read(file: &Path) -> Result<Self, String> {
         let text = fs::read_to_string(file).map_err(|error| {
-            crate::verdict::input_error(format!(
+            crate::exit::input_error(format!(
                 "--footprints-from: failed to read {}: {error}",
                 file.display()
             ))
         })?;
         let board = parse(&text).map_err(|error| {
-            crate::verdict::input_error(format!("--footprints-from {}: {error}", file.display()))
+            crate::exit::input_error(format!("--footprints-from {}: {error}", file.display()))
         })?;
         if board.head() != Some("kicad_pcb") {
-            return Err(crate::verdict::input_error(format!(
+            return Err(crate::exit::input_error(format!(
                 "--footprints-from {}: not a KiCad board",
                 file.display()
             )));
@@ -80,7 +80,7 @@ impl BoardFootprints {
             .filter(|item| matches!(item.head(), Some("footprint" | "module")))
             .find_map(footprint_form_error)
         {
-            return Err(crate::verdict::input_error(format!(
+            return Err(crate::exit::input_error(format!(
                 "--footprints-from {}: the board has {why}",
                 file.display()
             )));

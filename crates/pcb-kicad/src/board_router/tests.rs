@@ -4570,9 +4570,9 @@ mod robustness_tests {
         let error = lower(&pcb, &config, true).err().unwrap();
         assert!(error.contains("1900.0 x 1900.0 mm"), "{error}");
         assert!(error.contains("2000 MB"), "{error}");
-        assert!(crate::verdict::is_input_error(&error));
+        assert!(crate::exit::is_input_error(&error));
         assert!(
-            crate::verdict::noted_input_actions()
+            crate::exit::noted_input_actions()
                 .iter()
                 .any(|action| action.contains("coarsest pitch of 0.127 mm"))
         );

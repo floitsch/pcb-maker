@@ -81,7 +81,7 @@ pub(crate) fn finite_number(text: &str, label: &str) -> Result<f64, String> {
     if value.is_finite() {
         Ok(value)
     } else {
-        Err(crate::verdict::input_error(format!(
+        Err(crate::exit::input_error(format!(
             "{label} is {text}: coordinates and sizes must be finite numbers"
         )))
     }
@@ -96,7 +96,7 @@ pub(crate) fn form_f64(node: &Expr, head: &str, index: usize) -> Result<f64, Str
         .ok_or_else(|| format!("{head} form is missing coordinate {index}"))?;
     match text.parse::<f64>() {
         Ok(value) if value.is_finite() => Ok(value),
-        Ok(_) => Err(crate::verdict::input_error(format!(
+        Ok(_) => Err(crate::exit::input_error(format!(
             "{} {head} coordinate {index} is {text}: coordinates and sizes must be finite numbers",
             item_name(node)
         ))),
@@ -208,16 +208,16 @@ pub(crate) fn root_head(items: &[Expr]) -> Option<&str> {
 pub(crate) const MAX_NESTING: usize = 1000;
 
 /// Parses a KiCad S-expression file. Its errors are the input's
-/// (`verdict::input_error`): a file that does not parse or nests deeper
+/// (`exit::input_error`): a file that does not parse or nests deeper
 /// than `MAX_NESTING`. Numbers are read where they are used, and refused
 /// there when they are not finite (`finite_number`): a word such as `inf` is a
 /// KiCad 5 name or a tstamp as often as a number.
 pub(crate) fn parse(source: &str) -> Result<Expr, String> {
     let mut parser = Parser { source, offset: 0 };
-    let expression = parser.expression().map_err(crate::verdict::input_error)?;
+    let expression = parser.expression().map_err(crate::exit::input_error)?;
     parser.whitespace();
     if parser.offset != source.len() {
-        return Err(crate::verdict::input_error(format!(
+        return Err(crate::exit::input_error(format!(
             "trailing input at byte {}",
             parser.offset
         )));
@@ -567,7 +567,7 @@ mod tests {
             error.contains("nested deeper than 1000 levels at line 1"),
             "{error}"
         );
-        assert!(crate::verdict::is_input_error(&error));
+        assert!(crate::exit::is_input_error(&error));
         // Far deeper: no recursion to overflow.
         assert!(parse(&"(".repeat(200_000)).is_err());
     }
@@ -595,7 +595,7 @@ mod tests {
             let item = parse(text).unwrap();
             let error = form_xy(&item, item.children()[1].head().unwrap()).unwrap_err();
             assert!(error.starts_with(message), "{error}");
-            assert!(crate::verdict::is_input_error(&error));
+            assert!(crate::exit::is_input_error(&error));
         }
         let footprint =
             parse(r#"(footprint "L:R" (at 1 2 nan) (property "Reference" "R7"))"#).unwrap();

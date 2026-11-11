@@ -9,14 +9,14 @@ use super::*;
 /// input error.
 pub(super) fn read_netlist(netlist_path: &Path) -> Result<Expr, String> {
     let not_a_netlist = || {
-        crate::verdict::input_error(format!(
+        crate::exit::input_error(format!(
             "{} is not a KiCad netlist: give the schematic, or export one with kicad-cli sch export netlist --format kicadsexpr",
             netlist_path.display()
         ))
     };
     let netlist = fs::read_to_string(netlist_path)
         .map_err(|error| {
-            crate::verdict::input_error(format!(
+            crate::exit::input_error(format!(
                 "failed to read {}: {error}",
                 netlist_path.display()
             ))

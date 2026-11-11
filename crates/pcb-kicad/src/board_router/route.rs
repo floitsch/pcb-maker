@@ -41,9 +41,9 @@ pub fn route_kicad_board(
             .map_err(|error| format!("failed to read {}: {error}", board.display()))?;
         with_classes = crate::net_classes::with_net_classes(
             config,
-            &parse(&text).map_err(crate::verdict::input_error)?,
+            &parse(&text).map_err(crate::exit::input_error)?,
         )
-        .map_err(crate::verdict::input_error)?;
+        .map_err(crate::exit::input_error)?;
         &with_classes
     };
     // The minimum connection width floors every width, also those of a
@@ -66,14 +66,13 @@ pub fn route_kicad_board(
         let board = source_directory.join(format!("{board_id}.kicad_pcb"));
         let text = fs::read_to_string(&board)
             .map_err(|error| format!("failed to read {}: {error}", board.display()))?;
-        let pcb =
-            crate::canonical_order::parse_board(&text).map_err(crate::verdict::input_error)?;
+        let pcb = crate::canonical_order::parse_board(&text).map_err(crate::exit::input_error)?;
         // `strip`: the board's own tracks and vias go before anything
         // reads the board (by default they are kept, `kept`).
         let strip =
             config.existing_tracks == KiCadExistingTracks::Strip && count_tracks(&pcb) != [0, 0, 0];
         (
-            planned_pours(&pcb, config).map_err(crate::verdict::input_error)?,
+            planned_pours(&pcb, config).map_err(crate::exit::input_error)?,
             strip,
         )
     };
@@ -105,7 +104,7 @@ pub fn route_kicad_board(
                 strip_tracks(&mut pcb)
             );
         }
-        add_pour_zones(&mut pcb, &planned).map_err(crate::verdict::input_error)?;
+        add_pour_zones(&mut pcb, &planned).map_err(crate::exit::input_error)?;
         fs::write(&board, format!("{}\n", encode(&pcb)))
             .map_err(|error| format!("failed to write {}: {error}", board.display()))?;
         if !config.net_classes.is_empty() {
@@ -122,7 +121,7 @@ pub fn route_kicad_board(
     let (source_directory, pin_swaps) = match &config.pin_swaps {
         Some(path) => {
             let spec = read_pin_swap_spec(&source_directory.join(path))
-                .map_err(crate::verdict::input_error)?;
+                .map_err(crate::exit::input_error)?;
             let result = swap_kicad_pins(
                 source_directory,
                 board_id,

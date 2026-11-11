@@ -592,11 +592,11 @@ pub(crate) fn check_lattice_fits(
         .fold(0.0, f64::max);
     let size = pcb_router::grid::LatticeSize::of(board, pitch);
     let refuse = |message: String| {
-        crate::verdict::note_input_action(format!(
+        crate::exit::note_input_action(format!(
             "the board outline spans {:.1} x {:.1} mm: at the router's coarsest pitch of {pitch} mm that is {:.0} x {:.0} lattice nodes a layer; check Edge.Cuts for an item far from the board",
             size.extent[0], size.extent[1], size.nodes[0], size.nodes[1]
         ));
-        Err(crate::verdict::input_error(message))
+        Err(crate::exit::input_error(message))
     };
     if let Err(message) = size.check() {
         return refuse(message);

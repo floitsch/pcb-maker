@@ -288,13 +288,13 @@ pub const KICAD_REQUIREMENT: &str = "pcb-maker needs KiCad 10's kicad-cli: insta
 pub fn check_kicad_cli() -> Result<String, String> {
     let program = kicad_cli();
     let Some(version) = crate::drc_cache::tool_version(&program) else {
-        return Err(crate::verdict::input_error(format!(
+        return Err(crate::exit::input_error(format!(
             "{} version did not run or failed: {KICAD_REQUIREMENT}",
             program.to_string_lossy()
         )));
     };
     if kicad_major(&version).is_some_and(|major| major < KICAD_MAJOR) {
-        return Err(crate::verdict::input_error(format!(
+        return Err(crate::exit::input_error(format!(
             "kicad-cli {version} is older than KiCad {KICAD_MAJOR}: {KICAD_REQUIREMENT}"
         )));
     }

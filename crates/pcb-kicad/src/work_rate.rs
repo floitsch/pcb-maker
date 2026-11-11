@@ -280,9 +280,9 @@ pub fn calibrate(config: Option<(f64, Option<f64>)>) -> Result<KiCadWorkRate, St
     }
     let variable = std::env::var(WORK_RATE_VARIABLE).ok();
     // A bad pinned rate is the input's error, before a second is spent.
-    resolve(variable.as_deref(), config, None).map_err(crate::verdict::input_error)?;
-    let rate = resolve(variable.as_deref(), config, Some(measure()))
-        .map_err(crate::verdict::input_error)?;
+    resolve(variable.as_deref(), config, None).map_err(crate::exit::input_error)?;
+    let rate =
+        resolve(variable.as_deref(), config, Some(measure())).map_err(crate::exit::input_error)?;
     core::router::set_expansions_per_second(rate.expansions_per_second);
     placer::set_work_per_second(rate.placer_work_per_second);
     core::router::set_wall_stretch(rate.wall_stretch(false));
@@ -320,7 +320,7 @@ pub fn calibrate_reference_by_default(
         )),
         Some(measure()),
     )
-    .map_err(crate::verdict::input_error)?;
+    .map_err(crate::exit::input_error)?;
     rate.source = PINNED_REFERENCE.into();
     core::router::set_expansions_per_second(rate.expansions_per_second);
     placer::set_work_per_second(rate.placer_work_per_second);

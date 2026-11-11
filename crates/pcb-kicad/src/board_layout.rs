@@ -630,7 +630,7 @@ pub const DEFAULT_WALL_GUARD: f64 = 2.0;
 /// would cut every layout before its work ends: it is an input error.
 pub fn wall_guard_seconds(total_seconds: f64, wall_guard: f64) -> Result<f64, String> {
     if !(wall_guard.is_finite() && wall_guard >= 1.0) {
-        return Err(crate::verdict::input_error(format!(
+        return Err(crate::exit::input_error(format!(
             "wall_guard {wall_guard}: the wall-clock guard is a factor of total_seconds of at least 1"
         )));
     }
@@ -1190,8 +1190,8 @@ pub fn layout_placer_config(
     router_config: &KiCadBoardRouterConfig,
     source_directory: &Path,
 ) -> Result<KiCadBoardPlacerConfig, String> {
-    let mut placer_config = resolve_constraints(&config.placer, source_directory)
-        .map_err(crate::verdict::input_error)?;
+    let mut placer_config =
+        resolve_constraints(&config.placer, source_directory).map_err(crate::exit::input_error)?;
     // Bodies keep at least the largest copper clearance apart.
     if placer_config.copper_clearance_mm.is_none() {
         placer_config.copper_clearance_mm = Some(largest_clearance(router_config));
@@ -1310,7 +1310,7 @@ pub fn placement_check_config(
         let text = fs::read_to_string(&board)
             .map_err(|error| format!("failed to read {}: {error}", board.display()))?;
         with_classes = crate::net_classes::with_net_classes(router_config, &parse(&text)?)
-            .map_err(crate::verdict::input_error)?;
+            .map_err(crate::exit::input_error)?;
         &with_classes
     };
     let mut placer_config = layout_placer_config(config, router_config, source_directory)?;
@@ -1791,7 +1791,7 @@ mod budget_tests {
         // Below 1 the guard would cut every layout before its work ends.
         for bad in [0.9, 0.0, -1.0, f64::NAN, f64::INFINITY] {
             let error = wall_guard_seconds(40.0, bad).unwrap_err();
-            assert!(crate::verdict::is_input_error(&error), "{error}");
+            assert!(crate::exit::is_input_error(&error), "{error}");
         }
         // A layout config names it; the default fills it in.
         let config: KiCadBoardLayoutConfig =

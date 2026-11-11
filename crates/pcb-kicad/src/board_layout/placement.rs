@@ -68,7 +68,7 @@ pub(super) fn place(ctx: &LayoutContext, ledger: &mut WorkLedger) -> Result<Plac
     // swaps.
     let pre_ranking = pre_ranks(config, router_config);
     if !crate::congestion_rank::SCORES.contains(&config.congestion_score.as_str()) {
-        return Err(crate::verdict::input_error(format!(
+        return Err(crate::exit::input_error(format!(
             "congestion_score {:?} is not one of {}",
             config.congestion_score,
             crate::congestion_rank::SCORES.join(", ")

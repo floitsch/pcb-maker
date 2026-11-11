@@ -59,7 +59,7 @@ fn check_extent(pieces: &[[f64; 4]]) -> Result<(), String> {
     {
         return Ok(());
     }
-    Err(crate::verdict::input_error(format!(
+    Err(crate::exit::input_error(format!(
         "the board outline (Edge.Cuts) spans {:.1} x {:.1} mm, from ({:.3}, {:.3}) to ({:.3}, {:.3}): more than the {MAX_BOARD_EXTENT_MM:.0} mm any board can have; a stray Edge.Cuts item drawn far from the board?",
         size[0], size[1], all[0], all[1], all[2], all[3]
     )))
@@ -782,7 +782,7 @@ mod tests {
         .unwrap();
         let error = board_loops(&pcb).err().unwrap();
         assert!(error.contains("spans 3001.0 x 10.0 mm"), "{error}");
-        assert!(crate::verdict::is_input_error(&error));
+        assert!(crate::exit::is_input_error(&error));
         let pcb = parse(r#"(kicad_pcb (gr_rect (start 0 0) (end 1999 1999) (layer "Edge.Cuts")))"#)
             .unwrap();
         assert!(board_loops(&pcb).is_ok());

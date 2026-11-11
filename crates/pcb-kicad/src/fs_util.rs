@@ -50,7 +50,7 @@ pub(crate) fn file_name_error(part: &str) -> Option<&'static str> {
 pub fn check_board_id(board_id: &str) -> Result<(), String> {
     match file_name_error(board_id) {
         None => Ok(()),
-        Some(why) => Err(crate::verdict::input_error(format!(
+        Some(why) => Err(crate::exit::input_error(format!(
             "the board id {board_id:?} {why}: give the board file's stem (<board-id>.kicad_pcb in the project directory)"
         ))),
     }
@@ -229,7 +229,7 @@ mod tests {
         for name in ["", ".", "..", "../x", "a/b", "a\\b", "~x", "$HOME", "x\0y"] {
             assert!(file_name_error(name).is_some(), "{name:?}");
             let error = check_board_id(name).unwrap_err();
-            assert!(crate::verdict::is_input_error(&error), "{error}");
+            assert!(crate::exit::is_input_error(&error), "{error}");
         }
     }
 }

@@ -453,7 +453,7 @@ pub(super) fn write_local_libraries(
         // that is no file name (`../../x:../../y`) would write outside the
         // output directory.
         if let Some(why) = file_name_error(nickname).or_else(|| file_name_error(name)) {
-            return Err(crate::verdict::input_error(format!(
+            return Err(crate::exit::input_error(format!(
                 "the footprint {id:?} of {}: its library nickname or name {why}; the footprints taken from a board are written to <out>/<nickname>.pretty/<name>.kicad_mod",
                 board.map_or_else(
                     || "the board".to_string(),

@@ -132,7 +132,7 @@ pub(crate) fn lower(
     // read, a layer stack it cannot hold), as is a board the router's maps
     // cannot hold (its nets in 16 bits, its layers in 32): an input error,
     // not an internal one.
-    let mut lowered = lowered.map_err(crate::verdict::input_error)?;
+    let mut lowered = lowered.map_err(crate::exit::input_error)?;
     lowered.expressions = expressions;
     if std::env::var_os("PCB_ROUTER_BUILD_TRACE").is_some() {
         let board = &lowered.board;
@@ -155,7 +155,7 @@ pub(crate) fn lower(
             started.elapsed().as_secs_f64()
         );
     }
-    core::grid::check_capacity(&lowered.board).map_err(crate::verdict::input_error)?;
+    core::grid::check_capacity(&lowered.board).map_err(crate::exit::input_error)?;
     // A lattice the memory cannot hold, before any map is allocated.
     check_lattice_fits(&lowered.board, config)?;
     Ok(lowered)

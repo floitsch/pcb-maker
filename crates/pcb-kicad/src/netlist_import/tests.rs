@@ -1017,7 +1017,7 @@ fn footprint_ids_and_names_never_make_paths_outside_their_folders() {
     )
     .unwrap_err();
     assert!(error.contains("its library nickname or name"), "{error}");
-    assert!(crate::verdict::is_input_error(&error));
+    assert!(crate::exit::is_input_error(&error));
     assert!(!directory.join("a/x.pretty").exists());
     assert!(!directory.join("x.pretty").exists());
     // A board id that climbs: refused before anything is written.
@@ -1068,7 +1068,7 @@ fn a_library_footprint_without_its_name_is_reported_missing_not_a_panic() {
         error.contains("a footprint form without its name"),
         "{error}"
     );
-    assert!(crate::verdict::is_input_error(&error));
+    assert!(crate::exit::is_input_error(&error));
     // And the forms that index past the name refuse it.
     let short = parse("(footprint)").unwrap();
     assert!(crate::board_footprints::library_form(&short, "L:R").is_err());

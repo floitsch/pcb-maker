@@ -49,7 +49,7 @@ pub fn run_files(run: &Path) -> Result<KiCadRunFiles, String> {
         .into_iter()
         .find(|directory| directory.join("board-router.json").is_file())
         .ok_or_else(|| {
-            crate::verdict::input_error(format!(
+            crate::exit::input_error(format!(
                 "{} holds no board-router.json (nor its result/): give a route-kicad-board or layout-kicad-board output directory",
                 run.display()
             ))
@@ -58,15 +58,15 @@ pub fn run_files(run: &Path) -> Result<KiCadRunFiles, String> {
     let board_id = report["board_id"]
         .as_str()
         .ok_or_else(|| {
-            crate::verdict::input_error(format!(
+            crate::exit::input_error(format!(
                 "{} names no board_id",
                 directory.join("board-router.json").display()
             ))
         })?
         .to_string();
-    check_board_id(&board_id).map_err(crate::verdict::input_error)?;
+    check_board_id(&board_id).map_err(crate::exit::input_error)?;
     if !directory.join(format!("{board_id}.kicad_pcb")).is_file() {
-        return Err(crate::verdict::input_error(format!(
+        return Err(crate::exit::input_error(format!(
             "{} is missing: the run's board",
             directory.join(format!("{board_id}.kicad_pcb")).display()
         )));
@@ -79,10 +79,10 @@ pub fn run_files(run: &Path) -> Result<KiCadRunFiles, String> {
 
 fn read_value(path: &Path) -> Result<serde_json::Value, String> {
     let text = fs::read_to_string(path).map_err(|error| {
-        crate::verdict::input_error(format!("failed to read {}: {error}", path.display()))
+        crate::exit::input_error(format!("failed to read {}: {error}", path.display()))
     })?;
     serde_json::from_str(&text).map_err(|error| {
-        crate::verdict::input_error(format!("failed to parse {}: {error}", path.display()))
+        crate::exit::input_error(format!("failed to parse {}: {error}", path.display()))
     })
 }
 
@@ -1099,7 +1099,7 @@ fn read_run_inputs(inspection: &KiCadRunInspection) -> Result<(RunInputs, Lowere
     let reference = match &inspection.reference {
         Some(reference) => {
             if !reference.join(format!("{board_id}.kicad_pcb")).is_file() {
-                return Err(crate::verdict::input_error(format!(
+                return Err(crate::exit::input_error(format!(
                     "{} is missing: the reference project holds no board {board_id}",
                     reference.join(format!("{board_id}.kicad_pcb")).display()
                 )));
@@ -1163,17 +1163,17 @@ fn named_terminal(
         return Ok(None);
     };
     let (reference, number) = text.split_once(':').ok_or_else(|| {
-        crate::verdict::input_error(format!("--terminal {text}: give REF:PAD (U3:52)"))
+        crate::exit::input_error(format!("--terminal {text}: give REF:PAD (U3:52)"))
     })?;
     let pad = result
         .pads
         .iter()
         .find(|pad| pad.reference == reference && pad.number == number)
         .ok_or_else(|| {
-            crate::verdict::input_error(format!("--terminal {text}: no such pad on the board"))
+            crate::exit::input_error(format!("--terminal {text}: no such pad on the board"))
         })?;
     let net = pad.net.clone().ok_or_else(|| {
-        crate::verdict::input_error(format!("--terminal {text}: the pad has no net"))
+        crate::exit::input_error(format!("--terminal {text}: the pad has no net"))
     })?;
     Ok(Some((reference.to_string(), number.to_string(), net)))
 }
@@ -1191,7 +1191,7 @@ fn selected_nets(
     } else if let Some(net) = &inspection.net {
         let net = result.names.normalize(net).to_string();
         if result.net_id(&net).is_none() && !router_nets.contains_key(&net) {
-            return Err(crate::verdict::input_error(format!(
+            return Err(crate::exit::input_error(format!(
                 "--net {net}: the board has no routable net of that name"
             )));
         }
