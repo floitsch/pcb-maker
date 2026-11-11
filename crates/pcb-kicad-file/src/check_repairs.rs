@@ -192,7 +192,7 @@ fn overlap(a: &[[f64; 2]], b: &[[f64; 2]]) -> bool {
     inside(a[0], b) || inside(b[0], a)
 }
 
-pub fn pours(board: &Expr) -> Vec<Pour> {
+fn pours(board: &Expr) -> Vec<Pour> {
     board
         .children()
         .iter()

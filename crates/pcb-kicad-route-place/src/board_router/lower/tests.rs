@@ -3,7 +3,7 @@
 //! Tests of the lowering's stages on their own: the classes of the nets,
 //! the merged pads, the mask openings' nets, net ties, padstacks, holes and
 //! via layers. The whole lowering is checked against F1's golden table
-//! (crates/pcb-kicad/src/tests/fixtures.rs).
+//! (crates/pcb-kicad-route-place/src/tests/fixtures.rs).
 
 use super::footprint::{carve_net_tie, net_tie_groups, touch_electrode};
 use super::merge::terminal_hosts;

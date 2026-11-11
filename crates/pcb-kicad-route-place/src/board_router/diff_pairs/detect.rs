@@ -268,7 +268,7 @@ fn pair_clearance(config: &KiCadBoardRouterConfig, names: [&str; 2], classes: f6
 /// The width, gap and layers of the pair of the positive net `name`: the
 /// net class's width and the pair's clearance, on every layer, unless the
 /// rules name the pair.
-pub fn pair_geometry(
+pub(super) fn pair_geometry(
     board: &core::Board,
     config: &KiCadBoardRouterConfig,
     name: &str,

@@ -6,7 +6,7 @@ The router turns a placed KiCad board into a routed one. It is two crates:
   search, the repairs, the pour model and the exact verifier. Its input is
   a `pcb_router::Board` (`board.rs`), its output a `RoutingResult` of
   branches per net. `router/` has one file per part of `impl Router`.
-- `crates/pcb-kicad/src/board_router/` is the KiCad side: it lowers a
+- `crates/pcb-kicad-route-place/src/board_router/` is the KiCad side: it lowers a
   `.kicad_pcb` and its project rules into a `Board`, runs the attempt
   ladder, writes the copper into the board, runs KiCad's checks and writes
   `board-router.json`.
@@ -62,7 +62,7 @@ does not fit memory is an input error. The board is read in canonical order
 
 ### Project rules
 
-`crates/pcb-kicad/src/project_rules.rs` and `project_rules/dru.rs` read the
+`crates/pcb-kicad-route-place/src/project_rules.rs` and `project_rules/dru.rs` read the
 `.kicad_pro` and `.kicad_dru`.
 
 - Board-setup minimums the project omits take KiCad's defaults
@@ -152,7 +152,8 @@ about the fab: MIDAS-MK1.1 went 5 to 0 unconnected and nothing else moved.
 ### Nets split by sub-board
 
 On a panel, same-named nets of different boards share no copper.
-`sub_boards.rs` (`Pieces`) finds the outline's pieces (necks under 2 mm,
+`outline_pieces.rs` (`Pieces`; `sub_boards.rs` holds the placer's half)
+finds the outline's pieces (necks under 2 mm,
 mouse-bite rows and V-cuts cut it), and `split_router_nets` gives each piece
 its own net unless a terminal or pour joins two pieces; `excuse_across`
 moves KiCad's cross-piece items to `unconnected_across_sub_boards`.
@@ -471,7 +472,7 @@ designer's thermal relief for a clean check.
 
 KiCad's refill makes necks the model does not know (hatched thermal rings,
 borders around teardrops). When the final check reports `connection_width`
-errors, `repair_connection_width` (`crates/pcb-kicad/src/necks.rs`, via
+errors, `repair_connection_width` (`crates/pcb-kicad-route-place/src/necks.rs`, via
 `repair_necks`) has kicad-cli refill a copy, finds narrow passages on a
 4 µm raster and lays minimum-width tracks across them, kept while necks
 drop and nothing else gets worse; skipped past the deadline or without
@@ -609,7 +610,7 @@ limits gate probes and finer pitches. A debug flag only prints
 
 ### The machine's rates
 
-`crates/pcb-kicad/src/work_rate.rs`: route and layout runs measure the
+`crates/pcb-kicad-check/src/work_rate.rs`: route and layout runs measure the
 machine at start-up (a canned search, five rounds, the fastest counted
 because other jobs' bursts halve a round) and scale the reference rates.
 `PCB_WORK_RATE=<exp/s>[,<placer/s>]` pins them over the settings
@@ -847,7 +848,7 @@ router's copper taut where the verifier accepts it (`pcb_topo::tighten`):
 
 ## What the routes look like
 
-`crates/pcb-kicad/src/aesthetics.rs` (`score-kicad-board`'s `aesthetics`)
+`crates/pcb-kicad-route-place/src/aesthetics.rs` (`score-kicad-board`'s `aesthetics`)
 counts bends, stair-steps and pin-row crossings;
 `experiments/aesthetics/census.py` adds bundling, jogs, detour and spacing.
 On complete designer-tier boards the router has fewer vias (×0.58), less

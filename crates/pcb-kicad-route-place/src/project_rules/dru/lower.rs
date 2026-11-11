@@ -143,7 +143,7 @@ pub(super) const ROUTED_KINDS: [Kind; 2] = [Kind::Track, Kind::Via];
 
 /// The rules a .kicad_dru gives the router.
 #[derive(Clone, Debug, Default)]
-pub struct Lowered {
+pub(crate) struct Lowered {
     /// Clearance floors per net (the index of `BoardFacts::nets`).
     pub clearance: Vec<f64>,
     /// A clearance floor for every net (and nets without pads).

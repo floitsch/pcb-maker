@@ -357,7 +357,12 @@ benchmarks/github/freerouting.py build/freerouting --ours      # both routers, h
 | --- | --- |
 | `crates/pcb-router` | the format-independent routing core: geometry, lattice, negotiation, pours, verifier |
 | `crates/pcb-placer` | the electrostatic placer, annealer, legaliser and playback |
-| `crates/pcb-kicad` | KiCad S-expression parsing and writing, project rules, the board adapters, native verification |
+| `crates/pcb-kicad-file` | KiCad's files as data: the S-expression tree, nets, pad and outline geometry, copper written back |
+| `crates/pcb-kicad-check` | KiCad's own checks through kicad-cli, their cache and reports; the memory ledger and the work rate |
+| `crates/pcb-kicad-route-place` | a KiCad board routed and placed: project rules, the lowering to the router and the placer, the route and place flows and their features |
+| `crates/pcb-kicad` | the layout flow (`layout-kicad-board`), the verdict and the other commands' reports; the API the binary uses |
+| `crates/pcb-kicad-import` | `import-kicad-netlist` and its starter files |
+| `crates/pcb-kicad-lab` | the measurement tools the research commands run |
 | `src/` | the `pcb-maker` command line: `main.rs` (dispatch, the inspection and benchmark commands), `agent_cli.rs` (the agent commands) |
 | `benchmarks/corpus` | the KiCad-demo corpus runner (route and layout) |
 | `benchmarks/github` | the harvested open-source boards: harvest, manifest, Freerouting comparison |
@@ -370,12 +375,9 @@ benchmarks/github/freerouting.py build/freerouting --ours      # both routers, h
 | `tools/config-reference` | generates [the configuration reference](docs/config-reference.md) (every settings key with its type, default and doc comment) and the hand-over's environment index from the code |
 
 `crates/pcb-topo` is a TopoR-style topological router, an experiment the
-board router can call. `pcb-kicad`'s modules: the KiCad file layer
-(`kicad_sexpr`, `kicad_nets`, `copper_emit`), geometry (`geometry`,
-`copper_geometry`, `outline`, `roundrect_pad`), the adapters to the placer
-and the router (`board_placer/`, `board_router/`, `board_layout`), KiCad's
-checks (`verification`, `native_report`, `drc_cache`, `verdict`) and the
-agent commands' tools (`fab_release` is `fab-kicad-board`'s); `lib.rs` lists them. The research stack of August
+board router can call. The `pcb-kicad*` crates were one crate,
+`pcb-kicad`, until 2026-11-11; each crate's `lib.rs` says what it holds
+and [the architecture](docs/architecture.md) maps them. The research stack of August
 and September 2026 is in git history: the crates `layout-trace-routing`,
 `pcb-routing`, `pcb-coordinator`, `pcb-placement`, `pcb-validate`,
 `pcb-viewer`, `pcb-benchmark`, `pcb-pipeline` and their commands up to

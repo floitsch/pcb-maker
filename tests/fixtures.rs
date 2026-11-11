@@ -21,7 +21,7 @@
 //! board (skipped, with a message, without kicad-cli), 8 the free
 //! dimension's clean path, 10 a plane pour and a keepout over a fixed
 //! part. Tests 2, 7 and 9 need the crate's insides:
-//! crates/pcb-kicad/src/tests/fixtures.rs.
+//! crates/pcb-kicad-route-place/src/tests/fixtures.rs.
 //!
 //! Every route pins the work rates (`PCB_WORK_RATE`), the memory
 //! (`PCB_MAKER_MEMORY_MB`) and turns the wall guard off, so that the

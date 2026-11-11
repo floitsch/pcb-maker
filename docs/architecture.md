@@ -3,7 +3,9 @@
 A map of the code as it is: the crates and what each owns, the stages of
 `layout-kicad-board` and `route-kicad-board` in the order they run, the
 data each stage hands to the next, and the file that owns each stage.
-Paths are relative to the repository root. How each stage decides what it
+Paths are relative to the repository root; a bare file name in the
+tables is relative to the `src/` of the crate that holds its module
+(below). How each stage decides what it
 does is in [router.md](router.md) and [placer.md](placer.md); the settings
 are in [config-reference.md](config-reference.md); the state and the open
 problems in [handover.md](handover.md).
@@ -12,68 +14,94 @@ problems in [handover.md](handover.md).
 
 | Crate | Owns | Depends on |
 | --- | --- | --- |
-| `src/` (the `pcb-maker` binary) | The command line. `agent_cli.rs` is the agent contract: `AGENT_COMMANDS`, the input checks, the exit codes, `verdict.json`; `agent_cli/free_dimension.rs` runs a layout at several sizes of one edge as child processes. `main.rs` dispatches through its `COMMANDS` table and prints the help (`ENVIRONMENT_HELP`); `kicad_commands.rs` and `lab_commands.rs` hold the research and utility commands it runs. | pcb-kicad, pcb-global |
-| `crates/pcb-kicad` | Everything on the KiCad side: reading and writing boards and projects, lowering them to the placer's and the router's types, the layout and route flows, the features that need KiCad's view of a board, KiCad's own checks and the verdict. | all crates below |
+| `src/` (the `pcb-maker` binary) | The command line. `agent_cli.rs` is the agent contract: `AGENT_COMMANDS`, the input checks, the exit codes, `verdict.json`; `agent_cli/free_dimension.rs` runs a layout at several sizes of one edge as child processes. `main.rs` dispatches through its `COMMANDS` table and prints the help (`ENVIRONMENT_HELP`); `kicad_commands.rs` and `lab_commands.rs` hold the research and utility commands it runs. | pcb-kicad, pcb-kicad-import, pcb-kicad-lab, pcb-global |
+| `crates/pcb-kicad-lab` | The measurement tools the research commands run (below). | pcb-kicad and the crates below it |
+| `crates/pcb-kicad` | The top of the KiCad side: `layout-kicad-board` (`board_layout`, `congestion_rank`, `free_dimension`), the verdict (`verdict`) and the other commands' reports and outputs (`describe`, `class_view`, `run_diagnosis`, `silkscreen`, `fab_export`, `fab_release`). Its `lib.rs` re-exports what the binary uses of the crates below, so `src/` reads one API. | pcb-kicad-route-place, pcb-kicad-check, pcb-kicad-file |
+| `crates/pcb-kicad-import` | `import-kicad-netlist` and the starters it writes. Beside pcb-kicad: neither uses the other. | pcb-kicad-route-place, pcb-kicad-check, pcb-kicad-file |
+| `crates/pcb-kicad-route-place` | A board routed and placed: the project's rules, the lowering to the router's and the placer's problems, `route_kicad_board` and its ladder, `place_kicad_board`, and the features both sides read (pairs, lengths, fan-outs, pours, constraints, panels, quality, labels). | pcb-kicad-check, pcb-kicad-file, pcb-router, pcb-placer, pcb-global, pcb-topo |
+| `crates/pcb-kicad-check` | KiCad's own checks: kicad-cli runs with a library-free configuration, the DRC cache, the reports read, a routed result's verification; and the machine: the memory ledger, `/proc` memory, the work rate. | pcb-kicad-file |
+| `crates/pcb-kicad-file` | KiCad's files as data: the S-expression tree, canonical order, nets, pad and outline geometry, the outline's pieces, copper written back, statistics, file utilities, the exit codes and the errors that are the input's. | pcb-router, pcb-placer (types only) |
 | `crates/pcb-router` | A format-free, in-memory whole-board router: `Board` (nets, terminals, obstacles, planes, rules, via spans) in, `RoutingResult` out. The lattice and its static maps, the pour model, the search, PathFinder negotiation, the repairs, the polish and an exact copper verifier (`verify`). `Router` keeps its state between calls (`new`, `run`, `probe`, `resume`, `update`, `reroute`), which the layout's race and moves use. | none |
 | `crates/pcb-placer` | A format-free placer: `Problem` (components, pins, nets, constraints) in, `Placement` (poses, legality, the constraints' status) out, through `place`. | none |
 | `crates/pcb-global` | A coarse tile-graph global router (capacities per tile boundary, PathFinder on tiles, corridors per net). Not on the default path: the placer's global guidance and research commands use it. | pcb-router |
 | `crates/pcb-topo` | A TopoR-style topological router (a constrained Delaunay mesh, crossings resolved topologically, taut geometry) and `tighten`, which pulls any router's copper taut. Only with the router settings `engine: "topological"` or `tighten: true`. | pcb-router |
 | `tools/config-reference` | Generates [config-reference.md](config-reference.md) and the environment index at the end of [handover.md](handover.md) from the settings structs and every `PCB_*` name in the sources; `tests/config_reference.rs` fails while either is stale. | pcb-kicad, pcb-placer, pcb-router |
 
-pcb-router and pcb-placer know nothing of KiCad or of each other; only
-pcb-kicad joins them.
+pcb-router and pcb-placer know nothing of KiCad or of each other; the
+`pcb-kicad*` crates join them. Each `pcb-kicad*` crate's `lib.rs` says
+what it holds and imports, at its root, the modules of the crates below
+that it uses, so a module's `crate::kicad_sexpr::...` path names a module
+of pcb-kicad-file. Items are `pub` only where a crate above uses them.
 
-## pcb-kicad by module group
+## The KiCad side, crate by crate
 
-`crates/pcb-kicad/src/lib.rs` lists the modules. They fall into groups
-that a later split into crates is expected to follow.
+The six were one crate, `pcb-kicad`, until 2026-11-11. The cut follows
+the module graph: every dependency points down this list, and the
+compiler holds it.
 
-- **Input and output.** `kicad_sexpr` (the S-expression tree, parser and
-  writer), `canonical_order` (footprints by reference, their items
-  sorted, so two saves of one design lay out alike), `kicad_nets`,
-  `copper_emit` (tracks, vias and pad vias written back), `geometry`,
-  `copper_geometry`, `roundrect_pad`, `outline` (Edge.Cuts loops and
-  cutouts), `project_rules` and `project_rules/dru.rs` (`.kicad_pro` and
-  `.kicad_dru` rules lowered to router rules), `net_classes`,
-  `connection_rules`, `local_clearance`, `electrical_terminals`, `flip`,
-  `kicad_config` (a library-free KiCad configuration for kicad-cli),
-  `fs_util`.
-- **Lowering.** `board_placer/lower/` (a board to a
-  `pcb_placer::Problem`, with `bodies.rs`, `courtyards.rs`, `rules.rs`)
-  and `board_router/lower/` (a board to a `pcb_router::Board`, with
-  `geometry.rs`, `pour_plan.rs`, `kept.rs`, `config.rs`). `sub_boards` is
-  called from both.
-- **The flow.** `board_layout` (`layout_kicad_board`), `board_placer/place/`
-  (`place_kicad_board`) and `seed_race.rs`, `board_router/route.rs`
-  (`route_kicad_board`), `ladder.rs`, `attempt.rs`, `budget.rs`,
-  `memory.rs`; `work_rate` (budgets in work, the rate calibration),
-  `check_work` (the work a KiCad check is charged), `ledger` (the
-  machine-wide memory ledger), `free_dimension`.
-- **Features.** Under `board_router/`: `diff_pairs`, `lengths` and
-  `meander` (length and skew rules, tuning patterns), `layer_preference`,
-  `bga_fanout`, `via_in_pad`, `via_spans`. Under `board_placer/`: `panel`
-  (panels of copies), `skeleton`, `decoupling`, `edges`, `pair_rows`,
-  `marks`. Elsewhere: `sub_boards` (panels of different boards),
-  `placement_constraints` (constraints.json), `placement_room`,
-  `constraints_template`, `key_matrix`, `netlist_import`,
-  `board_footprints`, `pin_swap`, `necks` (connection-width findings and
-  their repair), `labels`, `silk_fields`, `silkscreen`, `check_repairs`,
-  `fab_export`, `fab_release`, `cost`.
-- **Reporting and verification.** `verification` (ERC, DRC with
-  schematic parity), `native_report` (running kicad-cli and reading its
-  reports), `drc_cache`, `verification_preview`, `verdict` (the verdict,
-  `judge`, `route_facts`, the next actions, the exit codes), `quality`
-  and `aesthetics` (`score-kicad-board`), `describe`, `class_view`,
-  `board_stats`, `run_diagnosis` (`inspect-routing-run`),
-  `corridors_fact`, and the result files `board_router/result.rs`,
-  `board_router/pour_quality.rs`, `board_placer/result.rs`.
-- **Measurement only** (`lab/`), reached from research commands and
-  not from the agent commands: `coarse_probe`, `trouble_probe`,
-  `global_route`, `placement_ablation`, `shrink`, `footprint_links`,
-  `legality`. Outside `lab/` but also measurement only:
-  `board_placer/trace.rs` and `board_router/tools.rs` (but for the track
-  strip that `strip-kicad-tracks` uses). `congestion_rank` holds the
-  race's RUDY pre-ranking, which is on the default path.
+- **pcb-kicad-file** (`crates/pcb-kicad-file/src/`). `kicad_sexpr` (the
+  S-expression tree, parser and writer), `canonical_order` (footprints by
+  reference, their items sorted, so two saves of one design lay out
+  alike), `kicad_nets`, `geometry`, `copper_geometry`, `roundrect_pad`,
+  `electrical_terminals`, `local_clearance`, `outline` (Edge.Cuts loops
+  and cutouts), `outline_pieces` (the outline's pieces without its tabs:
+  the sub-boards of a panel, the router's net split, KiCad's check judged
+  per sub-board), `copper_emit` (tracks, vias and pad vias written back)
+  with `route_graph`, `board_stats`, `flip`, `part_motion`,
+  `check_repairs`, `connection_rules`, `corridors_fact`, `fs_util`, and
+  `exit` (the exit codes and `input_error`, which every reader of an
+  input marks its errors with).
+- **pcb-kicad-check** (`crates/pcb-kicad-check/src/`). `native_report`
+  (running kicad-cli and reading its reports), `kicad_config` (a
+  library-free KiCad configuration), `drc_cache`, `verification` (ERC,
+  DRC with schematic parity; `verify_materialized_rung`) and
+  `verification_preview`; `ledger` (the machine-wide memory ledger),
+  `proc_memory`, `work_rate` (budgets in work, the rate calibration).
+- **pcb-kicad-route-place** (`crates/pcb-kicad-route-place/src/`).
+  - The project's rules: `project_rules` and `project_rules/dru.rs`
+    (`.kicad_pro` and `.kicad_dru` rules lowered to router rules),
+    `net_classes`.
+  - The router side, `board_router/`: the lowering (`lower/`, with
+    `geometry.rs`, `pour_plan.rs`, `kept.rs`, `config.rs`),
+    `route.rs` (`route_kicad_board`), `ladder.rs`, `attempt.rs`,
+    `budget.rs`, `memory.rs`, `diff_pairs/`, `lengths` and `meander`
+    (length and skew rules, tuning patterns), `layer_preference`,
+    `bga_fanout`, `via_in_pad`, `via_spans`, the result files
+    (`result.rs`, `pour_quality.rs`) and `tools.rs` (the track strip of
+    `strip-kicad-tracks`; the rest measurement only). Beside it: `necks`
+    (connection-width findings and their repair), `pin_swap`,
+    `check_work` (the work a KiCad check is charged).
+  - The placer side, `board_placer/`: the lowering (`lower/`, with
+    `bodies.rs`, `courtyards.rs`, `rules.rs`), `place/`
+    (`place_kicad_board`) and `seed_race.rs`, `panel` (panels of copies),
+    `skeleton`, `decoupling`, `edges`, `pair_rows`, `marks`, `exits`,
+    `guidance`, `result.rs`, and `trace.rs` (measurement only). Beside it:
+    `placement_constraints/` (constraints.json), `placement_room`,
+    `sub_boards` (the placer's half of a panel of different boards).
+  - What both sides read: `quality` with `aesthetics` and `cost`
+    (`score-kicad-board`), `labels` and `silk_fields`.
+
+  The router and placer sides are one crate because they use each other:
+  the placer's lowering builds on the router's (the layer table, the
+  router config, pours, BGA array rooms, length rules), and the router's
+  lowering reads `quality`'s net-name heuristics (`ground`, `rail_name`)
+  and its vias-in-pads census, while `quality` reads the placer's part
+  bodies (`connector_mouth`, `local_body`). Splitting them needs those
+  heuristics and the via-in-pad census moved out of quality.rs to the
+  router side, and `glob_matches`, `outline_corner` and `part_box` moved
+  down; nothing else crosses from the router side to the placer side.
+- **pcb-kicad** (`crates/pcb-kicad/src/`). `board_layout`
+  (`layout_kicad_board`, its stages in `board_layout/`),
+  `congestion_rank` (the race's RUDY pre-ranking), `free_dimension`;
+  `verdict` (the verdict, `judge`, `route_facts`, the next actions);
+  `describe`, `class_view`, `run_diagnosis` (`inspect-routing-run`),
+  `silkscreen`, `fab_export`, `fab_release`.
+- **pcb-kicad-import** (`crates/pcb-kicad-import/src/`). `netlist_import/`,
+  `board_footprints`, `constraints_template`, `key_matrix`.
+- **pcb-kicad-lab** (`crates/pcb-kicad-lab/src/`), reached from research
+  commands and not from the agent commands: `coarse_probe`,
+  `trouble_probe`, `global_route`, `placement_ablation`, `shrink`,
+  `footprint_links`, `legality`.
 
 ## `layout-kicad-board`
 
@@ -114,7 +142,7 @@ to the final ladder's narrow-signal attempt.
 ## `route-kicad-board`
 
 `agent_cli::route` handles `--strip` and turns differential pairs on by
-need, then calls `route_kicad_board` (crates/pcb-kicad/src/board_router/route.rs).
+need, then calls `route_kicad_board` (crates/pcb-kicad-route-place/src/board_router/route.rs).
 
 | # | Stage | Function, file | Hands on |
 | ---: | --- | --- | --- |
@@ -164,7 +192,7 @@ router knows which pads a pour joins.
 
 ## The placement
 
-`place_kicad_board` (crates/pcb-kicad/src/board_placer/place/):
+`place_kicad_board` (crates/pcb-kicad-route-place/src/board_placer/place/):
 `prepare_board` parses the board, resolves the constraints
 (placement_constraints/) and the project rules, applies the outline,
 keepouts and sides, and lowers it (`lower_placement`) to a
@@ -242,11 +270,11 @@ git history has the code.
 | --- | --- |
 | Work budgets, the rate calibration, determinism | work_rate.rs; pcb-router `set_expansions_per_second`; pcb-placer `work()` |
 | The wall-clock guard | pcb-router router/wall.rs; `WallStop` in board_layout.rs |
-| Memory reservations | ledger.rs; board_router/memory.rs; pcb-router mem_profile.rs |
+| Memory reservations | ledger.rs, proc_memory.rs; board_router/memory.rs; pcb-router mem_profile.rs |
 | The project's rules and custom rules | project_rules.rs, project_rules/dru.rs; the verdict's `custom_rules` in verdict.rs |
-| Exit codes, next actions, `verdict.json` | verdict.rs (`EXIT_*`, `judge`), src/agent_cli.rs |
+| Exit codes, next actions, `verdict.json` | exit.rs (`EXIT_*`, `input_error`), verdict.rs (`judge`), src/agent_cli.rs |
 | The input checks before a run | src/agent_cli.rs (`check_project`, `check_constraints`, `check_pours`, `check_kicad`) |
-| Panels | board_placer/panel.rs (copies), sub_boards.rs (different boards) |
+| Panels | board_placer/panel.rs (copies), outline_pieces.rs and sub_boards.rs (different boards) |
 | Differential pairs | board_router/diff_pairs/; pcb-router give_up.rs |
 | Length and skew rules | board_router/lengths.rs, meander.rs, layer_preference.rs |
 | BGA fan-outs, vias in pads, via spans | board_router/bga_fanout.rs, via_in_pad.rs, via_spans.rs |

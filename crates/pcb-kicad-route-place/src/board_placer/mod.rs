@@ -15,7 +15,7 @@ mod decoupling;
 mod edges;
 mod exits;
 mod guidance;
-pub mod lower;
+mod lower;
 mod marks;
 mod pair_rows;
 mod panel;

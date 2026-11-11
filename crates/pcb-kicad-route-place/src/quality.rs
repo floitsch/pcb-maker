@@ -379,7 +379,7 @@ fn exposed_pad(part: &Part) -> Vec<usize> {
         .collect()
 }
 
-pub struct Part {
+struct Part {
     reference: String,
     value: String,
     footprint: String,
@@ -502,7 +502,7 @@ fn round(value: f64) -> f64 {
     (value * 100.0).round() / 100.0
 }
 
-pub fn parts_of(pcb: &Expr, names: &NetNames) -> Result<Vec<Part>, String> {
+fn parts_of(pcb: &Expr, names: &NetNames) -> Result<Vec<Part>, String> {
     let mut parts = Vec::new();
     for footprint in pcb
         .children()

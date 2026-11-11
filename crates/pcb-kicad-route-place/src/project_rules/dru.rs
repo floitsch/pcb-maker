@@ -27,7 +27,7 @@ use serde::Serialize;
 
 mod clearance;
 mod condition;
-pub mod lower;
+mod lower;
 mod sizes;
 mod tracks;
 

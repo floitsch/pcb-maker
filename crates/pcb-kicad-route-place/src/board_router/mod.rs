@@ -18,7 +18,7 @@ mod kept;
 mod ladder;
 mod layer_preference;
 mod lengths;
-pub mod lower;
+mod lower;
 mod meander;
 mod memory;
 mod pour_plan;
