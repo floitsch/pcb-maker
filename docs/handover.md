@@ -1,4 +1,4 @@
-# Hand-over (state as of 2026-11-10; measured by layout sweep v37, the nightly of 2026-11-10 on main 8bfeb31)
+# Hand-over (state as of 2026-11-11; measured by layout sweep v38, the nightly of 2026-11-11 on main c0e40c3)
 
 Read this first. It says what the tool does today, which benchmarks
 count, what is known to be wrong, how to work on the code and what still
@@ -62,22 +62,22 @@ The line below and the next paragraph are rewritten by the nightly;
 [benchmarks.md](benchmarks.md) has the table of the last 14 nights.
 
 <!-- nightly-state:begin -->
-**Nightly** 2026-11-10 (main 8bfeb313afbf, `build/nightly/2026-11-10/summary.md`): fingerprints identical; expansion 26/46 (strict 26), 556 open; short 9/12 (strict 9), 16 open; sweep 69/109 (strict 70), 1552 open; designer 75/109 (strict 76), 2672 open at 0.613; gap placement 67%, routing 33%.
+**Nightly** 2026-11-11 (main c0e40c30d391, `build/nightly/2026-11-11/summary.md`): fingerprints identical; expansion 26/46 (strict 26), 556 open; short 9/12 (strict 9), 16 open; sweep 69/109 (strict 70), 1552 open; designer 75/109 (strict 76), 2672 open at 0.613; gap placement 67%, routing 33%.
 <!-- nightly-state:end -->
 
-**Layout sweep v37** (the nightly of 2026-11-10, main 8bfeb31, written
+**Layout sweep v38** (the nightly of 2026-11-11, main c0e40c3, written
 by the nightly): **70 of 109 pass the strict rule** (69 the per-type
 rule), 1552 unconnected in all, strict errors 15, no row cut or killed,
 3 without a result; medians against the designer's board: vias x0.65,
 length x0.98, open 0.000 (mean 0.063), bends x1.01, stair-steps +33.5,
-crossings +1. Against the nightly of 2026-11-09: better 0, same 106,
+crossings +1. Against the nightly of 2026-11-10: better 0, same 106,
 worse 0, strict passes 70 -> 70. The matched designer tier on the same
 binary (budget scale 0.613): 76 strict passes (75 per type); over the
 100 target boards placement 67 %, routing 33 % of the open connections
 (placement 75 %, routing 25 % without MegaDrive).
-`build/nightly/2026-11-10/`; table, gap split, the costliest placements
+`build/nightly/2026-11-11/`; table, gap split, the costliest placements
 and the losers in
-[benchmarks.md](benchmarks.md#layout-sweep-v37-2026-11-10).
+[benchmarks.md](benchmarks.md#layout-sweep-v38-2026-11-11).
 
 The stages, all on the committed task list `benchmarks/agent-tasks/tasks/v7`:
 
