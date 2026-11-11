@@ -45,6 +45,10 @@ const MOST_FILL: f64 = 0.7;
 /// of it (mm): a part held at that edge may go there.
 const EDGE_REACH_MM: f64 = 2.0;
 
+/// How far a module's parts keep from its sides inside the board (mm,
+/// `BoardModules::held_box`).
+const TAB_KEEP_MM: f64 = 1.0;
+
 /// What a track over a tab beyond its capacity costs, in tab crossings.
 const OVERFLOW_COST: f64 = 2.0;
 
@@ -81,6 +85,48 @@ pub(crate) struct BoardModules {
 impl BoardModules {
     pub(crate) fn count(&self) -> usize {
         self.boxes.len()
+    }
+
+    /// The region that holds a module's parts: its box, each side inside
+    /// the board (towards a tab or a slot, not the board's own edge) moved
+    /// in by `TAB_KEEP_MM` (protoesp's passives pressed against a row of
+    /// holes at the tightest level came closer than the clearance to
+    /// them).
+    pub(crate) fn held_box(&self, module: usize) -> [f64; 4] {
+        let board = self.boxes.iter().fold(
+            [
+                f64::INFINITY,
+                f64::INFINITY,
+                f64::NEG_INFINITY,
+                f64::NEG_INFINITY,
+            ],
+            |a, b| {
+                [
+                    a[0].min(b[0]),
+                    a[1].min(b[1]),
+                    a[2].max(b[2]),
+                    a[3].max(b[3]),
+                ]
+            },
+        );
+        let mut held = self.boxes[module];
+        let inside = |at: f64, edge: f64| (at - edge).abs() > EDGE_REACH_MM;
+        if inside(held[0], board[0]) {
+            held[0] += TAB_KEEP_MM;
+        }
+        if inside(held[1], board[1]) {
+            held[1] += TAB_KEEP_MM;
+        }
+        if inside(held[2], board[2]) {
+            held[2] -= TAB_KEEP_MM;
+        }
+        if inside(held[3], board[3]) {
+            held[3] -= TAB_KEEP_MM;
+        }
+        if held[0] >= held[2] || held[1] >= held[3] {
+            return self.boxes[module];
+        }
+        held
     }
 
     /// The module `point` lies on; None off the board or on a tab.
@@ -217,6 +263,9 @@ pub(crate) struct ModuleAssignment {
     /// The modules whose parts take more than `MOST_FILL` of their area on
     /// a side (nothing else would fit them anywhere).
     pub overfull: usize,
+    /// Per module: the share of its area its parts' bodies take on its
+    /// fuller side.
+    pub fill: Vec<f64>,
     pub passes: usize,
 }
 
@@ -327,6 +376,69 @@ fn side_area(component: &core::Component) -> [f64; 2] {
         core::Side::Both => [area, area],
         core::Side::Neither => [0.0, 0.0],
     }
+}
+
+/// Per module and side, its area that no component held where it is (a
+/// part that stays, a copper mark, a keepout; not a silkscreen mark KiCad
+/// lets a part cover: `passable_marks`) covers with its body:
+/// sampled on a grid of at least 0.5 mm, at most about 200 000 points.
+fn free_area(modules: &BoardModules, problem: &core::Problem, footprints: usize) -> Vec<[f64; 2]> {
+    let mut taken: [Vec<[f64; 4]>; 2] = [Vec::new(), Vec::new()];
+    let passable: BTreeSet<usize> = problem.constraints.passable_marks.iter().copied().collect();
+    for (index, component) in problem.components.iter().enumerate() {
+        // The silkscreen marks KiCad lets a part cover are no obstacle.
+        if !component.fixed || (index >= footprints && passable.contains(&index)) {
+            continue;
+        }
+        let pose = problem.poses[index];
+        let (center, half) = (component.center(pose), component.half_extent(pose.angle));
+        let b = [
+            center[0] - half[0],
+            center[1] - half[1],
+            center[0] + half[0],
+            center[1] + half[1],
+        ];
+        let [front, back] = side_area(component).map(|a| a > 0.0);
+        if front {
+            taken[0].push(b);
+        }
+        if back {
+            taken[1].push(b);
+        }
+    }
+    let total: f64 = modules
+        .boxes
+        .iter()
+        .map(|b| (b[2] - b[0]) * (b[3] - b[1]))
+        .sum();
+    let step = (total / 200_000.0).sqrt().max(0.5);
+    modules
+        .boxes
+        .iter()
+        .enumerate()
+        .map(|(module, b)| {
+            let mut free = [0usize; 2];
+            let mut y = b[1] + step / 2.0;
+            while y < b[3] {
+                let mut x = b[0] + step / 2.0;
+                while x < b[2] {
+                    if modules.module_at([x, y]) == Some(module) {
+                        for (side, boxes) in taken.iter().enumerate() {
+                            if !boxes
+                                .iter()
+                                .any(|t| x >= t[0] && x <= t[2] && y >= t[1] && y <= t[3])
+                            {
+                                free[side] += 1;
+                            }
+                        }
+                    }
+                    x += step;
+                }
+                y += step;
+            }
+            free.map(|count| count as f64 * step * step)
+        })
+        .collect()
 }
 
 /// The partition's state: the assignment, each counted net's pins per
@@ -518,6 +630,13 @@ impl Partition<'_> {
             .filter(|m| (0..2).any(|side| self.load[*m][side] > self.room[*m][side] + 1.0e-9))
             .count();
         result.module = self.module.clone();
+        result.fill = (0..self.modules.count())
+            .map(|m| {
+                (0..2)
+                    .map(|side| self.load[m][side] * MOST_FILL / self.room[m][side].max(1.0e-9))
+                    .fold(0.0, f64::max)
+            })
+            .collect();
     }
 
     fn cost(&mut self) -> (usize, usize, usize) {
@@ -702,24 +821,12 @@ fn seeded_partition<'a>(
     let area: Vec<[f64; 2]> = (0..footprints)
         .map(|part| side_area(&problem.components[part]))
         .collect();
-    let mut room: Vec<[f64; 2]> = modules
-        .areas
+    // Each module's room: a share of the area its fixed parts and marks
+    // leave free.
+    let room: Vec<[f64; 2]> = free_area(modules, problem, footprints)
         .iter()
-        .map(|a| [a * MOST_FILL, a * MOST_FILL])
+        .map(|free| [free[0] * MOST_FILL, free[1] * MOST_FILL])
         .collect();
-    for (part, area) in area.iter().enumerate() {
-        // Every part that stays where it is takes room, pins or not.
-        if problem.components[part].fixed
-            && let Some(module) =
-                result.module.get(part).copied().flatten().or_else(|| {
-                    modules.module_at(problem.components[part].center(problem.poses[part]))
-                })
-        {
-            for side in 0..2 {
-                room[module][side] -= area[side];
-            }
-        }
-    }
     let mut partition = Partition {
         modules,
         trees: Trees::new(modules),
@@ -950,7 +1057,7 @@ pub(crate) fn hold_in_modules(
         if held.contains(&part) {
             continue;
         }
-        let region = modules.boxes[module];
+        let region = modules.held_box(module);
         let size = [region[2] - region[0], region[3] - region[1]];
         let body = component.body_size;
         let fits = (body[0] <= size[0] && body[1] <= size[1])
@@ -1036,6 +1143,7 @@ pub fn describe_modules(
         "tab_crossings": assignment.tab_crossings,
         "overflow": assignment.overflow,
         "overfull": assignment.overfull,
+        "fill": assignment.fill.iter().map(|f| (f * 100.0).round() / 100.0).collect::<Vec<_>>(),
         "passes": assignment.passes,
         "seconds": (seconds * 1000.0).round() / 1000.0,
         "fixed_per_module": (0..modules.count()).map(|m| (0..footprints).filter(|p| problem.components[*p].fixed && assignment.module[*p] == Some(m)).count()).collect::<Vec<_>>(),
@@ -1127,6 +1235,7 @@ pub fn describe_modules(
             "tab_crossings": measured.tab_crossings,
             "overflow": measured.overflow,
             "overfull": measured.overfull,
+            "fill": measured.fill.iter().map(|f| (f * 100.0).round() / 100.0).collect::<Vec<_>>(),
             "right": right,
             "wrong": wrong,
             "unassigned": unassigned,
@@ -1254,7 +1363,7 @@ mod tests {
                 .find(|(held, _)| *held == part)
                 .map(|(_, region)| *region)
                 .unwrap();
-            assert_eq!(region, modules.boxes[module.unwrap()]);
+            assert_eq!(region, modules.held_box(module.unwrap()));
             assert!(constraints.automatic_regions.contains(&part));
         }
         assert!(constraints.starts.is_empty());
