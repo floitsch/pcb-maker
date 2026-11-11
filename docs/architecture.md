@@ -47,7 +47,7 @@ compiler holds it.
   `electrical_terminals`, `local_clearance`, `outline` (Edge.Cuts loops
   and cutouts), `outline_pieces` (the outline's pieces without its tabs:
   the sub-boards of a panel, the router's net split, KiCad's check judged
-  per sub-board), `copper_emit` (tracks, vias and pad vias written back)
+  per sub-board, the breakaway strips), `copper_emit` (tracks, vias and pad vias written back)
   with `route_graph`, `board_stats`, `flip`, `part_motion`,
   `check_repairs`, `connection_rules`, `corridors_fact`, `fs_util`, and
   `footprint_bodies` (a footprint's body, courtyard and pad boxes, its
@@ -216,7 +216,9 @@ Inside `pcb_placer::place` (crates/pcb-placer/src/lib.rs), in order:
 3. Per relaxation level (halos, spacing, fine grid, tight bodies):
    `anneal::anneal` (anneal.rs, with the ratsnest crossings of
    crossings.rs in its cost), `facing::turn_to_face`, `legal::legalize`
-   (legal.rs), parts seated on board marks.
+   (legal.rs), the eviction and the packing along edges
+   (`legal::evict_for`, `legal::compact_edges`), parts seated on board
+   marks.
 4. The refinement (`finish` in lib.rs): `legal::refine_with`, edge
    copper centred, `repair_relations`, `align_orientations`,
    `facing::face`.
