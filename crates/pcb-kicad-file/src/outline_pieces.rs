@@ -1816,10 +1816,11 @@ pub fn excuse_across(
 /// that piece. A zone whose outline covers several pieces lies on one of
 /// them, unknown which, and the items of its net are excused all together
 /// or not at all: when the net is split (`board_split_nets`: pads on each
-/// piece, none on a tab, no track or via on a tab or across), the report
-/// is below KiCad's cap and lists exactly as many items of the net as the
-/// allowance (pieces minus one), every one of them can lie across (two
-/// ends of the net, each placed, not both on one piece), and KiCad's fill
+/// piece, none on a tab, no track or via on a tab or across; and none off
+/// the board, `copper_off_board`), the report is below KiCad's cap and
+/// lists exactly as many items of the net as the allowance (pieces minus
+/// one), every one of them can lie across (two ends of the net, each
+/// placed, not both on one piece), and KiCad's fill
 /// of the net, its polygons united per copper layer, has no connected part
 /// on two pieces. Then each of the net's copper clusters lies on one
 /// piece, each piece with pads holds one at least, and KiCad lists one
@@ -1932,6 +1933,7 @@ pub fn excuse_across_with(
             if !indices.iter().any(among)
                 || indices.len() != split[net] - 1
                 || !indices.iter().all(may_cross)
+                || copper_off_board(pcb, pieces, net)
             {
                 continue;
             }
@@ -1982,6 +1984,27 @@ fn described_net(description: &str) -> Option<String> {
     let end = start + description[start..].find(']')?;
     let net = &description[start..end];
     (net != "<no net>" && !net.is_empty()).then(|| net.to_string())
+}
+
+/// Whether a track, arc or via of `net` has a point off every piece and
+/// off the tabs: copper beyond the outline, which could join two pieces
+/// where `board_split_nets` does not look (a track to a point off the
+/// board and on to the other piece).
+fn copper_off_board(pcb: &Expr, pieces: &Pieces, net: &str) -> bool {
+    let codes = crate::kicad_nets::net_codes(pcb);
+    let off = |point: [f64; 2]| pieces.piece_at(point).is_none() && !pieces.between(point);
+    pcb.children().iter().any(|item| {
+        let heads: &[&str] = match item.head() {
+            Some("segment" | "arc") => &["start", "mid", "end"],
+            Some("via") => &["at"],
+            _ => return false,
+        };
+        crate::kicad_nets::item_net(item, &codes).is_some_and(|name| unescaped(name) == net)
+            && heads
+                .iter()
+                .filter_map(|head| crate::kicad_sexpr::form_xy(item, head).ok())
+                .any(off)
+    })
 }
 
 /// The zones of a board: its own and its footprints'.
@@ -2488,6 +2511,23 @@ mod tests {
                 &[
                     zone("zf", "F.Cu", PANEL, &over_bridge),
                     zone("zb", "B.Cu", PANEL, &[TOP, BOTTOM]),
+                ],
+                serde_json::json!({"unconnected_items": [
+                    zone_item(("zf", [30.0, 47.0]), ("zb", [30.0, 25.0]))]}),
+            ),
+            0
+        );
+        // A GND track out past the board's edge and back onto the other
+        // piece joins the pieces where `board_split_nets` does not look.
+        assert_eq!(
+            excused(
+                &[
+                    zone("zf", "F.Cu", PANEL, &[TOP, BOTTOM]),
+                    zone("zb", "B.Cu", PANEL, &[TOP, BOTTOM]),
+                    r#"(segment (start 3 5) (end 25 22.5) (width 0.2) (layer "F.Cu") (net "GND"))"#
+                        .to_string(),
+                    r#"(segment (start 25 22.5) (end 3 35) (width 0.2) (layer "F.Cu") (net "GND"))"#
+                        .to_string(),
                 ],
                 serde_json::json!({"unconnected_items": [
                     zone_item(("zf", [30.0, 47.0]), ("zb", [30.0, 25.0]))]}),
