@@ -10,8 +10,8 @@ placer options: the final weighted HPWL of each, side by side.
 
 Each run is `place-kicad-board <dir> <board_id> <out>/<board>-<variant>-<seed>`
 (a variant's `_env` option sets environment variables)
-with `{"constraints": "constraints.json", "placement_seeds": 1, "seed": s}`
-plus the variant's options, one search thread each. Prints a table of
+with `{"constraints": "constraints.json", "tuning": {"placement_seeds": 1,
+"seed": s}}` plus the variant's options (their `tuning` merged key by key), one search thread each. Prints a table of
 HPWL per board and variant (median and the seeds).
 """
 import argparse
@@ -58,12 +58,13 @@ def main():
         name, directory, board_id = board.split(":")
         for variant in arguments.variant:
             vname, binary, *rest = variant.split(":", 2)
-            options = {"constraints": "constraints.json", "placement_seeds": 1}
+            options = {"constraints": "constraints.json", "tuning": {"placement_seeds": 1}}
             if rest:
-                options.update(json.loads(rest[0]))
+                extra = json.loads(rest[0])
+                options.update({**extra, "tuning": {**options["tuning"], **extra.get("tuning", {})}})
             for seed in seeds:
                 jobs.append((arguments.out / f"{name}-{vname}-{seed}", binary, directory, board_id,
-                             json.loads(json.dumps(dict(options, seed=seed)))))
+                             json.loads(json.dumps(dict(options, tuning=dict(options["tuning"], seed=seed))))))
                 keys.append((name, vname, seed))
     with concurrent.futures.ThreadPoolExecutor(arguments.jobs) as pool:
         results = list(pool.map(run, jobs))

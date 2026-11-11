@@ -7,7 +7,7 @@ on the eleven dense boards with `stop_after_first_route` (docs/benchmarks.md,
 "The ladder of placer measurements"); with `--full`, stage 2:
 the same units as full layouts.
 
-    screen.py --out DIR --off-binary PATH --on-binary PATH --on '{"align_rows": {}}' [--slots 5]
+    screen.py --out DIR --off-binary PATH --on-binary PATH --on '{"tuning": {"align_rows": {}}}' [--slots 5]
     screen.py --out DIR --off-binary PATH --on-binary PATH --on '{}' --on-env PCB_PLACER_SKIP_ANNEAL=1
     benchmarks/agent-tasks/placer_ab.py compare --metric first_open \\
         --off DIR/dense-s*-off-* --on DIR/dense-s*-on-*
@@ -79,7 +79,8 @@ def units(arguments):
     for seed in seeds:
         for board in sorted(boards, key=lambda b: -estimate(b, arguments.estimates)[1]):
             for side in arguments.sides.split(","):
-                placer = {"seed": seed, **(on if side == "on" else {})}
+                lever = on if side == "on" else {}
+                placer = {**lever, "tuning": {"seed": seed, **lever.get("tuning", {})}}
                 name = f"dense-s{seed}-{side}-{board.split('__')[-1]}"
                 binary = arguments.on_binary if side == "on" else arguments.off_binary
                 command = [sys.executable, str(ROOT / "benchmarks/agent-tasks/run.py"), str(Path(arguments.out) / name),

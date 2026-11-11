@@ -357,7 +357,7 @@ def prepare(arguments):
 def unit_command(out, board, name, binary):
     rule, seed = name.rsplit("-s", 1)
     directory = out / "units" / short(board)
-    placer = {"seed": int(seed)}
+    placer = {"tuning": {"seed": int(seed)}}
     return [sys.executable, str(ROOT / "benchmarks/agent-tasks/run.py"), str(out / "runs" / f"{short(board)}-{name}"),
             "--tasks", str(directory / f"{rule}.tasks.json"), "--only", board, "--binary", binary,
             "--jobs", "1", "--threads", "2", "--expected-gb", str(expected_gb(board)),
