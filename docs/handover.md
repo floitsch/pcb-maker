@@ -79,6 +79,10 @@ binary (budget scale 0.613): 76 strict passes (75 per type); over the
 and the losers in
 [benchmarks.md](benchmarks.md#layout-sweep-v38-2026-11-11).
 
+The strict rule became rule 5 on 2026-11-11: a track or via against a
+footprint's own copper graphic that walls in a pad of its net counts as
+the designer's (run.py's `forced_by_footprint`).
+
 The stages, all on the committed task list `benchmarks/agent-tasks/tasks/v7`:
 
 | Stage | Boards | What it measures |
@@ -212,12 +216,11 @@ an off switch; a fresh-agent trial every few days.
     five connections and five errors of clean. The list changes nightly;
     a diagnosis takes the night's list (`summary.md`, `diff-sweep.txt`).
     Pads walled by their own footprint's copper (antennas, a microphone's
-    ring: osprey, WLED_Matrix, Batch_1, reCamera, nrf24_remote) get
-    fenced exits since 2026-11-11 (router.md, "A pad
-    walled by its own footprint's copper"); KiCad reports every such
-    connection as a track against the graphic, as on the designers'
-    boards, and the verdict and run.py's strict rule still count it as the
-    run's.
+    ring: osprey, WLED_Matrix, Batch_1, reCamera, nrf24_remote) are wired
+    through fenced corridors since 2026-11-11 (router.md, "A pad walled by
+    its own footprint's copper"); KiCad reports each crossing, as on the
+    designers' boards, and the verdict (`walled_pads`) and the strict rule
+    (rule 5) set it apart as the footprint's.
 11. **The agent flow's gaps.** A crowded side (90 to 99 %) that no exact
     test calls hopeless still runs the placer's levels to the budget; the
     placer does not choose sides by itself. Starters are missing for LED
