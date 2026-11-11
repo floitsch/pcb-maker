@@ -4,7 +4,8 @@
 
 use super::footprint::{FootprintSides, angle_options, halo, pad_boxes};
 use super::obstacles::{
-    add_board_rule_areas, add_cutouts, fixed_obstacle, local_box, outer_copper,
+    add_board_rule_areas, add_cutouts, add_footprint_rule_areas, fixed_obstacle, local_box,
+    outer_copper,
 };
 use super::*;
 use pcb_placer as core;
@@ -45,7 +46,10 @@ fn a_part_turns_by_quarters_and_square_to_the_board_from_an_odd_angle() {
         assert!(odd.contains(&board), "{odd:?}");
     }
     let kept = KiCadBoardPlacerConfig {
-        keep_rotation: true,
+        tuning: KiCadPlacerTuning {
+            keep_rotation: true,
+            ..Default::default()
+        },
         ..KiCadBoardPlacerConfig::default()
     };
     assert_eq!(angle_options(&kept, -30.0), vec![-30.0]);
@@ -54,17 +58,20 @@ fn a_part_turns_by_quarters_and_square_to_the_board_from_an_odd_angle() {
 #[test]
 fn a_halo_grows_with_the_pins_up_to_its_maximum_unless_overridden() {
     let mut config = KiCadBoardPlacerConfig {
-        pins_per_halo_track: 4.0,
-        track_pitch_mm: 0.5,
-        maximum_halo_mm: 2.0,
-        halo_scale: 1.0,
+        tuning: KiCadPlacerTuning {
+            pins_per_halo_track: 4.0,
+            track_pitch_mm: 0.5,
+            maximum_halo_mm: 2.0,
+            halo_scale: 1.0,
+            ..Default::default()
+        },
         ..KiCadBoardPlacerConfig::default()
     };
     assert_eq!(halo(&config, "U1", 5), 1.0);
     assert_eq!(halo(&config, "U1", 100), 2.0);
-    config.halo_overrides_mm.insert("U1".into(), 0.25);
+    config.tuning.halo_overrides_mm.insert("U1".into(), 0.25);
     assert_eq!(halo(&config, "U1", 100), 0.25);
-    config.pins_per_halo_track = 0.0;
+    config.tuning.pins_per_halo_track = 0.0;
     assert_eq!(halo(&config, "U2", 100), 0.0);
 }
 
@@ -200,6 +207,42 @@ fn the_boards_rule_areas_are_obstacles_and_those_keeping_bodies_out_fix_parts() 
     assert!(!components[0].copper_only && components[0].side == core::Side::Both);
     assert!(components[2].copper_only && components[2].side == core::Side::Front);
     assert_eq!(builder.problem.poses[2].position, [21.0, 2.0]);
+}
+
+#[test]
+fn a_fixed_footprints_own_rule_area_is_a_locked_part_like_every_obstacle() {
+    // A locked module with its antenna keepout: the keepout is the next
+    // part, and the per-part lists keep the parts' length (its lock was
+    // missing, `locked` one short of `components`).
+    let pcb = parse(
+        r#"(kicad_pcb
+    (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+    (gr_rect (start 0 0) (end 40 20) (layer "Edge.Cuts"))
+    (footprint "ESP32" (layer "F.Cu") (locked) (at 20 10)
+        (fp_rect (start -3 -3) (end 3 3) (layer "F.CrtYd"))
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "A"))
+        (zone (net 0) (net_name "") (layers "F.Cu" "B.Cu") (name "antenna")
+            (keepout (tracks allowed) (vias allowed) (pads allowed) (copperpour allowed) (footprints not_allowed))
+            (polygon (pts (xy 17 4) (xy 23 4) (xy 23 6) (xy 17 6))))))"#,
+    )
+    .unwrap();
+    let config = KiCadBoardPlacerConfig::default();
+    let context = LowerContext::new(&pcb, &config).unwrap();
+    let mut builder = ProblemBuilder::new(&context);
+    for footprint in context.footprints() {
+        let lowered =
+            super::footprint::lower_footprint(&context, footprint, &mut builder.net_ids).unwrap();
+        builder.push_footprint(lowered);
+    }
+    builder.problem.components[0].fixed = true;
+    add_footprint_rule_areas(&context, &mut builder).unwrap();
+    assert_eq!(
+        builder.references,
+        ["", "keepout"].map(String::from).to_vec()
+    );
+    assert_eq!(builder.locked, vec![true; 2]);
+    assert_eq!(builder.problem.components.len(), 2);
+    assert_eq!(builder.source_at.len(), 2);
 }
 
 #[test]

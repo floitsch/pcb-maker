@@ -93,7 +93,7 @@ impl Builder {
 /// With `exclusive_layers`, each net keeps at most that many exclusive
 /// planes, the outermost layers first; the others carry signals again.
 pub(super) fn limit_exclusive_planes(ctx: &Context, planes: &mut [core::Plane]) {
-    let Some(limit) = ctx.config.exclusive_layers else {
+    let Some(limit) = ctx.config.tuning.exclusive_layers else {
         return;
     };
     let mut by_net: BTreeMap<core::NetId, Vec<usize>> = BTreeMap::new();

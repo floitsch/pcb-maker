@@ -22,13 +22,17 @@ differ, this document says so.
 
 Every key of the router config, with type, default and doc comment, is in
 the generated [config-reference.md](config-reference.md); environment
-variables are indexed in [handover.md](handover.md). The project's rules
+variables are indexed in [handover.md](handover.md). The settings an
+agent sets stand at the top level; the tuning of the machinery stands in
+the `tuning` group ([architecture.md](architecture.md#settings)), whose
+`core` keys are the router core's fields of the same name: a cost below
+such as `via_cost` is set as `{"tuning": {"via_cost": 4}}`. The project's rules
 are the base of every run: a config file's key replaces the project's
 value of that key, and a file setting `connection_rules` or
 `default_rules` replaces the project's classes
 (`project_rules::router_config_over_project`). A file asking for widths or
 clearances below the project's is refused (exit 2) unless it sets
-`allow_below_project_minimum`. `frame_directory` writes the board after
+`allow_below_project_minimum`. `tuning.frame_directory` writes the board after
 every negotiation iteration (`docs/images/animate.py routing` makes a GIF).
 
 ## A run in order
@@ -157,12 +161,12 @@ finds the outline's pieces (necks under 2 mm,
 mouse-bite rows and V-cuts cut it), and `split_router_nets` gives each piece
 its own net unless a terminal or pour joins two pieces; `excuse_across`
 moves KiCad's cross-piece items to `unconnected_across_sub_boards`.
-Setting `sub_board_nets` (on).
+Setting `tuning.sub_board_nets` (on).
 
 ## The lattice
 
 `Grid::choose` (`pcb-router/src/grid/mod.rs`; the static maps are built in `grid/build.rs`) picks a pitch and phase per axis
-from `pitches` (0.127, 0.125, 0.1 mm; KiCad key `grid_pitches_mm`). Pad
+from `pitches` (0.127, 0.125, 0.1 mm; setting `tuning.pitches`). Pad
 centres vote (only pads narrower than 0.35 mm, when there are any), and so
 do tight channels: gaps between fenced-in pads that the narrowest track
 fits with less than half a pitch to spare. All channels together weigh
@@ -251,7 +255,7 @@ history) and (1 + present price × occupancy). On top come
 (3) on another net's pour (impassable on an exclusive plane) and
 `layer_preference_cost` (10) off a net's preferred layers; plus
 `pin_row_cost` (2 mm) in another net's pin-row gap and `bend_cost` (0.1 mm
-per 45°; KiCad key `bend_cost_mm`). A via costs `via_cost` (8) with the same factors, `plane_via_cost`
+per 45°; setting `tuning.bend_cost`). A via costs `via_cost` (8) with the same factors, `plane_via_cost`
 (2) toward a pour. The heuristic is an octile bound aware of layer
 directions for up to 12 targets and an exact distance transform for larger
 trees. In *hard* mode (the repairs) any occupied cell is a wall.
@@ -260,7 +264,7 @@ trees. In *hard* mode (the repairs) any occupied cell is a wall.
 
 `footprint_pin_row_gaps` (lower.rs) marks the gaps between adjacent SMD
 pads of a part. A step into a gap by another net costs `pin_row_cost`
-(2 mm; `pin_row_cost_mm`; 0 builds no marks).
+(2 mm; `tuning.pin_row_cost`; 0 builds no marks).
 Gaps up to 1.5 mm are charged everywhere, gaps from 1.5 to 2.6 mm only in
 the clean-up and the bend round. At 2 mm the expansion tier went 625 to 592
 unconnected; at 3 mm a gap costs more than a thermal guard and starved
@@ -508,15 +512,15 @@ because ColdFire needs them whole (13 open against 43); video needs the
 room (9 against 110).
 
 **Pitches** (`ladder_pitches`): the regular lattice, then each of
-`refine_pitches_mm` (0.075, 0.05 mm). A finer pitch is skipped when the
+`tuning.refine_pitches_mm` (0.075, 0.05 mm). A finer pitch is skipped when the
 slowest attempt's work times the squared pitch ratio exceeds
 `refine_budget_seconds` or the work left, or when one router would not fit
 the process's own memory limit or 0.4 of the machine's memory.
 
 **Seeds.** A seed perturbs the net order and the history; seed 0 is the
 deterministic order. A rung that leaves connections open gets an immediate
-retry of `retry_seeds` (4) seeds when it fits, and up to three seed rounds
-of the best rung follow. `seeds` routes every attempt that many ways, from `first_seed`.
+retry of `tuning.retry_seeds` (4) seeds when it fits, and up to three seed rounds
+of the best rung follow. `seeds` routes every attempt that many ways, from `tuning.first_seed`.
 
 **Ranking and KiCad's checks.** An attempt's open count is the router's
 unconnected terminals plus internal violations plus KiCad's unconnected
@@ -538,8 +542,8 @@ what did not run.
 
 No fixed split of the budget suits every large multilayer board: one needs
 600 s of negotiation in its first rung, another the last rungs. On a board
-of at least three rungs, four layers and 120 connections (`probe_ladder`,
-on; no `negotiation_seconds` given), every rung is probed for `probe_seconds` (75 s of search; in route
+of at least three rungs, four layers and 120 connections (`tuning.probe_ladder`,
+on; no `tuning.negotiation_seconds` given), every rung is probed for `probe_seconds` (75 s of search; in route
 mode all probes together at most half the budget). The fewest unfinished
 nets lead, ties to the earlier rung; probes run side by side as memory
 allows but are judged in order. The leader is continued (`resume`) with a
@@ -547,7 +551,7 @@ third of what is left, 60 to 900 s of negotiation.
 
 ### The leader first
 
-In route mode on two or more rungs (`leader_first`, on) the ladder
+In route mode on two or more rungs (`tuning.leader_first`, on) the ladder
 spends its work on the leader's kind
 first: a seed round of the leader, the leader on the finer pitches, then
 the other rungs on the regular and finer pitches, each only if its probe
@@ -591,7 +595,7 @@ the project rates clearance findings as warnings the step also routes at
 the relaxed clearance; otherwise a minimum-clearance step may follow.
 `use_narrow_signals: false` turns it off. Work is kept back for it once
 the first attempt leaves connections open (a layout:
-`narrow_reserve_share` 0.75 of the first attempt's work, 240 to 600 s).
+`tuning.narrow_reserve_share` 0.75 of the first attempt's work, 240 to 600 s).
 Narrowing named classes narrowed impedance classes KiCad does not check
 and completed no board, so it was dropped.
 
@@ -797,7 +801,7 @@ it (`fanout_used`). A board with no plan routes exactly as with the switch
 off; an array whose class via fits is left to the search. Glasgow's inner
 balls had taken 47 % of its search work; the fan-outs took it from 55 to 15
 open on the designer placement, and no other tier board moved. The placer
-keeps the far side free under the vias (`via_in_pad_far_side`).
+keeps the far side free under the vias (the placer's `tuning.via_in_pad_far_side`).
 `PCB_ROUTER_BGA_FANOUT_WHY` prints the plans; `PCB_ROUTER_NET_WORK=<file>`
 writes search work per net.
 
@@ -838,11 +842,11 @@ occupancy and history), and `reroute(polish)` negotiates the rest. See
 
 `crates/pcb-topo` routes TopoR's way: wires as sequences of crossings of
 one triangulation shared by all layers, pulled taut into arcs.
-`{"engine": "topological"}` in a route-mode config makes one attempt with it
-(no ladder, pour nets as tracks, no pairs; knobs under `topological`, a
+`{"tuning": {"engine": "topological"}}` in a route-mode config makes one attempt with it
+(no ladder, pour nets as tracks, no pairs; knobs under `tuning.topological`, a
 wall-clock budget). It matches the lattice router on small two-layer boards
 but falls far behind on dense and four-layer ones (video 145 of 371 against
-362), so it is not developed further. `{"tighten": true}` pulls the lattice
+362), so it is not developed further. `{"tuning": {"tighten": true}}` pulls the lattice
 router's copper taut where the verifier accepts it (`pcb_topo::tighten`):
 2 to 4 % shorter, nothing else changed.
 
@@ -906,7 +910,7 @@ fail on:
 - **Parallelism:** batches need disjoint windows, so on large boards with
   long nets the negotiation is nearly single-threaded.
 - **Geometry:** a 45° lattice, parallel diagonals quantised to pitch/√2, no
-  arc output outside `tighten`.
+  arc output outside `tuning.tighten`.
 - **Rules not modelled:** a clearance loosened only inside an area or
   courtyard (ChengminLi's YPS jumper pins stay unreachable), creepage,
   rules in time units, one edge and hole clearance per board, pair rules

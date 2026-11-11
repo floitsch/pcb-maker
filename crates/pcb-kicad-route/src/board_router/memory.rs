@@ -541,7 +541,8 @@ pub(crate) fn check_lattice_fits(
     config: &KiCadBoardRouterConfig,
 ) -> Result<(), String> {
     let pitch = config
-        .grid_pitches_mm
+        .tuning
+        .pitches
         .iter()
         .flatten()
         .chain(pcb_router::router::Config::default().pitches.iter())
@@ -577,7 +578,8 @@ fn reserve_for_lattice(board: &pcb_router::Board, config: &KiCadBoardRouterConfi
         return;
     }
     let finest = config
-        .grid_pitches_mm
+        .tuning
+        .pitches
         .iter()
         .flatten()
         .chain(pcb_router::router::Config::default().pitches.iter())

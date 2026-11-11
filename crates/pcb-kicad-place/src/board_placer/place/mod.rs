@@ -132,16 +132,20 @@ fn placer_config(
 ) -> Result<core::Config, String> {
     let config = &context.config;
     let mut placer_config = core::Config::new();
-    placer_config.global.whitespace_fill = config.whitespace_fill;
-    placer_config.maximum_utilization = config.maximum_utilization;
-    placer_config.global.seed = config.seed;
+    placer_config.global.whitespace_fill = config.tuning.whitespace_fill;
+    placer_config.maximum_utilization = config.tuning.maximum_utilization;
+    placer_config.global.seed = config.tuning.seed;
     placer_config.anneal.deadline = config.deadline;
     placer_config.work_limit = config
         .work_seconds
         .map(|seconds| (seconds.max(0.0) * core::work_per_second()) as u64);
-    placer_config.overlap_far_side_pads = config.overlap_far_side_pads;
-    placer_config.orientation_search = config.orientation_search;
-    placer_config.bus_groups = config.bus_groups.as_ref().map(KiCadBusGroups::settings);
+    placer_config.overlap_far_side_pads = config.tuning.overlap_far_side_pads;
+    placer_config.orientation_search = config.tuning.orientation_search;
+    placer_config.bus_groups = config
+        .tuning
+        .bus_groups
+        .as_ref()
+        .map(KiCadBusGroups::settings);
     placer_config.kicad_last_level = true;
     placer_config.start = warm_start(lowered)?.map(std::sync::Arc::new);
     placer_config.skip_anneal = std::env::var_os("PCB_PLACER_SKIP_ANNEAL").is_some();

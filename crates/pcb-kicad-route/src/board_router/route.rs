@@ -128,7 +128,7 @@ pub fn route_kicad_board(
                 board_id,
                 &swapped_directory,
                 &spec,
-                &config.pin_swap,
+                &config.tuning.pin_swap,
             )?;
             eprintln!(
                 "pin swaps: ratsnest {:.0} mm with {} crossings -> {:.0} mm with {} crossings, {} pins changed",
@@ -147,7 +147,8 @@ pub fn route_kicad_board(
     // them into the pairs' copper (`finish_pairs`); the pairs' nets route at
     // the pairs' width.
     let paired_config;
-    let config = if config.diff_pairs_on() && config.engine.as_deref() != Some("topological") {
+    let config = if config.diff_pairs_on() && config.tuning.engine.as_deref() != Some("topological")
+    {
         paired_config = with_pairs(config);
         &paired_config
     } else {
@@ -163,7 +164,7 @@ pub fn route_kicad_board(
         config
     };
     // The topological engine makes one attempt, pour nets as tracks.
-    if config.engine.as_deref() == Some("topological") {
+    if config.tuning.engine.as_deref() == Some("topological") {
         let mut report =
             route_kicad_board_once(source_directory, board_id, output_directory, config, false)?;
         report.pin_swaps = pin_swaps;
@@ -797,44 +798,16 @@ pub fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
         limits_count_all: config.limits_count_all,
         ..core::Config::default()
     };
-    if let Some(via_cost) = config.via_cost_mm {
-        router_config.via_cost = via_cost;
-    }
-    if let Some(strict) = config.strict_via_budget {
-        router_config.strict_via_budget = strict;
-    }
+    // The tuning group's core fields, each to the core's field of its name.
+    config.tuning.apply(&mut router_config);
     router_config.run_work = config.run_work;
     if let Some(seconds) = config.cleanup_seconds {
         router_config.cleanup_seconds = router_config.cleanup_seconds.min(seconds);
     }
-    if let Some(against) = config.against_direction_cost {
-        router_config.against_direction = against;
-    }
     if let Some(iterations) = config.maximum_iterations {
         router_config.max_iterations = iterations;
     }
-    if let Some(pitches) = &config.grid_pitches_mm {
-        router_config.pitches = pitches.clone();
-    }
-    if let Some(weight) = config.heuristic_weight {
-        router_config.heuristic_weight = weight;
-    }
-    if let Some(cap) = config.present_cap {
-        router_config.present_cap = cap;
-    }
-    if let Some(factor) = config.present_factor {
-        router_config.present_factor = factor;
-    }
-    if let Some(growth) = config.present_growth {
-        router_config.present_growth = growth;
-    }
-    if let Some(drop) = config.stall_drop {
-        router_config.stall_drop = drop;
-    }
-    if let Some(stall) = config.stall_at_cap {
-        router_config.stall_at_cap = stall;
-    }
-    if let Some(seconds) = config.negotiation_seconds {
+    if let Some(seconds) = config.tuning.negotiation_seconds {
         // A budget given in seconds is turned into work (search
         // expansions), so that results do not depend on the machine's
         // load; the clock stays as a guard.
@@ -858,9 +831,6 @@ pub fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     // and skew rules"): the meanders lengthen a net, this shortens one.
     router_config.length_bounded = length_bounded_nets(config);
     core_layer_preferences(config, &mut router_config);
-    if let Some(exact) = config.exact_escape_stubs {
-        router_config.exact_escape_stubs = exact;
-    }
     if let Some(pin_lines) = config.pin_lines
         && core::pin_lines::lines_override().is_none()
     {
@@ -870,62 +840,14 @@ pub fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
             core::pin_lines::Lines::Off
         };
     }
-    if let Some(fixed) = config.fixed_plane_stubs {
-        router_config.fixed_plane_stubs = fixed;
-    }
     if let Some(minimum) = config.min_resolved_spokes {
         router_config.min_spokes = minimum;
-    }
-    if let Some(repair) = config.trouble_repair {
-        router_config.trouble_repair = repair;
-    }
-    if let Some(cost) = config.thermal_guard_cost {
-        router_config.thermal_guard_cost = cost;
-    }
-    if let Some(present) = config.via_reduction_present {
-        router_config.via_reduction_present = present;
     }
     if let Some(exclusive) = config.exclusive_planes {
         router_config.exclusive_planes = exclusive;
     }
-    if let Some(islands) = config.pour_islands {
-        router_config.pour_islands = islands;
-    }
-    if let Some(kicad_spokes) = config.kicad_spokes {
-        router_config.kicad_spokes = kicad_spokes;
-    }
-    if let Some(manual_spokes) = config.manual_spokes {
-        router_config.manual_spokes = manual_spokes;
-    }
-    if let Some(reach) = config.neck_reach_mm {
-        router_config.neck_reach = reach;
-    }
     if let Some(cost) = config.plane_cut_cost {
         router_config.plane_cut_cost = cost;
-    }
-    if let Some(weight) = config.pour_integrity {
-        router_config.pour_integrity = weight;
-    }
-    if let Some(cost) = config.cleanup_via_cost_mm {
-        router_config.cleanup_via_cost = cost;
-    }
-    if let Some(passes) = config.cleanup_passes {
-        router_config.cleanup_passes = passes;
-    }
-    if let Some(cost) = config.bend_cost_mm {
-        router_config.bend_cost = cost;
-    }
-    if let Some(cost) = config.pin_row_cost_mm {
-        router_config.pin_row_cost = cost;
-    }
-    if let Some(rounds) = config.via_reduction_rounds {
-        router_config.via_reduction_rounds = rounds;
-    }
-    if let Some(skeleton) = config.plane_skeleton {
-        router_config.plane_skeleton = skeleton;
-    }
-    if let Some(bias) = config.skeleton_bias {
-        router_config.skeleton_bias = bias;
     }
     router_config
 }

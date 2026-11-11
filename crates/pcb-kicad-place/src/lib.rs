@@ -57,8 +57,8 @@ pub mod sub_boards;
 pub use board_placer::{
     KiCadBoardPlacerConfig, KiCadBoardPlacerResult, KiCadClosedPad, KiCadExitMove, KiCadPadExits,
     KiCadPadExitsCensus, KiCadPadExitsReport, KiCadPanelCellClass, KiCadPanelCopiesReport,
-    KiCadPanelCopy, KiCadPlacedFootprint, pad_exits_kicad_board, pad_exits_override,
-    place_kicad_board,
+    KiCadPanelCopy, KiCadPlacedFootprint, KiCadPlacerTuning, pad_exits_kicad_board,
+    pad_exits_override, place_kicad_board,
 };
 pub use labels::KiCadLabelReport;
 pub use modules::describe_modules;

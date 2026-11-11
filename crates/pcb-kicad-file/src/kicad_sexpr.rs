@@ -225,6 +225,17 @@ pub fn parse(source: &str) -> Result<Expr, String> {
     Ok(expression)
 }
 
+/// The teardrop settings KiCad reads as a key and a value with its ")"
+/// even where the "(" is missing (`Parser::list`).
+const TEARDROP_VALUE_KEYS: [&str; 6] = [
+    "best_length_ratio",
+    "max_length",
+    "best_width_ratio",
+    "max_width",
+    "curve_points",
+    "filter_ratio",
+];
+
 /// An open list while parsing: its items so far and whether its "(" was
 /// missing (a teardrop setting's, `Parser::list`).
 struct Open {
@@ -274,37 +285,62 @@ impl Parser<'_> {
                 }
                 continue;
             }
-            let top = open.last().expect("a list is open");
-            // KiCad reads a teardrop setting's opening parenthesis as
-            // optional (PCB_IO_KICAD_SEXPR_PARSER's
-            // parseTEARDROP_PARAMETERS: a key after a missing "(" ends
-            // at its ")" as usual), and a pad written as
-            // "(curved_edges no)filter_ratio 0.9)" loads; read as a
-            // list, the stray ")" closed the pad and then the board
-            // (RoyalBlue54L-Feather: "trailing input at byte 14111").
-            let missing_opening = character != '('
-                && !top.without_opening
-                && matches!(top.items.first(), Some(Expr::Atom(head)) if head == "teardrops");
-            if character == '(' || missing_opening {
-                if open.len() >= MAX_NESTING {
-                    return Err(format!(
-                        "lists nested deeper than {MAX_NESTING} levels at line {} (byte {}): no KiCad file nests so deep",
-                        self.line(),
-                        self.offset
-                    ));
-                }
-                if character == '(' {
-                    self.bump();
-                }
-                open.push(Open {
-                    items: Vec::new(),
-                    without_opening: missing_opening,
-                });
+            if character == '(' {
+                self.open_list(&mut open, Vec::new(), false)?;
                 continue;
             }
             let atom = self.atom()?;
-            open.last_mut().expect("a list is open").items.push(atom);
+            let top = open.last_mut().expect("a list is open");
+            // KiCad reads a teardrop setting's opening parenthesis as
+            // optional (PCB_IO_KICAD_SEXPR_PARSER's
+            // parseTEARDROP_PARAMETERS): a key with a value after a
+            // missing "(" ends at its ")" as usual, and a pad written as
+            // "(curved_edges no)filter_ratio 0.9)" loads; read as a list,
+            // the stray ")" closed the pad and then the board
+            // (RoyalBlue54L-Feather: "trailing input at byte 14111"). A
+            // flag (enabled, allow_two_segments, prefer_zone_connections,
+            // curved_edges) without its "(" is a bare flag that closes
+            // nothing (parseMaybeAbsentBool), as KiCad 7.99 wrote them on
+            // vias: "(teardrops enabled allow_two_segments
+            // prefer_zone_connections (best_length_ratio 0.5) ...)"
+            // (murexrobotics anyesc, version 20230913).
+            let missing_opening = !top.without_opening
+                && matches!(top.items.first(), Some(Expr::Atom(head)) if head == "teardrops")
+                && matches!(
+                    &atom,
+                    Expr::Atom(key) if TEARDROP_VALUE_KEYS.contains(&key.as_str())
+                );
+            if missing_opening {
+                self.open_list(&mut open, vec![atom], true)?;
+                continue;
+            }
+            top.items.push(atom);
         }
+    }
+
+    /// Opens a list holding `items` on the stack `open`, its "(" already
+    /// read unless `without_opening`.
+    fn open_list(
+        &mut self,
+        open: &mut Vec<Open>,
+        items: Vec<Expr>,
+        without_opening: bool,
+    ) -> Result<(), String> {
+        if open.len() >= MAX_NESTING {
+            return Err(format!(
+                "lists nested deeper than {MAX_NESTING} levels at line {} (byte {}): no KiCad file nests so deep",
+                self.line(),
+                self.offset
+            ));
+        }
+        if !without_opening {
+            self.bump();
+        }
+        open.push(Open {
+            items,
+            without_opening,
+        });
+        Ok(())
     }
 
     fn atom(&mut self) -> Result<Expr, String> {
@@ -526,6 +562,37 @@ mod tests {
         assert!(encode(teardrops).contains("(filter_ratio 0.9)"));
         // Elsewhere a stray atom is still an atom.
         assert!(parse("(kicad_pcb (x 1) y)").is_ok());
+    }
+
+    #[test]
+    fn a_teardrop_flag_without_parentheses_is_a_bare_flag() {
+        // murexrobotics anyesc's vias (KiCad 7.99, version 20230913): KiCad
+        // reads a bare flag as set and opens no list for it; read as a key
+        // after a missing "(", "enabled" took the via's ")" and the board
+        // failed with "unterminated list".
+        let board = parse(
+            r#"(kicad_pcb (via (at 1 2) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu")
+              (teardrops enabled allow_two_segments prefer_zone_connections (best_length_ratio 0.5)
+                (max_length 1) (best_width_ratio 1) (max_width 2) (curve_points 0) (filter_ratio 0.9))
+              (uuid "v")) (gr_line (start 0 0) (end 1 0)))"#,
+        )
+        .unwrap();
+        let via = board.child("via").unwrap();
+        let teardrops = via.child("teardrops").unwrap();
+        let flags: Vec<&str> = teardrops
+            .children()
+            .iter()
+            .skip(1)
+            .filter_map(Expr::atom)
+            .collect();
+        assert_eq!(
+            flags,
+            ["enabled", "allow_two_segments", "prefer_zone_connections"]
+        );
+        assert_eq!(form_atom(teardrops, "filter_ratio", 1), Some("0.9"));
+        assert!(via.child("uuid").is_some());
+        assert!(board.child("gr_line").is_some());
+        assert_eq!(parse(&encode(&board)).unwrap(), board);
     }
 
     #[test]

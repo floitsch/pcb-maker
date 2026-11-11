@@ -158,7 +158,7 @@ machine (`wall_stretch`) instead of cutting rows (docs/router.md).
   or both warm. Quality comparisons are unaffected.
 - **Placer defaults need seed pairs:** a placer change reshuffles crowded
   boards at random, so it is judged on five seed pairs (`--placer
-  '{"seed": N}'`, N = 1, 101, 201, 301, 401) on the eleven dense boards of
+  '{"tuning": {"seed": N}}'`, N = 1, 101, 201, 301, 401) on the eleven dense boards of
   `dense-noise.json` by `placer_ab.py compare --off DIR... --on DIR...`:
   better at p <= 0.03; at 0.03 < p <= 0.25 four more pairs (501 to 801) and
   better at p <= 0.03 over the nine.
@@ -233,7 +233,7 @@ MIDAS-MK1.1 and WLED_Matrix are the slow ones kept: both had connections
 open in every round. 8 two-layer, 2 four-layer, 2 six-layer boards.
 
 **Budget.** `short.json`'s `budget_scale` (0.3333; `--budget-scale`
-overrides it) scales `total_seconds` 1500 to 500, `move_seconds` 600 to 200
+overrides it) scales `total_seconds` 1500 to 500, `tuning.move_seconds` 600 to 200
 and `polish_seconds` 60 to 20; the harness's timeout is the budget times
 the wall guard (2) times the wall-stretch allowance, plus 300 s, at least
 1800 s. The scale bites where the final ladder runs, which is where the
@@ -417,7 +417,7 @@ on one binary, the switch as an option) and on every rerun.
 
 ```sh
 benchmarks/agent-tasks/run.py build/X-dense-s1-on --tasks benchmarks/agent-tasks/tasks/v7/tasks.json \
-  --binary build/bin/pcb-maker-xNNNN --placer '{"seed": 1, "my_switch": true}' --reuse build/layout-reuse
+  --binary build/bin/pcb-maker-xNNNN --placer '{"tuning": {"seed": 1, "my_switch": true}}' --reuse build/layout-reuse
 ```
 
 ## Nightly

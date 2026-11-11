@@ -54,8 +54,10 @@ def prepare(task, tasks_path, work, binary):
 def run(task, tasks_path, output, binary, placer):
     work = output / task["name"]
     source = prepare(task, tasks_path, work, binary)
-    config = {"constraints": "constraints.json", "placement_seeds": 16,
-              **task.get("placer", {}), **task.get("layout", {}).get("placer", {}), **placer}
+    parts = [task.get("placer", {}), task.get("layout", {}).get("placer", {}), placer]
+    config = {"constraints": "constraints.json", **{key: value for part in parts for key, value in part.items()},
+              "tuning": {"placement_seeds": 16, **{key: value for part in parts
+                                                   for key, value in part.get("tuning", {}).items()}}}
     (work / "placer.json").write_text(json.dumps(config))
     env = dict(os.environ, PCB_PLACER_WORK_SECONDS="600", PCB_PLACER_TRACE=str(work / "trace.json"),
                PCB_PLACER_DESIGNER=str(Path(task["directory"]) / f"{task['board_id']}.kicad_pcb"))

@@ -50,7 +50,10 @@ def units(arguments):
             source = sweep / board / "source"
             board_id = next(source.glob("*.kicad_pcb")).stem
             layout = json.loads((sweep / board / "layout.json").read_text())
-            layout["placer"] = {**layout.get("placer", {}), **json.loads(settings)}
+            placer, extra = layout.get("placer", {}), json.loads(settings)
+            # The tuning group's keys merge one by one, as top-level keys do.
+            layout["placer"] = {**placer, **extra,
+                                "tuning": {**placer.get("tuning", {}), **extra.get("tuning", {})}}
             work = (Path(arguments.out) / name / board).resolve()
             router = sweep / board / "router.json"
             command = [str(ROOT / binary), "place-kicad-board", str(source), board_id,

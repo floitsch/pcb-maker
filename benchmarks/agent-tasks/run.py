@@ -1852,9 +1852,37 @@ def add_quality(row, task, arguments):
                       "ours": quality.measures(ours) if ours else None}
 
 
-# The layout's budgets (KiCadBoardLayoutConfig's defaults), scaled by
-# --budget-scale; the router's ladder budget in route mode.
-LAYOUT_BUDGETS = {"total_seconds": 1500.0, "move_seconds": 600.0, "polish_seconds": 60.0}
+# The layout's budgets (KiCadBoardLayoutConfig's defaults; the moves' in its
+# tuning group), scaled by --budget-scale; the router's ladder budget in
+# route mode.
+LAYOUT_BUDGETS = {"total_seconds": 1500.0, "tuning.move_seconds": 600.0, "polish_seconds": 60.0}
+
+
+def merge_settings(*parts):
+    """Settings objects merged left to right, a later key replacing an
+    earlier one; the keys of the `tuning` group each on its own, as if the
+    group's keys stood at the top level (a new dict: no part is changed)."""
+    merged = {}
+    for part in parts:
+        for key, value in part.items():
+            if key == "tuning" and isinstance(value, dict):
+                merged["tuning"] = {**merged.get("tuning", {}), **value}
+            else:
+                merged[key] = value
+    return merged
+
+
+def scale_layout_budgets(layout, scale):
+    """The layout's budgets (LAYOUT_BUDGETS, a dotted key inside its group)
+    times `scale`, each the layout's own where it gives one; the groups are
+    copied, not changed in place (they may be --layout's)."""
+    for key, default in LAYOUT_BUDGETS.items():
+        *groups, name = key.split(".")
+        target = layout
+        for group in groups:
+            target[group] = dict(target.get(group, {}))
+            target = target[group]
+        target[name] = round(target.get(name, default) * scale)
 ROUTE_BUDGET = ("ladder_budget_seconds", 1200.0)
 
 
@@ -1938,13 +1966,13 @@ def run_admitted(task, arguments, token):
     # constraints differ between two runs (another task list, or run.py's
     # rules) instead of comparing it.
     constraints_sha256 = constraints_digest(constraints)
-    layout = {"placer": {"constraints": "constraints.json", **task.get("placer", {}), **arguments.placer},
-              **task.get("layout", {}), **arguments.layout}
+    layout = merge_settings({"placer": merge_settings({"constraints": "constraints.json"}, task.get("placer", {}),
+                                                      arguments.placer)},
+                            task.get("layout", {}), arguments.layout)
     if arguments.budget_scale != 1:
         # The layout's budgets in work (docs/router.md, "Determinism and the
         # wall clock"); the defaults are KiCadBoardLayoutConfig's.
-        for key, default in LAYOUT_BUDGETS.items():
-            layout[key] = round(layout.get(key, default) * arguments.budget_scale)
+        scale_layout_budgets(layout, arguments.budget_scale)
     (work / "layout.json").write_text(json.dumps(layout))
     via_in_pad = {}
     router = with_designer_vias(task.get("router") or {}, via_in_pad, arguments, directory, task["board_id"])
@@ -2216,11 +2244,11 @@ def schematic_admitted(task, arguments, token):
             row["parts"][key] = facts[key][:12] + ([f"... {len(facts[key])} in all"] if len(facts[key]) > 12 else [])
     (project / "constraints.json").write_text(json.dumps(constraints, indent=1))
     row["constraints_sha256"] = constraints_digest(constraints)
-    layout = {"placer": {"constraints": "constraints.json", **task.get("placer", {}), **arguments.placer},
-              **task.get("layout", {}), **arguments.layout}
+    layout = merge_settings({"placer": merge_settings({"constraints": "constraints.json"}, task.get("placer", {}),
+                                                      arguments.placer)},
+                            task.get("layout", {}), arguments.layout)
     if arguments.budget_scale != 1:
-        for key, default in LAYOUT_BUDGETS.items():
-            layout[key] = round(layout.get(key, default) * arguments.budget_scale)
+        scale_layout_budgets(layout, arguments.budget_scale)
     (project / "layout.json").write_text(json.dumps(layout))
     router = task.get("router") or {}
     router_argument = "auto"
@@ -2814,7 +2842,8 @@ def main():
     parser.add_argument("--tier", choices=sorted(TIERS),
                         help="only the boards of a tier (quick: quick.json, many small boards side by side)")
     parser.add_argument("--placer", type=json.loads, default={},
-                        help="placer settings for every board, as JSON (e.g. '{\"halo_scale\": 0.75}')")
+                        help="placer settings for every board, as JSON (e.g. '{\"tuning\": {\"halo_scale\": 0.75}}'; "
+                             "the keys of its tuning group merge one by one with the task's)")
     parser.add_argument("--designer-via-in-pad", choices=["on", "off"], default="on",
                         help="on (default): the designer's vias in small SMD pads (score-kicad-board's "
                              "vias_in_pads_at on the designer's board) become the router config's via_in_pad "
@@ -2824,7 +2853,8 @@ def main():
                              "count as pre-existing; a panel's sub-boards from its places)")
     parser.add_argument("--layout", type=json.loads, default={},
                         help="layout settings for every board, as JSON, over the task's "
-                             "(e.g. '{\"congestion_score\": \"none\"}')")
+                             "(e.g. '{\"stop_after_first_route\": true, \"tuning\": {\"race_count\": \"unfinished\"}}'; "
+                             "the keys of its tuning group merge one by one with the task's)")
     parser.add_argument("--jobs", type=int, default=None,
                         help="boards at once (default: with --tier and no --threads the physical cores / "
                              "TIER_THREADS, else 1)")

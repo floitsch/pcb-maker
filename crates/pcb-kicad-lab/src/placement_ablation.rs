@@ -314,7 +314,7 @@ fn ablation_problem(
         }
     }
     let fact = escape::Escape {
-        pitch: config.track_pitch_mm,
+        pitch: config.tuning.track_pitch_mm,
         layers: lowered.routing_layers.max(1.0),
         counted: pins
             .iter()

@@ -171,7 +171,8 @@ pub fn keepout_warnings(
             .filter(|item| item.head() == Some("footprint"))
         {
             let (_, size, _) = crate::footprint_bodies::local_body(footprint)?;
-            part_area += (size[0] + resolved.spacing_mm) * (size[1] + resolved.spacing_mm);
+            part_area +=
+                (size[0] + resolved.tuning.spacing_mm) * (size[1] + resolved.tuning.spacing_mm);
         }
         apply_outline(&mut pcb, outline, part_area)?;
     }

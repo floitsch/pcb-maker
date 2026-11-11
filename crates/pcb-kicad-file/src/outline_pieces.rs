@@ -1758,9 +1758,10 @@ pub fn board_split_nets(pcb: &Expr, pieces: &Pieces) -> BTreeMap<String, usize> 
 }
 
 /// How far beyond the board an unconnected item's place may lie and still
-/// count on the nearest piece (mm): KiCad places a zone's item at a corner
-/// of its outline, which designers draw past the edge (up to 9 mm on the
-/// 4in1 panel).
+/// count on the nearest piece (mm). It was made for zones (KiCad places a
+/// zone's item at the first corner of its outline, which designers draw
+/// past the edge: up to 9 mm on the 4in1 panel); zones are now placed by
+/// their outline (`zone_end`), and the reach stays for the other items.
 const ZONE_REACH_MM: f64 = 25.0;
 
 /// A net's name as KiCad's reports write it: the board file's string
@@ -1868,6 +1869,19 @@ pub fn repeated_reference_nets(pcb: &Expr) -> BTreeSet<String> {
 /// per sub-board does not count (`excuse_across`).
 pub const ACROSS_KEY: &str = "unconnected_across_sub_boards";
 
+/// Where one end of an unconnected item lies (`excuse_across`).
+#[derive(Clone, Debug, PartialEq)]
+enum End {
+    /// On this piece.
+    On(usize),
+    /// On one of these pieces (two or more): a zone whose outline spans
+    /// them. Its item stands for one island of its fill, and KiCad does not
+    /// say which.
+    Among(BTreeSet<usize>),
+    /// Off every piece, on a tab, or a zone the board does not hold.
+    Unplaced,
+}
+
 /// KiCad's check judged per sub-board: in a DRC report of `pcb`, the
 /// unconnected items of a net the sub-boards split (`board_split_nets`)
 /// whose two items lie on two pieces are what joining the sub-boards
@@ -1876,12 +1890,46 @@ pub const ACROSS_KEY: &str = "unconnected_across_sub_boards";
 /// `unconnected_items` to `ACROSS_KEY`. Other items, and as many more as
 /// KiCad's ratsnest put across the pieces (an island within a piece left
 /// open: its edge may end on the other piece), stay. Returns how many
-/// moved.
+/// moved. Without KiCad's fill (`excuse_across_with`), an item with an end
+/// on a zone over several pieces stays.
 pub fn excuse_across(
     report: &mut serde_json::Value,
     pcb: &Expr,
     pieces: &Pieces,
     designed: Option<&BTreeSet<String>>,
+) -> usize {
+    excuse_across_with(report, pcb, pieces, designed, &mut || None)
+}
+
+/// `excuse_across`, with `fills` giving `pcb` as KiCad's refill saves it
+/// (asked at most once, and only for a zone over several pieces).
+///
+/// A pad, track or via end lies on the piece of its place. A zone end does
+/// not: KiCad gives a zone's first outline corner as its item's place, and
+/// the item stands for one island of the zone's fill, which one the report
+/// does not say. The rule for zones: a zone (found by the item's uuid)
+/// whose outline, drawn on the pieces' raster, covers one piece lies on
+/// that piece. A zone whose outline covers several pieces lies on one of
+/// them, unknown which, and the items of its net are excused all together
+/// or not at all: when the net is split (`board_split_nets`: pads on each
+/// piece, none on a tab, no track or via on a tab or across; and none off
+/// the board, `copper_off_board`), the report is below KiCad's cap and
+/// lists exactly as many items of the net as the allowance (pieces minus
+/// one), every one of them can lie across (two ends of the net, each
+/// placed, not both on one piece), and KiCad's fill
+/// of the net, its polygons united per copper layer, has no connected part
+/// on two pieces. Then each of the net's copper clusters lies on one
+/// piece, each piece with pads holds one at least, and KiCad lists one
+/// item fewer than clusters: pieces minus one items means one cluster per
+/// piece, so every item joins two pieces and none is an open connection
+/// within one. More items than that fail the net anyway, and are left to
+/// the rule for placed ends without asking for the fill.
+pub fn excuse_across_with(
+    report: &mut serde_json::Value,
+    pcb: &Expr,
+    pieces: &Pieces,
+    designed: Option<&BTreeSet<String>>,
+    fills: &mut dyn FnMut() -> Option<Expr>,
 ) -> usize {
     let Some(items) = report["unconnected_items"].as_array() else {
         return 0;
@@ -1901,45 +1949,109 @@ pub fn excuse_across(
         .iter()
         .map(|(net, count)| (net.as_str(), count - 1))
         .collect();
-    let mut kept = Vec::new();
-    let mut across = Vec::new();
-    for item in items {
-        let ends: Vec<(Option<String>, Option<usize>)> = item["items"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(|end| {
-                let net = end["description"].as_str().and_then(described_net);
-                let at = [end["pos"]["x"].as_f64(), end["pos"]["y"].as_f64()];
-                let piece = match at {
-                    [Some(x), Some(y)] => pieces.piece_near([x, y], ZONE_REACH_MM),
-                    _ => None,
-                };
-                (net, piece)
-            })
-            .collect();
-        let excused = match ends.as_slice() {
-            [(Some(a), Some(pa)), (Some(b), Some(pb))] if a == b && pa != pb => {
-                match left.get_mut(a.as_str()) {
-                    Some(count) if *count > 0 => {
-                        *count -= 1;
-                        true
-                    }
-                    _ => false,
-                }
-            }
-            _ => false,
-        };
-        if excused {
-            across.push(item.clone());
-        } else {
-            kept.push(item.clone());
+    let mut zones: BTreeMap<String, End> = BTreeMap::new();
+    let ends: Vec<Vec<(Option<String>, End)>> = items
+        .iter()
+        .map(|item| {
+            item["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|end| {
+                    let description = end["description"].as_str().unwrap_or("");
+                    let net = described_net(description);
+                    let at = [end["pos"]["x"].as_f64(), end["pos"]["y"].as_f64()];
+                    let place = if description.starts_with("Zone ") {
+                        match (&net, end["uuid"].as_str()) {
+                            (Some(net), Some(uuid)) if split.contains_key(net) => zones
+                                .entry(uuid.to_string())
+                                .or_insert_with(|| zone_end(pcb, pieces, uuid))
+                                .clone(),
+                            _ => End::Unplaced,
+                        }
+                    } else {
+                        match at {
+                            [Some(x), Some(y)] => pieces
+                                .piece_near([x, y], ZONE_REACH_MM)
+                                .map_or(End::Unplaced, End::On),
+                            _ => End::Unplaced,
+                        }
+                    };
+                    (net, place)
+                })
+                .collect()
+        })
+        .collect();
+    let mut excused = vec![false; items.len()];
+    for (index, ends) in ends.iter().enumerate() {
+        if let [(Some(a), End::On(pa)), (Some(b), End::On(pb))] = ends.as_slice()
+            && a == b
+            && pa != pb
+            && let Some(count) = left.get_mut(a.as_str())
+            && *count > 0
+        {
+            *count -= 1;
+            excused[index] = true;
         }
     }
     // KiCad lists at most `KICAD_REPORT_CAP` unconnected items: at the cap
     // the items left are a lower bound, and none left would be a pass
     // KiCad's list cannot show; then nothing moves.
     let capped = items.len() >= KICAD_REPORT_CAP;
+    if !capped {
+        // The nets with an item on a zone over several pieces (rule above).
+        let mut of_net: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        for (index, ends) in ends.iter().enumerate() {
+            let nets: BTreeSet<&str> = ends.iter().filter_map(|(net, _)| net.as_deref()).collect();
+            for net in nets {
+                if split.contains_key(net) {
+                    of_net.entry(net).or_default().push(index);
+                }
+            }
+        }
+        let mut filled: Option<Option<Expr>> = None;
+        for (net, indices) in of_net {
+            let among = |index: &usize| {
+                ends[*index]
+                    .iter()
+                    .any(|(_, place)| matches!(place, End::Among(_)))
+            };
+            let may_cross = |index: &usize| match ends[*index].as_slice() {
+                [(Some(a), pa), (Some(b), pb)] => {
+                    a.as_str() == net
+                        && b.as_str() == net
+                        && *pa != End::Unplaced
+                        && *pb != End::Unplaced
+                        && !matches!((pa, pb), (End::On(x), End::On(y)) if x == y)
+                }
+                _ => false,
+            };
+            if !indices.iter().any(among)
+                || indices.len() != split[net] - 1
+                || !indices.iter().all(may_cross)
+                || copper_off_board(pcb, pieces, net)
+            {
+                continue;
+            }
+            let Some(filled) = filled.get_or_insert_with(&mut *fills) else {
+                continue;
+            };
+            if pieces.fill_joins(filled, net) {
+                continue;
+            }
+            for index in indices {
+                excused[index] = true;
+            }
+        }
+    }
+    let (mut kept, mut across) = (Vec::new(), Vec::new());
+    for (item, excused) in items.iter().zip(&excused) {
+        if *excused {
+            across.push(item.clone());
+        } else {
+            kept.push(item.clone());
+        }
+    }
     if capped && kept.is_empty() {
         return 0;
     }
@@ -1970,11 +2082,291 @@ fn described_net(description: &str) -> Option<String> {
     (net != "<no net>" && !net.is_empty()).then(|| net.to_string())
 }
 
-/// `excuse_across` on a DRC report file of the board file `board`, in
-/// place: read only when the report has unconnected items and the
-/// board's outline has two pieces or more. The report keeps KiCad's other
-/// fields as they are.
-pub fn excuse_across_file(report: &Path, board: &Path) -> Result<usize, String> {
+/// Whether a track, arc or via of `net` has a point off every piece and
+/// off the tabs: copper beyond the outline, which could join two pieces
+/// where `board_split_nets` does not look (a track to a point off the
+/// board and on to the other piece).
+fn copper_off_board(pcb: &Expr, pieces: &Pieces, net: &str) -> bool {
+    let codes = crate::kicad_nets::net_codes(pcb);
+    let off = |point: [f64; 2]| pieces.piece_at(point).is_none() && !pieces.between(point);
+    pcb.children().iter().any(|item| {
+        let heads: &[&str] = match item.head() {
+            Some("segment" | "arc") => &["start", "mid", "end"],
+            Some("via") => &["at"],
+            _ => return false,
+        };
+        crate::kicad_nets::item_net(item, &codes).is_some_and(|name| unescaped(name) == net)
+            && heads
+                .iter()
+                .filter_map(|head| crate::kicad_sexpr::form_xy(item, head).ok())
+                .any(off)
+    })
+}
+
+/// The zones of a board: its own and its footprints'.
+fn board_zones(pcb: &Expr) -> Vec<&Expr> {
+    let mut zones = Vec::new();
+    for item in pcb.children() {
+        match item.head() {
+            Some("zone") => zones.push(item),
+            Some("footprint") => zones.extend(
+                item.children()
+                    .iter()
+                    .filter(|child| child.head() == Some("zone")),
+            ),
+            _ => {}
+        }
+    }
+    zones
+}
+
+/// Where a zone's unconnected item lies (`excuse_across_with`): on the
+/// pieces the outline of the zone of `uuid` covers.
+fn zone_end(pcb: &Expr, pieces: &Pieces, uuid: &str) -> End {
+    let Some(zone) = board_zones(pcb)
+        .into_iter()
+        .find(|zone| crate::kicad_nets::footprint_uuid(zone).as_deref() == Some(uuid))
+    else {
+        return End::Unplaced;
+    };
+    let grid = pieces.grid();
+    let mut mask = vec![false; grid.columns * grid.rows];
+    for polygon in zone
+        .children()
+        .iter()
+        .filter(|child| child.head() == Some("polygon"))
+    {
+        if let Ok(points) = outline::pts_points(polygon) {
+            grid.draw(&points, &mut mask);
+        }
+    }
+    let covered: BTreeSet<usize> = mask
+        .iter()
+        .enumerate()
+        .filter(|(_, set)| **set)
+        .filter_map(|(index, _)| pieces.grid_piece(&grid, index))
+        .collect();
+    match covered.len() {
+        0 => End::Unplaced,
+        1 => End::On(*covered.first().expect("one piece")),
+        _ => End::Among(covered),
+    }
+}
+
+/// A raster polygons are drawn on (`Pieces::grid`).
+struct Grid {
+    origin: [f64; 2],
+    cell: f64,
+    columns: usize,
+    rows: usize,
+}
+
+impl Grid {
+    fn index_of(&self, point: [f64; 2]) -> Option<usize> {
+        let column = ((point[0] - self.origin[0]) / self.cell).floor();
+        let row = ((point[1] - self.origin[1]) / self.cell).floor();
+        if column < 0.0 || row < 0.0 {
+            return None;
+        }
+        let (column, row) = (column as usize, row as usize);
+        (column < self.columns && row < self.rows).then_some(row * self.columns + column)
+    }
+
+    /// Marks the cells whose centre `polygon` holds (even-odd) and the
+    /// cells its sides pass, so that a strip thinner than a cell stays
+    /// joined.
+    fn draw(&self, polygon: &[[f64; 2]], mask: &mut [bool]) {
+        if polygon.len() < 3 || self.columns == 0 || self.rows == 0 {
+            return;
+        }
+        let b = polygon_box(polygon);
+        let first_row = ((b[1] - self.origin[1]) / self.cell - 0.5).ceil().max(0.0) as usize;
+        let last_row = ((b[3] - self.origin[1]) / self.cell - 0.5).floor();
+        let mut crossings: Vec<f64> = Vec::new();
+        if last_row >= 0.0 {
+            for row in first_row..=(last_row as usize).min(self.rows - 1) {
+                let y = self.origin[1] + (row as f64 + 0.5) * self.cell;
+                crossings.clear();
+                for index in 0..polygon.len() {
+                    let (a, b) = (polygon[index], polygon[(index + 1) % polygon.len()]);
+                    if (a[1] <= y) != (b[1] <= y) {
+                        crossings.push(a[0] + (y - a[1]) / (b[1] - a[1]) * (b[0] - a[0]));
+                    }
+                }
+                crossings.sort_by(f64::total_cmp);
+                for pair in crossings.chunks(2) {
+                    let [start, end] = pair else { break };
+                    let first =
+                        ((start - self.origin[0]) / self.cell - 0.5).ceil().max(0.0) as usize;
+                    let last = ((end - self.origin[0]) / self.cell - 0.5).floor();
+                    if last < 0.0 {
+                        continue;
+                    }
+                    for column in first..=(last as usize).min(self.columns - 1) {
+                        mask[row * self.columns + column] = true;
+                    }
+                }
+            }
+        }
+        for index in 0..polygon.len() {
+            let (a, b) = (polygon[index], polygon[(index + 1) % polygon.len()]);
+            let steps = ((b[0] - a[0]).hypot(b[1] - a[1]) / (self.cell / 4.0))
+                .ceil()
+                .max(1.0) as usize;
+            for step in 0..=steps {
+                let t = step as f64 / steps as f64;
+                if let Some(at) =
+                    self.index_of([a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])])
+                {
+                    mask[at] = true;
+                }
+            }
+        }
+    }
+}
+
+impl Pieces {
+    /// The raster zones are drawn on: the pieces' own, or for pieces that
+    /// are boxes (`of_boxes`) one over them.
+    fn grid(&self) -> Grid {
+        if !self.boxed() {
+            return Grid {
+                origin: self.origin,
+                cell: self.cell,
+                columns: self.columns,
+                rows: self.rows,
+            };
+        }
+        let all = self.boxes.iter().fold(
+            [
+                f64::INFINITY,
+                f64::INFINITY,
+                f64::NEG_INFINITY,
+                f64::NEG_INFINITY,
+            ],
+            |a, b| {
+                [
+                    a[0].min(b[0]),
+                    a[1].min(b[1]),
+                    a[2].max(b[2]),
+                    a[3].max(b[3]),
+                ]
+            },
+        );
+        let extent = (all[2] - all[0]).max(all[3] - all[1]);
+        if !extent.is_finite() || extent <= 0.0 {
+            return Grid {
+                origin: [0.0, 0.0],
+                cell: 1.0,
+                columns: 0,
+                rows: 0,
+            };
+        }
+        let cell = (extent / 1500.0).max(0.1);
+        Grid {
+            origin: [all[0] - cell, all[1] - cell],
+            cell,
+            columns: ((all[2] - all[0]) / cell).ceil() as usize + 3,
+            rows: ((all[3] - all[1]) / cell).ceil() as usize + 3,
+        }
+    }
+
+    /// The piece of a cell of `grid` (`Pieces::grid`); None on a tab or
+    /// off the board.
+    fn grid_piece(&self, grid: &Grid, index: usize) -> Option<usize> {
+        if !self.boxed() {
+            let label = self.labels[index];
+            return (label != NONE).then_some(label as usize);
+        }
+        let (row, column) = (index / grid.columns, index % grid.columns);
+        self.piece_at([
+            grid.origin[0] + (column as f64 + 0.5) * grid.cell,
+            grid.origin[1] + (row as f64 + 0.5) * grid.cell,
+        ])
+    }
+
+    /// Whether KiCad's fill of `net` in `filled` (the board as its refill
+    /// saves it) joins two pieces: its polygons, united per copper layer
+    /// (cells touching at a corner joined), have a connected part on two.
+    fn fill_joins(&self, filled: &Expr, net: &str) -> bool {
+        let codes = crate::kicad_nets::net_codes(filled);
+        let mut layers: BTreeMap<String, Vec<Vec<[f64; 2]>>> = BTreeMap::new();
+        for zone in board_zones(filled) {
+            let Some(name) = crate::kicad_nets::item_net(zone, &codes)
+                .or_else(|| form_atom(zone, "net_name", 1))
+            else {
+                continue;
+            };
+            if unescaped(name) != net {
+                continue;
+            }
+            for polygon in zone
+                .children()
+                .iter()
+                .filter(|child| child.head() == Some("filled_polygon"))
+            {
+                let layer = form_atom(polygon, "layer", 1)
+                    .or_else(|| form_atom(zone, "layer", 1))
+                    .unwrap_or_default();
+                if let Ok(points) = outline::pts_points(polygon) {
+                    layers.entry(layer.to_string()).or_default().push(points);
+                }
+            }
+        }
+        let grid = self.grid();
+        let count = grid.columns * grid.rows;
+        let mut stack = Vec::new();
+        for polygons in layers.values() {
+            let mut mask = vec![false; count];
+            for polygon in polygons {
+                grid.draw(polygon, &mut mask);
+            }
+            let mut seen = vec![false; count];
+            for start in 0..count {
+                if !mask[start] || seen[start] {
+                    continue;
+                }
+                let mut on: Option<usize> = None;
+                seen[start] = true;
+                stack.push(start);
+                while let Some(at) = stack.pop() {
+                    if let Some(piece) = self.grid_piece(&grid, at) {
+                        match on {
+                            Some(other) if other != piece => return true,
+                            _ => on = Some(piece),
+                        }
+                    }
+                    let (row, column) = (at / grid.columns, at % grid.columns);
+                    for dy in -1i64..=1 {
+                        for dx in -1i64..=1 {
+                            let (r, c) = (row as i64 + dy, column as i64 + dx);
+                            if r < 0 || c < 0 || r >= grid.rows as i64 || c >= grid.columns as i64 {
+                                continue;
+                            }
+                            let next = r as usize * grid.columns + c as usize;
+                            if mask[next] && !seen[next] {
+                                seen[next] = true;
+                                stack.push(next);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+}
+
+/// `excuse_across_with` on a DRC report file of the board file `board`,
+/// in place: read only when the report has unconnected items and the
+/// board's outline has two pieces or more; `fills` gives the board as
+/// KiCad's refill saves it. The report keeps KiCad's other fields as they
+/// are.
+pub fn excuse_across_file(
+    report: &Path,
+    board: &Path,
+    fills: &mut dyn FnMut() -> Option<Expr>,
+) -> Result<usize, String> {
     let text = fs::read_to_string(report)
         .map_err(|error| format!("failed to read {}: {error}", report.display()))?;
     let mut value: serde_json::Value =
@@ -1998,7 +2390,7 @@ pub fn excuse_across_file(report: &Path, board: &Path) -> Result<usize, String> 
             None => return Ok(0),
         },
     };
-    let moved = excuse_across(&mut value, &pcb, &pieces, designed.as_ref());
+    let moved = excuse_across_with(&mut value, &pcb, &pieces, designed.as_ref(), fills);
     if moved > 0 {
         let text = serde_json::to_string_pretty(&value).map_err(|error| error.to_string())?;
         crate::fs_util::write_atomically(report, text.as_bytes())
@@ -2092,5 +2484,165 @@ mod tests {
             ..pieces
         };
         assert_eq!(pieces.outline_frames(), vec![false, false]);
+    }
+
+    /// Two 20 x 20 pieces (y 0 to 20 and 25 to 45) joined by a 4 mm
+    /// bridge with a row of mouse bites, a GND pad on each, and `zones`.
+    fn split_panel(zones: &str) -> Expr {
+        let outline = "(gr_poly (pts (xy 0 0) (xy 20 0) (xy 20 20) (xy 12 20) (xy 12 25) (xy 20 25) (xy 20 45) (xy 0 45) (xy 0 25) (xy 8 25) (xy 8 20) (xy 0 20)) (layer \"Edge.Cuts\"))";
+        let holes: String = (0..5)
+            .map(|index| {
+                let x = 8.4 + 0.8 * index as f64;
+                format!(
+                    "(gr_circle (center {x} 22.5) (end {} 22.5) (layer \"Edge.Cuts\"))",
+                    x + 0.25
+                )
+            })
+            .collect();
+        let part = |name: &str, x: f64, y: f64| {
+            format!(
+                r#"(footprint "{name}" (at {x} {y}) (property "Reference" "{name}") (pad "1" thru_hole circle (at 0 0) (size 1.6 1.6) (drill 0.8) (layers "*.Cu") (net "GND")))"#
+            )
+        };
+        crate::kicad_sexpr::parse(&format!(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user)) {outline} {holes} {} {} {zones})"#,
+            part("J1", 3.0, 5.0),
+            part("J1", 3.0, 35.0),
+        ))
+        .unwrap()
+    }
+
+    /// A GND zone on `layer` with outline `outline` and fill `fills`.
+    fn zone(uuid: &str, layer: &str, outline: [f64; 4], fills: &[[f64; 4]]) -> String {
+        let rect = |b: [f64; 4]| {
+            format!(
+                "(pts (xy {} {}) (xy {} {}) (xy {} {}) (xy {} {}))",
+                b[0], b[1], b[2], b[1], b[2], b[3], b[0], b[3]
+            )
+        };
+        let fills: String = fills
+            .iter()
+            .map(|b| format!("(filled_polygon (layer \"{layer}\") {})", rect(*b)))
+            .collect();
+        format!(
+            "(zone (net \"GND\") (layer \"{layer}\") (uuid \"{uuid}\") (polygon {}) {fills})",
+            rect(outline)
+        )
+    }
+
+    /// KiCad's item between the zones `a` (F.Cu) and `b` (B.Cu), each at
+    /// its outline's first corner.
+    fn zone_item(a: (&str, [f64; 2]), b: (&str, [f64; 2])) -> serde_json::Value {
+        serde_json::json!({"type": "unconnected_items", "items": [
+            {"description": "Zone [GND] on F.Cu, priority 0", "pos": {"x": a.1[0], "y": a.1[1]}, "uuid": a.0},
+            {"description": "Zone [GND] on B.Cu, priority 1", "pos": {"x": b.1[0], "y": b.1[1]}, "uuid": b.0}]})
+    }
+
+    const PANEL: [f64; 4] = [-2.0, -2.0, 30.0, 47.0];
+    const TOP: [f64; 4] = [0.5, 0.5, 19.5, 19.5];
+    const BOTTOM: [f64; 4] = [0.5, 25.5, 19.5, 44.5];
+
+    #[test]
+    fn a_split_nets_zones_over_both_pieces_are_excused_by_their_fill() {
+        // woagboard: GND split by design, one F.Cu and one B.Cu zone over
+        // the whole panel, each filled on both pieces apart; KiCad's one
+        // item joins the zones, both placed at corners off the board's
+        // right (both nearest one piece by place alone).
+        let zones = [
+            zone("zf", "F.Cu", PANEL, &[TOP, BOTTOM]),
+            zone("zb", "B.Cu", PANEL, &[TOP, BOTTOM]),
+        ]
+        .join(" ");
+        let pcb = split_panel(&zones);
+        let pieces = Pieces::of_board(&pcb).unwrap().expect("pieces");
+        assert_eq!(board_split_nets(&pcb, &pieces).get("GND"), Some(&2));
+        let report = serde_json::json!({"unconnected_items": [
+            zone_item(("zf", [30.0, 47.0]), ("zb", [30.0, 25.0]))]});
+        // Without KiCad's fill: kept.
+        let mut without = report.clone();
+        assert_eq!(excuse_across(&mut without, &pcb, &pieces, None), 0);
+        // With it (the board's own fills here): excused, the fill asked once.
+        let mut with = report.clone();
+        let mut asked = 0;
+        let mut fills = || {
+            asked += 1;
+            Some(pcb.clone())
+        };
+        assert_eq!(
+            excuse_across_with(&mut with, &pcb, &pieces, None, &mut fills),
+            1
+        );
+        assert_eq!(asked, 1);
+        assert!(with["unconnected_items"].as_array().unwrap().is_empty());
+        assert_eq!(with[ACROSS_KEY].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_zone_item_within_one_piece_is_not_excused() {
+        let excused = |zones: &[String], report: serde_json::Value| {
+            let pcb = split_panel(&zones.join(" "));
+            let pieces = Pieces::of_board(&pcb).unwrap().expect("pieces");
+            let mut report = report;
+            excuse_across_with(&mut report, &pcb, &pieces, None, &mut || Some(pcb.clone()))
+        };
+        // Both zones on the top piece alone: an open connection there.
+        let top = [-2.0, -2.0, 22.0, 20.0];
+        assert_eq!(
+            excused(
+                &[
+                    zone("zf", "F.Cu", top, &[TOP]),
+                    zone("zb", "B.Cu", top, &[TOP]),
+                ],
+                serde_json::json!({"unconnected_items": [
+                    zone_item(("zf", [22.0, 20.0]), ("zb", [22.0, 20.0]))]}),
+            ),
+            0
+        );
+        // Zones over both pieces whose F.Cu fill runs over the bridge: the
+        // pieces' GND is one, and the item is an open connection within a
+        // piece (the B.Cu fill of one, say).
+        let over_bridge = [[0.5, 0.5, 19.5, 44.5]];
+        assert_eq!(
+            excused(
+                &[
+                    zone("zf", "F.Cu", PANEL, &over_bridge),
+                    zone("zb", "B.Cu", PANEL, &[TOP, BOTTOM]),
+                ],
+                serde_json::json!({"unconnected_items": [
+                    zone_item(("zf", [30.0, 47.0]), ("zb", [30.0, 25.0]))]}),
+            ),
+            0
+        );
+        // A GND track out past the board's edge and back onto the other
+        // piece joins the pieces where `board_split_nets` does not look.
+        assert_eq!(
+            excused(
+                &[
+                    zone("zf", "F.Cu", PANEL, &[TOP, BOTTOM]),
+                    zone("zb", "B.Cu", PANEL, &[TOP, BOTTOM]),
+                    r#"(segment (start 3 5) (end 25 22.5) (width 0.2) (layer "F.Cu") (net "GND"))"#
+                        .to_string(),
+                    r#"(segment (start 25 22.5) (end 3 35) (width 0.2) (layer "F.Cu") (net "GND"))"#
+                        .to_string(),
+                ],
+                serde_json::json!({"unconnected_items": [
+                    zone_item(("zf", [30.0, 47.0]), ("zb", [30.0, 25.0]))]}),
+            ),
+            0
+        );
+        // Two items of GND over two pieces: one more than the split
+        // explains, and which is within a piece the report does not say.
+        assert_eq!(
+            excused(
+                &[
+                    zone("zf", "F.Cu", PANEL, &[TOP, BOTTOM]),
+                    zone("zb", "B.Cu", PANEL, &[TOP, BOTTOM]),
+                ],
+                serde_json::json!({"unconnected_items": [
+                    zone_item(("zf", [30.0, 47.0]), ("zb", [30.0, 25.0])),
+                    zone_item(("zf", [30.0, 47.0]), ("zb", [30.0, 25.0]))]}),
+            ),
+            0
+        );
     }
 }

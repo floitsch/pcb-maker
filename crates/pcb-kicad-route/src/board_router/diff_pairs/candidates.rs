@@ -274,6 +274,16 @@ pub(super) fn run_path(
         {
             path.remove(0);
         }
+        // On a route of two pieces on one layer (launch a, a node, launch
+        // b) only end a's stub goes: the guard keeps two of the route's
+        // nodes. End b then keeps its launch, which lies on its lead's
+        // line beyond the half point below, so the run holds b's whole
+        // lead straight where it cuts from a's half point to the node.
+        // Both are tracks along the route, checked like any run
+        // (`check_candidates`); dropping b's launch too would cut that
+        // corner and change the copper, so the asymmetry stays (it met
+        // none of the 304 runs of twelve pair boards' designer routes,
+        // 2026-11-11).
         let count = path.len();
         if count >= 3
             && path[count - 1].1 == path[count - 2].1

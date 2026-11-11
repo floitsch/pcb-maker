@@ -72,8 +72,11 @@ fn f1_places_the_same_in_either_order_of_the_file() {
     let root =
         std::env::temp_dir().join(format!("pcb-maker-f1-order-{}-{nonce}", std::process::id()));
     let config = KiCadBoardPlacerConfig {
-        placement_seeds: 2,
         fixed: vec!["J1".into(), "H1".into()],
+        tuning: crate::KiCadPlacerTuning {
+            placement_seeds: 2,
+            ..Default::default()
+        },
         ..KiCadBoardPlacerConfig::default()
     };
     let mut placed = Vec::new();

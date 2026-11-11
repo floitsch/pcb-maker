@@ -196,7 +196,7 @@ impl Builder {
         label: &str,
         lowered: &LoweredPad,
     ) {
-        if ctx.config.mask_only_pad_openings == Some(false) {
+        if ctx.config.tuning.mask_only_pad_openings == Some(false) {
             return;
         }
         let [front, back] = mask_layers_open(&listed_layers(pad));

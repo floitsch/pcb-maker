@@ -157,7 +157,7 @@ impl<'a> Finish<'a> {
     /// The board as lowered (`plan`'s counts of nets, obstacles and
     /// classes, the pairs' nets, merged pads and terminal copper as they
     /// were), and the links' routes and status split off `result`.
-    fn new(
+    pub(super) fn new(
         plan: &'a PairPlan,
         board: &'a core::Board,
         result: &mut core::RoutingResult,
@@ -405,18 +405,23 @@ impl<'a> Finish<'a> {
     }
 
     /// The fallback: the pairs' nets with a connection a link left open,
-    /// routed with everything else kept (its work the report's); then what
+    /// routed with everything else kept (its work added to the report's,
+    /// beside the stub repair's); then what
     /// is left of the failed links' stubs that joins nothing, and any
     /// track or via of a fallen-back pair's nets that joins nothing at one
     /// end (a stub's piece the prune from its end did not reach: one that
     /// ended on the other end's copper, a pad exit left when the stub went;
     /// KiCad's track_dangling and via_dangling).
-    fn fall_back(&mut self, result: &mut core::RoutingResult, kept_nets: &BTreeSet<core::NetId>) {
+    pub(super) fn fall_back(
+        &mut self,
+        result: &mut core::RoutingResult,
+        kept_nets: &BTreeSet<core::NetId>,
+    ) {
         if self.open_pairs.is_empty() {
             return;
         }
         let plan = self.plan;
-        self.report.work_seconds = route_fallback(
+        self.report.work_seconds += route_fallback(
             &self.restored,
             result,
             &plan.pairs,

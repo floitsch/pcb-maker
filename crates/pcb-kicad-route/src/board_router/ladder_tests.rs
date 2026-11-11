@@ -116,7 +116,8 @@ fn statics_key_of(attempt: &KiCadBoardRouterConfig, connect: bool) -> u128 {
         rung => rung,
     };
     let pitch = attempt
-        .grid_pitches_mm
+        .tuning
+        .pitches
         .as_ref()
         .map_or(0, |pitches| (pitches[0] * 1.0e4).round() as u128);
     let index = ["connect", "skeleton", "stubs", "tracks"]
@@ -181,9 +182,9 @@ fn rung_of(attempt: &KiCadBoardRouterConfig, connect: bool) -> &'static str {
         "tracks"
     } else if attempt.exclusive_planes == Some(true) {
         "exclusive"
-    } else if attempt.fixed_plane_stubs == Some(true) {
+    } else if attempt.tuning.fixed_plane_stubs == Some(true) {
         "stubs"
-    } else if attempt.plane_skeleton == Some(true) {
+    } else if attempt.tuning.plane_skeleton == Some(true) {
         "skeleton"
     } else {
         "connect"
@@ -400,12 +401,12 @@ impl LadderRunner for Fake {
     ) -> Result<KiCadBoardRouterResult, String> {
         let routed = Routed {
             rung: rung_of(attempt, connect),
-            pitch: attempt.grid_pitches_mm.as_ref().map(|pitches| pitches[0]),
+            pitch: attempt.tuning.pitches.as_ref().map(|pitches| pitches[0]),
             seeds: attempt.seeds.unwrap_or(1),
-            first_seed: attempt.first_seed.unwrap_or(0),
+            first_seed: attempt.tuning.first_seed.unwrap_or(0),
             narrow: attempt.use_narrow_signals == Some(true),
             deadline_work: attempt.router_deadline_work,
-            negotiation: attempt.negotiation_seconds,
+            negotiation: attempt.tuning.negotiation_seconds,
             lines: attempt.pin_lines == Some(true),
         };
         self.calls.lock().unwrap().push(Call::Route(routed.clone()));
@@ -861,7 +862,7 @@ fn route_mode_unprobed_board_runs_the_best_rung_first() {
 fn route_mode_rungs_seeds_and_the_narrow_step_stay_within_the_bound() {
     // The order before the leader first (`leader_ladder`).
     let mut config = with_narrow_step(route_mode(100.0));
-    config.leader_first = Some(false);
+    config.tuning.leader_first = Some(false);
     let out = output("bound");
     let fake = Fake::new(|routed| {
         Some(if routed.narrow {
@@ -1237,7 +1238,7 @@ fn every_attempt_failing_leaves_no_board() {
 fn a_panic_in_the_seeds_keeps_the_rungs_board() {
     // The last rung's seed retry: the order before the leader first.
     let mut config = route_mode(100.0);
-    config.leader_first = Some(false);
+    config.tuning.leader_first = Some(false);
     let out = output("seeds");
     let fake = Fake::new(|routed| (routed.seeds == 1).then_some(Outcome { open: 4, work: 5.0 }));
     let mut ladder = ladder(&config, &out, 2);
@@ -1310,8 +1311,8 @@ fn a_layouts_narrow_attempt_alone_ends_within_its_work() {
     let mut config = with_narrow_step(route_mode(808.0));
     config.use_narrow_signals = Some(true);
     config.pours = KiCadPourMode::Connect;
-    config.refine_pitches_mm = Some(Vec::new());
-    config.negotiation_seconds = Some(501.0);
+    config.tuning.refine_pitches_mm = Some(Vec::new());
+    config.tuning.negotiation_seconds = Some(501.0);
     config.deadline_work = Some(742.0);
     assert!(!narrow_step_applies(&config));
     for keep in [false, true] {

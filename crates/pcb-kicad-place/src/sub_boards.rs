@@ -2211,10 +2211,8 @@ mod tests {
             .board;
         assert_eq!(board.nets.iter().filter(|net| net.name == "SIG").count(), 1);
         // Switched off: one net each.
-        let off = crate::board_router::KiCadBoardRouterConfig {
-            sub_board_nets: Some(false),
-            ..config.clone()
-        };
+        let mut off = config.clone();
+        off.tuning.sub_board_nets = Some(false);
         let board = crate::board_router::lower(&pcb, &off, true).unwrap().board;
         assert_eq!(board.nets.iter().filter(|net| net.name == "GND").count(), 1);
     }

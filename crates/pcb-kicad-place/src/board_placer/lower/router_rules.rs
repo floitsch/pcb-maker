@@ -508,7 +508,7 @@ pub(super) fn apply_router_rules(
     let mut array_rooms = Vec::new();
     let mut length_rules = Vec::new();
     if let Some(rules) = &config.router_rules {
-        if config.via_in_pad_far_side {
+        if config.tuning.via_in_pad_far_side {
             far_side_of_vias_in_pads(pcb, rules, config, pad_offsets, problem);
             far_side_of_fanouts(pcb, rules, config, pad_offsets, problem);
         }

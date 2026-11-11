@@ -369,9 +369,11 @@ fn run_kicad_report_untimed(arguments: &[&str], output: &Path, input: &Path) -> 
     )?;
     // KiCad's check judged per sub-board (a panel of different boards
     // sharing net names): the items across two sub-boards are moved out
-    // of the counted list (`outline_pieces::excuse_across`).
+    // of the counted list (`outline_pieces::excuse_across_with`); a zone
+    // over several pieces asks for KiCad's fill.
     if arguments.get(..2) == Some(&["pcb", "drc"]) {
-        let moved = crate::outline_pieces::excuse_across_file(output, input)?;
+        let moved =
+            crate::outline_pieces::excuse_across_file(output, input, &mut || kicad_filled(input))?;
         if moved > 0 {
             eprintln!(
                 "kicad check: {moved} unconnected items join two sub-boards of a panel (nets of the same name no copper joins): not counted ({}){}",
@@ -530,6 +532,45 @@ fn run_kicad_save_board_untimed(board: &Path, report: &Path) -> Result<(), Strin
         return Err(format!("kicad-cli failed with {status}: {transcript}"));
     }
     Ok(())
+}
+
+/// `board` with its zones as KiCad's refill leaves them, for the excuse of
+/// items across sub-boards (`outline_pieces::excuse_across_with`): a
+/// scratch copy with its project and rules, refilled and saved by
+/// kicad-cli (`run_kicad_save_board`); None, said on stderr, when that
+/// fails.
+fn kicad_filled(board: &Path) -> Option<pcb_kicad_file::kicad_sexpr::Expr> {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let scratch = std::env::temp_dir().join(format!(
+        "pcb-maker-zone-fill-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let filled = (|| {
+        let stem = board
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .ok_or_else(|| format!("no board name in {}", board.display()))?;
+        fs::create_dir_all(&scratch).map_err(|error| error.to_string())?;
+        for extension in ["kicad_pcb", "kicad_pro", "kicad_dru"] {
+            let file = board.with_extension(extension);
+            if file.exists() {
+                fs::copy(&file, scratch.join(format!("{stem}.{extension}")))
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+        let saved = scratch.join(format!("{stem}.kicad_pcb"));
+        run_kicad_save_board(&saved, &scratch.join("drc.json"))?;
+        let text = fs::read_to_string(&saved)
+            .map_err(|error| format!("failed to read {}: {error}", saved.display()))?;
+        pcb_kicad_file::canonical_order::parse_board(&text)
+    })();
+    let _ = fs::remove_dir_all(&scratch);
+    filled
+        .map_err(|error| {
+            eprintln!("kicad check: no zone fill for the items across sub-boards: {error}")
+        })
+        .ok()
 }
 
 /// How a kicad-cli run that outlived `report_timeout` is reported (the

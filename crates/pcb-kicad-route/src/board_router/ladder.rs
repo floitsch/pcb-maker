@@ -350,7 +350,7 @@ pub(crate) fn ladder_rungs(
     // A skeleton helps a two-layer board whose pours get shredded by the
     // signals; with inner planes the pours stay whole and the fixed tree
     // only blocks vias.
-    let skeleton = config.plane_skeleton.unwrap_or(false);
+    let skeleton = config.tuning.plane_skeleton.unwrap_or(false);
     // (connect pours, plane skeleton, exclusive planes). On four or more
     // layers, inner planes are first kept free of signals (they stay whole:
     // ColdFire 13 open against 43), then opened to them (video needs the
@@ -362,7 +362,7 @@ pub(crate) fn ladder_rungs(
     // the plain pour connection left pour-net pads open, like the
     // skeleton rung: it saves those pads on some boards (Framework
     // mainboard half, GND 7 -> 0) and takes room on others (ColdFire).
-    let stubs = config.fixed_plane_stubs;
+    let stubs = config.tuning.fixed_plane_stubs;
     match (has_pours, config.pours) {
         (false, _) | (true, KiCadPourMode::Tracks) => vec![(false, false, false, false)],
         (true, KiCadPourMode::Connect) => vec![(
@@ -400,6 +400,7 @@ pub(crate) fn ladder_rungs(
 /// of `refine_pitches_mm` (0.075 and 0.05 mm) below the regular one's.
 pub(crate) fn ladder_pitches(config: &KiCadBoardRouterConfig) -> Vec<Option<Vec<f64>>> {
     let refine = config
+        .tuning
         .refine_pitches_mm
         .clone()
         .unwrap_or_else(|| vec![0.075, 0.05]);
@@ -728,7 +729,7 @@ impl<'a> Ladder<'a> {
             // whole on their own rungs.
             ranks_pours: has_pours
                 && copper_layers == 2
-                && config.pour_integrity.unwrap_or(0.0) > 0.0,
+                && config.tuning.pour_integrity.unwrap_or(0.0) > 0.0,
             output_directory,
             scratch: output_directory.with_extension("attempt"),
             modes: ladder_rungs(config, has_pours, copper_layers == 2),
@@ -797,7 +798,7 @@ impl<'a> Ladder<'a> {
             reserve_share: std::env::var("PCB_NARROW_RESERVE")
                 .ok()
                 .and_then(|value| value.parse::<f64>().ok())
-                .or(config.narrow_reserve_share)
+                .or(config.tuning.narrow_reserve_share)
                 .unwrap_or(0.75),
             // The layout's attempt after this one needs its floor
             // (`NARROW_RESERVE_FLOOR`, the continuation's 240 s) whatever
@@ -849,7 +850,7 @@ impl<'a> Ladder<'a> {
             selected: None,
         };
         ladder.leader_first = leader_first_applies(
-            config.leader_first,
+            config.tuning.leader_first,
             work_bound.is_some(),
             ladder.modes.len(),
         );
@@ -1451,11 +1452,11 @@ impl<'a> Ladder<'a> {
     fn rung_config(&self, mode: usize) -> KiCadBoardRouterConfig {
         let (_, skeleton, exclusive, plane_stubs) = self.modes[mode];
         let mut attempt = self.config.clone();
-        attempt.plane_skeleton = Some(skeleton);
+        attempt.tuning.plane_skeleton = Some(skeleton);
         attempt.exclusive_planes = Some(exclusive);
-        attempt.fixed_plane_stubs = Some(plane_stubs);
-        if exclusive && attempt.exclusive_layers.is_none() {
-            attempt.exclusive_layers = Some(if self.copper_layers >= 6 { 2 } else { 1 });
+        attempt.tuning.fixed_plane_stubs = Some(plane_stubs);
+        if exclusive && attempt.tuning.exclusive_layers.is_none() {
+            attempt.tuning.exclusive_layers = Some(if self.copper_layers >= 6 { 2 } else { 1 });
         }
         if self.pin_lines_on {
             attempt.pin_lines = Some(true);
@@ -1705,9 +1706,9 @@ impl<'a> Ladder<'a> {
     #[allow(clippy::type_complexity)]
     pub(crate) fn probes<R: LadderRunner>(&mut self, runner: &R) -> Result<(), String> {
         let config = self.config;
-        if !(config.probe_ladder.unwrap_or(true)
+        if !(config.tuning.probe_ladder.unwrap_or(true)
             && self.modes.len() >= 3
-            && config.negotiation_seconds.is_none())
+            && config.tuning.negotiation_seconds.is_none())
         {
             return Ok(());
         }
@@ -2248,7 +2249,7 @@ impl<'a> Ladder<'a> {
                     measures[mode].unwrap_or(0)
                 ));
                 self.skipped.push(format!(
-                    "the rung {} did not run{}: {what} {} unfinished, more than {LEADER_GATE_FACTOR} times the leader's {} ({}; leader_first)",
+                    "the rung {} did not run{}: {what} {} unfinished, more than {LEADER_GATE_FACTOR} times the leader's {} ({}; tuning.leader_first)",
                     self.rung_name(mode),
                     if probed { "" } else { " on the finer pitches" },
                     measures[mode].unwrap_or(0),
@@ -2436,7 +2437,7 @@ impl<'a> Ladder<'a> {
     ) -> KiCadBoardRouterConfig {
         let mut attempt = self.rung_config(mode);
         if let Some(seconds) = plan.negotiation {
-            attempt.negotiation_seconds = Some(seconds);
+            attempt.tuning.negotiation_seconds = Some(seconds);
         }
         attempt.run_work = Some((plan.total, plan.left));
         // Every rung of the pitch stops where the run's work ends as
@@ -2456,7 +2457,7 @@ impl<'a> Ladder<'a> {
             .or(plan.route_deadline);
         attempt.limits_count_all = plan.counts_all;
         if let Some(pitch) = pitch {
-            attempt.grid_pitches_mm = Some(pitch.clone());
+            attempt.tuning.pitches = Some(pitch.clone());
         }
         attempt
     }
@@ -2508,7 +2509,7 @@ impl<'a> Ladder<'a> {
         // judged in rung order as one after another, a rung the order
         // would not have reached counting for nothing.
         let sharing = sharing.max(1) as f64;
-        let negotiation = config.negotiation_seconds.is_none().then(|| {
+        let negotiation = config.tuning.negotiation_seconds.is_none().then(|| {
             if let Some(left) = self.rung_left() {
                 self.router_work(bounded_negotiation(left / sharing / 3.0, left))
             } else {
@@ -2585,8 +2586,8 @@ impl<'a> Ladder<'a> {
             // The skeleton and the plane stubs only help when the plain
             // pour connection left pads of a pour net open; elsewhere they
             // just take room.
-            if ((skeleton && !config.plane_skeleton.unwrap_or(false))
-                || (plane_stubs && !config.fixed_plane_stubs.unwrap_or(false)))
+            if ((skeleton && !config.tuning.plane_skeleton.unwrap_or(false))
+                || (plane_stubs && !config.tuning.fixed_plane_stubs.unwrap_or(false)))
                 && self.best.as_ref().is_some_and(|(_, result)| {
                     result.pours == "connect"
                         && !result.nets.iter().any(|net| {
@@ -2618,7 +2619,7 @@ impl<'a> Ladder<'a> {
                 self.note_shares(
                     &format!("the rung {}", self.rung_name(mode)),
                     attempt.router_deadline_work,
-                    attempt.negotiation_seconds,
+                    attempt.tuning.negotiation_seconds,
                 );
                 // The first rung of a pitch without a board yet runs alone
                 // (it often completes the board); after it, the rest run
@@ -2669,7 +2670,7 @@ impl<'a> Ladder<'a> {
             self.note_first_iteration(&result);
             // Open connections often depend on the order: route the same
             // attempt a few perturbed ways and keep the better board.
-            let retry = config.retry_seeds.unwrap_or(4);
+            let retry = config.tuning.retry_seeds.unwrap_or(4);
             // Four seeds in parallel cost about twice the attempt; on a
             // board whose attempt takes minutes that time is better spent
             // on the next rung (MIDAS-MK2: two retries, 740 s, both worse).
@@ -2684,7 +2685,7 @@ impl<'a> Ladder<'a> {
                 self.keep_reserves(
                     opens,
                     attempt_seconds,
-                    attempt.negotiation_seconds.unwrap_or(900.0),
+                    attempt.tuning.negotiation_seconds.unwrap_or(900.0),
                 );
             }
             let mut seeds_tried = false;
@@ -2692,7 +2693,7 @@ impl<'a> Ladder<'a> {
                 && opens.0 > 0
                 && retry > 0
                 && attempt.seeds.unwrap_or(1) <= 1
-                && attempt.first_seed.unwrap_or(0) == 0
+                && attempt.tuning.first_seed.unwrap_or(0) == 0
                 && attempt_seconds <= budget / 2.0
                 && mode + 1 == modes.len()
                 && !self.past_deadline()
@@ -2752,7 +2753,7 @@ impl<'a> Ladder<'a> {
             self.keep_reserves(
                 opens,
                 attempt_seconds,
-                attempt.negotiation_seconds.unwrap_or(900.0),
+                attempt.tuning.negotiation_seconds.unwrap_or(900.0),
             );
             let seconds = attempt_seconds;
             let used = (attempt_seconds, result.grid_pitch_mm);
@@ -2948,7 +2949,7 @@ impl<'a> Ladder<'a> {
         let mut seeded = attempt.clone();
         seeded.seeds = Some(retry);
         seeded.seeds_side_by_side = Some(self.seeds_that_fit(runner, retry, result.grid_pitch_mm));
-        seeded.first_seed = Some(1);
+        seeded.tuning.first_seed = Some(1);
         // Their work counts `retry` times: each stops at its share
         // of what is left beyond the reserve (in a layout's ladder also
         // with no reserve: `seed_rounds`).
@@ -3114,7 +3115,7 @@ impl<'a> Ladder<'a> {
             if let Some(share) = share {
                 affordable = affordable.min((share / cost).floor().max(0.0) as usize);
             }
-            let retry = config.retry_seeds.unwrap_or(4).min(affordable);
+            let retry = config.tuning.retry_seeds.unwrap_or(4).min(affordable);
             if opens.0 == 0
                 || self.best_seeded
                 || retry == 0
@@ -3139,7 +3140,7 @@ impl<'a> Ladder<'a> {
             let mut seeded = attempt;
             seeded.seeds = Some(retry);
             seeded.seeds_side_by_side = Some(side_by_side);
-            seeded.first_seed = Some(first);
+            seeded.tuning.first_seed = Some(first);
             // In a layout's ladder each seed stops at its share of the
             // work left beyond the reserve, also when nothing is kept:
             // without a deadline a seed round of the narrow-signal attempt
@@ -3258,9 +3259,9 @@ impl<'a> Ladder<'a> {
     /// A step's budget and work deadline.
     fn step_budget(&self, kept: &StepWork, step: &mut KiCadBoardRouterConfig) {
         if kept.kept > 0.0 {
-            step.negotiation_seconds = Some(narrow_step_negotiation_floored(
+            step.tuning.negotiation_seconds = Some(narrow_step_negotiation_floored(
                 self.routing_left(),
-                step.negotiation_seconds,
+                step.tuning.negotiation_seconds,
                 self.first_negotiation,
                 kept.kept_routing,
             ));
@@ -3271,8 +3272,9 @@ impl<'a> Ladder<'a> {
         } else if let Some(left) = self.bound_left() {
             // Route mode: within what is left of the ladder's bound, its
             // negotiation at most half of that.
-            step.negotiation_seconds = Some(
-                step.negotiation_seconds
+            step.tuning.negotiation_seconds = Some(
+                step.tuning
+                    .negotiation_seconds
                     .unwrap_or(900.0)
                     .min(self.router_work(0.5 * left)),
             );
@@ -3377,7 +3379,7 @@ impl<'a> Ladder<'a> {
             self.note_shares(
                 "the narrow-signal step",
                 narrowed.router_deadline_work,
-                narrowed.negotiation_seconds,
+                narrowed.tuning.negotiation_seconds,
             );
             // A project that takes clearance findings as warnings gets its
             // minimum clearance in the same attempt (the A13 module's

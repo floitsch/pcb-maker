@@ -56,7 +56,9 @@ pub struct KiCadLabelReport {
     pub labels: usize,
     pub moved: usize,
     /// Labels no clean spot was found for (kept at the spot with the
-    /// fewest findings, or hidden).
+    /// fewest findings, or hidden), and without `keep_board_marks` the
+    /// board's silkscreen artwork and texts that found no free spot (left
+    /// where they were).
     pub stuck: Vec<String>,
     /// The board's own texts and silkscreen graphics (`board_marks`) that
     /// parts' silkscreen, pads or labels lie on after placement, each with
@@ -682,7 +684,8 @@ pub fn place_labels(
     let fields = crate::silk_fields::place_fields(pcb, options)?;
     report.labels = fields.report.fields;
     report.moved += fields.report.moved;
-    report.stuck = fields.blocked_texts.clone();
+    // Beside the artwork and texts that found no spot above.
+    report.stuck.extend(fields.blocked_texts.iter().cloned());
     report.overlaps = mark_overlaps(
         &marks,
         &obstacles,
@@ -1252,6 +1255,25 @@ mod tests {
         let report = place_labels(&mut pcb, false, &BTreeSet::new(), &[], OPTIONS).unwrap();
         assert_ne!(text_at(&pcb, "VDD"), [20.0, 10.0, 0.0]);
         assert!(report.overlaps.is_empty());
+    }
+
+    #[test]
+    fn a_board_text_without_a_free_spot_is_reported_with_the_fields() {
+        // Moved off the part (keep_board_marks off) on a board too small
+        // for it elsewhere: VDD has no spot, and the report says so beside
+        // the fields that found none (it kept the fields' alone).
+        let board = BOARD.replace(
+            r#"(gr_rect (start 0 0) (end 40 20) (layer "Edge.Cuts"))"#,
+            r#"(gr_rect (start 18.4 9.4) (end 21.6 11.2) (layer "Edge.Cuts"))"#,
+        );
+        let mut pcb = parse(&board).unwrap();
+        let report = place_labels(&mut pcb, false, &BTreeSet::new(), &[], OPTIONS).unwrap();
+        assert_eq!(text_at(&pcb, "VDD"), [20.0, 10.0, 0.0]);
+        assert!(
+            report.stuck.iter().any(|stuck| stuck.contains("VDD")),
+            "{:?}",
+            report.stuck
+        );
     }
 
     #[test]

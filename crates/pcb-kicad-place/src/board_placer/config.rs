@@ -16,58 +16,20 @@ pub fn net_weight(pins: usize) -> f64 {
     (3.0 / (pins as f64 - 1.0).max(1.0)).min(1.0)
 }
 
+/// The placer settings: the keys an agent sets at the top level, the tuning
+/// of the machinery in `tuning` (docs/architecture.md, "Settings"). A
+/// top-level key that moved into `tuning` is refused with where it lives
+/// now (`settings_with_moved_keys!`).
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields, default)]
+#[serde(remote = "Self", deny_unknown_fields, default)]
 pub struct KiCadBoardPlacerConfig {
-    /// Minimum gap between two courtyards on colliding sides.
-    pub spacing_mm: f64,
-    /// Footprint origins are snapped to multiples of this.
-    pub grid_mm: f64,
-    /// Movable parts keep the angle the board gives them; otherwise each
-    /// may take any quarter turn of it (and square angles too when it
-    /// stands at an odd one).
-    pub keep_rotation: bool,
     /// References that must keep their pose, in addition to locked
     /// footprints, footprints without nets, and footprints on the board edge.
     pub fixed: Vec<String>,
     /// Glob patterns (`*` and `?`) of references that stay fixed.
     pub fixed_patterns: Vec<String>,
-    /// Through-hole parts with at least four pins (connectors, headers)
-    /// whose body comes within this distance of the outline stay where the
-    /// designer put them: at the edge, where they are reachable.
-    #[serde(default = "default_edge_keep_mm")]
-    pub edge_keep_mm: f64,
     /// References that may move even though a default rule would fix them.
     pub free: Vec<String>,
-    /// Share of the whitespace taken by filler charge: 1 packs the parts as
-    /// tightly as halos allow, 0 spreads them over the whole board. 0 by
-    /// default: the spare room then lies between the parts, where routing
-    /// needs it (routed in route mode, Sisu's placement left 11 open in
-    /// KiCad at 0 and 20 at 0.6; OpenESC mini 62-70 against 80-86 over two
-    /// seeds; wirelength within 3 %).
-    pub whitespace_fill: f64,
-    /// Every footprint keeps a halo of `pins / pins_per_halo_track` tracks
-    /// (at `track_pitch_mm`, capped at `maximum_halo_mm`) free around its
-    /// courtyard so its pins can escape.
-    pub track_pitch_mm: f64,
-    /// Pins per track of halo (see `track_pitch_mm`); 0 gives no part a
-    /// pin-count halo.
-    pub pins_per_halo_track: f64,
-    /// Factor on the routing halos the pin counts ask for (not on
-    /// `halo_overrides_mm`): less room for escapes, shorter wires.
-    pub halo_scale: f64,
-    /// The largest pin-count halo, in mm, before `halo_scale`.
-    pub maximum_halo_mm: f64,
-    /// Per-reference halos replacing the pin-count rule (routing feedback).
-    pub halo_overrides_mm: BTreeMap<String, f64>,
-    /// Share of the free board that bodies, halos and spacing may claim.
-    pub maximum_utilization: f64,
-    /// Distance movable courtyards keep from the board edge (at least the
-    /// copper-to-edge clearance, since pads may reach the courtyard).
-    pub edge_margin_mm: f64,
-    /// The global placement's seed for the first of the
-    /// `placement_seeds`; seed k of the race uses this plus k.
-    pub seed: u64,
     /// Wall-clock time by which placement returns its best result (set by
     /// the layout from its budget; placement of a 404-part panel ran past
     /// 25 minutes).
@@ -78,11 +40,6 @@ pub struct KiCadBoardPlacerConfig {
     /// a busy or a slower machine places the same way.
     #[serde(skip)]
     pub work_seconds: Option<f64>,
-    /// Where the project lets courtyards overlap, a part may reach over
-    /// other parts' pads on its side at the last placement levels, keeping
-    /// only copper apart (as katia's designer put connectors partly over
-    /// hot-swap socket pads). Off by default: such pads may carry a body.
-    pub overlap_far_side_pads: bool,
     /// Placement constraints: a `constraints.json` path (relative to the
     /// source directory) or the constraints inline.
     pub constraints: Option<KiCadConstraintsSource>,
@@ -155,11 +112,6 @@ pub struct KiCadBoardPlacerConfig {
     /// the tabs): docs/placer.md, "Modules of one board". No change on a
     /// board without modules.
     pub keep_in_modules: bool,
-    /// On a panel of copies joined by tabs (one outline piece), each
-    /// copy's movable parts stay in its copy's region (see
-    /// `keep_copies_apart`): the copies are told apart by their nets. On:
-    /// boards whose nets form one group do not change.
-    pub keep_copies: bool,
     /// Panel-aware placement (on since 2026-10-26; false turns it off):
     /// where the board holds
     /// copies of one circuit (the same footprints, nets that map one to
@@ -190,38 +142,9 @@ pub struct KiCadBoardPlacerConfig {
     /// the layout, not read from the configuration.
     #[serde(skip)]
     pub sub_board_reference: Option<PathBuf>,
-    /// A footprint without a courtyard whose pads stand in rows of pins
-    /// (three or more at most 2.6 mm apart, holding three quarters of its
-    /// pads: a QFP, an SOIC, a header, a card slot) blocks with the whole
-    /// box of its pads, as a body there would; other courtyard-less
-    /// footprints (a key switch, a hot-swap socket) block with their pads
-    /// alone. On: hackrf's header and SOIC sat inside a turned LQFP-144's
-    /// pad ring, homebrew_486's second ISA slot between the first's rows.
-    pub solid_pin_rows: bool,
-    /// A footprint's solder-mask openings on its own side (graphics on
-    /// F.Mask or B.Mask) keep other footprints' pads and bodies off also
-    /// where the footprint blocks with its courtyard's shape rather than
-    /// its whole body (the body's box holds them; a courtyard-less part
-    /// blocks with them already): SNSP-CPU-01's J2 (a 12 x 5 courtyard
-    /// around four pins, a 22 x 32 mm F.Mask polygon beside it) held T1
-    /// and C61, and KiCad reported solder_mask_bridge for each of their
-    /// pads. They keep the bodies' spacing (at least the copper clearance)
-    /// or KiCad's mask margin where that is larger (`mask_opening_growth`).
-    /// On.
-    pub mask_openings: bool,
     /// The project's `solder_mask_to_copper_clearance`: covered copper
     /// keeps it from a mask opening. Read from the project when not given.
     pub solder_mask_to_copper_mm: Option<f64>,
-    /// Placements tried with different seeds (in parallel); the best is
-    /// kept: fewest illegal parts, least missed constraints, least wire.
-    pub placement_seeds: usize,
-    /// The placement's orientation search starts from a canonical pose
-    /// (`core::orient`): every movable part that may turn at the first of
-    /// its angle options (in a fixed order), so that the placement is the
-    /// same whether the board holds 0 degrees (an import from a schematic)
-    /// or the designer's angles (a stack). On; off: the parts start at
-    /// the angles the board holds.
-    pub orientation_search: bool,
     /// The board's own texts (header pin names, a title) and silkscreen
     /// graphics (a logo, a frame around a group) stay where the input put
     /// them: each is a placement obstacle on its side with a keepout's
@@ -247,44 +170,6 @@ pub struct KiCadBoardPlacerConfig {
     /// where the parts no longer lie where the input had them.
     #[serde(skip)]
     pub attached_marks: Option<Vec<(usize, usize)>>,
-    /// Escape demand in placement (on; `null` turns it off): where each
-    /// part's nets leave its body, and the channels between parts that
-    /// must carry them, shape the global placement's density, the rotation
-    /// choice, the legaliser and the refinement; in a layout the
-    /// refinement corrects the estimate by the global route's overflow
-    /// attribution (docs/placer.md, "Escape demand").
-    #[serde(default = "default_escape_demand")]
-    pub escape_demand: Option<KiCadEscapeDemand>,
-    /// Ratsnest crossings as a placement cost (on since 2026-10-24; `null`
-    /// turns it off): per net the minimum spanning tree
-    /// of its pins, and the pairs of tree lines of different nets that
-    /// cross. The legaliser and the refinement pay `weight` mm of
-    /// wirelength per crossing the moved part's nets make, and the
-    /// layout's race ranks the seeds' placements by their crossings beside
-    /// the congestion score. Keys `weight`, `legalise`, `refine`,
-    /// `rank_seeds`, `anneal`, `per_layer` (defaults 3 mm, on, on, on, on
-    /// since 2026-10-28, off; docs/placer.md, "Ratsnest crossings").
-    #[serde(default = "default_ratsnest_crossings")]
-    pub ratsnest_crossings: Option<KiCadRatsnestCrossings>,
-    /// Bus-group moves (off by default; `{}` for the defaults): banks of
-    /// parts of one footprint that share a bus (`min_shared` nets of up
-    /// to `bus_net_pins` pins between two, at most `max_bank` parts), and
-    /// each other part with its passives (up to `passive_pins` pins and
-    /// `passive_area_mm2`: those a relation binds to it, a decoupling
-    /// capacitor, and those sharing a net within `reach_mm`), move as
-    /// units. After the global placement each bank takes the order and
-    /// arrangement (in place, side by side along x or y) that lowers its
-    /// nets' wirelength plus crossings (`arrange`); the anneal shifts,
-    /// turns, swaps and reorders groups each stage (`anneal`,
-    /// `anneal_moves` tries per group, a bank's members moving only with
-    /// it: `rigid_banks`), and the refinement does so legally, each unit
-    /// placed whole (`refine`), all judged by wirelength plus their nets'
-    /// crossings. Defaults: `min_shared` 4, `bus_net_pins` 24,
-    /// `passive_pins` 4, `passive_area_mm2` 16, `reach_mm` 3, `arrange`,
-    /// `anneal`, `rigid_banks` and `refine` true, `anneal_moves` 2,
-    /// `max_bank` 16 (docs/placer.md, "Bus-group moves").
-    #[serde(default)]
-    pub bus_groups: Option<KiCadBusGroups>,
     /// A race over skeletons (on since 2026-11-05 where a seed's placement
     /// work reaches `min_work_seconds`; `null` turns it off; docs/placer.md,
     /// "A race over skeletons" and "The skeleton's budget"): each seed
@@ -339,14 +224,6 @@ pub struct KiCadBoardPlacerConfig {
     /// the pad exits lower with (set by the layout and the place check).
     #[serde(skip)]
     pub measure_router: Option<KiCadBoardRouterConfig>,
-    /// The far side under a via in a BGA's pad stays free (on): where the
-    /// router's via-in-pad rule admits a footprint (the designer's vias in
-    /// its pads, or the router's `via_in_pad`), each enclosed pad's via
-    /// goes through the board, and other parts on the other side keep off
-    /// it as off a through-hole pin, with the clearances a via needs
-    /// (docs/placer.md, "The far side of a via in a BGA's pad").
-    /// Nothing changes on a board without such a footprint.
-    pub via_in_pad_far_side: bool,
     /// Room around grid arrays (on): around each grid array whose inner
     /// balls the router's fan-out serves with dog-bones in the diagonal
     /// gaps (`bga_fanout`; a BGA at 0.8 mm or coarser whose class via is
@@ -405,7 +282,183 @@ pub struct KiCadBoardPlacerConfig {
     /// (`reach_mm` 1, `candidates` 16), `0` off.
     #[serde(default)]
     pub pad_exits: Option<KiCadPadExits>,
+    /// The tuning of the placer's machinery: not for an agent's everyday
+    /// use (docs/architecture.md, "Settings").
+    pub tuning: KiCadPlacerTuning,
 }
+
+/// The placer settings' `tuning` group: settings of the placer's machinery
+/// an agent does not need (docs/architecture.md, "Settings"). The KiCad
+/// placer's own: the halos and the relaxation's start, the race's seeds,
+/// the lowering's switches and the placement costs it adds.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct KiCadPlacerTuning {
+    /// Minimum gap between two courtyards on colliding sides.
+    pub spacing_mm: f64,
+    /// Footprint origins are snapped to multiples of this.
+    pub grid_mm: f64,
+    /// Movable parts keep the angle the board gives them; otherwise each
+    /// may take any quarter turn of it (and square angles too when it
+    /// stands at an odd one).
+    pub keep_rotation: bool,
+    /// Through-hole parts with at least four pins (connectors, headers)
+    /// whose body comes within this distance of the outline stay where the
+    /// designer put them: at the edge, where they are reachable.
+    #[serde(default = "default_edge_keep_mm")]
+    pub edge_keep_mm: f64,
+    /// Share of the whitespace taken by filler charge: 1 packs the parts as
+    /// tightly as halos allow, 0 spreads them over the whole board. 0 by
+    /// default: the spare room then lies between the parts, where routing
+    /// needs it (routed in route mode, Sisu's placement left 11 open in
+    /// KiCad at 0 and 20 at 0.6; OpenESC mini 62-70 against 80-86 over two
+    /// seeds; wirelength within 3 %).
+    pub whitespace_fill: f64,
+    /// Every footprint keeps a halo of `pins / pins_per_halo_track` tracks
+    /// (at `track_pitch_mm`, capped at `maximum_halo_mm`) free around its
+    /// courtyard so its pins can escape.
+    pub track_pitch_mm: f64,
+    /// Pins per track of halo (see `track_pitch_mm`); 0 gives no part a
+    /// pin-count halo.
+    pub pins_per_halo_track: f64,
+    /// Factor on the routing halos the pin counts ask for (not on
+    /// `halo_overrides_mm`): less room for escapes, shorter wires.
+    pub halo_scale: f64,
+    /// The largest pin-count halo, in mm, before `halo_scale`.
+    pub maximum_halo_mm: f64,
+    /// Per-reference halos replacing the pin-count rule (routing feedback).
+    pub halo_overrides_mm: BTreeMap<String, f64>,
+    /// Share of the free board that bodies, halos and spacing may claim.
+    pub maximum_utilization: f64,
+    /// Distance movable courtyards keep from the board edge (at least the
+    /// copper-to-edge clearance, since pads may reach the courtyard).
+    pub edge_margin_mm: f64,
+    /// The global placement's seed for the first of the
+    /// `placement_seeds`; seed k of the race uses this plus k.
+    pub seed: u64,
+    /// Where the project lets courtyards overlap, a part may reach over
+    /// other parts' pads on its side at the last placement levels, keeping
+    /// only copper apart (as katia's designer put connectors partly over
+    /// hot-swap socket pads). Off by default: such pads may carry a body.
+    pub overlap_far_side_pads: bool,
+    /// On a panel of copies joined by tabs (one outline piece), each
+    /// copy's movable parts stay in its copy's region (see
+    /// `keep_copies_apart`): the copies are told apart by their nets. On:
+    /// boards whose nets form one group do not change.
+    pub keep_copies: bool,
+    /// A footprint without a courtyard whose pads stand in rows of pins
+    /// (three or more at most 2.6 mm apart, holding three quarters of its
+    /// pads: a QFP, an SOIC, a header, a card slot) blocks with the whole
+    /// box of its pads, as a body there would; other courtyard-less
+    /// footprints (a key switch, a hot-swap socket) block with their pads
+    /// alone. On: hackrf's header and SOIC sat inside a turned LQFP-144's
+    /// pad ring, homebrew_486's second ISA slot between the first's rows.
+    pub solid_pin_rows: bool,
+    /// A footprint's solder-mask openings on its own side (graphics on
+    /// F.Mask or B.Mask) keep other footprints' pads and bodies off also
+    /// where the footprint blocks with its courtyard's shape rather than
+    /// its whole body (the body's box holds them; a courtyard-less part
+    /// blocks with them already): SNSP-CPU-01's J2 (a 12 x 5 courtyard
+    /// around four pins, a 22 x 32 mm F.Mask polygon beside it) held T1
+    /// and C61, and KiCad reported solder_mask_bridge for each of their
+    /// pads. They keep the bodies' spacing (at least the copper clearance)
+    /// or KiCad's mask margin where that is larger (`mask_opening_growth`).
+    /// On.
+    pub mask_openings: bool,
+    /// Placements tried with different seeds (in parallel); the best is
+    /// kept: fewest illegal parts, least missed constraints, least wire.
+    pub placement_seeds: usize,
+    /// The placement's orientation search starts from a canonical pose
+    /// (`core::orient`): every movable part that may turn at the first of
+    /// its angle options (in a fixed order), so that the placement is the
+    /// same whether the board holds 0 degrees (an import from a schematic)
+    /// or the designer's angles (a stack). On; off: the parts start at
+    /// the angles the board holds.
+    pub orientation_search: bool,
+    /// Escape demand in placement (on; `null` turns it off): where each
+    /// part's nets leave its body, and the channels between parts that
+    /// must carry them, shape the global placement's density, the rotation
+    /// choice, the legaliser and the refinement; in a layout the
+    /// refinement corrects the estimate by the global route's overflow
+    /// attribution (docs/placer.md, "Escape demand").
+    #[serde(default = "default_escape_demand")]
+    pub escape_demand: Option<KiCadEscapeDemand>,
+    /// Ratsnest crossings as a placement cost (on since 2026-10-24; `null`
+    /// turns it off): per net the minimum spanning tree
+    /// of its pins, and the pairs of tree lines of different nets that
+    /// cross. The legaliser and the refinement pay `weight` mm of
+    /// wirelength per crossing the moved part's nets make, and the
+    /// layout's race ranks the seeds' placements by their crossings beside
+    /// the congestion score. Keys `weight`, `legalise`, `refine`,
+    /// `rank_seeds`, `anneal`, `per_layer` (defaults 3 mm, on, on, on, on
+    /// since 2026-10-28, off; docs/placer.md, "Ratsnest crossings").
+    #[serde(default = "default_ratsnest_crossings")]
+    pub ratsnest_crossings: Option<KiCadRatsnestCrossings>,
+    /// Bus-group moves (off by default; `{}` for the defaults): banks of
+    /// parts of one footprint that share a bus (`min_shared` nets of up
+    /// to `bus_net_pins` pins between two, at most `max_bank` parts), and
+    /// each other part with its passives (up to `passive_pins` pins and
+    /// `passive_area_mm2`: those a relation binds to it, a decoupling
+    /// capacitor, and those sharing a net within `reach_mm`), move as
+    /// units. After the global placement each bank takes the order and
+    /// arrangement (in place, side by side along x or y) that lowers its
+    /// nets' wirelength plus crossings (`arrange`); the anneal shifts,
+    /// turns, swaps and reorders groups each stage (`anneal`,
+    /// `anneal_moves` tries per group, a bank's members moving only with
+    /// it: `rigid_banks`), and the refinement does so legally, each unit
+    /// placed whole (`refine`), all judged by wirelength plus their nets'
+    /// crossings. Defaults: `min_shared` 4, `bus_net_pins` 24,
+    /// `passive_pins` 4, `passive_area_mm2` 16, `reach_mm` 3, `arrange`,
+    /// `anneal`, `rigid_banks` and `refine` true, `anneal_moves` 2,
+    /// `max_bank` 16 (docs/placer.md, "Bus-group moves").
+    #[serde(default)]
+    pub bus_groups: Option<KiCadBusGroups>,
+    /// The far side under a via in a BGA's pad stays free (on): where the
+    /// router's via-in-pad rule admits a footprint (the designer's vias in
+    /// its pads, or the router's `via_in_pad`), each enclosed pad's via
+    /// goes through the board, and other parts on the other side keep off
+    /// it as off a through-hole pin, with the clearances a via needs
+    /// (docs/placer.md, "The far side of a via in a BGA's pad").
+    /// Nothing changes on a board without such a footprint.
+    pub via_in_pad_far_side: bool,
+}
+
+impl Default for KiCadPlacerTuning {
+    fn default() -> Self {
+        Self {
+            spacing_mm: 0.5,
+            grid_mm: 0.635,
+            keep_rotation: false,
+            edge_keep_mm: default_edge_keep_mm(),
+            whitespace_fill: 0.0,
+            track_pitch_mm: 0.65,
+            pins_per_halo_track: 8.0,
+            maximum_halo_mm: 4.0,
+            halo_scale: 1.0,
+            halo_overrides_mm: BTreeMap::new(),
+            maximum_utilization: 0.6,
+            edge_margin_mm: 0.5,
+            seed: 1,
+            overlap_far_side_pads: false,
+            keep_copies: true,
+            solid_pin_rows: true,
+            mask_openings: true,
+            placement_seeds: 3,
+            orientation_search: true,
+            escape_demand: default_escape_demand(),
+            ratsnest_crossings: default_ratsnest_crossings(),
+            bus_groups: None,
+            via_in_pad_far_side: true,
+        }
+    }
+}
+
+pcb_kicad_route::settings_with_moved_keys!(
+    KiCadBoardPlacerConfig,
+    "placer",
+    KiCadPlacerTuning,
+    &[]
+);
 
 /// A differential pair's track width and gap where its coupled run is (the
 /// custom rules' or the net class's, as the router takes them) and the
@@ -454,25 +507,11 @@ impl KiCadBoardPlacerConfig {}
 impl Default for KiCadBoardPlacerConfig {
     fn default() -> Self {
         Self {
-            spacing_mm: 0.5,
-            grid_mm: 0.635,
-            keep_rotation: false,
             fixed: Vec::new(),
             fixed_patterns: Vec::new(),
-            edge_keep_mm: default_edge_keep_mm(),
             free: Vec::new(),
-            whitespace_fill: 0.0,
-            track_pitch_mm: 0.65,
-            pins_per_halo_track: 8.0,
-            maximum_halo_mm: 4.0,
-            halo_scale: 1.0,
-            halo_overrides_mm: BTreeMap::new(),
-            maximum_utilization: 0.6,
-            edge_margin_mm: 0.5,
-            seed: 1,
             deadline: None,
             work_seconds: None,
-            overlap_far_side_pads: false,
             constraints: None,
             constraint_weight: 50.0,
             copper_clearance_mm: None,
@@ -486,30 +525,22 @@ impl Default for KiCadBoardPlacerConfig {
             decoupling_near: false,
             keep_on_pieces: true,
             keep_in_modules: true,
-            keep_copies: true,
             panel_copies: true,
             sub_boards: true,
             sub_board_reference: None,
-            solid_pin_rows: true,
-            mask_openings: true,
             solder_mask_to_copper_mm: None,
-            placement_seeds: 3,
-            orientation_search: true,
             keep_board_marks: true,
             attached_marks: None,
-            escape_demand: default_escape_demand(),
-            ratsnest_crossings: default_ratsnest_crossings(),
-            bus_groups: None,
             skeleton_race: default_skeleton_race(),
             pair_rows: None,
             measure_router: None,
-            via_in_pad_far_side: true,
             bga_room: true,
             length_maxima: true,
             length_minima: false,
             router_rules: None,
             pair_geometry: Default::default(),
             pad_exits: None,
+            tuning: KiCadPlacerTuning::default(),
         }
     }
 }

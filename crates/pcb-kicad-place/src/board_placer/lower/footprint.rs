@@ -83,7 +83,7 @@ pub(super) fn lower_footprint(
     let far_graphics = !artwork && (!graphics.far.is_empty() || far_courtyard.is_some());
     let angle_options = angle_options(config, at[2]);
     let copper_graphics = copper_graphic_boxes(footprint)?;
-    let edge_inset = edge_inset(footprint, &own_pads, body_center, body_size)?;
+    let edge_inset = edge_inset(&own_pads, &copper_graphics, body_center, body_size);
     let shape = body_shape(
         context,
         footprint,
@@ -631,7 +631,7 @@ fn outer_graphics(
 /// with `keep_rotation`, else its four quarter turns (and the board's
 /// four where it sits at an odd angle).
 pub(super) fn angle_options(config: &KiCadBoardPlacerConfig, angle: f64) -> Vec<f64> {
-    if config.keep_rotation {
+    if config.tuning.keep_rotation {
         vec![angle]
     } else {
         let mut angles: Vec<f64> = (0..4)
@@ -646,7 +646,7 @@ pub(super) fn angle_options(config: &KiCadBoardPlacerConfig, angle: f64) -> Vec<
         }
         // In a fixed order, not from the board's angle: the searches
         // walk them in this order (`core::orient`).
-        if config.orientation_search {
+        if config.tuning.orientation_search {
             core::orient::sort_angles(&mut angles);
         }
         angles
@@ -696,40 +696,28 @@ fn bounds_of(boxes: &[[f64; 4]]) -> [f64; 4] {
     )
 }
 
-/// How far the copper (`own_pads` and the copper graphics on a `.Cu`
-/// layer) stays inside the body: the body may come that much closer to
-/// the board edge. Zero for a footprint without pads.
+/// How far the copper (`own_pads` and the footprint's copper graphics,
+/// `copper_graphic_boxes`) stays inside the body: the body may come that
+/// much closer to the board edge. Zero for a footprint without pads.
 fn edge_inset(
-    footprint: &Expr,
     own_pads: &[[f64; 4]],
+    copper_graphics: &[[f64; 4]],
     body_center: [f64; 2],
     body_size: [f64; 2],
-) -> Result<f64, String> {
+) -> f64 {
     if own_pads.is_empty() {
-        return Ok(0.0);
+        return 0.0;
     }
-    let mut pads = bounds_of(own_pads);
-    // Copper graphics of the footprint count as copper too.
-    for child in footprint.children() {
-        if !form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(".Cu")) {
-            continue;
-        }
-        if let Some(graphic) = graphic_box(child)? {
-            pads = [
-                pads[0].min(graphic[0]),
-                pads[1].min(graphic[1]),
-                pads[2].max(graphic[2]),
-                pads[3].max(graphic[3]),
-            ];
-        }
-    }
+    // Copper graphics of the footprint count as copper too, on one copper
+    // layer or several (KiCad 9's `(layers "F.Cu" "F.Mask")`).
+    let pads = bounds_of(&[bounds_of(own_pads), bounds_of(copper_graphics)]);
     let body = [
         body_center[0] - body_size[0] / 2.0,
         body_center[1] - body_size[1] / 2.0,
         body_center[0] + body_size[0] / 2.0,
         body_center[1] + body_size[1] / 2.0,
     ];
-    Ok([
+    [
         pads[0] - body[0],
         pads[1] - body[1],
         body[2] - pads[2],
@@ -737,7 +725,7 @@ fn edge_inset(
     ]
     .into_iter()
     .fold(f64::INFINITY, f64::min)
-    .max(0.0))
+    .max(0.0)
 }
 
 /// What `body_shape` reads of a lowered footprint.
@@ -786,7 +774,8 @@ fn body_shape(
         && !parts.artwork;
     // Unless its pads stand in rows of pins: then a body fills their
     // box (`solid_pin_rows`), and the part blocks with that box.
-    let solid = courtless && context.config.solid_pin_rows && pads_in_pin_rows(parts.pin_centers);
+    let solid =
+        courtless && context.config.tuning.solid_pin_rows && pads_in_pin_rows(parts.pin_centers);
     let hollow = hollow_shape(
         context,
         footprint,
@@ -860,7 +849,7 @@ fn hollow_shape(
             // (`mask_openings`). Held to the body's box (grown as they
             // are): a stroke's half width past it would widen every
             // neighbour search (`far_reach`).
-            if context.config.mask_openings {
+            if context.config.tuning.mask_openings {
                 let body = [
                     body_center[0] - body_size[0] / 2.0 - mask_growth,
                     body_center[1] - body_size[1] / 2.0 - mask_growth,
@@ -945,12 +934,12 @@ fn footprint_slots(footprint: &Expr) -> Result<Vec<[f64; 4]>, String> {
 /// override for `reference`, else a track pitch per `pins_per_halo_track`
 /// of its `pins`, at most `maximum_halo_mm`, scaled.
 pub(super) fn halo(config: &KiCadBoardPlacerConfig, reference: &str, pins: usize) -> f64 {
-    if let Some(halo) = config.halo_overrides_mm.get(reference) {
+    if let Some(halo) = config.tuning.halo_overrides_mm.get(reference) {
         *halo
-    } else if config.pins_per_halo_track > 0.0 {
-        ((pins as f64 / config.pins_per_halo_track).ceil() * config.track_pitch_mm)
-            .min(config.maximum_halo_mm)
-            * config.halo_scale
+    } else if config.tuning.pins_per_halo_track > 0.0 {
+        ((pins as f64 / config.tuning.pins_per_halo_track).ceil() * config.tuning.track_pitch_mm)
+            .min(config.tuning.maximum_halo_mm)
+            * config.tuning.halo_scale
     } else {
         0.0
     }

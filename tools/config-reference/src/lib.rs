@@ -300,7 +300,7 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_NARROW_RESERVE",
         Kind::Switch,
-        "`share`: the share of the ladder's first attempt's work kept back for the narrow-signal step (wins over the router setting `narrow_reserve_share`; default 0.75).",
+        "`share`: the share of the ladder's first attempt's work kept back for the narrow-signal step (wins over the router setting `tuning.narrow_reserve_share`; default 0.75).",
     ),
     (
         "PCB_WALL_STRETCH_MAX",
@@ -370,7 +370,7 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_ROUTER_SEVER_TRACE",
         Kind::Diagnostic,
-        "per refresh of what a cut severs of the pours (`pour_integrity`) its nodes, wall time and marked nodes per layer (calibrating `SEVER_NODE_NANOS`).",
+        "per refresh of what a cut severs of the pours (`tuning.pour_integrity`) its nodes, wall time and marked nodes per layer (calibrating `SEVER_NODE_NANOS`).",
     ),
     (
         "PCB_ROUTER_BUILD_TRACE",
@@ -550,6 +550,9 @@ pub struct Field {
     pub serde_default: bool,
     /// `#[serde(flatten)]`: its fields stand in the parent's object.
     pub flatten: bool,
+    /// In the `core { ... }` section of a `tuning_group!`: the core
+    /// config's field of the same name, set from it.
+    pub core: bool,
     /// The expression of the field in the struct's `Default` impl.
     pub default_expression: Option<String>,
 }
@@ -601,23 +604,43 @@ fn read(root: &Path, path: &str) -> Result<String, String> {
     fs::read_to_string(root.join(path)).map_err(|error| format!("failed to read {path}: {error}"))
 }
 
-/// The fields of `pub struct name` in `source`, in declaration order.
+/// The fields of `pub struct name` in `source`, in declaration order; also
+/// of one a `tuning_group!` declares (`pub struct name for core::Config {`,
+/// indented, its `core { ... }` section's fields marked `core`).
 pub fn parse_struct(source: &str, name: &str) -> Result<Vec<Field>, String> {
     let header = format!("pub struct {name} {{");
-    let mut lines = source.lines().skip_while(|line| line.trim() != header);
-    if lines.next().is_none() {
+    let group_header = format!("pub struct {name} for ");
+    let is_header = |line: &str| {
+        let line = line.trim();
+        line == header || (line.starts_with(&group_header) && line.ends_with('{'))
+    };
+    let mut lines = source.lines().skip_while(|line| !is_header(line));
+    let Some(first) = lines.next() else {
         return Err(format!("no `{header}`"));
-    }
+    };
+    let indent = &first[..first.len() - first.trim_start().len()];
+    let end = format!("{indent}}}");
+    let mut in_core = false;
     let mut fields = Vec::new();
     let mut doc: Vec<String> = Vec::new();
     let mut attributes = String::new();
     let mut attribute_depth = 0i32;
     let mut declaration = String::new();
     for line in lines {
-        if line == "}" {
+        if line == end {
             break;
         }
         let trimmed = line.trim();
+        if declaration.is_empty() && attribute_depth == 0 {
+            if trimmed == "core {" {
+                in_core = true;
+                continue;
+            }
+            if in_core && trimmed == "}" {
+                in_core = false;
+                continue;
+            }
+        }
         if attribute_depth > 0 {
             attributes.push_str(trimmed);
             attribute_depth += depth_change(trimmed, '[', ']');
@@ -663,6 +686,7 @@ pub fn parse_struct(source: &str, name: &str) -> Result<Vec<Field>, String> {
                 .iter()
                 .any(|item| item == "default" || item.starts_with("default =")),
             flatten: serde.iter().any(|item| item == "flatten"),
+            core: in_core,
             default_expression: None,
         });
         doc.clear();
@@ -883,10 +907,19 @@ fn config_keys(text: &str) -> BTreeSet<String> {
         let before = rest[..at].chars().last();
         let after = &rest[at + "config.".len()..];
         if !before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') {
-            let key: String = after
-                .chars()
-                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                .collect();
+            let identifier = |text: &str| -> String {
+                text.chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect()
+            };
+            let mut key = identifier(after);
+            // A key of the tuning group: `config.tuning.<key>`.
+            if key == "tuning"
+                && let Some(rest) = after.strip_prefix("tuning.")
+                && !identifier(rest).is_empty()
+            {
+                key = format!("tuning.{}", identifier(rest));
+            }
             if !key.is_empty() {
                 keys.insert(key);
             }
@@ -947,21 +980,39 @@ fn tables(root: &Path) -> Result<Vec<Table>, String> {
     let rules_file = "crates/pcb-kicad-file/src/connection_rules.rs";
 
     let router = json_defaults::<pcb_kicad::KiCadBoardRouterConfig>()?;
+    let placer = json_defaults::<pcb_kicad::KiCadBoardPlacerConfig>()?;
     let layout = json_defaults::<pcb_kicad::KiCadBoardLayoutConfig>()?;
-    let nested = |defaults: &Defaults, key: &str| match defaults {
-        Defaults::Json(json, _) => Defaults::Json(json[key].clone(), String::new()),
+    // The defaults of an object inside a settings file, by its key path.
+    let nested = |defaults: &Defaults, path: &[&str]| match defaults {
+        Defaults::Json(json, _) => Defaults::Json(
+            path.iter()
+                .fold(json.clone(), |json, key| json[*key].clone()),
+            String::new(),
+        ),
         _ => Defaults::Entry,
     };
-    let topological = nested(&router, "topological");
-    let pin_swap = nested(&router, "pin_swap");
+    let router_tuning = nested(&router, &["tuning"]);
+    let topological = nested(&router, &["tuning", "topological"]);
+    let pin_swap = nested(&router, &["tuning", "pin_swap"]);
+    let placer_tuning = nested(&placer, &["tuning"]);
+    let layout_tuning = nested(&layout, &["tuning"]);
 
     // Which settings reach the core configs.
     let core_config_file = find_file(root, "crates/pcb-kicad-route/src", "fn core_config(")?;
-    let router_sources = assignments(
+    let mut router_sources = assignments(
         &read(root, &core_config_file)?,
         "fn core_config(",
         "router_config",
     )?;
+    // The tuning group's core section, applied in one step
+    // (`KiCadRouterTuning::apply`): each field from the key of its name.
+    for field in pcb_kicad::KiCadRouterTuning::CORE {
+        router_sources
+            .entry(field.to_string())
+            .or_default()
+            .keys
+            .insert(format!("tuning.{field}"));
+    }
     let place_file = find_file(
         root,
         "crates/pcb-kicad-place/src",
@@ -990,7 +1041,7 @@ fn tables(root: &Path) -> Result<Vec<Table>, String> {
         Table {
             title: "Router settings",
             prefix: "",
-            intro: "The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` resolves it from the project's `.kicad_pro`; a file's keys replace what `auto` would give only where a file sets them, `connection_rules` and `default_rules` together as the classes; docs/router.md). Unknown keys are rejected. `unset` options take the default the doc comment names, mostly the router core's (the next table).",
+            intro: "The router config file of `route-kicad-board` and `layout-kicad-board`: the settings an agent sets (`auto` resolves it from the project's `.kicad_pro`; a file's keys replace what `auto` would give only where a file sets them, `connection_rules` and `default_rules` together as the classes; docs/router.md). Unknown keys are rejected; a key that moved into `tuning` is refused with its new place. `unset` options take the default the doc comment names.",
             file: router_file,
             name: "KiCadBoardRouterConfig",
             fields: parse(router_file, "KiCadBoardRouterConfig")?,
@@ -998,9 +1049,19 @@ fn tables(root: &Path) -> Result<Vec<Table>, String> {
             role: Role::File,
         },
         Table {
-            title: "Router settings: topological",
-            prefix: "topological.",
-            intro: "The `topological` object of the router settings (the `engine: \"topological\"` engine).",
+            title: "Router settings: tuning",
+            prefix: "tuning.",
+            intro: "The `tuning` object of the router settings: the machinery's settings, not for an agent's everyday use (docs/architecture.md, \"Settings\"). A *core* key is the router core's field of the same name (the *Router core* table), set from it where given; the others are the KiCad router's own. Unknown keys are rejected; `unset` keys take the default the doc comment names, a core key the core's.",
+            file: router_file,
+            name: "KiCadRouterTuning",
+            fields: parse(router_file, "KiCadRouterTuning")?,
+            defaults: router_tuning,
+            role: Role::File,
+        },
+        Table {
+            title: "Router settings: tuning.topological",
+            prefix: "tuning.topological.",
+            intro: "The `tuning.topological` object of the router settings (the `tuning.engine: \"topological\"` engine).",
             file: router_file,
             name: "KiCadTopologicalConfig",
             fields: parse(router_file, "KiCadTopologicalConfig")?,
@@ -1008,9 +1069,9 @@ fn tables(root: &Path) -> Result<Vec<Table>, String> {
             role: Role::File,
         },
         Table {
-            title: "Router settings: pin_swap",
-            prefix: "pin_swap.",
-            intro: "The `pin_swap` object of the router and the layout settings (the pin-swap estimate, docs/pin-swap.md).",
+            title: "Router settings: tuning.pin_swap",
+            prefix: "tuning.pin_swap.",
+            intro: "The `tuning.pin_swap` object of the router and the layout settings (the pin-swap estimate, docs/pin-swap.md).",
             file: pin_swap_file,
             name: "KiCadPinSwapConfig",
             fields: parse(pin_swap_file, "KiCadPinSwapConfig")?,
@@ -1099,21 +1160,41 @@ fn tables(root: &Path) -> Result<Vec<Table>, String> {
         Table {
             title: "Placer settings",
             prefix: "",
-            intro: "The placer config file of `place-kicad-board`, and the `placer` object of the layout settings. Unknown keys are rejected; a missing key takes its default.",
+            intro: "The placer config file of `place-kicad-board`, and the `placer` object of the layout settings: the settings an agent sets. Unknown keys are rejected; a key that moved into `tuning` is refused with its new place; a missing key takes its default.",
             file: placer_file,
             name: "KiCadBoardPlacerConfig",
             fields: parse(placer_file, "KiCadBoardPlacerConfig")?,
-            defaults: json_defaults::<pcb_kicad::KiCadBoardPlacerConfig>()?,
+            defaults: placer,
+            role: Role::File,
+        },
+        Table {
+            title: "Placer settings: tuning",
+            prefix: "tuning.",
+            intro: "The `tuning` object of the placer settings (`placer.tuning` in a layout's): the machinery's settings, not for an agent's everyday use (docs/architecture.md, \"Settings\"). Unknown keys are rejected; a missing key takes its default.",
+            file: placer_file,
+            name: "KiCadPlacerTuning",
+            fields: parse(placer_file, "KiCadPlacerTuning")?,
+            defaults: placer_tuning,
             role: Role::File,
         },
         Table {
             title: "Layout settings",
             prefix: "",
-            intro: "The layout config file of `layout-kicad-board`. Unknown keys are rejected; a missing key takes its default.",
+            intro: "The layout config file of `layout-kicad-board`: the settings an agent sets. Unknown keys are rejected; a key that moved into `tuning` is refused with its new place; a missing key takes its default.",
             file: layout_file,
             name: "KiCadBoardLayoutConfig",
             fields: parse(layout_file, "KiCadBoardLayoutConfig")?,
             defaults: layout,
+            role: Role::File,
+        },
+        Table {
+            title: "Layout settings: tuning",
+            prefix: "tuning.",
+            intro: "The `tuning` object of the layout settings: the machinery's settings, not for an agent's everyday use (docs/architecture.md, \"Settings\"). Unknown keys are rejected; a missing key takes its default.",
+            file: layout_file,
+            name: "KiCadLayoutTuning",
+            fields: parse(layout_file, "KiCadLayoutTuning")?,
+            defaults: layout_tuning,
             role: Role::File,
         },
         Table {
@@ -1150,9 +1231,9 @@ fn tables(root: &Path) -> Result<Vec<Table>, String> {
             role: Role::File,
         },
         Table {
-            title: "Layout settings: race_probe",
-            prefix: "race_probe.",
-            intro: "The `race_probe` object of the layout settings (off when absent, `{}` for the defaults): the race probes its best-ranked placements for a share of the layout's budget each, every probe charged to the work clock, and routes on with the fewest open terminals after the probe (docs/placer.md, \"The race's route probe\").",
+            title: "Layout settings: tuning.race_probe",
+            prefix: "tuning.race_probe.",
+            intro: "The `tuning.race_probe` object of the layout settings (off when absent, `{}` for the defaults): the race probes its best-ranked placements for a share of the layout's budget each, every probe charged to the work clock, and routes on with the fewest open terminals after the probe (docs/placer.md, \"The race's route probe\").",
             file: layout_file,
             name: "KiCadRaceProbe",
             fields: parse(layout_file, "KiCadRaceProbe")?,
@@ -1299,6 +1380,9 @@ fn is_nested(ty: &str) -> bool {
             | "KiCadPinSwapConfig"
             | "KiCadSilkscreenConfig"
             | "KiCadBoardPlacerConfig"
+            | "KiCadRouterTuning"
+            | "KiCadPlacerTuning"
+            | "KiCadLayoutTuning"
             | "GlobalConfig"
             | "anneal::AnnealConfig"
     )
@@ -1337,6 +1421,10 @@ pub fn reference(root: &Path) -> Result<(String, Vec<(String, Counts)>), String>
          \x20 their measurements.\n\
          - *internal*: `#[serde(skip)]`, set by the code (the ladder, the\n\
          \x20 layout), never read from a file.\n\
+         - Each settings file has the keys an agent sets at its top level\n\
+         \x20 and the machinery's in its `tuning` group (the *tuning* tables;\n\
+         \x20 [architecture.md](architecture.md#settings)). A key that moved\n\
+         \x20 into the group is refused at the top level with its new place.\n\
          - The core tables are not files: their *Set from* column names the\n\
          \x20 settings the KiCad layer copies into each field (*the KiCad layer*:\n\
          \x20 from the board or a computed value; *-*: the default stands there).\n\
@@ -1412,6 +1500,11 @@ pub fn reference(root: &Path) -> Result<(String, Vec<(String, Counts)>), String>
                         format!("{default} (internal)")
                     } else {
                         default
+                    };
+                    let doc = if field.core {
+                        format!("*Core* (`pcb_router::Config::{}`). {doc}", field.name)
+                    } else {
+                        doc
                     };
                     let _ = writeln!(
                         sections,
