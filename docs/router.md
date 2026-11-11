@@ -443,8 +443,9 @@ Three rules of KiCad's fill that decide whether a pad joins at all:
   pad and eight solid ones around its hole; read as solid, the fill ran
   over the large pad and joined C2_29.2, whose spoke ends in its relief).
 - In a hatched zone a via's spoke is kept, as a pad's, only where its end
-  lies in the fill before spokes (`cut_via_reliefs`, `manual_spokes.rs`):
-  a dropped spoke's corridor joins nothing (capybully's SW48.3, a 0.4 mm
+  lies in the fill before spokes or inside another item's spoke
+  (`cut_via_reliefs`, `manual_spokes.rs`; zone_filler.cpp's two tests): a
+  dropped spoke's corridor joins nothing (capybully's SW48.3, a 0.4 mm
   solid strip whose tip pokes out of its footprint's keepout beside a GND
   via whose spoke towards it ends in the keepout).
 - A pad merged into its terminal that connects solidly (in a solid pour,
