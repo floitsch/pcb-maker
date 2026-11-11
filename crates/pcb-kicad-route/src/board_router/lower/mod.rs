@@ -40,6 +40,8 @@ mod tracks;
 mod warnings;
 
 pub use self::layers::LayerTable;
+pub(crate) use self::layers::{item_layer_names, via_layers};
+pub use self::own_copper::WalledPad;
 use self::{context::*, graphics::*, layers::*, mask::*, planes::limit_exclusive_planes};
 pub(crate) use self::{
     exposed_pad::{PadBox, exposed_pad},
@@ -59,6 +61,9 @@ pub struct Lowered {
     /// The prepared fan-outs' plan work (`bga_fanout::plan`), in
     /// expressions of the same cost: charged with the lowering.
     pub fanout_work: u64,
+    /// The pads wired through their own footprint's copper
+    /// (own_copper.rs), for the verdict.
+    pub walled_pads: Vec<WalledPad>,
 }
 
 static LOWER_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -247,6 +252,7 @@ impl Builder {
             pin_row_gaps,
             pad_spokes,
             merged_pads,
+            walled_pads,
             ..
         } = self;
         let config = ctx.config;
@@ -297,6 +303,7 @@ impl Builder {
             },
             expressions: 0,
             fanout_work,
+            walled_pads,
         }
     }
 }

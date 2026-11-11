@@ -30,6 +30,7 @@ mod tests;
 mod tools;
 mod via_in_pad;
 mod via_spans;
+mod walled_pads;
 
 pub use self::bga_fanout::bga_fanout_on;
 pub use self::bga_fanout::{ArrayRoom, array_rooms, far_side_balls, rings_of};
@@ -48,6 +49,9 @@ pub use self::via_in_pad::far_side_vias;
 pub(crate) use self::via_in_pad::{PlannedVia, designer_entries, pad_vias_of};
 pub use self::via_in_pad::{admits_any as admits_vias_in_pads, plan as plan_vias_in_pads};
 pub(crate) use self::via_spans::{allowed_spans, designer_spans, project_spans};
+pub use self::walled_pads::{
+    KiCadWalledGraphic, KiCadWalledPad, walled_pads_of, walled_pads_of_file,
+};
 pub use self::{attempt::*, budget::*, geometry::*, ladder::*, lower::*, memory::*};
 pub use self::{
     config::*,

@@ -34,6 +34,9 @@ pub(super) struct Footprint<'a> {
     /// Its other copper graphics, copper of no net, by obstacle index: cut
     /// back where they wall its pads once those are known (own_copper.rs).
     pub own_copper: Vec<usize>,
+    /// Per graphic of `own_copper`, the graphic's uuid (KiCad's DRC names
+    /// it by that) and its kind (`fp_poly`).
+    pub own_copper_ids: Vec<(Option<String>, String)>,
     /// The mask openings its graphics queued, by index into
     /// `Builder::mask_openings`: cut back with `own_copper`.
     pub graphic_openings: std::ops::Range<usize>,
@@ -86,6 +89,7 @@ impl<'a> Footprint<'a> {
             tie_copper: Vec::new(),
             tie_pads: Vec::new(),
             own_copper: Vec::new(),
+            own_copper_ids: Vec::new(),
             graphic_openings: 0..0,
             duplicates_are_jumpers,
             pad_groups,
@@ -211,6 +215,12 @@ impl Builder {
                     continue;
                 }
                 footprint.own_copper.push(self.obstacles.len());
+                footprint.own_copper_ids.push((
+                    form_atom(graphic, "uuid", 1)
+                        .or_else(|| form_atom(graphic, "tstamp", 1))
+                        .map(|uuid| uuid.trim_matches('"').to_string()),
+                    graphic.head().unwrap_or("graphic").to_string(),
+                ));
                 self.obstacles.push(core::Obstacle {
                     shape,
                     layers: copper,

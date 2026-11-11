@@ -595,8 +595,12 @@ SAME_PLACE_MM = 0.05
 # at the same place is the reference's also of a type the reference has at
 # KiCad's cap; a copper_edge_clearance is at the same place by its copper
 # item, whichever piece of the outline KiCad names beside it (2026-10-23,
-# Batch_1's mounting holes and GND ring).
-STRICT_RULE = 4
+# Batch_1's mounting holes and GND ring). 5: a finding between a
+# footprint's copper graphic of no net and a track or via of net N is the
+# reference's when the reference pairs that graphic (its uuid) with a pad of
+# net N of the same footprint (`forced_by_footprint`, 2026-11-12: a pad its
+# own footprint's copper walls in cannot be connected without it).
+STRICT_RULE = 5
 # The designer's own board's solder mask bridges, kept in a task's work
 # directory by designer_findings for the strict rule.
 DESIGNER_BRIDGES = "designer-mask-bridges.json"
@@ -715,6 +719,53 @@ def footprint_own(finding):
     return len(finding[1]) > 1 and len(owners) == 1
 
 
+# A footprint's copper graphic of no net, as KiCad names it ("Polygon
+# [<no net>] of AE1 on F.Cu", "Segment [<no net>] of AE1 on F.Cu").
+OWN_GRAPHIC = re.compile(r"^(?:Polygon|Segment|Arc|Circle|Rectangle|Bezier|Line) \[<no net>\] "
+                         r"of (\S+)(?: on [^ ]+)?$")
+# A pad of a footprint and its net ("Pad 2 [GND] of AE1 on F.Cu", "PTH pad
+# 1 [/ANT] of J1").
+PAD_OF = re.compile(r"^(?:N?PTH )?[Pp]ad \S* ?\[(.*)\] of (\S+)(?: on [^ ]+)?$")
+# A track or a via and its net ("Track [GND] on F.Cu, length 0.1 mm",
+# "Via [GND] on F.Cu - B.Cu").
+ROUTED_ITEM = re.compile(r"^(?:Track|Via|Arc track) \[(.*)\] on ")
+
+
+def graphic_walls(reference):
+    """The (graphic uuid, net) pairs the reference has a finding between:
+    a footprint's copper graphic of no net and a pad of that net of the
+    same footprint (the pad walled in by its own footprint's copper)."""
+    pairs = set()
+    for _, items in reference or []:
+        graphics = [(item[0], OWN_GRAPHIC.match(item[2] if len(item) > 2 else "")) for item in items]
+        pads = [PAD_OF.match(item[2] if len(item) > 2 else "") for item in items]
+        for uuid, graphic in graphics:
+            if graphic is None or uuid is None:
+                continue
+            for pad in pads:
+                if pad is not None and pad.group(2) == graphic.group(1):
+                    pairs.add((uuid, pad.group(1)))
+    return pairs
+
+
+def forced_by_footprint(finding, walls):
+    """Whether a finding is a track or via of net N against a footprint's
+    copper graphic of no net that the reference pairs with a pad of net N of
+    that footprint (`graphic_walls`): the connection of a pad its own
+    footprint's copper walls in, which KiCad reports whatever the route
+    (docs/router.md, "A pad walled by its own footprint's copper"). Another
+    net's track on the graphic, or a contact the reference does not pair,
+    stays counted."""
+    if len(finding[1]) != 2:
+        return False
+    graphic = [item for item in finding[1] if OWN_GRAPHIC.match(item[2] if len(item) > 2 else "")]
+    routed = [ROUTED_ITEM.match(item[2] if len(item) > 2 else "") for item in finding[1]]
+    routed = [match for match in routed if match is not None]
+    if len(graphic) != 1 or len(routed) != 1 or graphic[0][0] is None:
+        return False
+    return (graphic[0][0], routed[0].group(1)) in walls
+
+
 def outline_item(item):
     """Whether a finding's item is a piece of the board outline (KiCad's
     description: "Segment on Edge.Cuts", "Arc of REF** on Edge.Cuts")."""
@@ -793,7 +844,9 @@ def strict_findings(ours, reference, designer=None):
     "unknown": [types the reference has at KiCad's cap], "mask_openings":
     n}. A finding of one footprint's own items (`footprint_own`) is the
     reference's: the footprint is there too, whether KiCad's capped report
-    names it or not. A finding the reference has at the same place is the
+    names it or not; so is a track or via against a footprint's own copper
+    graphic that walls a pad of its net (`forced_by_footprint`). A finding
+    the reference has at the same place is the
     reference's even of a type at KiCad's cap; every other finding of such
     a type is new (its type in "unknown"). `reference` None: no
     baseline, all are new. A solder mask bridge that is not the
@@ -808,11 +861,12 @@ def strict_findings(ours, reference, designer=None):
     for kind, _ in reference:
         counts[kind] = counts.get(kind, 0) + 1
     openings = bridged_openings(reference) + bridged_openings(designer)
+    walls = graphic_walls(reference)
     new, preexisting, unknown, mask_openings = {}, {}, [], 0
     used = [False] * len(reference)
     for finding in ours:
         kind = finding[0]
-        if footprint_own(finding):
+        if footprint_own(finding) or forced_by_footprint(finding, walls):
             preexisting[kind] = preexisting.get(kind, 0) + 1
             continue
         for index, theirs in enumerate(reference):

@@ -125,7 +125,7 @@ impl LayerTable {
 /// buried or micro via's (`(via blind ... (layers "F.Cu" "In1.Cu"))`)
 /// the layers from its first to its last. The router's own vias are
 /// through vias; another via is copper on its own layers only.
-pub(super) fn via_layers(via: &Expr, layers: &LayerTable) -> core::LayerMask {
+pub(crate) fn via_layers(via: &Expr, layers: &LayerTable) -> core::LayerMask {
     let ends: Vec<usize> = via
         .child("layers")
         .map(Expr::children)
@@ -145,7 +145,7 @@ pub(super) fn via_layers(via: &Expr, layers: &LayerTable) -> core::LayerMask {
 }
 
 /// The layer names of an item with either a `layer` or a `layers` form.
-pub(super) fn item_layer_names(item: &Expr) -> Vec<&str> {
+pub(crate) fn item_layer_names(item: &Expr) -> Vec<&str> {
     match form_atom(item, "layer", 1) {
         Some(name) => vec![name],
         None => item

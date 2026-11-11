@@ -95,6 +95,8 @@ const EXIT_SPREAD: f64 = std::f64::consts::FRAC_PI_4;
 /// `clearance` and `half_width` and `EXIT_MARGIN`.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Exit {
+    /// The walled pad's number, and its centre is `start`.
+    pub pad: String,
     pub layer: usize,
     pub net: core::NetId,
     pub start: [f64; 2],
@@ -104,12 +106,36 @@ pub(super) struct Exit {
     pub half_width: f64,
 }
 
+/// A pad the lowering wired through its own footprint's copper: what the
+/// verdict needs to tell the crossing KiCad reports there from any other
+/// contact with the graphic (`KiCadWalledPad`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct WalledPad {
+    /// The footprint's reference and the pad's number.
+    pub reference: String,
+    pub pad: String,
+    /// The pad's net, by name.
+    pub net: String,
+    /// The copper layer of its corridors.
+    pub layer: usize,
+    /// The graphics its corridors cut: uuid (None where the file gives
+    /// none) and kind (`fp_poly`).
+    pub graphics: Vec<(Option<String>, String)>,
+    /// Its corridors: start (the pad's centre), end, half width.
+    pub corridors: Vec<([f64; 2], [f64; 2], f64)>,
+    /// The footprint's pads (numbers) that those graphics touch: a net tie
+    /// of them is KiCad's own way to let their nets touch the graphic.
+    pub touching: Vec<String>,
+}
+
 /// A footprint with copper graphics of its own (not a net tie's), queued
 /// by `Builder::footprint` until every footprint's pads are known.
 pub(crate) struct OwnCopper {
     pub reference: String,
     /// Its copper graphics, by obstacle index.
     pub graphics: Vec<usize>,
+    /// Per graphic, its uuid and kind (`Footprint::own_copper_ids`).
+    pub graphic_ids: Vec<(Option<String>, String)>,
     /// The mask openings its graphics queued (`Footprint::graphic_openings`).
     pub openings: std::ops::Range<usize>,
     /// Its pads with copper: number, centre, copper obstacles.
@@ -123,6 +149,7 @@ impl OwnCopper {
         (!footprint.own_copper.is_empty()).then(|| Self {
             reference: footprint.reference.clone(),
             graphics: footprint.own_copper.clone(),
+            graphic_ids: footprint.own_copper_ids.clone(),
             openings: footprint.graphic_openings.clone(),
             pads: footprint
                 .pads
@@ -156,14 +183,19 @@ impl Builder {
         if footprint.graphics.is_empty() {
             return;
         }
-        let exits = self.walled_pad_exits(ctx, footprint);
         let debug = std::env::var_os("PCB_ROUTER_DEBUG").is_some();
         if debug {
             self.print_touching_pads(footprint);
         }
+        // `walled_pad_exits` false: walled pads stay walled (dead pads).
+        if ctx.config.walled_pad_exits == Some(false) {
+            return;
+        }
+        let exits = self.walled_pad_exits(ctx, footprint);
         if exits.is_empty() {
             return;
         }
+        self.record_walled_pads(footprint, &exits);
         if debug {
             for exit in &exits {
                 eprintln!(
@@ -306,6 +338,62 @@ impl Builder {
         }
     }
 
+    /// The walled pads of `exits`, one per pad and layer, with the
+    /// graphics their corridors cut (`WalledPad`).
+    fn record_walled_pads(&mut self, footprint: &OwnCopper, exits: &[Exit]) {
+        let mut pads: Vec<WalledPad> = Vec::new();
+        for exit in exits {
+            let position = pads
+                .iter()
+                .position(|pad| pad.pad == exit.pad && pad.layer == exit.layer)
+                .unwrap_or_else(|| {
+                    pads.push(WalledPad {
+                        reference: footprint.reference.clone(),
+                        pad: exit.pad.clone(),
+                        net: self.nets[exit.net as usize].name.clone(),
+                        layer: exit.layer,
+                        graphics: Vec::new(),
+                        corridors: Vec::new(),
+                        touching: Vec::new(),
+                    });
+                    pads.len() - 1
+                });
+            let pad = &mut pads[position];
+            pad.corridors.push((exit.start, exit.end, exit.radius));
+            for (&index, id) in footprint.graphics.iter().zip(&footprint.graphic_ids) {
+                let graphic = &self.obstacles[index];
+                if graphic.layers & (1 << exit.layer) != 0
+                    && graphic.shape.distance_to_segment(exit.start, exit.end) < exit.radius
+                    && !pad.graphics.contains(id)
+                {
+                    pad.graphics.push(id.clone());
+                }
+            }
+        }
+        for pad in &mut pads {
+            let graphics: Vec<&core::Obstacle> = footprint
+                .graphics
+                .iter()
+                .zip(&footprint.graphic_ids)
+                .filter(|(_, id)| pad.graphics.contains(id))
+                .map(|(&index, _)| &self.obstacles[index])
+                .collect();
+            for (number, _, copper) in &footprint.pads {
+                let touches = copper.iter().any(|&index| {
+                    let copper = &self.obstacles[index];
+                    graphics.iter().any(|graphic| {
+                        graphic.layers & copper.layers != 0
+                            && core::verify::shape_distance(&graphic.shape, &copper.shape) <= 1.0e-6
+                    })
+                });
+                if touches && !pad.touching.contains(number) {
+                    pad.touching.push(number.clone());
+                }
+            }
+        }
+        self.walled_pads.extend(pads);
+    }
+
     /// With `PCB_ROUTER_DEBUG`: one line per pad of the footprint that its
     /// own copper graphics touch, for a census of the boards.
     fn print_touching_pads(&self, footprint: &OwnCopper) {
@@ -363,7 +451,7 @@ impl Builder {
     /// no point on it for its class's track), on each of those layers.
     fn walled_pad_exits(&self, ctx: &Context, footprint: &OwnCopper) -> Vec<Exit> {
         let mut exits = Vec::new();
-        for (_, center, copper) in &footprint.pads {
+        for (number, center, copper) in &footprint.pads {
             let Some(net) = self.obstacles[copper[0]].net else {
                 continue;
             };
@@ -414,6 +502,7 @@ impl Builder {
             for (layer, walls) in walled {
                 for (start, end) in pad_exits(*center, &walls, &others, need) {
                     exits.push(Exit {
+                        pad: number.clone(),
                         layer,
                         net,
                         start,
