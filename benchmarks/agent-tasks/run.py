@@ -1047,11 +1047,33 @@ def has_drc_command(binary):
 # VIA_SITES_CACHE, the large pads' under `large:<SHA-256>`: a panel's
 # score takes minutes.
 DESIGNER_VIAS_IN_PADS = {}
+# Why the designer's score is missing, by the same key: score-kicad-board
+# ran past SCORE_TIMEOUT_SECONDS.
+DESIGNER_SCORE_MISSING = {}
 VIA_SITES_CACHE = ROOT / "build" / "designer-vias-in-pads.json"
 VIA_SITES_LOCK = threading.Lock()
 
 
 VIA_IN_PAD_BINARIES = {}
+
+# How long score-kicad-board may take on one board before the harness gives
+# up on it (the score recorded as missing, `score_missing`): ten times the
+# slowest board measured (2026-11-10: about 47 CPU s on the 109 designer
+# boards, the nightly's 159 routed ones, the 46 expansion and the 56
+# held-out boards; 45 s Keel, 24 s ZeyBack). Until then there was no limit,
+# and one designer's board (ZeyBack, 5353 pours) ran 54 minutes and stalled
+# a run.
+SCORE_TIMEOUT_SECONDS = 500
+
+
+def bounded_score(binary, directory, board_id, row, side):
+    """quality.score within SCORE_TIMEOUT_SECONDS: past it None, and the
+    row's `score_missing` names the side ("designer", "ours") and why."""
+    try:
+        return quality.score(binary, directory, board_id, timeout=SCORE_TIMEOUT_SECONDS)
+    except quality.ScoreTimeout as error:
+        row.setdefault("score_missing", {})[side] = str(error)
+        return None
 
 
 def lists_vias_in_pads(binary):
@@ -1076,7 +1098,7 @@ def via_in_pad_probe(binary):
         with tempfile.TemporaryDirectory() as directory:
             (Path(directory) / "probe.kicad_pcb").write_text(
                 '(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user)))\n')
-            report = quality.score(binary, directory, "probe") or {}
+            report = bounded_score(binary, directory, "probe", {}, "probe") or {}
         VIA_IN_PAD_BINARIES[key] = set((report.get("manufacturing") or {}).keys())
     return VIA_IN_PAD_BINARIES[key]
 
@@ -1084,7 +1106,8 @@ def via_in_pad_probe(binary):
 def designer_via_sites(binary, directory, board_id):
     """score-kicad-board's `vias_in_pads_at` on the designer's board, from
     VIA_SITES_CACHE where it holds the board; None when the binary gives
-    no list (`lists_vias_in_pads`)."""
+    no list (`lists_vias_in_pads`). quality.ScoreTimeout past
+    SCORE_TIMEOUT_SECONDS."""
     if not lists_vias_in_pads(binary):
         return None
     board = Path(directory) / f"{board_id}.kicad_pcb"
@@ -1099,7 +1122,7 @@ def designer_via_sites(binary, directory, board_id):
         return cached[digest]
     if digest in cached and f"large:{digest}" in cached:
         return cached[digest] + cached[f"large:{digest}"]
-    report = quality.score(binary, directory, board_id) or {}
+    report = quality.score(binary, directory, board_id, timeout=SCORE_TIMEOUT_SECONDS) or {}
     manufacturing = report.get("manufacturing") or {}
     if "filled_vias_in_pads" not in manufacturing:
         return None
@@ -1126,7 +1149,13 @@ def designer_via_sites(binary, directory, board_id):
 def designer_vias_in_pads(binary, directory, board_id):
     key = (str(binary), str(directory), board_id)
     if key not in DESIGNER_VIAS_IN_PADS:
-        sites = designer_via_sites(binary, directory, board_id) or []
+        try:
+            sites = designer_via_sites(binary, directory, board_id) or []
+        except quality.ScoreTimeout as error:
+            # No vias in pads from the designer's board, and the rows say
+            # why (`with_designer_vias`).
+            DESIGNER_SCORE_MISSING[key] = str(error)
+            sites = []
         parts = {}
         for site in sites:
             parts.setdefault((site["part"], site["footprint"]), []).append(site)
@@ -1156,6 +1185,9 @@ def with_designer_vias(router, row, arguments, directory, board_id):
     if arguments.designer_via_in_pad == "off" or "via_in_pad" in router:
         return router
     entries = designer_vias_in_pads(arguments.binary, directory, board_id)
+    missing = DESIGNER_SCORE_MISSING.get((str(arguments.binary), str(directory), board_id))
+    if missing:
+        row.setdefault("score_missing", {})["designer"] = missing
     if not entries:
         return router
     row["via_in_pad"] = [entry["part"] for entry in entries]
@@ -1814,8 +1846,8 @@ def add_quality(row, task, arguments):
     if row.get("native") is None:
         return
     result = result_directory(row, arguments.output)
-    designer = quality.score(arguments.binary, task_directory(task), task["board_id"])
-    ours = quality.score(arguments.binary, result, task["board_id"])
+    designer = bounded_score(arguments.binary, task_directory(task), task["board_id"], row, "designer")
+    ours = bounded_score(arguments.binary, result, task["board_id"], row, "ours")
     row["quality"] = {"designer": quality.measures(designer) if designer else None,
                       "ours": quality.measures(ours) if ours else None}
 

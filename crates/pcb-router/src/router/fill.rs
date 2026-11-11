@@ -133,6 +133,9 @@ pub(super) struct FillProbe<'a> {
     /// higher priority (`Router::reclaimed_fill`), computed when first
     /// asked.
     reclaimed: OnceCell<Vec<Vec<bool>>>,
+    /// Per layer, per pour of the net there (`filled_planes`), its
+    /// excluded regions with their boxes (`inside`), made when first asked.
+    excluded: OnceCell<Vec<Vec<crate::geometry::BoxedPolygons<'a>>>>,
     /// Per hatch hole (layer and its place in the pattern), whether KiCad
     /// keeps it (`hole_kept`).
     holes: std::cell::RefCell<FastMap<(usize, i64, i64), bool>>,
@@ -287,6 +290,7 @@ impl<'a> FillProbe<'a> {
             via_rings,
             index: OnceCell::new(),
             reclaimed: OnceCell::new(),
+            excluded: OnceCell::new(),
             holes: std::cell::RefCell::new(FastMap::default()),
             tolerance: std::cell::Cell::new(EPSILON),
             track_end: std::cell::Cell::new(false),
@@ -959,6 +963,7 @@ impl<'a> FillProbe<'a> {
             }
             // The pour's own outlines, the board's, and the reliefs.
             let mut half_most: f64 = 0.0;
+            let outlines = self.router.plane_outlines();
             for layer in 0..layers {
                 if state.plane.get(layer).is_none_or(|mask| mask.is_empty()) {
                     continue;
@@ -966,12 +971,11 @@ impl<'a> FillProbe<'a> {
                 let half = self.half(layer);
                 half_most = half_most.max(half);
                 for plane in self.filled_planes(layer) {
-                    for (polygon, clearance) in std::iter::once((&plane.polygon, 0.0)).chain(
-                        plane
-                            .excluded
-                            .iter()
-                            .map(|polygon| (polygon, board.excluded_clearance(plane, polygon))),
-                    ) {
+                    for (polygon, clearance) in
+                        std::iter::once((&plane.polygon, 0.0)).chain(plane.excluded.iter().map(
+                            |polygon| (polygon, outlines.excluded_clearance(board, plane, polygon)),
+                        ))
+                    {
                         for (a, b) in polygon_edges(polygon) {
                             insert(
                                 layer,
@@ -1059,13 +1063,23 @@ impl<'a> FillProbe<'a> {
                 return true;
             }
         }
-        self.filled_planes(layer).any(|plane| {
-            point_in_polygon(point, &plane.polygon)
-                && !plane
-                    .excluded
-                    .iter()
-                    .any(|other| point_in_polygon(point, other))
-        }) && point_in_polygon(point, &board.outline)
+        let excluded = self.excluded.get_or_init(|| {
+            (0..router.board.layer_count)
+                .map(|layer| {
+                    self.filled_planes(layer)
+                        .map(|plane| {
+                            crate::geometry::BoxedPolygons::meeting(&plane.excluded, &plane.polygon)
+                        })
+                        .collect()
+                })
+                .collect()
+        });
+        self.filled_planes(layer)
+            .zip(&excluded[layer])
+            .any(|(plane, excluded)| {
+                point_in_polygon(point, &plane.polygon) && !excluded.any_contains(point)
+            })
+            && point_in_polygon(point, &board.outline)
     }
 
     /// Whether a brush centre of the pour fits at `point` on `layer`: the

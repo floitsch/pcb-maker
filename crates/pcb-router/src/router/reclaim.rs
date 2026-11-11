@@ -36,63 +36,79 @@ impl Router {
         let description = &self.board.nets[net as usize];
         let cells = self.grid.cells();
         let pitch = self.grid.pitch;
+        let outlines = self.plane_outlines();
         for (layer, reclaimed) in result.iter_mut().enumerate() {
             if state.plane.get(layer).is_none_or(|mask| mask.is_empty()) {
                 continue;
             }
             let class = state.plane_class[layer];
             let half = self.board.classes[class].trace_width / 2.0;
+            // This net's copper on the layer, each point with its window:
+            // its pads (by their anchors), its branches' nodes (a via's on
+            // every layer).
+            let mut copper: Vec<(crate::geometry::Point, crate::geometry::Aabb)> = Vec::new();
+            for terminal in &description.terminals {
+                if terminal.layers & (1 << layer) != 0 {
+                    copper.push((
+                        terminal.anchor,
+                        self.board.obstacles[terminal.pad]
+                            .shape
+                            .aabb()
+                            .inflated(RECLAIM_REACH),
+                    ));
+                }
+            }
+            for branch in &state.branches {
+                for (index, node) in branch.nodes.iter().enumerate() {
+                    let via = branch
+                        .nodes
+                        .get(index + 1)
+                        .is_some_and(|next| next.cell == node.cell && next.layer != node.layer)
+                        || (index > 0
+                            && branch.nodes[index - 1].cell == node.cell
+                            && branch.nodes[index - 1].layer != node.layer);
+                    if node.layer as usize != layer && !via {
+                        continue;
+                    }
+                    let center = self.grid.center_of(node.cell as usize);
+                    let reach = if via { RECLAIM_REACH } else { 2.0 * pitch };
+                    copper.push((
+                        center,
+                        crate::geometry::Aabb {
+                            minimum: [center[0] - reach, center[1] - reach],
+                            maximum: [center[0] + reach, center[1] + reach],
+                        },
+                    ));
+                }
+            }
             for plane in self
                 .board
                 .planes
                 .iter()
                 .filter(|plane| plane.net == net && plane.layer == layer)
             {
-                for excluded in &plane.excluded {
-                    let Some(other) = self.board.planes.iter().find(|other| {
-                        other.net != net
-                            && other.layer == layer
-                            && other.polygon.as_slice() == excluded.as_slice()
-                    }) else {
+                // Only regions that can meet the pour hold a point inside
+                // both (a board of 5353 pours had 1300 regions a pour).
+                let regions = crate::geometry::BoxedPolygons::new(&plane.excluded);
+                for (index, excluded) in plane.excluded.iter().enumerate() {
+                    if !regions.may_meet(index, &plane.polygon) {
+                        continue;
+                    }
+                    let Some(other) = outlines.others(&self.board, net, layer, excluded).next()
+                    else {
                         // A keepout's region: nothing fills it.
                         continue;
                     };
                     let inside = |point: crate::geometry::Point| {
-                        crate::geometry::point_in_polygon(point, excluded)
+                        regions.contains(index, point)
                             && crate::geometry::point_in_polygon(point, &plane.polygon)
                     };
                     // The windows: this net's copper inside the region.
-                    let mut boxes: Vec<crate::geometry::Aabb> = Vec::new();
-                    for terminal in &description.terminals {
-                        if terminal.layers & (1 << layer) != 0 && inside(terminal.anchor) {
-                            boxes.push(
-                                self.board.obstacles[terminal.pad]
-                                    .shape
-                                    .aabb()
-                                    .inflated(RECLAIM_REACH),
-                            );
-                        }
-                    }
-                    for branch in &state.branches {
-                        for (index, node) in branch.nodes.iter().enumerate() {
-                            let via = branch.nodes.get(index + 1).is_some_and(|next| {
-                                next.cell == node.cell && next.layer != node.layer
-                            }) || (index > 0
-                                && branch.nodes[index - 1].cell == node.cell
-                                && branch.nodes[index - 1].layer != node.layer);
-                            if node.layer as usize != layer && !via {
-                                continue;
-                            }
-                            let center = self.grid.center_of(node.cell as usize);
-                            if inside(center) {
-                                let reach = if via { RECLAIM_REACH } else { 2.0 * pitch };
-                                boxes.push(crate::geometry::Aabb {
-                                    minimum: [center[0] - reach, center[1] - reach],
-                                    maximum: [center[0] + reach, center[1] + reach],
-                                });
-                            }
-                        }
-                    }
+                    let boxes: Vec<crate::geometry::Aabb> = copper
+                        .iter()
+                        .filter(|(point, _)| inside(*point))
+                        .map(|(_, window)| *window)
+                        .collect();
                     if boxes.is_empty() {
                         continue;
                     }
@@ -121,7 +137,7 @@ impl Router {
                     // This net's brush centre keeps the clearance from that
                     // fill: the gap plus both brushes' halves from its
                     // centres.
-                    let gap = self.board.excluded_clearance(plane, excluded);
+                    let gap = outlines.excluded_clearance(&self.board, plane, excluded);
                     let radius = gap + half + self.board.classes[other.class].trace_width / 2.0;
                     let steps = (radius / pitch).ceil() as i64;
                     let mut offsets: Vec<(i64, i64)> = Vec::new();
@@ -186,6 +202,8 @@ struct OtherFill<'a> {
     layer: usize,
     map: usize,
     own: OwnStamps,
+    /// The zone's own excluded regions.
+    excluded: crate::geometry::BoxedPolygons<'a>,
     /// The zone's net's copper on the layer: its pads' nodes, its
     /// branches' nodes.
     copper: HashSet<usize>,
@@ -226,6 +244,8 @@ impl<'a> OtherFill<'a> {
             layer,
             map,
             own,
+            // (Asked only of nodes inside the zone.)
+            excluded: crate::geometry::BoxedPolygons::meeting(&plane.excluded, &plane.polygon),
             copper,
             free: FastMap::default(),
             piece: FastMap::default(),
@@ -243,10 +263,7 @@ impl<'a> OtherFill<'a> {
         let plane = self.plane;
         let center = router.grid.center_of(cell);
         let free = crate::geometry::point_in_polygon(center, &plane.polygon)
-            && !plane
-                .excluded
-                .iter()
-                .any(|region| crate::geometry::point_in_polygon(center, region))
+            && !self.excluded.any_contains(center)
             && router.statics[plane.class].fill_allowed(self.layer, cell, plane.net)
             && router.occupancy.get(self.map, cell) as usize
                 == self.own.contains(self.map, cell) as usize;

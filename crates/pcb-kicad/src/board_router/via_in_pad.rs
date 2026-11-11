@@ -1087,9 +1087,9 @@ fn enclosed_pads(
                 .push(index);
         }
         for (net, members) in by_net {
-            let reached = grid.flood(pads, net);
+            let reach = grid.reach(pads, net);
             for index in members {
-                if !grid.reaches(&reached, &pads[index].shape) {
+                if !grid.reaches(|cell| reach.reached(&grid, cell), &pads[index].shape) {
                     enclosed.push(index);
                 }
             }
@@ -1114,6 +1114,138 @@ struct FloodGrid {
     blocked: Vec<u32>,
     /// Per cell: whether a via fits there (its clearance from every pad).
     via_fits: Vec<bool>,
+    /// The cells no pad blocks, in runs, and their components.
+    parts: FreeParts,
+    /// Per pad of the field: the range of cells it may block (`blocked`
+    /// holds a pad's code only there).
+    pad_ranges: Vec<(usize, [usize; 4])>,
+}
+
+/// The cells of a `FloodGrid` that no pad blocks, in runs along the rows,
+/// and their components (eight neighbours): what every net's flood shares
+/// (`FloodGrid::reach`). Until 2026-11-10 each net flooded the whole
+/// raster: a large module's field of a hundred nets at 5 to 25 um took a
+/// minute of every lowering of vd-rd's sbc_allwinner_a13.
+struct FreeParts {
+    /// Per row, where its runs start in `runs` (and the end, last).
+    rows: Vec<usize>,
+    /// Per run: its first and last column and its component.
+    runs: Vec<(u32, u32, u32)>,
+    /// Per component: whether it holds a seed of every net's flood (a rim
+    /// cell or a cell where a via fits; such a cell is free for every
+    /// net).
+    seeded: Vec<bool>,
+}
+
+impl FreeParts {
+    fn of(blocked: &[u32], via_fits: &[bool], size: [usize; 2]) -> Self {
+        let [width, height] = size;
+        let mut rows = Vec::with_capacity(height + 1);
+        let mut spans: Vec<(u32, u32)> = Vec::new();
+        let mut parent: Vec<u32> = Vec::new();
+        fn root(parent: &mut [u32], mut run: u32) -> u32 {
+            while parent[run as usize] != run {
+                let next = parent[run as usize];
+                parent[run as usize] = parent[next as usize];
+                run = next;
+            }
+            run
+        }
+        let mut above = 0..0;
+        for y in 0..height {
+            let start = spans.len();
+            rows.push(start);
+            let row = &blocked[y * width..(y + 1) * width];
+            let mut x = 0;
+            while x < width {
+                if row[x] != FREE {
+                    x += 1;
+                    continue;
+                }
+                let first = x;
+                while x < width && row[x] == FREE {
+                    x += 1;
+                }
+                spans.push((first as u32, (x - 1) as u32));
+                parent.push(parent.len() as u32);
+            }
+            // Eight neighbours: a run joins the runs of the row above that
+            // overlap it or touch it diagonally.
+            let mut index = above.start;
+            for run in start..spans.len() {
+                let (a, b) = spans[run];
+                while index < above.end && spans[index].1 + 1 < a {
+                    index += 1;
+                }
+                let mut other = index;
+                while other < above.end && spans[other].0 <= b + 1 {
+                    let (p, q) = (
+                        root(&mut parent, run as u32),
+                        root(&mut parent, other as u32),
+                    );
+                    if p != q {
+                        parent[p.max(q) as usize] = p.min(q);
+                    }
+                    other += 1;
+                }
+            }
+            above = start..spans.len();
+        }
+        rows.push(spans.len());
+        let mut numbers = vec![u32::MAX; spans.len()];
+        let mut seeded = Vec::new();
+        let mut runs = Vec::with_capacity(spans.len());
+        for y in 0..height {
+            for (run, &(a, b)) in spans.iter().enumerate().take(rows[y + 1]).skip(rows[y]) {
+                let top = root(&mut parent, run as u32) as usize;
+                if numbers[top] == u32::MAX {
+                    numbers[top] = seeded.len() as u32;
+                    seeded.push(false);
+                }
+                let part = numbers[top];
+                let seed = y == 0
+                    || y + 1 == height
+                    || a == 0
+                    || b as usize + 1 == width
+                    || via_fits[y * width + a as usize..=y * width + b as usize]
+                        .iter()
+                        .any(|fits| *fits);
+                seeded[part as usize] |= seed;
+                runs.push((a, b, part));
+            }
+        }
+        Self { rows, runs, seeded }
+    }
+
+    /// The component of a cell no pad blocks at column `x` of row `y`.
+    fn part(&self, x: usize, y: usize) -> Option<u32> {
+        let runs = &self.runs[self.rows[y]..self.rows[y + 1]];
+        let after = runs.partition_point(|run| run.0 as usize <= x);
+        let run = runs[..after].last()?;
+        (run.1 as usize >= x).then_some(run.2)
+    }
+}
+
+/// What one net's flood reached (`FloodGrid::reach`): the components of
+/// free cells beyond the seeded ones, and the cells only the net's own
+/// pads block.
+struct NetReach {
+    parts: std::collections::HashSet<u32>,
+    cells: std::collections::HashSet<usize>,
+}
+
+impl NetReach {
+    /// Whether the net's flood reaches `cell` (`FloodGrid::flood`'s cell).
+    fn reached(&self, grid: &FloodGrid, cell: usize) -> bool {
+        if grid.blocked[cell] == FREE {
+            let (x, y) = (cell % grid.size[0], cell / grid.size[0]);
+            grid.parts
+                .part(x, y)
+                .is_some_and(|part| grid.parts.seeded[part as usize] || self.parts.contains(&part))
+        } else {
+            self.cells.contains(&cell)
+        }
+    }
 }
 
 /// `FloodGrid::blocked` of a cell no pad blocks.
@@ -1161,6 +1293,7 @@ impl FloodGrid {
         ];
         let mut blocked: Vec<u32> = vec![FREE; size[0] * size[1]];
         let mut via_fits = vec![true; size[0] * size[1]];
+        let mut pad_ranges = Vec::with_capacity(on_layer.len());
         for &index in on_layer {
             let pad = &pads[index];
             let own_code = u32::try_from(index + 1)
@@ -1174,6 +1307,7 @@ impl FloodGrid {
             let y0 = ((aabb.minimum[1] - origin[1]) / step).floor().max(0.0) as usize;
             let x1 = (((aabb.maximum[0] - origin[0]) / step).ceil() as usize).min(size[0] - 1);
             let y1 = (((aabb.maximum[1] - origin[1]) / step).ceil() as usize).min(size[1] - 1);
+            pad_ranges.push((index, [x0, y0, x1, y1]));
             for y in y0..=y1 {
                 for x in x0..=x1 {
                     let point = [origin[0] + x as f64 * step, origin[1] + y as f64 * step];
@@ -1203,13 +1337,104 @@ impl FloodGrid {
                 }
             }
         }
+        let parts = FreeParts::of(&blocked, &via_fits, size);
         Self {
             origin,
             step,
             size,
             blocked,
             via_fits,
+            parts,
+            pad_ranges,
         }
+    }
+
+    /// `flood(pads, net)` from the components the nets share: a cell no
+    /// pad blocks is reached with its component, which is reached where it
+    /// holds a seed or touches a reached cell of the net's own pads; those
+    /// cells (the only others free for the net) are flooded one by one. The
+    /// cells reached are the same: those joined to a free seed through free
+    /// cells.
+    fn reach(&self, pads: &[BoardPad], net: &str) -> NetReach {
+        let [width, height] = self.size;
+        // The cells only the net's own pads block: within those pads'
+        // ranges, where `blocked` holds a pad of the net.
+        let mut own: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        for (index, [x0, y0, x1, y1]) in &self.pad_ranges {
+            if pads[*index].net.as_deref() != Some(net) {
+                continue;
+            }
+            for y in *y0..=*y1 {
+                for x in *x0..=*x1 {
+                    let cell = y * width + x;
+                    let code = self.blocked[cell];
+                    if code != FREE && code != SHARED && self.free(pads, net, cell) {
+                        own.insert(cell);
+                    }
+                }
+            }
+        }
+        let neighbours = |cell: usize| {
+            let (x, y) = ((cell % width) as isize, (cell / width) as isize);
+            [
+                (1, 0),
+                (-1, 0),
+                (0, 1),
+                (0, -1),
+                (1, 1),
+                (1, -1),
+                (-1, 1),
+                (-1, -1),
+            ]
+            .into_iter()
+            .filter_map(move |(dx, dy)| {
+                let (nx, ny) = (x + dx, y + dy);
+                (nx >= 0 && ny >= 0 && (nx as usize) < width && (ny as usize) < height)
+                    .then_some((nx as usize, ny as usize))
+            })
+        };
+        let mut reach = NetReach {
+            parts: std::collections::HashSet::new(),
+            cells: std::collections::HashSet::new(),
+        };
+        let mut stack: Vec<usize> = Vec::new();
+        // Per component not seeded, the net's cells beside it.
+        let mut beside: std::collections::HashMap<u32, Vec<usize>> =
+            std::collections::HashMap::new();
+        for &cell in &own {
+            let (x, y) = (cell % width, cell / width);
+            let mut reached =
+                x == 0 || y == 0 || x + 1 == width || y + 1 == height || self.via_fits[cell];
+            for (nx, ny) in neighbours(cell) {
+                if let Some(part) = self.parts.part(nx, ny) {
+                    if self.parts.seeded[part as usize] {
+                        reached = true;
+                    } else {
+                        beside.entry(part).or_default().push(cell);
+                    }
+                }
+            }
+            if reached && reach.cells.insert(cell) {
+                stack.push(cell);
+            }
+        }
+        while let Some(cell) = stack.pop() {
+            for (nx, ny) in neighbours(cell) {
+                let next = ny * width + nx;
+                if let Some(part) = self.parts.part(nx, ny) {
+                    if !self.parts.seeded[part as usize] && reach.parts.insert(part) {
+                        for &other in beside.get(&part).into_iter().flatten() {
+                            if reach.cells.insert(other) {
+                                stack.push(other);
+                            }
+                        }
+                    }
+                } else if own.contains(&next) && reach.cells.insert(next) {
+                    stack.push(next);
+                }
+            }
+        }
+        reach
     }
 
     /// Whether a track of `net` may pass `cell`.
@@ -1229,7 +1454,10 @@ impl FloodGrid {
     /// via cell and every neighbour of every reached cell, found or not:
     /// up to eight entries of eight bytes a cell, 1 GB of queue for one
     /// net of Neotron-Pico's. The cells reached are the same: those joined
-    /// to a free seed through free cells, whatever the order.
+    /// to a free seed through free cells, whatever the order. Until
+    /// 2026-11-10 the flood of every net; now the tests' reference for
+    /// `reach`.
+    #[cfg(test)]
     fn flood(&self, pads: &[BoardPad], net: &str) -> Vec<bool> {
         let [width, height] = self.size;
         assert!(
@@ -1335,7 +1563,7 @@ impl FloodGrid {
     }
 
     /// Whether a reached cell lies in `shape`.
-    fn reaches(&self, reached: &[bool], shape: &core::Shape) -> bool {
+    fn reaches(&self, reached: impl Fn(usize) -> bool, shape: &core::Shape) -> bool {
         let aabb = shape.aabb();
         let x0 = ((aabb.minimum[0] - self.origin[0]) / self.step)
             .floor()
@@ -1353,7 +1581,7 @@ impl FloodGrid {
                     self.origin[0] + x as f64 * self.step,
                     self.origin[1] + y as f64 * self.step,
                 ];
-                reached[y * self.size[0] + x] && shape.distance_to_point(point) <= 0.0
+                reached(y * self.size[0] + x) && shape.distance_to_point(point) <= 0.0
             })
         })
     }
@@ -1887,11 +2115,22 @@ mod tests {
                         "{pitch} mm, {name}, cell {cell}"
                     );
                 }
+                let flood = grid.flood(&pads, name);
                 assert_eq!(
-                    grid.flood(&pads, name),
+                    flood,
                     grid.flood_by_queue(&pads, name),
                     "{pitch} mm, {name}"
                 );
+                // The flood from the shared components reaches the same
+                // cells (2026-11-10).
+                let reach = grid.reach(&pads, name);
+                for (cell, reached) in flood.iter().enumerate() {
+                    assert_eq!(
+                        reach.reached(&grid, cell),
+                        *reached,
+                        "{pitch} mm, {name}, cell {cell}"
+                    );
+                }
             }
         }
     }

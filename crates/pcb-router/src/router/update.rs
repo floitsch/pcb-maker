@@ -53,6 +53,8 @@ impl Router {
         self.searched = searched_classes(&self.board, &self.neck_of);
         self.statics_shared = false;
         self.statics_key = None;
+        self.pour_masks_key = std::sync::OnceLock::new();
+        self.plane_outlines = std::sync::OnceLock::new();
         self.statics = Arc::new(
             (0..self.board.classes.len())
                 .map(|class| {

@@ -4693,3 +4693,73 @@ fn strip_keeps_the_tracks_of_the_nets_it_is_told_to_keep() {
     assert_eq!(counts, [0, 5]);
     fs::remove_dir_all(&directory).unwrap();
 }
+
+/// A board of many small zones, one per net, on four layers, each priority
+/// above the last: every pour excludes every zone of a higher priority on
+/// its layers, near or not (ZeyBack: 5353 pours excluding 7 million
+/// regions; score-kicad-board ran 54 minutes and was killed). Scoring it
+/// as score-kicad-board does (the quality report and the pours) takes
+/// about a second; the code before 2026-11-10 took minutes (its pour
+/// masks' key wrote every pour's regions as text once a net, each excluded
+/// region was looked up among all pours, every pour walked the whole
+/// lattice).
+#[test]
+fn a_board_of_many_zones_scores_in_seconds() {
+    const SIDE: usize = 18;
+    const PITCH: f64 = 2.5;
+    let mut text = String::from(
+        r#"(kicad_pcb (version 20260206) (layers (0 "F.Cu" signal) (4 "In1.Cu" signal) (6 "In2.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+  (gr_rect (start 0 0) (end 46 46) (layer "Edge.Cuts"))
+"#,
+    );
+    for index in 0..SIDE * SIDE {
+        let x = 1.0 + (index % SIDE) as f64 * PITCH;
+        let y = 1.0 + (index / SIDE) as f64 * PITCH;
+        let net = format!("/N{index}");
+        text += &format!(
+            r#"  (footprint "TP" (layer "F.Cu") (at {cx} {cy}) (property "Reference" "TP{index}") (property "Value" "TP")
+    (pad "1" thru_hole circle (at 0 0) (size 0.8 0.8) (drill 0.4) (layers "*.Cu") (net "{net}")))
+  (zone (net "{net}") (layers "F.Cu" "In1.Cu" "In2.Cu" "B.Cu") (uuid "00000000-0000-4000-8000-{index:012}") (priority {index})
+    (connect_pads (clearance 0.2)) (min_thickness 0.2) (fill yes (thermal_gap 0.3) (thermal_bridge_width 0.3))
+    (polygon (pts (xy {x} {y}) (xy {x2} {y}) (xy {x2} {y2}) (xy {x} {y2}))))
+"#,
+            cx = x + 1.0,
+            cy = y + 1.0,
+            x2 = x + 2.0,
+            y2 = y + 2.0,
+        );
+    }
+    text += ")\n";
+    let directory =
+        std::env::temp_dir().join(format!("pcb-maker-many-zones-{}", std::process::id()));
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("b.kicad_pcb"), &text).unwrap();
+    let started = std::time::Instant::now();
+    let quality = crate::quality::score_kicad_board(&directory, "b");
+    let config = KiCadBoardRouterConfig {
+        default_rules: Some(KiCadConnectionRoutingRules {
+            trace_width_mm: 0.2,
+            clearance_mm: 0.2,
+            via_size_mm: 0.6,
+            via_drill_mm: 0.3,
+        }),
+        ..KiCadBoardRouterConfig::default()
+    };
+    let pours = measure_pours(&directory, "b", &config);
+    let seconds = started.elapsed().as_secs_f64();
+    fs::remove_dir_all(&directory).ok();
+    quality.unwrap();
+    let pours = pours.unwrap();
+    // Every zone measured on every layer, whole: one piece (an island,
+    // its pad joined by spokes alone).
+    assert_eq!(pours.len(), SIDE * SIDE * 4);
+    assert!(
+        pours
+            .iter()
+            .all(|pour| pour.area_mm2 == 4.0 && pour.pieces + pour.islands_removed == 1),
+        "{pours:?}"
+    );
+    eprintln!("scored in {seconds:.2} s");
+    // Generous for a loaded machine (about a second unloaded).
+    assert!(seconds < 15.0, "scored in {seconds:.1} s");
+}

@@ -1912,7 +1912,7 @@ class DesignerViasInPads(unittest.TestCase):
                                   "diameter_mm": size[0], "drill_mm": size[1], "filled": False}
         self.calls = 0
 
-        def score(binary, directory, board_id):
+        def score(binary, directory, board_id, timeout=None):
             if board_id == "probe":
                 return {"manufacturing": {"vias_in_pads": 0, "filled_vias_in_pads": 0}}
             self.calls += 1
@@ -1957,8 +1957,8 @@ class DesignerViasInPads(unittest.TestCase):
                 "diameter_mm": 0.6, "drill_mm": 0.3, "filled": False}
         small = self.score
 
-        def score(binary, directory, board_id):
-            report = run.quality.score.__wrapped__(binary, directory, board_id)
+        def score(binary, directory, board_id, timeout=None):
+            report = run.quality.score.__wrapped__(binary, directory, board_id, timeout)
             if binary == "new":
                 report["manufacturing"]["vias_in_large_pads"] = 0 if board_id == "probe" else 1
                 if board_id != "probe":
@@ -1985,6 +1985,68 @@ class DesignerViasInPads(unittest.TestCase):
             self.assertEqual(self.calls, 2)
         finally:
             run.quality.score = small
+
+
+class ScoreTimeout(unittest.TestCase):
+    """score-kicad-board past SCORE_TIMEOUT_SECONDS: the row's score is
+    missing with the reason, and the run goes on (ZeyBack's designer board
+    ran 54 minutes, 2026-11-10)."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        self.limit = run.SCORE_TIMEOUT_SECONDS
+        run.SCORE_TIMEOUT_SECONDS = 0.5
+        self.cache = run.VIA_SITES_CACHE
+        run.VIA_SITES_CACHE = self.root / "cache.json"
+        run.DESIGNER_VIAS_IN_PADS.clear()
+        run.DESIGNER_SCORE_MISSING.clear()
+        # Answers the probe of an empty board, hangs on any other board.
+        self.binary = self.root / "pcb-maker"
+        self.binary.write_text("#!/bin/sh\n"
+                               "if [ \"$3\" = probe ]; then\n"
+                               "  echo '{\"manufacturing\": {\"vias_in_pads\": 0, \"filled_vias_in_pads\": 0}}'\n"
+                               "  exit 0\n"
+                               "fi\n"
+                               "sleep 60\n")
+        self.binary.chmod(0o755)
+        self.board = self.root / "board"
+        self.board.mkdir()
+        (self.board / "b.kicad_pcb").write_text("(kicad_pcb)")
+
+    def tearDown(self):
+        run.SCORE_TIMEOUT_SECONDS = self.limit
+        run.VIA_SITES_CACHE = self.cache
+        run.DESIGNER_VIAS_IN_PADS.clear()
+        run.DESIGNER_SCORE_MISSING.clear()
+        run.VIA_IN_PAD_BINARIES.pop(str(self.binary), None)
+        shutil.rmtree(self.root)
+
+    def test_the_designers_vias_in_pads_are_missing_with_the_reason(self):
+        class Arguments:
+            designer_via_in_pad = "on"
+            binary = self.binary
+        row = {}
+        started = time.monotonic()
+        self.assertEqual(run.with_designer_vias({"seeds": 2}, row, Arguments, self.board, "b"), {"seeds": 2})
+        self.assertLess(time.monotonic() - started, 30)
+        self.assertEqual(row["score_missing"], {"designer": "score-kicad-board ran past 0.5 s"})
+        # Another row of the board: not scored again, the reason kept.
+        again = {}
+        started = time.monotonic()
+        run.with_designer_vias({}, again, Arguments, self.board, "b")
+        self.assertLess(time.monotonic() - started, 0.4)
+        self.assertEqual(again["score_missing"], row["score_missing"])
+        self.assertFalse(run.VIA_SITES_CACHE.exists())
+
+    def test_the_quality_scores_are_missing_with_the_reason(self):
+        output = self.root / "run"
+        (output / "t" / "route").mkdir(parents=True)
+        arguments = run.argparse.Namespace(binary=self.binary, output=output)
+        row = {"name": "t", "mode": "route", "native": {}}
+        run.add_quality(row, {"directory": str(self.board), "board_id": "b"}, arguments)
+        self.assertEqual(row["quality"], {"designer": None, "ours": None})
+        self.assertEqual(row["score_missing"], {"designer": "score-kicad-board ran past 0.5 s",
+                                                "ours": "score-kicad-board ran past 0.5 s"})
 
 
 if __name__ == "__main__":

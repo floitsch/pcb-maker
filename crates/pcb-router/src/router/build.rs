@@ -339,6 +339,8 @@ impl Router {
             statics,
             statics_shared,
             statics_key,
+            pour_masks_key: std::sync::OnceLock::new(),
+            plane_outlines: std::sync::OnceLock::new(),
             occupancy: Occupancy::new(maps, cells),
             spans,
             stamp_mark: vec![0; cells.div_ceil(64) * maps],
@@ -527,7 +529,7 @@ impl Router {
             )),
             masks: (masks != [0, 0]).then(|| {
                 (
-                    super::prepare::pour_masks_key(key, &self.board),
+                    self.pour_masks_key().expect("the static maps' key"),
                     masks_work(masks),
                 )
             }),
@@ -537,16 +539,17 @@ impl Router {
     /// The work this process did building this router: `build_work` less
     /// the static maps and masks it found (another router's or a hold's).
     pub(super) fn physical_build_work(&self) -> f64 {
-        let shared = self.shared_build();
         let masks_found = self.nets.iter().any(|state| state.masks_found);
         self.build_work
-            - if self.statics_shared {
-                shared.statics.map_or(0.0, |(_, work)| work)
+            - if self.statics_shared && self.statics_key.is_some() {
+                statics_part_work(&self.statics, &self.grid, self.board.layer_count)
             } else {
                 0.0
             }
+            // (The masks' key, which `shared_build` hashes from every
+            // pour's outlines, is known where they were found.)
             - if masks_found {
-                shared.masks.map_or(0.0, |(_, work)| work)
+                self.shared_build().masks.map_or(0.0, |(_, work)| work)
             } else {
                 0.0
             }
@@ -1158,6 +1161,7 @@ impl Router {
                         &self.grid,
                         plane.net,
                         false,
+                        self.plane_outlines(),
                     );
                     self.cover_mask_counts[0] += counts[0];
                     self.cover_mask_counts[1] += counts[1];
@@ -1165,10 +1169,33 @@ impl Router {
                 }
             }
         }
-        for plane in &self.board.planes {
+        // A net's pours on a layer mark the same mask: only the last of
+        // them in the board's order is marked (the marks a later pour
+        // leaves stay either way), and only over their nodes' range, where
+        // the masks are (`compute_pour_masks`). A board of 5353 pours
+        // walked every node of the board 5353 times.
+        let mut bounds: HashMap<(NetId, usize), (usize, crate::geometry::Aabb)> = HashMap::new();
+        for (index, plane) in self.board.planes.iter().enumerate() {
+            let outline = crate::geometry::Shape::Polygon {
+                points: plane.polygon.clone(),
+            }
+            .aabb();
+            bounds
+                .entry((plane.net, plane.layer))
+                .and_modify(|(last, union)| {
+                    *last = index;
+                    *union = union.union(outline);
+                })
+                .or_insert((index, outline));
+        }
+        for (index, plane) in self.board.planes.iter().enumerate() {
             let layer = plane.layer;
             if self.covered[layer].is_empty() {
                 self.covered[layer] = vec![0; self.grid.cells()];
+            }
+            let (last, outline) = bounds[&(plane.net, layer)];
+            if index != last {
+                continue;
             }
             let mut mask = &self.nets[plane.net as usize].plane;
             if mask.is_empty() || mask[layer].is_empty() {
@@ -1181,13 +1208,23 @@ impl Router {
                 continue;
             }
             let mut per_tile = vec![0u32; tiles];
-            for (cell, inside) in mask[layer].iter().enumerate() {
-                if *inside {
-                    self.covered[layer][cell] = crate::grid::owner16(plane.net);
-                    per_tile[(cell / self.grid.nx / TILE) * self.tiles_x
-                        + (cell % self.grid.nx) / TILE] += 1;
+            if let Some((x0, y0, x1, y1)) = self.grid.node_range(outline) {
+                for y in y0..=y1 {
+                    for x in x0..=x1 {
+                        let cell = self.grid.index(x, y);
+                        if mask[layer][cell] {
+                            self.covered[layer][cell] = crate::grid::owner16(plane.net);
+                            per_tile[(cell / self.grid.nx / TILE) * self.tiles_x
+                                + (cell % self.grid.nx) / TILE] += 1;
+                        }
+                    }
                 }
             }
+            debug_assert_eq!(
+                per_tile.iter().map(|count| *count as usize).sum::<usize>(),
+                mask[layer].iter().filter(|inside| **inside).count(),
+                "a pour mask outside its pours' range"
+            );
             for (tile, count) in per_tile.iter().enumerate() {
                 let share = *count as f32 / (TILE * TILE) as f32;
                 self.tile_covered[layer][tile] = self.tile_covered[layer][tile].max(share.min(1.0));
@@ -1581,8 +1618,10 @@ pub fn hold_static_maps(board: &Board, config: &Config) -> StaticMapsHold {
                 .collect();
             let mut set = Vec::new();
             let mut counts = [0u64; 2];
+            let outlines = board.planes_by_outline();
             for net in nets {
-                let mask = super::prepare::compute_pour_masks(&board, &maps, &grid, net, true);
+                let mask =
+                    super::prepare::compute_pour_masks(&board, &maps, &grid, net, true, &outlines);
                 counts[0] += mask.2[0];
                 counts[1] += mask.2[1];
                 set.push((net, Arc::new(mask)));

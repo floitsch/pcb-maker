@@ -22,6 +22,7 @@ score-kicad-board's `aesthetics`, docs/quality.md)."""
 import argparse
 import json
 import statistics
+import subprocess
 import sys
 from pathlib import Path
 
@@ -33,9 +34,19 @@ DESIGNER_NUMBERS = HERE / "designer-numbers.json"
 DEFAULT_TASKS = HERE / "tasks/v7/tasks.json"
 
 
-def score(binary, directory, board_id):
-    process = run_group([str(binary), "score-kicad-board", str(directory), board_id],
-                        capture_output=True, text=True)
+class ScoreTimeout(Exception):
+    """score-kicad-board ran past the time it was given (its process group
+    killed)."""
+
+
+def score(binary, directory, board_id, timeout=None):
+    """score-kicad-board's report, None when it fails; with `timeout`
+    (seconds), ScoreTimeout when it runs longer."""
+    try:
+        process = run_group([str(binary), "score-kicad-board", str(directory), board_id],
+                            capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise ScoreTimeout(f"score-kicad-board ran past {timeout:g} s") from None
     if process.returncode != 0:
         return None
     try:

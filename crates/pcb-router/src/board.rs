@@ -527,6 +527,23 @@ impl Board {
             .fold(0.0, f64::max)
     }
 
+    /// The planes indexed by layer and outline, for `excluded_clearance`
+    /// and the zone an excluded region is, asked of many regions: a query
+    /// compares the few planes of the same outline, not every plane of the
+    /// board (a board of 5353 planes, each excluding the 1300 of a higher
+    /// priority on its layer, made that 37 billion comparisons).
+    pub fn planes_by_outline(&self) -> PlanesByOutline {
+        let mut by_outline: std::collections::HashMap<(usize, u64), Vec<usize>> =
+            std::collections::HashMap::new();
+        for (index, plane) in self.planes.iter().enumerate() {
+            by_outline
+                .entry((plane.layer, outline_hash(&plane.polygon)))
+                .or_default()
+                .push(index);
+        }
+        PlanesByOutline { by_outline }
+    }
+
     /// Clearance between copper of `class` and `obstacle`, as KiCad resolves
     /// it: the larger of the two objects' clearances, where the obstacle's is
     /// its override if it has one, else its net class's (and its local
@@ -552,6 +569,62 @@ impl Board {
             .clearance_override
             .unwrap_or_else(|| self.copper_clearance(class, obstacle))
     }
+}
+
+/// The planes of a board by layer and outline (`Board::planes_by_outline`;
+/// its queries take that board).
+#[derive(Debug, Default)]
+pub struct PlanesByOutline {
+    by_outline: std::collections::HashMap<(usize, u64), Vec<usize>>,
+}
+
+impl PlanesByOutline {
+    /// The planes of `board` of another net than `net` on `layer` whose
+    /// outline is `polygon`, in the board's order.
+    pub fn others<'a>(
+        &'a self,
+        board: &'a Board,
+        net: NetId,
+        layer: usize,
+        polygon: &'a [Point],
+    ) -> impl Iterator<Item = &'a Plane> + 'a {
+        self.by_outline
+            .get(&(layer, outline_hash(polygon)))
+            .into_iter()
+            .flatten()
+            .map(move |index| &board.planes[*index])
+            .filter(move |other| {
+                other.net != net && other.layer == layer && other.polygon.as_slice() == polygon
+            })
+    }
+
+    /// `board.excluded_clearance(plane, polygon)`: the same planes, in the
+    /// same order, by the same test.
+    pub fn excluded_clearance(&self, board: &Board, plane: &Plane, polygon: &[Point]) -> f64 {
+        self.others(board, plane.net, plane.layer, polygon)
+            .map(|other| {
+                board.classes[plane.class]
+                    .clearance
+                    .max(board.classes[other.class].clearance)
+            })
+            .fold(0.0, f64::max)
+    }
+}
+
+/// A hash of an outline under which outlines that compare equal (`==`,
+/// so -0.0 as 0.0) hash alike: its corner count and its first corners
+/// (the queries compare the outlines themselves; an index built once a
+/// net hashes every plane).
+fn outline_hash(polygon: &[Point]) -> u64 {
+    use std::hash::Hasher as _;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    hasher.write_usize(polygon.len());
+    for point in polygon.iter().take(4) {
+        for value in point {
+            hasher.write_u64((value + 0.0).to_bits());
+        }
+    }
+    hasher.finish()
 }
 
 #[derive(Clone, Debug, PartialEq)]
