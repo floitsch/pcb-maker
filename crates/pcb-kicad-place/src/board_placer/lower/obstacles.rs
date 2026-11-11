@@ -384,14 +384,15 @@ pub(super) fn add_footprint_rule_areas(
             let Some((component, pose, _, bodies)) = rule_area_obstacle(zone)? else {
                 continue;
             };
+            if builder.problem.components[index].fixed {
+                // Locked like every obstacle, so that the per-part lists
+                // keep the parts' length (the constraints read the locks
+                // before).
+                builder.push_obstacle(component, pose, "keepout");
+                continue;
+            }
             let problem = &mut builder.problem;
-            if problem.components[index].fixed {
-                // Pushed after the constraints read the locks: no lock.
-                problem.components.push(component);
-                problem.poses.push(pose);
-                builder.references.push("keepout".into());
-                builder.source_at.push([0.0; 3]);
-            } else if component
+            if component
                 .side
                 .collides(match problem.components[index].side {
                     core::Side::Front => core::Side::Back,

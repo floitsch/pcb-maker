@@ -4,7 +4,8 @@
 
 use super::footprint::{FootprintSides, angle_options, halo, pad_boxes};
 use super::obstacles::{
-    add_board_rule_areas, add_cutouts, fixed_obstacle, local_box, outer_copper,
+    add_board_rule_areas, add_cutouts, add_footprint_rule_areas, fixed_obstacle, local_box,
+    outer_copper,
 };
 use super::*;
 use pcb_placer as core;
@@ -200,6 +201,42 @@ fn the_boards_rule_areas_are_obstacles_and_those_keeping_bodies_out_fix_parts() 
     assert!(!components[0].copper_only && components[0].side == core::Side::Both);
     assert!(components[2].copper_only && components[2].side == core::Side::Front);
     assert_eq!(builder.problem.poses[2].position, [21.0, 2.0]);
+}
+
+#[test]
+fn a_fixed_footprints_own_rule_area_is_a_locked_part_like_every_obstacle() {
+    // A locked module with its antenna keepout: the keepout is the next
+    // part, and the per-part lists keep the parts' length (its lock was
+    // missing, `locked` one short of `components`).
+    let pcb = parse(
+        r#"(kicad_pcb
+    (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+    (gr_rect (start 0 0) (end 40 20) (layer "Edge.Cuts"))
+    (footprint "ESP32" (layer "F.Cu") (locked) (at 20 10)
+        (fp_rect (start -3 -3) (end 3 3) (layer "F.CrtYd"))
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "A"))
+        (zone (net 0) (net_name "") (layers "F.Cu" "B.Cu") (name "antenna")
+            (keepout (tracks allowed) (vias allowed) (pads allowed) (copperpour allowed) (footprints not_allowed))
+            (polygon (pts (xy 17 4) (xy 23 4) (xy 23 6) (xy 17 6))))))"#,
+    )
+    .unwrap();
+    let config = KiCadBoardPlacerConfig::default();
+    let context = LowerContext::new(&pcb, &config).unwrap();
+    let mut builder = ProblemBuilder::new(&context);
+    for footprint in context.footprints() {
+        let lowered =
+            super::footprint::lower_footprint(&context, footprint, &mut builder.net_ids).unwrap();
+        builder.push_footprint(lowered);
+    }
+    builder.problem.components[0].fixed = true;
+    add_footprint_rule_areas(&context, &mut builder).unwrap();
+    assert_eq!(
+        builder.references,
+        ["", "keepout"].map(String::from).to_vec()
+    );
+    assert_eq!(builder.locked, vec![true; 2]);
+    assert_eq!(builder.problem.components.len(), 2);
+    assert_eq!(builder.source_at.len(), 2);
 }
 
 #[test]

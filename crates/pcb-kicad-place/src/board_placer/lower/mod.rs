@@ -355,6 +355,18 @@ pub fn lower_placement(
         .iter()
         .filter_map(|row| row.facing.clone())
         .collect();
+    // Per part, every list: footprints first, then obstacles.
+    let parts = builder.problem.components.len();
+    debug_assert!(
+        [
+            builder.problem.poses.len(),
+            builder.references.len(),
+            builder.source_at.len(),
+            builder.locked.len(),
+        ]
+        .iter()
+        .all(|&length| length == parts)
+    );
     Ok(LoweredPlacement {
         problem: builder.problem,
         net_names,
