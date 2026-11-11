@@ -7,9 +7,79 @@
 use super::*;
 use crate::search_counts::SearchKind;
 
-/// `route_net`'s absorb: takes a group of terminals and retained branches
-/// (by its root) into a tree.
-type Absorb<'a> = dyn Fn(&mut Scratch, &mut NetState, &mut Vec<Node>, &mut Vec<bool>, usize) + 'a;
+/// A net's elements as `route_net` joins them: its terminals, the
+/// branches it keeps (`retained`) and, for a net with pours, the pour,
+/// each element's group given by its root (`component`).
+struct NetGroups {
+    terminal_count: usize,
+    /// The branches the net had when routing started.
+    retained: Vec<Branch>,
+    /// Per element, the root of its group.
+    component: Vec<usize>,
+    has_plane: bool,
+    /// The pour's element (after the retained branches).
+    plane_element: usize,
+    cells: usize,
+}
+
+/// The tree `route_net` grows: its nodes (the next search's sources) and
+/// which elements it holds.
+struct Tree {
+    nodes: Vec<Node>,
+    in_tree: Vec<bool>,
+}
+
+impl NetGroups {
+    /// Takes the group of root `root` into `tree`.
+    fn absorb(
+        &self,
+        scratch: &mut Scratch,
+        net_state: &mut NetState,
+        tree: &mut Tree,
+        root: usize,
+    ) {
+        self.absorb_into(scratch, net_state, &mut tree.nodes, &mut tree.in_tree, root);
+    }
+
+    /// Takes the group of root `root` (its terminals' nodes and its
+    /// retained branches' nodes) into the tree of `nodes` and `in_tree`.
+    fn absorb_into(
+        &self,
+        scratch: &mut Scratch,
+        net_state: &mut NetState,
+        nodes: &mut Vec<Node>,
+        in_tree: &mut [bool],
+        root: usize,
+    ) {
+        let cells = self.cells;
+        let state_of = |node: Node| node.layer as usize * cells + node.cell as usize;
+        for (element, group) in self.component.iter().enumerate() {
+            if *group != root || in_tree[element] {
+                continue;
+            }
+            in_tree[element] = true;
+            if self.has_plane && element == self.plane_element {
+                continue;
+            }
+            if element < self.terminal_count {
+                for node in net_state.terminal_nodes[element].clone() {
+                    scratch.tree.insert(state_of(node) as u32, element as u16);
+                    nodes.push(node);
+                }
+                net_state.connected[element] = true;
+            } else {
+                for node in &self.retained[element - self.terminal_count].nodes {
+                    if let std::collections::hash_map::Entry::Vacant(entry) =
+                        scratch.tree.entry(state_of(*node) as u32)
+                    {
+                        entry.insert(NO_TERMINAL);
+                        nodes.push(*node);
+                    }
+                }
+            }
+        }
+    }
+}
 
 impl Router {
     /// `search` without a plane target, counted by `kind` in the
@@ -156,6 +226,9 @@ impl Router {
         net_state.expansions += scratch.expansions.saturating_sub(before);
     }
 
+    /// `route_net` on the scratch's arrays: the net's groups, then (for a
+    /// net without pours) one search at a time from the tree to the open
+    /// groups, then the trees apart.
     #[allow(clippy::too_many_arguments)]
     fn route_net_with_arrays(
         &self,
@@ -170,6 +243,70 @@ impl Router {
             self.grid.cells() * self.board.layer_count,
             self.grid.cells(),
         );
+        let groups = self.net_groups(net, net_state);
+        scratch.tree.clear();
+        let mut tree = Tree {
+            nodes: Vec::new(),
+            in_tree: vec![false; groups.component.len()],
+        };
+        if groups.has_plane {
+            self.connect_to_plane(
+                scratch,
+                net,
+                net_state,
+                &groups.retained,
+                &groups.component,
+                groups.plane_element,
+                present,
+                hard,
+            );
+            return;
+        }
+        let terminal_count = groups.terminal_count;
+        let first_live = (0..terminal_count)
+            .find(|terminal| !net_state.terminal_nodes[*terminal].is_empty())
+            .unwrap_or(0);
+        groups.absorb(scratch, net_state, &mut tree, groups.component[first_live]);
+        let left_out = self.left_out_groups(net_state, &groups, first_live, hard);
+        while let Some((targets, points)) =
+            self.open_targets(net, net_state, &groups, &tree, &left_out)
+        {
+            let (path, fallback, corridor_tried) = self.tree_search(
+                scratch,
+                net,
+                net_state,
+                &tree,
+                &targets,
+                points.as_deref(),
+                present,
+                hard,
+                window_growth,
+            );
+            let Some(path) = path else {
+                self.note_failed_search(net, net_state, &tree, hard, fallback, corridor_tried);
+                break;
+            };
+            self.add_branch(scratch, net_state, &groups, &mut tree, &targets, path);
+        }
+        let apart = self.route_apart(
+            scratch,
+            net,
+            net_state,
+            &groups,
+            &mut tree.in_tree,
+            present,
+            hard,
+        );
+        let complete = !apart && tree.in_tree.iter().all(|inside| *inside);
+        net_state.complete = complete;
+        if !hard && !complete {
+            net_state.blocked = true;
+        }
+    }
+
+    /// The net's elements (terminals, retained branches, and finally the
+    /// pours) joined into groups by what already connects them.
+    fn net_groups(&self, net: NetId, net_state: &NetState) -> NetGroups {
         let terminal_count = self.board.nets[net as usize].terminals.len();
         let retained = net_state.branches.clone();
         let keep = vec![true; retained.len()];
@@ -230,299 +367,296 @@ impl Router {
         let component: Vec<usize> = (0..parent.len())
             .map(|element| find(&mut parent, element))
             .collect();
-
-        scratch.tree.clear();
-        let mut tree: Vec<Node> = Vec::new();
-        let mut in_tree = vec![false; parent.len()];
-        let cells = self.grid.cells();
-        let state_of = |node: Node| node.layer as usize * cells + node.cell as usize;
-        let absorb = |scratch: &mut Scratch,
-                      net_state: &mut NetState,
-                      tree: &mut Vec<Node>,
-                      in_tree: &mut Vec<bool>,
-                      root: usize| {
-            for element in 0..component.len() {
-                if component[element] != root || in_tree[element] {
-                    continue;
-                }
-                in_tree[element] = true;
-                if has_plane && element == plane_element {
-                    continue;
-                }
-                if element < terminal_count {
-                    for node in net_state.terminal_nodes[element].clone() {
-                        scratch.tree.insert(state_of(node) as u32, element as u16);
-                        tree.push(node);
-                    }
-                    net_state.connected[element] = true;
-                } else {
-                    for node in &retained[element - terminal_count].nodes {
-                        if let std::collections::hash_map::Entry::Vacant(entry) =
-                            scratch.tree.entry(state_of(*node) as u32)
-                        {
-                            entry.insert(NO_TERMINAL);
-                            tree.push(*node);
-                        }
-                    }
-                }
-            }
-        };
-        if has_plane {
-            self.connect_to_plane(
-                scratch,
-                net,
-                net_state,
-                &retained,
-                &component,
-                plane_element,
-                present,
-                hard,
-            );
-            return;
+        NetGroups {
+            terminal_count,
+            retained,
+            component,
+            has_plane,
+            plane_element,
+            cells: self.grid.cells(),
         }
-        let first_live = (0..terminal_count)
-            .find(|terminal| !net_state.terminal_nodes[*terminal].is_empty())
-            .unwrap_or(0);
-        absorb(
-            scratch,
-            net_state,
-            &mut tree,
-            &mut in_tree,
-            component[first_live],
-        );
+    }
 
-        // Groups holding a terminal no path reaches (`unreachable`) are
-        // left out of the negotiation's searches; the hard searches try
-        // everything (a multi-target search fails only when no target is
-        // left that it reaches).
+    /// The groups the negotiation's searches leave out: those holding a
+    /// terminal no path reaches (`unreachable`), but the first live
+    /// terminal's. The hard searches try everything (a multi-target search
+    /// fails only when no target is left that it reaches).
+    fn left_out_groups(
+        &self,
+        net_state: &NetState,
+        groups: &NetGroups,
+        first_live: usize,
+        hard: bool,
+    ) -> Vec<bool> {
+        let component = &groups.component;
         let mut left_out = vec![false; component.len()];
         if !hard {
             for (terminal, unreachable) in net_state.unreachable.iter().enumerate() {
                 if *unreachable
-                    && terminal < terminal_count
+                    && terminal < groups.terminal_count
                     && component[terminal] != component[first_live]
                 {
                     left_out[component[terminal]] = true;
                 }
             }
         }
+        left_out
+    }
+
+    /// The next search's targets: the nodes of every element outside the
+    /// tree and not left out, with the terminals' anchors as the
+    /// heuristic's points when they are all terminals and at most twelve.
+    /// None when no target is left.
+    #[allow(clippy::type_complexity)]
+    fn open_targets(
+        &self,
+        net: NetId,
+        net_state: &NetState,
+        groups: &NetGroups,
+        tree: &Tree,
+        left_out: &[bool],
+    ) -> Option<(Vec<(Node, u16)>, Option<Vec<(i32, i32, f32)>>)> {
         let pitch = self.grid.pitch as f32;
-        loop {
-            let mut targets: Vec<(Node, u16)> = Vec::new();
-            let mut points: Vec<(i32, i32, f32)> = Vec::new();
-            let mut exact_points = true;
-            for element in 0..component.len() {
-                if in_tree[element] || left_out[component[element]] {
-                    continue;
-                }
-                if element < terminal_count {
-                    for node in &net_state.terminal_nodes[element] {
-                        targets.push((*node, element as u16));
-                    }
-                    let anchor = self.board.nets[net as usize].terminals[element].anchor;
-                    points.push((
-                        self.grid.index_of(0, anchor[0]).round() as i32,
-                        self.grid.index_of(1, anchor[1]).round() as i32,
-                        // Rounding the anchor to a node costs at most one pitch.
-                        net_state.terminal_reach[element] + pitch,
-                    ));
-                } else {
-                    exact_points = false;
-                    for node in &retained[element - terminal_count].nodes {
-                        targets.push((*node, element as u16));
-                    }
-                }
+        let mut targets: Vec<(Node, u16)> = Vec::new();
+        let mut points: Vec<(i32, i32, f32)> = Vec::new();
+        let mut exact_points = true;
+        for element in 0..groups.component.len() {
+            if tree.in_tree[element] || left_out[groups.component[element]] {
+                continue;
             }
-            if targets.is_empty() {
-                break;
-            }
-            let points = (exact_points && points.len() <= 12).then_some(points);
-            let windowed = self.window(net, window_growth);
-            let full = (0, 0, self.grid.nx - 1, self.grid.ny - 1);
-            // Two-level search: a corridor from the tile graph first, wider
-            // on failure, and only then the plain window and the full board.
-            let mut planned = None;
-            // The trouble repair's second pass over its victims searched
-            // their corridors already.
-            let skip_corridors = hard && self.hard_scope == HardScope::Window;
-            let reroutes = net_state.reroutes;
-            if self.config.corridors && !self.cleanup && !skip_corridors {
-                // One tile more every six reroutes. Widened every three,
-                // the corridors of the nets the negotiation kept rerouting
-                // gave their searches room the paths never used (Sisu and
-                // jetson: 73 % of a late iteration's expansions more than
-                // three tiles from the path found). The slower growth: on
-                // the quick tier 10 % less CPU, unconnected 32 to 30,
-                // starved thermals 20 to 15, vias -6 %, no pass lost; in
-                // route mode nonSNES SNSP-CPU-01 171 to 98 unconnected at
-                // +6 % vias. A cap instead (at most 3 or 5 tiles) left
-                // SNSP-CPU-01 unconverged: some nets need the wide detour.
-                let margin = (1 + reroutes / 6).min(10);
-                for margin in [margin, margin + 3] {
-                    let mut arrays = std::mem::take(&mut scratch.planner);
-                    let corridor = self.plan_corridor(
-                        &mut arrays,
-                        net,
-                        net_state,
-                        &tree,
-                        &targets,
-                        hard,
-                        margin,
-                        scratch.own_active.then_some(scratch.own_claimed.as_slice()),
-                    );
-                    scratch.planner = arrays;
-                    let Some(corridor) = corridor else {
-                        break;
-                    };
-                    scratch.corridor = Some(corridor);
-                    planned = self.counted_search(
-                        SearchKind::Corridor,
-                        scratch,
-                        net,
-                        net_state,
-                        &tree,
-                        &targets,
-                        points.as_deref(),
-                        present,
-                        hard,
-                        full,
-                    );
-                    scratch.corridor = None;
-                    if planned.is_some() {
-                        break;
-                    }
+            if element < groups.terminal_count {
+                for node in &net_state.terminal_nodes[element] {
+                    targets.push((*node, element as u16));
                 }
-            }
-            // Board-wide fallbacks, unless they keep failing where a
-            // corridor was searched first.
-            let corridor_tried = self.config.corridors && !self.cleanup && !skip_corridors;
-            // The trouble repair's victims (`hard_scope`): corridors only.
-            let fallback = if hard && self.hard_scope == HardScope::Corridors && corridor_tried {
-                false
+                let anchor = self.board.nets[net as usize].terminals[element].anchor;
+                points.push((
+                    self.grid.index_of(0, anchor[0]).round() as i32,
+                    self.grid.index_of(1, anchor[1]).round() as i32,
+                    // Rounding the anchor to a node costs at most one pitch.
+                    net_state.terminal_reach[element] + pitch,
+                ));
             } else {
-                hard || !corridor_tried || net_state.hopeless_searches < 2
-            };
-            if planned.is_none() && !fallback && !hard {
-                crate::search_counts::note_hopeless_skip();
-            }
-            let path = planned.or_else(|| {
-                if !fallback {
-                    return None;
+                exact_points = false;
+                for node in &groups.retained[element - groups.terminal_count].nodes {
+                    targets.push((*node, element as u16));
                 }
-                self.counted_search(
-                    SearchKind::Window,
+            }
+        }
+        if targets.is_empty() {
+            return None;
+        }
+        let points = (exact_points && points.len() <= 12).then_some(points);
+        Some((targets, points))
+    }
+
+    /// One search from the tree to `targets`, at two levels: a corridor
+    /// from the tile graph first, wider on failure, and only then the
+    /// plain window and the full board. Returns the path, whether the
+    /// board-wide fallbacks were allowed and whether a corridor was tried.
+    #[allow(clippy::too_many_arguments)]
+    fn tree_search(
+        &self,
+        scratch: &mut Scratch,
+        net: NetId,
+        net_state: &NetState,
+        tree: &Tree,
+        targets: &[(Node, u16)],
+        points: Option<&[(i32, i32, f32)]>,
+        present: f32,
+        hard: bool,
+        window_growth: f64,
+    ) -> (Option<Vec<Node>>, bool, bool) {
+        let windowed = self.window(net, window_growth);
+        let full = (0, 0, self.grid.nx - 1, self.grid.ny - 1);
+        // Two-level search: a corridor from the tile graph first, wider
+        // on failure, and only then the plain window and the full board.
+        let mut planned = None;
+        // The trouble repair's second pass over its victims searched
+        // their corridors already.
+        let skip_corridors = hard && self.hard_scope == HardScope::Window;
+        let reroutes = net_state.reroutes;
+        if self.config.corridors && !self.cleanup && !skip_corridors {
+            // One tile more every six reroutes. Widened every three,
+            // the corridors of the nets the negotiation kept rerouting
+            // gave their searches room the paths never used (Sisu and
+            // jetson: 73 % of a late iteration's expansions more than
+            // three tiles from the path found). The slower growth: on
+            // the quick tier 10 % less CPU, unconnected 32 to 30,
+            // starved thermals 20 to 15, vias -6 %, no pass lost; in
+            // route mode nonSNES SNSP-CPU-01 171 to 98 unconnected at
+            // +6 % vias. A cap instead (at most 3 or 5 tiles) left
+            // SNSP-CPU-01 unconverged: some nets need the wide detour.
+            let margin = (1 + reroutes / 6).min(10);
+            for margin in [margin, margin + 3] {
+                let mut arrays = std::mem::take(&mut scratch.planner);
+                let corridor = self.plan_corridor(
+                    &mut arrays,
+                    net,
+                    net_state,
+                    &tree.nodes,
+                    targets,
+                    hard,
+                    margin,
+                    scratch.own_active.then_some(scratch.own_claimed.as_slice()),
+                );
+                scratch.planner = arrays;
+                let Some(corridor) = corridor else {
+                    break;
+                };
+                scratch.corridor = Some(corridor);
+                planned = self.counted_search(
+                    SearchKind::Corridor,
                     scratch,
                     net,
                     net_state,
-                    &tree,
-                    &targets,
-                    points.as_deref(),
+                    &tree.nodes,
+                    targets,
+                    points,
                     present,
                     hard,
-                    windowed,
-                )
-            });
-            let path = path.or_else(|| {
-                (fallback && windowed != full && !(hard && self.hard_scope == HardScope::Window))
-                    .then(|| {
-                        self.counted_search(
-                            SearchKind::Board,
-                            scratch,
-                            net,
-                            net_state,
-                            &tree,
-                            &targets,
-                            points.as_deref(),
-                            present,
-                            hard,
-                            full,
-                        )
-                    })
-                    .flatten()
-            });
-            let Some(path) = path else {
-                if fallback && !hard {
-                    net_state.hopeless_searches = net_state.hopeless_searches.saturating_add(1);
-                    // The board-wide search reached none of the open
-                    // terminals: only what never changes in a negotiation
-                    // stops it, so none will be reached in this one. The
-                    // net's later searches leave them out; without that,
-                    // once the net kept to its corridors (two such
-                    // failures), a corridor that missed stopped the whole
-                    // net (SNSP-CPU-01's GND with four walled-in pads: 48
-                    // of 199 terminals, then frozen as blocked; 178 open).
-                    if net_state.unreachable.len() != terminal_count {
-                        net_state.unreachable = vec![false; terminal_count];
-                    }
-                    for (unreachable, reached) in net_state.unreachable.iter_mut().zip(&in_tree) {
-                        if !reached {
-                            *unreachable = true;
-                        }
-                    }
-                }
-                if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
-                    let open: Vec<usize> = (0..terminal_count)
-                        .filter(|element| !in_tree[*element])
-                        .collect();
-                    eprintln!(
-                        "route_net {}: search failed (hard {hard}, fallback {fallback}, corridor tried {corridor_tried}, hopeless {}, cleanup {}), {} of {terminal_count} terminals in the tree, open {:?}",
-                        self.board.nets[net as usize].name,
-                        net_state.hopeless_searches,
-                        self.cleanup,
-                        terminal_count - open.len(),
-                        &open[..open.len().min(12)]
-                    );
-                }
-                break;
-            };
-            let first = self.state(path[0]);
-            let last = self.state(*path.last().unwrap());
-            let start_terminal = scratch
-                .tree
-                .get(&(first as u32))
-                .copied()
-                .unwrap_or(NO_TERMINAL);
-            let reached = self.reached_element(&targets, last) as usize;
-            for node in &path[1..] {
-                if let std::collections::hash_map::Entry::Vacant(entry) =
-                    scratch.tree.entry(self.state(*node) as u32)
-                {
-                    entry.insert(NO_TERMINAL);
-                    tree.push(*node);
+                    full,
+                );
+                scratch.corridor = None;
+                if planned.is_some() {
+                    break;
                 }
             }
-            absorb(
+        }
+        // Board-wide fallbacks, unless they keep failing where a
+        // corridor was searched first.
+        let corridor_tried = self.config.corridors && !self.cleanup && !skip_corridors;
+        // The trouble repair's victims (`hard_scope`): corridors only.
+        let fallback = if hard && self.hard_scope == HardScope::Corridors && corridor_tried {
+            false
+        } else {
+            hard || !corridor_tried || net_state.hopeless_searches < 2
+        };
+        if planned.is_none() && !fallback && !hard {
+            crate::search_counts::note_hopeless_skip();
+        }
+        let path = planned.or_else(|| {
+            if !fallback {
+                return None;
+            }
+            self.counted_search(
+                SearchKind::Window,
                 scratch,
+                net,
                 net_state,
-                &mut tree,
-                &mut in_tree,
-                component[reached],
+                &tree.nodes,
+                targets,
+                points,
+                present,
+                hard,
+                windowed,
+            )
+        });
+        let path = path.or_else(|| {
+            (fallback && windowed != full && !(hard && self.hard_scope == HardScope::Window))
+                .then(|| {
+                    self.counted_search(
+                        SearchKind::Board,
+                        scratch,
+                        net,
+                        net_state,
+                        &tree.nodes,
+                        targets,
+                        points,
+                        present,
+                        hard,
+                        full,
+                    )
+                })
+                .flatten()
+        });
+        (path, fallback, corridor_tried)
+    }
+
+    /// After a search from the tree found no path: with the fallbacks
+    /// searched, the terminals outside the tree are unreachable in this
+    /// negotiation.
+    fn note_failed_search(
+        &self,
+        net: NetId,
+        net_state: &mut NetState,
+        tree: &Tree,
+        hard: bool,
+        fallback: bool,
+        corridor_tried: bool,
+    ) {
+        let terminal_count = self.board.nets[net as usize].terminals.len();
+        let in_tree = &tree.in_tree;
+        if fallback && !hard {
+            net_state.hopeless_searches = net_state.hopeless_searches.saturating_add(1);
+            // The board-wide search reached none of the open
+            // terminals: only what never changes in a negotiation
+            // stops it, so none will be reached in this one. The
+            // net's later searches leave them out; without that,
+            // once the net kept to its corridors (two such
+            // failures), a corridor that missed stopped the whole
+            // net (SNSP-CPU-01's GND with four walled-in pads: 48
+            // of 199 terminals, then frozen as blocked; 178 open).
+            if net_state.unreachable.len() != terminal_count {
+                net_state.unreachable = vec![false; terminal_count];
+            }
+            for (unreachable, reached) in net_state.unreachable.iter_mut().zip(in_tree) {
+                if !reached {
+                    *unreachable = true;
+                }
+            }
+        }
+        if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
+            let open: Vec<usize> = (0..terminal_count)
+                .filter(|element| !in_tree[*element])
+                .collect();
+            eprintln!(
+                "route_net {}: search failed (hard {hard}, fallback {fallback}, corridor tried {corridor_tried}, hopeless {}, cleanup {}), {} of {terminal_count} terminals in the tree, open {:?}",
+                self.board.nets[net as usize].name,
+                net_state.hopeless_searches,
+                self.cleanup,
+                terminal_count - open.len(),
+                &open[..open.len().min(12)]
             );
-            net_state.branches.push(Branch {
-                nodes: path,
-                start_terminal,
-                end_terminal: if reached < terminal_count {
-                    reached as u16
-                } else {
-                    NO_TERMINAL
-                },
-            });
         }
-        let apart = self.route_apart(
-            scratch,
-            net,
-            net_state,
-            &component,
-            &mut in_tree,
-            present,
-            hard,
-            &absorb,
-        );
-        let complete = !apart && in_tree.iter().all(|inside| *inside);
-        net_state.complete = complete;
-        if !hard && !complete {
-            net_state.blocked = true;
+    }
+
+    /// Takes the found `path` into the tree with the group it reached, as
+    /// a new branch of the net.
+    fn add_branch(
+        &self,
+        scratch: &mut Scratch,
+        net_state: &mut NetState,
+        groups: &NetGroups,
+        tree: &mut Tree,
+        targets: &[(Node, u16)],
+        path: Vec<Node>,
+    ) {
+        let first = self.state(path[0]);
+        let last = self.state(*path.last().unwrap());
+        let start_terminal = scratch
+            .tree
+            .get(&(first as u32))
+            .copied()
+            .unwrap_or(NO_TERMINAL);
+        let reached = self.reached_element(targets, last) as usize;
+        for node in &path[1..] {
+            if let std::collections::hash_map::Entry::Vacant(entry) =
+                scratch.tree.entry(self.state(*node) as u32)
+            {
+                entry.insert(NO_TERMINAL);
+                tree.nodes.push(*node);
+            }
         }
+        groups.absorb(scratch, net_state, tree, groups.component[reached]);
+        net_state.branches.push(Branch {
+            nodes: path,
+            start_terminal,
+            end_terminal: if reached < groups.terminal_count {
+                reached as u16
+            } else {
+                NO_TERMINAL
+            },
+        });
     }
 
     /// `Config::apart_trees`: the terminals no path reaches from the net's
@@ -537,13 +671,13 @@ impl Router {
         scratch: &mut Scratch,
         net: NetId,
         net_state: &mut NetState,
-        component: &[usize],
-        in_tree: &mut Vec<bool>,
+        groups: &NetGroups,
+        in_tree: &mut [bool],
         present: f32,
         hard: bool,
-        absorb: &Absorb<'_>,
     ) -> bool {
         let terminal_count = self.board.nets[net as usize].terminals.len();
+        let component = &groups.component;
         if !self.config.apart_trees || net_state.unreachable.len() != terminal_count {
             return false;
         }
@@ -564,8 +698,8 @@ impl Router {
         }) {
             scratch.tree.clear();
             let mut tree: Vec<Node> = Vec::new();
-            let before: Vec<bool> = in_tree.clone();
-            absorb(scratch, net_state, &mut tree, in_tree, component[root]);
+            let before: Vec<bool> = in_tree.to_vec();
+            groups.absorb_into(scratch, net_state, &mut tree, in_tree, component[root]);
             loop {
                 let mut targets: Vec<(Node, u16)> = Vec::new();
                 for element in 0..component.len() {
@@ -602,7 +736,7 @@ impl Router {
                         tree.push(*node);
                     }
                 }
-                absorb(scratch, net_state, &mut tree, in_tree, component[reached]);
+                groups.absorb_into(scratch, net_state, &mut tree, in_tree, component[reached]);
                 net_state.branches.push(Branch {
                     nodes: path,
                     start_terminal,

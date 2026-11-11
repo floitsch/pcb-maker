@@ -77,81 +77,217 @@ pub fn verify_with_rules(
     rules: Option<&crate::rules::ClassRules>,
 ) -> Vec<Violation> {
     let widths = rules.filter(|rules| rules.has_layer_widths());
-    let rules = rules.filter(|rules| rules.clearances);
-    // The clearance the rules ask beyond the classes between an item of
-    // kind `kind_a` of `net_a` and one of kind `kind_b` of `net_b`, on
-    // `layer` (`None`: a via against a via, on every layer).
-    let extra = |net_a: NetId, kind_a: usize, net_b: NetId, kind_b: usize, layer: Option<usize>| {
-        rules.map_or(0.0, |rules| {
-            let group = |net: NetId| rules.class_group[board.nets[net as usize].class];
+    let mut verifier = Verifier::new(board, routes, rules.filter(|rules| rules.clearances));
+    for (net, route) in routes.iter().enumerate() {
+        let net = net as NetId;
+        let class_index = board.nets[net as usize].class;
+        // A class with widths per layer: each track at least its layer's
+        // floor (KiCad's track_width minimum there).
+        if let Some(widths) = widths.filter(|widths| !widths.class_floors[class_index].is_empty()) {
+            verifier.check_widths(net, route, widths);
+        }
+        for item in routed_items(board, route) {
+            verifier.check_item(&Checked::new(board, net, item));
+        }
+    }
+    verifier.violations
+}
+
+/// What `verify_with_rules` reads and the violations it found.
+struct Verifier<'a> {
+    board: &'a Board,
+    routes: &'a [NetRoute],
+    /// The rules beyond the classes, when they ask clearances.
+    rules: Option<&'a crate::rules::ClassRules>,
+    /// The obstacles and routed items by `BUCKET` square, each in every
+    /// bucket within the largest clearance of its box.
+    index: HashMap<(i64, i64), Vec<Item>>,
+    violations: Vec<Violation>,
+}
+
+/// One routed item being checked, as a centreline and a copper radius.
+struct Checked {
+    net: NetId,
+    class_index: usize,
+    class: crate::board::RuleClass,
+    start: Point,
+    end: Point,
+    radius: f64,
+    /// The segment's layer, `None` for a via.
+    layer: Option<usize>,
+    /// A via's drill radius.
+    drill: Option<f64>,
+    /// The index of the segment it is.
+    own_segment: Option<usize>,
+    layer_mask: crate::board::LayerMask,
+    /// Its kind for the rules (`TRACK` or `VIA`).
+    own_kind: usize,
+    /// Where a violation is reported, and on which layer.
+    at: Point,
+    report_layer: usize,
+}
+
+impl Checked {
+    fn new(board: &Board, net: NetId, item: RoutedItem) -> Self {
+        let (start, end, radius, layer, drill, own_segment, layer_mask) = item;
+        let class_index = board.nets[net as usize].class;
+        Self {
+            net,
+            class_index,
+            class: board.classes[class_index],
+            start,
+            end,
+            radius,
+            layer,
+            drill,
+            own_segment,
+            layer_mask,
+            own_kind: if layer.is_some() {
+                crate::rules::TRACK
+            } else {
+                crate::rules::VIA
+            },
+            at: [(start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0],
+            report_layer: layer.unwrap_or(layer_mask.trailing_zeros() as usize),
+        }
+    }
+}
+
+/// A net's routed items: its segments, then its vias.
+fn routed_items(board: &Board, route: &NetRoute) -> Vec<RoutedItem> {
+    // A routed item is described as a centreline plus a copper radius.
+    let mut items: Vec<RoutedItem> = route
+        .segments
+        .iter()
+        .enumerate()
+        .map(|(index, segment)| {
+            (
+                segment.start,
+                segment.end,
+                segment.width / 2.0,
+                Some(segment.layer),
+                None,
+                Some(index),
+                1 << segment.layer,
+            )
+        })
+        .collect();
+    items.extend(route.vias.iter().map(|via| {
+        (
+            via.at,
+            via.at,
+            via.diameter / 2.0,
+            None,
+            Some(via.drill / 2.0),
+            None,
+            via.mask(board.layer_count),
+        )
+    }));
+    items
+}
+
+impl<'a> Verifier<'a> {
+    /// The verifier with its spatial index of the obstacles and the routed
+    /// items.
+    fn new(
+        board: &'a Board,
+        routes: &'a [NetRoute],
+        rules: Option<&'a crate::rules::ClassRules>,
+    ) -> Self {
+        let max_clearance = board
+            .classes
+            .iter()
+            .map(|class| class.clearance)
+            .chain(board.obstacles.iter().map(|obstacle| {
+                obstacle
+                    .clearance
+                    .max(obstacle.clearance_override.unwrap_or(0.0))
+            }))
+            .fold(board.hole_clearance, f64::max)
+            .max(rules.map_or(0.0, |rules| rules.resolved.largest()));
+
+        let mut index: HashMap<(i64, i64), Vec<Item>> = HashMap::new();
+        for (obstacle_index, obstacle) in board.obstacles.iter().enumerate() {
+            for bucket in buckets(obstacle.shape.aabb().inflated(max_clearance)) {
+                index.entry(bucket).or_default().push(Item::Obstacle {
+                    index: obstacle_index,
+                });
+            }
+        }
+        for (net, route) in routes.iter().enumerate() {
+            for (segment_index, segment) in route.segments.iter().enumerate() {
+                let bounds = Shape::Capsule {
+                    start: segment.start,
+                    end: segment.end,
+                    radius: segment.width / 2.0,
+                }
+                .aabb();
+                for bucket in buckets(bounds.inflated(max_clearance)) {
+                    index.entry(bucket).or_default().push(Item::Segment {
+                        net: net as NetId,
+                        index: segment_index,
+                    });
+                }
+            }
+            for (via_index, via) in route.vias.iter().enumerate() {
+                let bounds = Shape::Circle {
+                    center: via.at,
+                    radius: via.diameter / 2.0,
+                }
+                .aabb();
+                for bucket in buckets(bounds.inflated(max_clearance)) {
+                    index.entry(bucket).or_default().push(Item::Via {
+                        net: net as NetId,
+                        index: via_index,
+                    });
+                }
+            }
+        }
+        Self {
+            board,
+            routes,
+            rules,
+            index,
+            violations: Vec::new(),
+        }
+    }
+
+    /// The clearance the rules ask beyond the classes between an item of
+    /// kind `kind_a` of `net_a` and one of kind `kind_b` of `net_b`, on
+    /// `layer` (`None`: a via against a via, on every layer).
+    fn extra(
+        &self,
+        net_a: NetId,
+        kind_a: usize,
+        net_b: NetId,
+        kind_b: usize,
+        layer: Option<usize>,
+    ) -> f64 {
+        self.rules.map_or(0.0, |rules| {
+            let group = |net: NetId| rules.class_group[self.board.nets[net as usize].class];
             let (a, b) = (group(net_a), group(net_b));
             match layer {
                 Some(layer) => rules.resolved.extra_on(a, kind_a, b, kind_b, layer),
                 None => rules.resolved.extra_anywhere(a, kind_a, b, kind_b),
             }
         })
-    };
-    let max_clearance = board
-        .classes
-        .iter()
-        .map(|class| class.clearance)
-        .chain(board.obstacles.iter().map(|obstacle| {
-            obstacle
-                .clearance
-                .max(obstacle.clearance_override.unwrap_or(0.0))
-        }))
-        .fold(board.hole_clearance, f64::max)
-        .max(rules.map_or(0.0, |rules| rules.resolved.largest()));
-
-    let mut index: HashMap<(i64, i64), Vec<Item>> = HashMap::new();
-    for (obstacle_index, obstacle) in board.obstacles.iter().enumerate() {
-        for bucket in buckets(obstacle.shape.aabb().inflated(max_clearance)) {
-            index.entry(bucket).or_default().push(Item::Obstacle {
-                index: obstacle_index,
-            });
-        }
-    }
-    for (net, route) in routes.iter().enumerate() {
-        for (segment_index, segment) in route.segments.iter().enumerate() {
-            let bounds = Shape::Capsule {
-                start: segment.start,
-                end: segment.end,
-                radius: segment.width / 2.0,
-            }
-            .aabb();
-            for bucket in buckets(bounds.inflated(max_clearance)) {
-                index.entry(bucket).or_default().push(Item::Segment {
-                    net: net as NetId,
-                    index: segment_index,
-                });
-            }
-        }
-        for (via_index, via) in route.vias.iter().enumerate() {
-            let bounds = Shape::Circle {
-                center: via.at,
-                radius: via.diameter / 2.0,
-            }
-            .aabb();
-            for bucket in buckets(bounds.inflated(max_clearance)) {
-                index.entry(bucket).or_default().push(Item::Via {
-                    net: net as NetId,
-                    index: via_index,
-                });
-            }
-        }
     }
 
-    let mut violations = Vec::new();
-    let mut report = |net: NetId,
-                      segment: Option<usize>,
-                      other_segment: Option<(NetId, usize)>,
-                      other: String,
-                      layer: usize,
-                      at: Point,
-                      required: f64,
-                      actual: f64| {
+    /// Records a violation where `actual` falls short of `required`.
+    #[allow(clippy::too_many_arguments)]
+    fn report(
+        &mut self,
+        net: NetId,
+        segment: Option<usize>,
+        other_segment: Option<(NetId, usize)>,
+        other: String,
+        layer: usize,
+        at: Point,
+        required: f64,
+        actual: f64,
+    ) {
         if actual + TOLERANCE < required {
-            violations.push(Violation {
+            self.violations.push(Violation {
                 net,
                 segment,
                 other_segment,
@@ -162,315 +298,302 @@ pub fn verify_with_rules(
                 actual,
             });
         }
-    };
+    }
 
-    for (net, route) in routes.iter().enumerate() {
-        let net = net as NetId;
-        let class_index = board.nets[net as usize].class;
-        let class = board.classes[class_index];
-        // A routed item is described as a centreline plus a copper radius.
-        let mut items: Vec<RoutedItem> = route
-            .segments
-            .iter()
-            .enumerate()
-            .map(|(index, segment)| {
-                (
-                    segment.start,
-                    segment.end,
-                    segment.width / 2.0,
-                    Some(segment.layer),
-                    None,
-                    Some(index),
-                    1 << segment.layer,
-                )
-            })
-            .collect();
-        items.extend(route.vias.iter().map(|via| {
-            (
-                via.at,
-                via.at,
-                via.diameter / 2.0,
-                None,
-                Some(via.drill / 2.0),
-                None,
-                via.mask(board.layer_count),
-            )
-        }));
-
-        // A class with widths per layer: each track at least its layer's
-        // floor (KiCad's track_width minimum there).
-        if let Some(widths) = widths.filter(|widths| !widths.class_floors[class_index].is_empty()) {
-            for (index, segment) in route.segments.iter().enumerate() {
-                report(
-                    net,
-                    Some(index),
-                    None,
-                    "track width".into(),
-                    segment.layer,
-                    [
-                        (segment.start[0] + segment.end[0]) / 2.0,
-                        (segment.start[1] + segment.end[1]) / 2.0,
-                    ],
-                    widths.floor_on(class_index, segment.layer),
-                    segment.width,
-                );
-            }
-        }
-
-        for (start, end, radius, layer, drill, own_segment, layer_mask) in items {
-            let own_kind = if layer.is_some() {
-                crate::rules::TRACK
-            } else {
-                crate::rules::VIA
-            };
-            let at = [(start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0];
-            let report_layer = layer.unwrap_or(layer_mask.trailing_zeros() as usize);
-
-            let inside =
-                point_in_polygon(start, &board.outline) && point_in_polygon(end, &board.outline);
-            let edge_distance = polygon_edges(&board.outline)
-                .map(|(a, b)| segment_segment_distance(start, end, a, b))
-                .fold(f64::INFINITY, f64::min);
-            report(
+    /// Each track of `net` at least its layer's width floor.
+    fn check_widths(&mut self, net: NetId, route: &NetRoute, widths: &crate::rules::ClassRules) {
+        let class_index = self.board.nets[net as usize].class;
+        for (index, segment) in route.segments.iter().enumerate() {
+            self.report(
                 net,
-                own_segment,
+                Some(index),
                 None,
-                "board edge".into(),
-                report_layer,
-                at,
-                board.edge_clearance,
-                if inside {
-                    edge_distance - radius
-                } else {
-                    -radius
-                },
+                "track width".into(),
+                segment.layer,
+                [
+                    (segment.start[0] + segment.end[0]) / 2.0,
+                    (segment.start[1] + segment.end[1]) / 2.0,
+                ],
+                widths.floor_on(class_index, segment.layer),
+                segment.width,
             );
+        }
+    }
 
-            let bounds = Aabb {
-                minimum: [start[0].min(end[0]), start[1].min(end[1])],
-                maximum: [start[0].max(end[0]), start[1].max(end[1])],
-            }
-            .inflated(radius);
-            let mut seen = Vec::new();
-            for bucket in buckets(bounds) {
-                for item in index.get(&bucket).into_iter().flatten() {
-                    match *item {
-                        Item::Obstacle { index } => {
-                            if seen.contains(&(0, index)) {
-                                continue;
-                            }
-                            seen.push((0, index));
-                            let obstacle = &board.obstacles[index];
-                            if obstacle.net == Some(net) || obstacle.layers & layer_mask == 0 {
-                                continue;
-                            }
-                            let is_via = layer.is_none();
-                            if (is_via && !obstacle.blocks_vias)
-                                || (!is_via && !obstacle.blocks_tracks)
-                            {
-                                continue;
-                            }
-                            // A pad inside a keepout leaves it by its stub
-                            // (the router's `stub_is_clear`).
-                            if !is_via
-                                && obstacle.kind == ObstacleKind::Keepout
-                                && obstacle.label.starts_with("solder mask opening")
-                                && (obstacle.shape.contains(start) || obstacle.shape.contains(end))
-                                && board.nets[net as usize]
-                                    .terminals
-                                    .iter()
-                                    .any(|terminal| obstacle.shape.contains(terminal.anchor))
-                            {
-                                continue;
-                            }
-                            let distance = obstacle.shape.distance_to_segment(start, end);
-                            let required = match obstacle.kind {
-                                ObstacleKind::Copper => {
-                                    let clearance = board.copper_clearance(&class, obstacle);
-                                    match (rules, layer) {
-                                        (None, _) => clearance,
-                                        (Some(rules), Some(layer)) => {
-                                            clearance.max(rules.obstacle_extra(
-                                                class_index,
-                                                crate::rules::TRACK,
-                                                obstacle,
-                                                layer,
-                                            ))
-                                        }
-                                        (Some(rules), None) => {
-                                            clearance.max(rules.obstacle_extra_via(
-                                                class_index,
-                                                obstacle,
-                                                board.layer_count,
-                                            ))
-                                        }
-                                    }
-                                }
-                                ObstacleKind::Keepout => obstacle.clearance,
-                                ObstacleKind::Hole => board.hole_clearance.max(obstacle.clearance),
-                            };
-                            report(
-                                net,
-                                own_segment,
-                                None,
-                                obstacle.label.clone(),
-                                report_layer,
-                                at,
-                                required,
-                                distance - radius,
-                            );
-                            // A via's drill keeps the hole clearance from
-                            // copper.
-                            if let (Some(drill), ObstacleKind::Copper) = (drill, obstacle.kind) {
-                                report(
-                                    net,
-                                    own_segment,
-                                    None,
-                                    format!("{} (via hole)", obstacle.label),
-                                    report_layer,
-                                    at,
-                                    board.hole_clearance,
-                                    distance - drill,
-                                );
-                            }
-                            if let (Some(drill), ObstacleKind::Hole) = (drill, obstacle.kind) {
-                                report(
-                                    net,
-                                    own_segment,
-                                    None,
-                                    format!("{} (hole to hole)", obstacle.label),
-                                    report_layer,
-                                    at,
-                                    board.hole_to_hole,
-                                    distance - drill,
-                                );
-                            }
+    /// One routed item against the board edge and every obstacle and
+    /// other net's item in its buckets (each once).
+    fn check_item(&mut self, item: &Checked) {
+        let board = self.board;
+        let (start, end, radius) = (item.start, item.end, item.radius);
+        let inside =
+            point_in_polygon(start, &board.outline) && point_in_polygon(end, &board.outline);
+        let edge_distance = polygon_edges(&board.outline)
+            .map(|(a, b)| segment_segment_distance(start, end, a, b))
+            .fold(f64::INFINITY, f64::min);
+        self.report(
+            item.net,
+            item.own_segment,
+            None,
+            "board edge".into(),
+            item.report_layer,
+            item.at,
+            board.edge_clearance,
+            if inside {
+                edge_distance - radius
+            } else {
+                -radius
+            },
+        );
+
+        let bounds = Aabb {
+            minimum: [start[0].min(end[0]), start[1].min(end[1])],
+            maximum: [start[0].max(end[0]), start[1].max(end[1])],
+        }
+        .inflated(radius);
+        let mut seen = Vec::new();
+        // The index taken while the checks report (given back below).
+        let spatial = std::mem::take(&mut self.index);
+        for bucket in buckets(bounds) {
+            for found in spatial.get(&bucket).into_iter().flatten() {
+                match *found {
+                    Item::Obstacle { index } => {
+                        if seen.contains(&(0, index)) {
+                            continue;
                         }
-                        Item::Segment { net: other, index } => {
-                            // Every unordered pair is visited from its lower net.
-                            if other <= net || seen.contains(&(1 + other as usize, index)) {
-                                continue;
-                            }
-                            seen.push((1 + other as usize, index));
-                            let segment = &routes[other as usize].segments[index];
-                            if layer_mask & (1 << segment.layer) == 0 {
-                                continue;
-                            }
-                            let other_class = board.classes[board.nets[other as usize].class];
-                            let distance =
-                                segment_segment_distance(start, end, segment.start, segment.end);
-                            report(
-                                net,
-                                own_segment,
-                                Some((other, index)),
-                                board.nets[other as usize].name.clone(),
-                                segment.layer,
-                                at,
-                                class.clearance.max(other_class.clearance).max(extra(
-                                    net,
-                                    own_kind,
-                                    other,
-                                    crate::rules::TRACK,
-                                    Some(segment.layer),
-                                )),
-                                distance - radius - segment.width / 2.0,
-                            );
-                            if let Some(drill) = drill {
-                                report(
-                                    net,
-                                    own_segment,
-                                    Some((other, index)),
-                                    format!("{} (via hole)", board.nets[other as usize].name),
-                                    segment.layer,
-                                    at,
-                                    board.hole_clearance,
-                                    distance - drill - segment.width / 2.0,
-                                );
-                            }
+                        seen.push((0, index));
+                        self.check_obstacle(item, index);
+                    }
+                    Item::Segment { net: other, index } => {
+                        // Every unordered pair is visited from its lower net.
+                        if other <= item.net || seen.contains(&(1 + other as usize, index)) {
+                            continue;
                         }
-                        Item::Via { net: other, index } => {
-                            if other <= net || seen.contains(&(usize::MAX - other as usize, index))
-                            {
-                                continue;
-                            }
-                            seen.push((usize::MAX - other as usize, index));
-                            let via = &routes[other as usize].vias[index];
-                            // Items meet only on a layer both are on: a
-                            // via of a span has neither copper nor a hole
-                            // elsewhere (KiCad checks no clearance and no
-                            // hole-to-hole between vias of disjoint spans).
-                            if via.mask(board.layer_count) & layer_mask == 0 {
-                                continue;
-                            }
-                            let other_class = board.classes[board.nets[other as usize].class];
-                            let distance = if start == end {
-                                crate::geometry::distance(start, via.at)
-                            } else {
-                                point_segment_distance(via.at, start, end)
-                            };
-                            report(
-                                net,
-                                own_segment,
-                                None,
-                                format!("via of {}", board.nets[other as usize].name),
-                                report_layer,
-                                at,
-                                class.clearance.max(other_class.clearance).max(extra(
-                                    net,
-                                    own_kind,
-                                    other,
-                                    crate::rules::VIA,
-                                    layer,
-                                )),
-                                distance - radius - via.diameter / 2.0,
-                            );
-                            if let Some(drill) = drill {
-                                report(
-                                    net,
-                                    own_segment,
-                                    None,
-                                    format!("via hole of {}", board.nets[other as usize].name),
-                                    report_layer,
-                                    at,
-                                    board.hole_to_hole,
-                                    distance - drill - via.drill / 2.0,
-                                );
-                                report(
-                                    net,
-                                    own_segment,
-                                    None,
-                                    format!(
-                                        "via of {} (hole clearance)",
-                                        board.nets[other as usize].name
-                                    ),
-                                    report_layer,
-                                    at,
-                                    board.hole_clearance,
-                                    distance - drill - via.diameter / 2.0,
-                                );
-                            }
-                            // The other via's drill keeps the hole clearance
-                            // from this copper.
-                            report(
-                                net,
-                                own_segment,
-                                None,
-                                format!(
-                                    "via hole of {} (hole clearance)",
-                                    board.nets[other as usize].name
-                                ),
-                                report_layer,
-                                at,
-                                board.hole_clearance,
-                                distance - radius - via.drill / 2.0,
-                            );
+                        seen.push((1 + other as usize, index));
+                        self.check_segment(item, other, index);
+                    }
+                    Item::Via { net: other, index } => {
+                        if other <= item.net || seen.contains(&(usize::MAX - other as usize, index))
+                        {
+                            continue;
                         }
+                        seen.push((usize::MAX - other as usize, index));
+                        self.check_via(item, other, index);
                     }
                 }
             }
         }
+        self.index = spatial;
     }
-    violations
+
+    /// The item against obstacle `index` (another net's, on its layers,
+    /// keeping its kind out): the clearance, and a via's drill's hole
+    /// clearance or hole-to-hole spacing.
+    fn check_obstacle(&mut self, item: &Checked, index: usize) {
+        let board = self.board;
+        let (net, start, end, layer) = (item.net, item.start, item.end, item.layer);
+        let obstacle = &board.obstacles[index];
+        if obstacle.net == Some(net) || obstacle.layers & item.layer_mask == 0 {
+            return;
+        }
+        let is_via = layer.is_none();
+        if (is_via && !obstacle.blocks_vias) || (!is_via && !obstacle.blocks_tracks) {
+            return;
+        }
+        // A pad inside a keepout leaves it by its stub
+        // (the router's `stub_is_clear`).
+        if !is_via
+            && obstacle.kind == ObstacleKind::Keepout
+            && obstacle.label.starts_with("solder mask opening")
+            && (obstacle.shape.contains(start) || obstacle.shape.contains(end))
+            && board.nets[net as usize]
+                .terminals
+                .iter()
+                .any(|terminal| obstacle.shape.contains(terminal.anchor))
+        {
+            return;
+        }
+        let distance = obstacle.shape.distance_to_segment(start, end);
+        let required = match obstacle.kind {
+            ObstacleKind::Copper => {
+                let clearance = board.copper_clearance(&item.class, obstacle);
+                match (self.rules, layer) {
+                    (None, _) => clearance,
+                    (Some(rules), Some(layer)) => clearance.max(rules.obstacle_extra(
+                        item.class_index,
+                        crate::rules::TRACK,
+                        obstacle,
+                        layer,
+                    )),
+                    (Some(rules), None) => clearance.max(rules.obstacle_extra_via(
+                        item.class_index,
+                        obstacle,
+                        board.layer_count,
+                    )),
+                }
+            }
+            ObstacleKind::Keepout => obstacle.clearance,
+            ObstacleKind::Hole => board.hole_clearance.max(obstacle.clearance),
+        };
+        self.report(
+            net,
+            item.own_segment,
+            None,
+            obstacle.label.clone(),
+            item.report_layer,
+            item.at,
+            required,
+            distance - item.radius,
+        );
+        // A via's drill keeps the hole clearance from
+        // copper.
+        if let (Some(drill), ObstacleKind::Copper) = (item.drill, obstacle.kind) {
+            self.report(
+                net,
+                item.own_segment,
+                None,
+                format!("{} (via hole)", obstacle.label),
+                item.report_layer,
+                item.at,
+                board.hole_clearance,
+                distance - drill,
+            );
+        }
+        if let (Some(drill), ObstacleKind::Hole) = (item.drill, obstacle.kind) {
+            self.report(
+                net,
+                item.own_segment,
+                None,
+                format!("{} (hole to hole)", obstacle.label),
+                item.report_layer,
+                item.at,
+                board.hole_to_hole,
+                distance - drill,
+            );
+        }
+    }
+
+    /// The item against segment `index` of net `other` (on a layer the
+    /// item is on): the clearance, and a via's drill's hole clearance.
+    fn check_segment(&mut self, item: &Checked, other: NetId, index: usize) {
+        let board = self.board;
+        let net = item.net;
+        let segment = &self.routes[other as usize].segments[index];
+        if item.layer_mask & (1 << segment.layer) == 0 {
+            return;
+        }
+        let other_class = board.classes[board.nets[other as usize].class];
+        let distance = segment_segment_distance(item.start, item.end, segment.start, segment.end);
+        let required = item
+            .class
+            .clearance
+            .max(other_class.clearance)
+            .max(self.extra(
+                net,
+                item.own_kind,
+                other,
+                crate::rules::TRACK,
+                Some(segment.layer),
+            ));
+        self.report(
+            net,
+            item.own_segment,
+            Some((other, index)),
+            board.nets[other as usize].name.clone(),
+            segment.layer,
+            item.at,
+            required,
+            distance - item.radius - segment.width / 2.0,
+        );
+        if let Some(drill) = item.drill {
+            self.report(
+                net,
+                item.own_segment,
+                Some((other, index)),
+                format!("{} (via hole)", board.nets[other as usize].name),
+                segment.layer,
+                item.at,
+                board.hole_clearance,
+                distance - drill - segment.width / 2.0,
+            );
+        }
+    }
+
+    /// The item against via `index` of net `other` (on a layer both are
+    /// on): the clearance, the hole-to-hole spacing and both drills' hole
+    /// clearances.
+    fn check_via(&mut self, item: &Checked, other: NetId, index: usize) {
+        let board = self.board;
+        let (net, start, end) = (item.net, item.start, item.end);
+        let via = &self.routes[other as usize].vias[index];
+        // Items meet only on a layer both are on: a
+        // via of a span has neither copper nor a hole
+        // elsewhere (KiCad checks no clearance and no
+        // hole-to-hole between vias of disjoint spans).
+        if via.mask(board.layer_count) & item.layer_mask == 0 {
+            return;
+        }
+        let other_class = board.classes[board.nets[other as usize].class];
+        let distance = if start == end {
+            crate::geometry::distance(start, via.at)
+        } else {
+            point_segment_distance(via.at, start, end)
+        };
+        let required = item
+            .class
+            .clearance
+            .max(other_class.clearance)
+            .max(self.extra(net, item.own_kind, other, crate::rules::VIA, item.layer));
+        self.report(
+            net,
+            item.own_segment,
+            None,
+            format!("via of {}", board.nets[other as usize].name),
+            item.report_layer,
+            item.at,
+            required,
+            distance - item.radius - via.diameter / 2.0,
+        );
+        if let Some(drill) = item.drill {
+            self.report(
+                net,
+                item.own_segment,
+                None,
+                format!("via hole of {}", board.nets[other as usize].name),
+                item.report_layer,
+                item.at,
+                board.hole_to_hole,
+                distance - drill - via.drill / 2.0,
+            );
+            self.report(
+                net,
+                item.own_segment,
+                None,
+                format!(
+                    "via of {} (hole clearance)",
+                    board.nets[other as usize].name
+                ),
+                item.report_layer,
+                item.at,
+                board.hole_clearance,
+                distance - drill - via.diameter / 2.0,
+            );
+        }
+        // The other via's drill keeps the hole clearance
+        // from this copper.
+        self.report(
+            net,
+            item.own_segment,
+            None,
+            format!(
+                "via hole of {} (hole clearance)",
+                board.nets[other as usize].name
+            ),
+            item.report_layer,
+            item.at,
+            board.hole_clearance,
+            distance - item.radius - via.drill / 2.0,
+        );
+    }
 }
 
 /// The distance between two filled shapes (zero where they overlap).
