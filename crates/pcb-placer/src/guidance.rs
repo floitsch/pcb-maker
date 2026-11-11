@@ -3,7 +3,9 @@
 // found in the LICENSE file.
 
 //! The global route inside the anneal (`AnnealConfig::guidance`, an
-//! experiment, docs/global-route.md "Phase 2"): every so many accepted
+//! experiment whose layout setting, `global_guidance`, was removed
+//! 2026-11-11; docs/placer.md, "Tried and rejected"; nothing sets it now
+//! but a test): every so many accepted
 //! moves the caller routes the current placement globally and returns
 //! where the boundaries overflow. Until the next evaluation that field is
 //! fixed: a net pays its wirelength times the mean overflow of the tiles

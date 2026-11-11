@@ -14,10 +14,8 @@
 //! - `legality`: `legality-kicad-board`, a placement judged by the
 //!   placer's legality model at every relaxation level beside KiCad's DRC
 //!   (benchmarks/agent-tasks/legality_census.py).
-//! - `global_route`: `global-route-kicad-board`, the coarse global route as
-//!   a routability measure beside RUDY and the race's probe
-//!   (experiments/global-route), and the placed board's lowering the
-//!   others share.
+//! - `lowering`: the placed board lowered as the layout routes it, which
+//!   the ablation and the probes share.
 //! - `shrink`: `shrink-kicad-board`, boards shrunk for the corpus's
 //!   strength rows (benchmarks/corpus/run.py).
 //! - `footprint_links`: `normalize-kicad-footprint-links`, a benchmark
@@ -26,9 +24,9 @@
 //! They lower boards with the route and place crate's lowering and
 //! geometry (the placer's `lower_placement` and `prepare_board`, the
 //! router's `lower` and pour planning, the footprint pose writers, the
-//! courtyard and body shapes, the constraint resolution) and two of the
-//! layout's pieces (`race_core_config`, `rudy_overflow`); nothing in the
-//! other crates uses this one.
+//! courtyard and body shapes, the constraint resolution) and one of the
+//! layout's pieces (`race_core_config`); nothing in the other crates uses
+//! this one.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -47,7 +45,7 @@ use std::{
 
 // The KiCad files (pcb-kicad-file), a board routed (pcb-kicad-route) and
 // placed (pcb-kicad-place), and the layout (pcb-kicad).
-use pcb_kicad::{board_layout, congestion_rank};
+use pcb_kicad::board_layout;
 use pcb_kicad_file::corridors_fact::{KiCadCorridors, KiCadSearchKinds};
 use pcb_kicad_file::footprint_bodies::graphic_box;
 use pcb_kicad_file::{
@@ -59,8 +57,8 @@ use pcb_kicad_route::*;
 
 mod coarse_probe;
 mod footprint_links;
-mod global_route;
 mod legality;
+mod lowering;
 mod placement_ablation;
 mod shrink;
 mod trouble_probe;
@@ -70,7 +68,6 @@ pub use footprint_links::{
     KiCadFootprintLinkNormalizationReport, KiCadFootprintLinkUpdate,
     KiCadSchematicLinkNormalization, normalize_kicad_footprint_links,
 };
-pub use global_route::{KiCadGlobalRouteReport, KiCadProbeReport, global_route_kicad_board};
 pub use legality::{KiCadLegalityReport, legality_kicad_board};
 pub use placement_ablation::{
     KiCadAblationConfig, KiCadAblationGroup, KiCadAblationReport, KiCadAblationVariant,

@@ -47,9 +47,6 @@ struct MoveTrials {
     since_fewer_open: usize,
     /// The parts tried lately.
     recently: Vec<usize>,
-    /// With `global_guidance`'s `moves`: the parts' attribution in the
-    /// global route of the kept board, recomputed when a move is kept.
-    guided_attribution: Option<Vec<f64>>,
 }
 
 /// The parts a move may take: not fixed, with pins.
@@ -141,18 +138,7 @@ pub(super) fn try_moves(
         polished: false,
         since_fewer_open: 0,
         recently: Vec::new(),
-        guided_attribution: None,
     };
-    // `global_guidance` with `moves`: the parts by their attribution in
-    // the global route of the kept board, recomputed when a move is kept
-    // (docs/global-route.md, "Phase 2").
-    let guided_moves = kept
-        .placer_config
-        .global_guidance
-        .as_ref()
-        .filter(|guidance| guidance.moves)
-        .map(|guidance| guidance.threshold);
-    let guidance_index = crate::board_placer::reference_index(&kept.problem.references);
     for _ in 0..if many_open { 0 } else { config.moves } {
         if !ctx.stop.allows(LayoutStep::Move) {
             break;
@@ -173,21 +159,6 @@ pub(super) fn try_moves(
             || routing.router.past_deadline()
         {
             break;
-        }
-        if let Some(threshold) = guided_moves
-            && trials.guided_attribution.is_none()
-        {
-            let route = pcb_global::route(&kept.board, &pcb_global::GlobalConfig::default());
-            trials.guided_attribution = Some(
-                crate::board_placer::attribution(
-                    &kept.board,
-                    &route,
-                    &guidance_index,
-                    kept.problem.problem.components.len(),
-                    threshold,
-                )
-                .0,
-            );
         }
         let Some(index) = next_part(
             &kept.problem,
@@ -229,8 +200,7 @@ pub(super) fn try_moves(
 }
 
 /// The part the next trial moves: the most congested movable footprint
-/// that was not tried lately (with the guidance: the most
-/// overflow-attributed one first), noted as tried. `None` where no part is
+/// that was not tried lately, noted as tried. `None` where no part is
 /// left, or the board is complete and no part sits in congestion.
 fn next_part(
     problem: &crate::board_placer::LoweredPlacement,
@@ -239,17 +209,13 @@ fn next_part(
     result: &core::RoutingResult,
     open: usize,
 ) -> Option<usize> {
-    let mut ranked: Vec<(f64, f64, usize)> = movable
+    let mut ranked: Vec<(f64, usize)> = movable
         .iter()
         .filter(|index| !trials.recently.contains(index))
         .map(|index| {
             let component = &problem.problem.components[*index];
             let pose = problem.problem.poses[*index];
             (
-                trials
-                    .guided_attribution
-                    .as_ref()
-                    .map_or(0.0, |attribution| attribution[*index]),
                 body_congestion(
                     result,
                     component.center(pose),
@@ -260,13 +226,8 @@ fn next_part(
             )
         })
         .collect();
-    ranked.sort_by(|a, b| {
-        b.0.total_cmp(&a.0)
-            .then(b.1.total_cmp(&a.1))
-            .then(a.2.cmp(&b.2))
-    });
-    let &(attributed, congestion, index) = ranked.first()?;
-    let congestion = congestion.max(attributed);
+    ranked.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+    let &(congestion, index) = ranked.first()?;
     if congestion <= 0.0 && open == 0 {
         return None;
     }
@@ -455,7 +416,6 @@ fn try_pose(
         routing.best = trial_score;
         routing.result = trial;
         kept.board = trial_board;
-        trials.guided_attribution = None;
         trials.polished = polish;
         return Ok(true);
     }

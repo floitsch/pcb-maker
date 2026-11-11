@@ -663,7 +663,7 @@ fn signals(
     let mut global = None;
     let mut global_parts = None;
     if let Some(pcb) = pcb {
-        let board = super::global_route::lower_placed(pcb, router_config)?;
+        let board = super::lowering::lower_placed(pcb, router_config)?;
         let route = pcb_global::route(&board, &pcb_global::GlobalConfig::default());
         let index = reference_index(references);
         let (parts, tiles) = attribution(&board, &route, &index, references.len(), threshold);

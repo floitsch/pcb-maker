@@ -9,7 +9,7 @@
 //! task budget. Its open terminals rank the placement. Deterministic: the
 //! budget is work.
 
-use super::global_route::lower_placed;
+use super::lowering::lower_placed;
 use crate::*;
 use pcb_router as core;
 

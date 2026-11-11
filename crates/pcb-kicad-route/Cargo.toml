@@ -7,7 +7,6 @@ description = "A KiCad board routed: the project's rules, the lowering to pcb-ro
 publish = false
 
 [dependencies]
-pcb-global = { path = "../pcb-global" }
 pcb-kicad-check = { path = "../pcb-kicad-check" }
 pcb-kicad-file = { path = "../pcb-kicad-file" }
 pcb-placer = { path = "../pcb-placer" }

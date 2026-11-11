@@ -13,9 +13,9 @@ mod courtyards;
 mod decoupling;
 mod edges;
 mod exits;
-mod guidance;
 mod lower;
 mod marks;
+mod measured;
 mod pair_rows;
 mod panel;
 mod place;
@@ -30,7 +30,7 @@ mod trace;
 pub use self::courtyards::courtyard_slabs;
 pub use self::exits::closed_pad_reason;
 pub use self::exits::pad_exits_settings;
-pub use self::guidance::{attribution, reference_index};
+pub use self::measured::{attribution, reference_index};
 pub use self::place::room_hint;
 pub use self::{
     config::*,
@@ -38,7 +38,6 @@ pub use self::{
         KiCadClosedPad, KiCadExitMove, KiCadPadExits, KiCadPadExitsCensus, KiCadPadExitsReport,
         pad_exits_kicad_board, pad_exits_override,
     },
-    guidance::KiCadGlobalGuidance,
     panel::{KiCadPanelCellClass, KiCadPanelCopiesReport, KiCadPanelCopy},
     place::*,
     result::*,

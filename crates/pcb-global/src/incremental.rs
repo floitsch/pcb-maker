@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 //! The global route kept up to date while parts move (the placer's
-//! measured escape demand, docs/global-route.md, "Where it runs"): a move
+//! measured escape demand, docs/global-route.md): a move
 //! re-measures the capacities of the tiles around the part's old and new
 //! place and routes only the part's nets again, against the usage, the
 //! history and the present price the rest's negotiation left.

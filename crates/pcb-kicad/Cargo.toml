@@ -7,7 +7,6 @@ description = "Deterministic KiCad project materialization for pcb-maker experim
 publish = false
 
 [dependencies]
-pcb-global = { path = "../pcb-global" }
 pcb-kicad-check = { path = "../pcb-kicad-check" }
 pcb-kicad-file = { path = "../pcb-kicad-file" }
 pcb-kicad-place = { path = "../pcb-kicad-place" }

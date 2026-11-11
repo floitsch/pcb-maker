@@ -239,13 +239,6 @@ pub struct KiCadBoardPlacerConfig {
     /// where the parts no longer lie where the input had them.
     #[serde(skip)]
     pub attached_marks: Option<Vec<(usize, usize)>>,
-    /// The global route inside the placer's search (an experiment, off):
-    /// the anneal re-evaluates the global route of its placement and
-    /// prefers moves away from overflowing boundaries, proposing the parts
-    /// whose nets cross them more often; the coupled loop moves those
-    /// parts first (docs/global-route.md, "Phase 2").
-    #[serde(default)]
-    pub global_guidance: Option<KiCadGlobalGuidance>,
     /// Escape demand in placement (on; `null` turns it off): where each
     /// part's nets leave its body, and the channels between parts that
     /// must carry them, shape the global placement's density, the rotation
@@ -334,10 +327,10 @@ pub struct KiCadBoardPlacerConfig {
     /// it off.
     #[serde(default)]
     pub pair_rows: Option<bool>,
-    /// The router's configuration the guidance lowers with (set by the
-    /// layout; the default otherwise).
+    /// The router's configuration the escape demand's measurements and
+    /// the pad exits lower with (set by the layout and the place check).
     #[serde(skip)]
-    pub guidance_router: Option<KiCadBoardRouterConfig>,
+    pub measure_router: Option<KiCadBoardRouterConfig>,
     /// The far side under a via in a BGA's pad stays free (on): where the
     /// router's via-in-pad rule admits a footprint (the designer's vias in
     /// its pads, or the router's `via_in_pad`), each enclosed pad's via
@@ -495,13 +488,12 @@ impl Default for KiCadBoardPlacerConfig {
             orientation_search: true,
             keep_board_marks: true,
             attached_marks: None,
-            global_guidance: None,
             escape_demand: default_escape_demand(),
             ratsnest_crossings: default_ratsnest_crossings(),
             bus_groups: None,
             skeleton_race: default_skeleton_race(),
             pair_rows: None,
-            guidance_router: None,
+            measure_router: None,
             via_in_pad_far_side: true,
             bga_room: true,
             length_maxima: true,

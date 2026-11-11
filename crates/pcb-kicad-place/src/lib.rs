@@ -7,7 +7,8 @@
 //!   router side's lowering: the layer table, the router config, pours,
 //!   BGA array rooms, length rules), `place_kicad_board` and its seed race,
 //!   panels of copies, the skeleton race, decoupling, edges, pair rows,
-//!   board marks, pad exits and global guidance.
+//!   board marks, pad exits and the global route the escape demand
+//!   measures with.
 //! - `placement_constraints` (constraints.json), `placement_room`,
 //!   `sub_boards` (the placer's half of a panel of different boards).
 //! - `labels` and `silk_fields`: texts moved off copper and silkscreen

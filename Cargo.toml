@@ -24,7 +24,6 @@ members = [
 resolver = "3"
 
 [dependencies]
-pcb-global = { path = "crates/pcb-global" }
 pcb-kicad = { path = "crates/pcb-kicad" }
 pcb-kicad-import = { path = "crates/pcb-kicad-import" }
 pcb-kicad-lab = { path = "crates/pcb-kicad-lab" }

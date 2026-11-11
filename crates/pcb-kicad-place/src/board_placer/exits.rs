@@ -7,7 +7,7 @@
 //! repair (`pcb_placer::exits`), the place check's report and the
 //! census command (`pad-exits-kicad-board`).
 
-use super::guidance::{lowered_at, reference_index, routed_base};
+use super::measured::{lowered_at, reference_index, routed_base};
 use super::*;
 use crate::board_router::core_config;
 use pcb_placer as core;

@@ -2824,7 +2824,7 @@ def main():
                              "count as pre-existing; a panel's sub-boards from its places)")
     parser.add_argument("--layout", type=json.loads, default={},
                         help="layout settings for every board, as JSON, over the task's "
-                             "(e.g. '{\"congestion_score\": \"global\"}')")
+                             "(e.g. '{\"congestion_score\": \"none\"}')")
     parser.add_argument("--jobs", type=int, default=None,
                         help="boards at once (default: with --tier and no --threads the physical cores / "
                              "TIER_THREADS, else 1)")

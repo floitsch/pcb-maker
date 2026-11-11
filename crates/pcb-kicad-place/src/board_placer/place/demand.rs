@@ -35,8 +35,8 @@ pub(super) fn add_routing_demand(
         // The measured version lowers the board as the layout routes it,
         // with the layout's router configuration (its rules): a placement
         // alone has none and runs on the estimate.
-        let measured = match (&config.guidance_router, escape.measured) {
-            (Some(router_config), true) => Some(guidance::measured_factory(
+        let measured = match (&config.measure_router, escape.measured) {
+            (Some(router_config), true) => Some(measured::measured_factory(
                 pcb,
                 &lowered.references,
                 router_config,

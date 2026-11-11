@@ -17,12 +17,11 @@
 use crate::GlobalConfig;
 use crate::capacity::{Capacity, Frame};
 use pcb_router::Board;
-use serde::Serialize;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
 /// One net's global route.
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default)]
 pub struct NetRoute {
     /// The net (index into `Board::nets`).
     pub net: usize,
@@ -42,29 +41,15 @@ pub struct NetRoute {
     pub pour: bool,
 }
 
-/// The routability measures of one global route.
-#[derive(Clone, Debug, Default, Serialize)]
+/// The routability measures of one global route (what the placement
+/// ablation reports).
+#[derive(Clone, Debug, Default)]
 pub struct Score {
     /// Tracks over capacity, summed over every boundary and layer.
     pub total_overflow: f64,
-    /// The most tracks over capacity on one boundary.
-    pub max_overflow: f64,
-    /// Boundaries (per layer) over capacity.
-    pub overflowed_edges: usize,
-    /// Vias over the tiles' via sites, summed.
-    pub via_overflow: f64,
-    /// `total_overflow` per layer.
-    pub overflow_per_layer: Vec<f64>,
-    /// Tracks over boundaries per layer (the usage summed), and the
-    /// capacity summed.
-    pub usage_per_layer: Vec<f64>,
-    pub capacity_per_layer: Vec<f64>,
     /// Usage above `alpha` times capacity summed over the boundaries, per
     /// `SOFT_ALPHAS` (a continuous measure where nothing overflows).
     pub soft_overflow: Vec<f64>,
-    /// Mean utilisation (usage over capacity) of the most used boundaries
-    /// with capacity, per `ACE_SHARES` of them (ISPD's ACE).
-    pub ace: Vec<f64>,
     /// Nets routed on the graph (two or more terminals, or a pour).
     pub nets: usize,
     /// Nets with a terminal the graph could not reach.
@@ -75,18 +60,10 @@ pub struct Score {
     pub detoured: usize,
     /// `detoured` over the signal nets.
     pub detour_fraction: f64,
-    /// Boundaries crossed times the tile side.
-    pub wirelength_mm: f64,
-    pub vias: usize,
-    pub iterations: usize,
-    /// The iteration whose state is kept (the least overflow).
-    pub best_iteration: usize,
 }
 
 /// The utilisation levels of `Score::soft_overflow`.
 pub const SOFT_ALPHAS: [f64; 2] = [0.5, 0.75];
-/// The shares of boundaries `Score::ace` averages over.
-pub const ACE_SHARES: [f64; 3] = [0.005, 0.02, 0.05];
 
 /// The global route of a board: the grid, its capacities, the usage of
 /// the kept iteration, every net's route and the score.
@@ -100,8 +77,6 @@ pub struct GlobalRoute {
     pub via_usage: Vec<f32>,
     pub nets: Vec<NetRoute>,
     pub score: Score,
-    pub capacity_seconds: f64,
-    pub seconds: f64,
     /// States popped by all searches (the negotiation's work).
     pub pops: u64,
     /// The history on the boundaries and via sites and the present price
@@ -109,34 +84,6 @@ pub struct GlobalRoute {
     pub history: [Vec<f32>; 2],
     pub via_history: Vec<f32>,
     pub present: f32,
-}
-
-impl GlobalRoute {
-    /// Tracks over capacity per boundary: `[direction][layer * tiles +
-    /// tile]`, 0 where within.
-    pub fn overflow(&self) -> [Vec<f32>; 2] {
-        [0, 1].map(|direction| {
-            self.usage[direction]
-                .iter()
-                .zip(&self.capacity.edges[direction])
-                .map(|(used, capacity)| (used - capacity).max(0.0))
-                .collect()
-        })
-    }
-
-    /// The tiles `net`'s route crossed (on any layer), sorted.
-    pub fn corridor(&self, net: usize) -> Vec<u32> {
-        let tiles = self.frame.tiles() as u32;
-        let mut corridor: Vec<u32> = self
-            .nets
-            .iter()
-            .filter(|route| route.net == net)
-            .flat_map(|route| route.states.iter().map(|state| state % tiles))
-            .collect();
-        corridor.sort_unstable();
-        corridor.dedup();
-        corridor
-    }
 }
 
 #[derive(Clone)]
@@ -730,7 +677,6 @@ struct Snapshot {
     via_usage: Vec<f32>,
     routes: Vec<NetRoute>,
     overflow: f64,
-    iteration: usize,
 }
 
 #[allow(
@@ -745,15 +691,13 @@ pub(crate) fn negotiate(
 ) -> GlobalRoute {
     let plans = plans(board, &frame, &capacity, config);
     let per = frame.layers * frame.tiles();
-    let (best, iterations, pops, history, via_history, present) = {
+    let (best, pops, history, via_history, present) = {
         let mut graph = Graph::new(&frame, &capacity, config);
         let mut routes: Vec<NetRoute> = vec![NetRoute::default(); plans.len()];
         let mut pending: Vec<usize> = (0..plans.len()).collect();
         let mut present = config.present_start as f32;
         let mut best: Option<Snapshot> = None;
-        let mut iterations = 0;
         for iteration in 0..config.iterations.max(1) {
-            iterations = iteration + 1;
             for &index in &pending {
                 let old = std::mem::take(&mut routes[index]);
                 graph.take(&old, plans[index].demand, -1.0);
@@ -787,7 +731,6 @@ pub(crate) fn negotiate(
                     via_usage: graph.via_usage.clone(),
                     routes: routes.clone(),
                     overflow: total,
-                    iteration: iterations,
                 });
             }
             if total <= 0.0 {
@@ -819,7 +762,8 @@ pub(crate) fn negotiate(
                 .collect();
             if std::env::var_os("PCB_GLOBAL_DEBUG").is_some() {
                 eprintln!(
-                    "global route: iteration {iterations}, {} nets rerouted next, overflow {total:.1}, pops {}",
+                    "global route: iteration {}, {} nets rerouted next, overflow {total:.1}, pops {}",
+                    iteration + 1,
                     pending.len(),
                     graph.pops
                 );
@@ -828,7 +772,6 @@ pub(crate) fn negotiate(
         }
         (
             best.expect("one iteration at least"),
-            iterations,
             graph.pops,
             std::mem::take(&mut graph.history),
             std::mem::take(&mut graph.via_history),
@@ -837,63 +780,30 @@ pub(crate) fn negotiate(
     };
     // The score of the kept iteration.
     let mut score = Score {
-        iterations,
-        best_iteration: best.iteration,
-        overflow_per_layer: vec![0.0; frame.layers],
-        usage_per_layer: vec![0.0; frame.layers],
-        capacity_per_layer: vec![0.0; frame.layers],
         nets: best.routes.len(),
+        soft_overflow: vec![0.0; SOFT_ALPHAS.len()],
         ..Score::default()
     };
     let mut over_edge = [vec![false; per], vec![false; per]];
-    for direction in 0..2 {
-        for index in 0..per {
-            score.usage_per_layer[index / frame.tiles()] += best.usage[direction][index] as f64;
-            score.capacity_per_layer[index / frame.tiles()] +=
-                capacity.edges[direction][index] as f64;
-            let over = (best.usage[direction][index] - capacity.edges[direction][index]) as f64;
-            if over > 1.0e-4 {
-                over_edge[direction][index] = true;
-                score.total_overflow += over;
-                score.max_overflow = score.max_overflow.max(over);
-                score.overflowed_edges += 1;
-                score.overflow_per_layer[index / frame.tiles()] += over;
-            }
-        }
-    }
-    let mut utilisation = Vec::new();
-    score.soft_overflow = vec![0.0; SOFT_ALPHAS.len()];
     for direction in 0..2 {
         for index in 0..per {
             let (used, room) = (
                 best.usage[direction][index] as f64,
                 capacity.edges[direction][index] as f64,
             );
-            if room > 0.0 {
-                utilisation.push(used / room);
+            let over = (best.usage[direction][index] - capacity.edges[direction][index]) as f64;
+            if over > 1.0e-4 {
+                over_edge[direction][index] = true;
+                score.total_overflow += over;
             }
             for (slot, alpha) in score.soft_overflow.iter_mut().zip(SOFT_ALPHAS) {
                 *slot += (used - alpha * room).max(0.0);
             }
         }
     }
-    utilisation.sort_by(|a, b| b.total_cmp(a));
-    score.ace = ACE_SHARES
-        .iter()
-        .map(|share| {
-            let count = ((utilisation.len() as f64 * share).ceil() as usize)
-                .clamp(1, utilisation.len().max(1));
-            utilisation.iter().take(count).sum::<f64>() / count as f64
-        })
+    let over_via: Vec<bool> = (0..frame.tiles())
+        .map(|tile| (best.via_usage[tile] - capacity.vias[tile]) as f64 > 1.0e-4)
         .collect();
-    let mut over_via = vec![false; frame.tiles()];
-    for tile in 0..frame.tiles() {
-        let over = (best.via_usage[tile] - capacity.vias[tile]) as f64;
-        if over > 1.0e-4 {
-            over_via[tile] = true;
-            score.via_overflow += over;
-        }
-    }
     let mut signal = 0usize;
     for route in &best.routes {
         if !route.routed {
@@ -906,8 +816,6 @@ pub(crate) fn negotiate(
         {
             score.overflowed_nets += 1;
         }
-        score.wirelength_mm += route.crossings.len() as f64 * frame.tile_mm;
-        score.vias += route.vias.len();
         if !route.pour {
             signal += 1;
             let bound = route.lower_bound as f64;
@@ -928,8 +836,6 @@ pub(crate) fn negotiate(
         via_usage: best.via_usage,
         nets: best.routes,
         score,
-        capacity_seconds: 0.0,
-        seconds: 0.0,
         pops,
         history,
         via_history,
@@ -972,7 +878,6 @@ mod tests {
         assert_eq!(route.nets[0].crossings.len(), 5);
         assert!(route.nets[0].vias.is_empty());
         assert_eq!(route.score.detoured, 0);
-        assert_eq!(route.corridor(0), vec![0, 1, 2, 3, 4, 5]);
     }
 
     #[test]

@@ -2,9 +2,8 @@
 
 //! The placement race's pre-ranking: each placement of one board is
 //! lowered as the router would see it and scored by its RUDY routing
-//! demand above the tiles' free capacity (`rudy_overflow`), or by the
-//! coarse global route (an experiment). A score takes milliseconds; the
-//! race then probes only the best-ranked placements.
+//! demand above the tiles' free capacity (`rudy_overflow`). A score takes
+//! milliseconds; the race then probes only the best-ranked placements.
 //!
 //! RUDY is computed on the router's tiles (`TILE` x `TILE` lattice nodes)
 //! from the board alone: no router is built. Copper layers go to four
@@ -34,32 +33,27 @@ pub(crate) struct Ranking {
     pub score_seconds: f64,
 }
 
-/// The pre-ranking scores the layout knows (`congestion_score`).
-pub(crate) const SCORES: [&str; 3] = ["rudy", "global", "none"];
+/// The pre-ranking scores the layout knows (`congestion_score`): `rudy`
+/// ranks, `none` races the plain seeds.
+pub(crate) const SCORES: [&str; 2] = ["rudy", "none"];
 
-/// One placement's score: `rudy` (RUDY demand above capacity) or
-/// `global` (the global route's demand above half the boundaries'
-/// capacity, docs/global-route.md; an experiment).
-pub(crate) fn score_board(
-    board: &core::Board,
-    core_config: &core::Config,
-    score: &str,
-) -> Result<f64, String> {
-    match score {
-        "rudy" => {
-            let frame = core::router::congestion::tile_frame(board, core_config);
-            Ok(rudy_overflow(board, &frame, 0.25) as f64)
-        }
-        "global" => Ok(
-            pcb_global::route(board, &pcb_global::GlobalConfig::default())
-                .score
-                .soft_overflow[0],
-        ),
-        _ => Err(format!(
+/// An input error where `score` is not one of `SCORES` (the global
+/// route's `global`, removed 2026-11-11, among them).
+pub(crate) fn check_score(score: &str) -> Result<(), String> {
+    if SCORES.contains(&score) {
+        Ok(())
+    } else {
+        Err(crate::exit::input_error(format!(
             "congestion_score {score:?} is not one of {}",
-            SCORES.join(", ")
-        )),
+            SCORES.map(|score| format!("{score:?}")).join(", ")
+        )))
     }
+}
+
+/// One placement's score: RUDY demand above capacity.
+fn score_board(board: &core::Board, core_config: &core::Config) -> f64 {
+    let frame = core::router::congestion::tile_frame(board, core_config);
+    rudy_overflow(board, &frame, 0.25) as f64
 }
 
 /// `pcb` is the board as the layout routes it (`without_copper_texts`).
@@ -69,7 +63,6 @@ pub(crate) fn rank_placements(
     router_config: &KiCadBoardRouterConfig,
     core_config: &core::Config,
     connect: bool,
-    score: &str,
 ) -> Result<Ranking, String> {
     let started = std::time::Instant::now();
     let (mut lower_seconds, mut score_seconds) = (0.0, 0.0);
@@ -86,7 +79,7 @@ pub(crate) fn rank_placements(
         let board = lower(&candidate, router_config, connect)?.board;
         lower_seconds += lowered_at.elapsed().as_secs_f64();
         let scored_at = std::time::Instant::now();
-        scores.push(score_board(&board, core_config, score)?);
+        scores.push(score_board(&board, core_config));
         score_seconds += scored_at.elapsed().as_secs_f64();
     }
     let mut order: Vec<usize> = (0..scores.len()).collect();
@@ -509,7 +502,7 @@ impl RudyMaps {
 /// edges) above `alpha` times the tiles' free capacity, summed over the
 /// board's tiles on `frame`. Lower is better. `alpha` 0.25 ranked
 /// held-out placements best (fitted 0.2-0.3).
-pub fn rudy_overflow(board: &Board, frame: &TileFrame, alpha: f32) -> f32 {
+pub(crate) fn rudy_overflow(board: &Board, frame: &TileFrame, alpha: f32) -> f32 {
     rasterize(board, frame).overflow(alpha)
 }
 
@@ -631,6 +624,19 @@ mod tests {
                 maps.demand
             );
         }
+    }
+
+    #[test]
+    fn a_score_the_layout_does_not_know_is_an_input_error_naming_the_known_ones() {
+        assert_eq!(check_score("rudy"), Ok(()));
+        assert_eq!(check_score("none"), Ok(()));
+        // The global route's pre-ranking was removed on 2026-11-11.
+        let error = check_score("global").unwrap_err();
+        assert!(crate::exit::is_input_error(&error), "{error}");
+        assert!(
+            error.contains(r#"congestion_score "global" is not one of "rudy", "none""#),
+            "{error}"
+        );
     }
 
     #[test]

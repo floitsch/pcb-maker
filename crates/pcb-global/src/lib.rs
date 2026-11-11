@@ -17,26 +17,26 @@
 //! overflow that grows every iteration and a history on boundaries that
 //! overflowed (`negotiate`).
 //!
-//! What it gives: the overflow per boundary and layer, a routability score
-//! (total and largest overflow, overflowed vias, the nets crossing an
-//! overflowing boundary, the nets that detour) and per net the tiles it
-//! crossed (its corridor). It reads the lowered `pcb_router::Board` and
-//! builds no lattice: seconds on the largest boards.
+//! What it gives: the usage and capacity per boundary and layer, per net
+//! the boundaries it crossed, and a routability score (the total and the
+//! soft overflow, the nets crossing an overflowing boundary, the nets that
+//! detour). `Incremental` keeps it up to date while parts move: the
+//! placer's measured escape demand. It reads the lowered
+//! `pcb_router::Board` and builds no lattice: seconds on the largest
+//! boards.
 
 pub mod capacity;
 pub mod incremental;
 mod negotiate;
 
-pub use capacity::{Capacity, Frame, reference_class};
+pub use capacity::{Capacity, Frame};
 pub use incremental::Incremental;
-pub use negotiate::{ACE_SHARES, GlobalRoute, NetRoute, SOFT_ALPHAS, Score};
+pub use negotiate::{GlobalRoute, NetRoute, SOFT_ALPHAS, Score};
 
 use pcb_router::Board;
-use serde::{Deserialize, Serialize};
 
 /// Settings of the global route.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(deny_unknown_fields, default)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GlobalConfig {
     /// Tile side in millimetres.
     pub tile_mm: f64,
@@ -103,12 +103,7 @@ impl Default for GlobalConfig {
 
 /// Routes `board` globally.
 pub fn route(board: &Board, config: &GlobalConfig) -> GlobalRoute {
-    let started = std::time::Instant::now();
     let frame = Frame::of_board(board, config.tile_mm);
     let capacity = Capacity::build(board, &frame, config);
-    let capacity_seconds = started.elapsed().as_secs_f64();
-    let mut result = negotiate::negotiate(board, frame, capacity, config);
-    result.capacity_seconds = capacity_seconds;
-    result.seconds = started.elapsed().as_secs_f64();
-    result
+    negotiate::negotiate(board, frame, capacity, config)
 }

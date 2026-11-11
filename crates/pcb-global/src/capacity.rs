@@ -124,7 +124,7 @@ fn shape_cost(shape: &pcb_router::geometry::Shape) -> u64 {
 }
 
 /// The class most nets with two or more terminals use.
-pub fn reference_class(board: &Board) -> RuleClass {
+pub(crate) fn reference_class(board: &Board) -> RuleClass {
     let mut counts = vec![0usize; board.classes.len()];
     for net in &board.nets {
         if net.terminals.len() > 1 {

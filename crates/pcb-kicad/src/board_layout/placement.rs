@@ -67,13 +67,6 @@ pub(super) fn place(ctx: &LayoutContext, ledger: &mut WorkLedger) -> Result<Plac
     // could probe, only where the race runs: one router seed, no pin
     // swaps.
     let pre_ranking = pre_ranks(config, router_config);
-    if !crate::congestion_rank::SCORES.contains(&config.congestion_score.as_str()) {
-        return Err(crate::exit::input_error(format!(
-            "congestion_score {:?} is not one of {}",
-            config.congestion_score,
-            crate::congestion_rank::SCORES.join(", ")
-        )));
-    }
     if pre_ranking {
         placer_config.placement_seeds = race_placement_seeds(config, &placer_config);
     }

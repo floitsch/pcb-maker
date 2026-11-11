@@ -159,8 +159,8 @@ pub(super) fn race_probes(config: &KiCadBoardLayoutConfig) -> usize {
         .max(1)
 }
 
-/// The seeds' placements ranked by predicted routability (RUDY or the
-/// global route, `congestion_score`), where the race pre-ranks and there
+/// The seeds' placements ranked by predicted routability (RUDY,
+/// `congestion_score`), where the race pre-ranks and there
 /// are more than it probes: only the best few are probed (a probe is a
 /// real route of up to `probe_seconds`; a score takes milliseconds), in
 /// the ranking's order. Where the first-ranked is not the placer's kept
@@ -207,7 +207,6 @@ pub(super) fn pre_rank(
         &ctx.router_config,
         core_config,
         copper.connect,
-        &config.congestion_score,
     )?;
     let crossings = seed_crossings(&kept.placer_config, &kept.problem, &pool);
     let order = probe_order(&ranked.order, crossings.as_deref(), &pool);

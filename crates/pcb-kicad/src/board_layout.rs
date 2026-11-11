@@ -92,10 +92,7 @@ pub struct KiCadBoardLayoutConfig {
     ///   capacity (quick tier: KiCad unconnected 98 -> 64 against the
     ///   plain race of three seeds);
     /// - `none`: the plain race (the placer's `placement_seeds`, all
-    ///   probed);
-    /// - `global`: the coarse global route's usage above half the tile
-    ///   boundaries' capacity (`pcb-global`, docs/global-route.md; an
-    ///   experiment).
+    ///   probed).
     pub congestion_score: String,
     /// One edge of a rectangular outline the layout may move, to find the
     /// smallest board that comes out clean (docs/constraints.md, "A free
@@ -1056,8 +1053,8 @@ impl<F: Fn() -> bool> WallStop<F> {
 /// and the placer settings it carries, the first placement's relaxation
 /// applied), the other placements the race may probe and their
 /// relaxations, the placer settings the later steps read beside the
-/// problem (the crossings' seed ranking, the guided moves, the board's
-/// marks), the pin swaps, and the work the placement booked (the later
+/// problem (the crossings' seed ranking, the board's marks), the pin
+/// swaps, and the work the placement booked (the later
 /// steps' budgets are what is left of the layout's). Two layouts of one
 /// binary, task, layout settings and rates whose digests are equal route
 /// alike: everything after the placement is a function of these and of
@@ -1097,19 +1094,18 @@ fn placement_digest(
     for (poses, relaxation) in others {
         part(&mut hash, "other", &format!("{poses:?} {relaxation:?}"));
     }
+    // The `None` is where the global guidance's moves were (removed
+    // 2026-11-11): digests stay those of the rows stored before
+    // (run.py `--reuse`).
     part(
         &mut hash,
         "placer",
         &format!(
-            "{:?} {:?} {:?} {:?} {:?}",
+            "{:?} None {:?} {:?} {:?}",
             placer_config
                 .ratsnest_crossings
                 .as_ref()
                 .map(|crossings| crossings.rank_seeds),
-            placer_config
-                .global_guidance
-                .as_ref()
-                .map(|guidance| (guidance.moves, guidance.threshold)),
             placer_config.keep_board_marks,
             placer_config.tight_bodies,
             placer_config.attached_marks,
@@ -1138,7 +1134,7 @@ pub fn placement_budget(config: &KiCadBoardLayoutConfig) -> f64 {
 /// sized: the layout config's `placer` with its constraints resolved, the
 /// router's clearances, edge margin and wall-clock deadline, the
 /// placement's share of the budget and the router configuration the
-/// escape demand's measurements and the global guidance lower with.
+/// escape demand's measurements and the pad exits lower with.
 /// `place-kicad-board` places with the same (`placement_check_config`),
 /// so that its yes is the layout's (the OpenESC panel: the check placed
 /// every part on the escape demand's estimate where the layout, which
@@ -1172,11 +1168,10 @@ pub fn layout_placer_config(
     // layout depended on the load).
     placer_config.deadline = router_config.deadline;
     placer_config.work_seconds = Some(placement_budget(config));
-    if placer_config.global_guidance.is_some()
-        || placer_config.escape_demand.is_some()
+    if placer_config.escape_demand.is_some()
         || crate::board_placer::pad_exits_settings(&placer_config).is_some()
     {
-        placer_config.guidance_router = Some(router_config.clone());
+        placer_config.measure_router = Some(router_config.clone());
     }
     // The router's rules the placer keeps (the far side under vias in
     // pads, length maxima and minima), only where one applies.
@@ -1229,10 +1224,10 @@ pub fn race_core_config(router_config: &KiCadBoardRouterConfig) -> core::Config 
     core_config
 }
 
-/// Whether the layout's race pre-ranks the placer's seeds (by RUDY or the
-/// global route): only with one router seed and no pin swaps.
+/// Whether the layout's race pre-ranks the placer's seeds (by RUDY): only
+/// with one router seed and no pin swaps.
 fn pre_ranks(config: &KiCadBoardLayoutConfig, router_config: &KiCadBoardRouterConfig) -> bool {
-    (config.congestion_score == "rudy" || config.congestion_score == "global")
+    config.congestion_score == "rudy"
         && router_config.seeds.unwrap_or(1) <= 1
         && config.pin_swaps.is_none()
         && config.swappable.is_empty()
@@ -2047,7 +2042,7 @@ mod budget_tests {
         let check = placement_check_config(&f1, "f1", &layout, &router).unwrap();
         assert_eq!(check.work_seconds, Some(12.0));
         assert_eq!(check.placement_seeds, layout.congestion_candidates);
-        assert!(check.guidance_router.is_some());
+        assert!(check.measure_router.is_some());
         assert_eq!(check.copper_clearance_mm, Some(largest_clearance(&router)));
         assert_eq!(
             check.copper_edge_clearance_mm,

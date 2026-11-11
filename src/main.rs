@@ -390,13 +390,6 @@ const COMMANDS: &[Command] = &[
         run: lab_commands::cmd_ablate_kicad_placement,
     },
     Command {
-        name: "global-route-kicad-board",
-        usage: Some(
-            "global-route-kicad-board <source-directory> <board-id> [router-config.json|auto] [--global <global.json>] [--probe <work-seconds>] [--corridors <out.json>]",
-        ),
-        run: lab_commands::cmd_global_route_kicad_board,
-    },
-    Command {
         name: "probe-trouble-placement",
         usage: Some(
             "probe-trouble-placement <placed.kicad_pcb> [router-config.json|auto] (--trouble-from <run-dir|board-router.json|probe.json> | --trouble <names.txt> | --auto)... [--nets <n>] [--background none|stubs|global|full] [--share <0.05>] [--total-seconds <1500>] [--work-seconds <s>] [--stub-mm <1.0>] [--global-weight <2.0>] [--out <report.json>]",

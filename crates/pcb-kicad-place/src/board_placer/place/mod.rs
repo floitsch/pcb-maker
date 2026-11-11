@@ -115,8 +115,8 @@ pub fn place_kicad_board(
 }
 
 /// The placer's configuration for the board: the settings, the work
-/// limit, the warm start, and the router's tests where they are on (the
-/// global guidance, the pad exits).
+/// limit, the warm start, and the router's test where it is on (the pad
+/// exits).
 fn placer_config(
     context: &PlaceContext,
     pcb: &Expr,
@@ -137,27 +137,11 @@ fn placer_config(
     placer_config.kicad_last_level = true;
     placer_config.start = warm_start(lowered)?.map(std::sync::Arc::new);
     placer_config.skip_anneal = std::env::var_os("PCB_PLACER_SKIP_ANNEAL").is_some();
-    if let Some(guidance) = &config.global_guidance {
-        let router_config = config.guidance_router.clone().unwrap_or_default();
-        placer_config.anneal.guidance = Some(core::guidance::Guidance {
-            evaluate: guidance::evaluator(
-                pcb,
-                &lowered.references,
-                &router_config,
-                config.keep_board_marks,
-                guidance.threshold,
-            )?,
-            weight: guidance.weight,
-            work_share: guidance.work_share,
-            min_accepted: guidance.min_accepted,
-            bias: guidance.bias,
-        });
-    }
     // Pads without a way out (`pad_exits`): the router's test after each
     // seed's placement, with the router's configuration the layout and the
     // place check give.
     if let Some(settings) = exits::pad_exits_settings(config) {
-        match &config.guidance_router {
+        match &config.measure_router {
             Some(router_config) => {
                 placer_config.pad_exits = Some(core::exits::PadExits {
                     factory: exits::exit_factory(

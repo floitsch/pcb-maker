@@ -165,7 +165,6 @@ name = "pcb-global"
 version = "0.1.0"
 dependencies = [
  "pcb-router",
- "serde",
 ]
 
 [[package]]
@@ -173,7 +172,6 @@ name = "pcb-kicad"
 version = "0.1.0"
 dependencies = [
  "libc",
- "pcb-global",
  "pcb-kicad-check",
  "pcb-kicad-file",
  "pcb-kicad-place",
@@ -267,7 +265,6 @@ name = "pcb-kicad-route"
 version = "0.1.0"
 dependencies = [
  "libc",
- "pcb-global",
  "pcb-kicad-check",
  "pcb-kicad-file",
  "pcb-placer",
@@ -285,7 +282,6 @@ name = "pcb-maker"
 version = "0.1.0"
 dependencies = [
  "config-reference",
- "pcb-global",
  "pcb-kicad",
  "pcb-kicad-import",
  "pcb-kicad-lab",
