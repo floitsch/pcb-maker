@@ -1211,7 +1211,7 @@ pub fn layout_placer_config(
 /// really fall (a move on OpenAirScope negotiated 64 iterations at 15
 /// conflicted nets, 200-350 s a move). The final ladder routes the kept
 /// placement with the full patience.
-pub(crate) fn race_core_config(router_config: &KiCadBoardRouterConfig) -> core::Config {
+pub fn race_core_config(router_config: &KiCadBoardRouterConfig) -> core::Config {
     let mut core_config = core_config(router_config);
     if router_config.stall_drop.is_none() {
         core_config.stall_drop = 0.1;

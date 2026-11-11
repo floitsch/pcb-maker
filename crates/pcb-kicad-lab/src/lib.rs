@@ -23,12 +23,38 @@
 //! - `footprint_links`: `normalize-kicad-footprint-links`, a benchmark
 //!   board's schematic links rewritten (benchmarks/real/*/prepare.sh).
 //!
-//! In a module of the crate rather than a crate of their own: they lower
-//! boards with the crate's private lowering and geometry (the placer's
-//! `lower_placement` and `prepare_board`, the router's `lower` and pour
-//! planning, the S-expression tree, the footprint pose writers, the
-//! courtyard and body shapes, the constraint resolution: some thirty
-//! crate-private items), which a separate crate would need made public.
+//! They lower boards with the route and place crate's lowering and
+//! geometry (the placer's `lower_placement` and `prepare_board`, the
+//! router's `lower` and pour planning, the footprint pose writers, the
+//! courtyard and body shapes, the constraint resolution) and two of the
+//! layout's pieces (`race_core_config`, `rudy_overflow`); nothing in the
+//! other crates uses this one.
+
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::{
+    collections::{BTreeMap, BTreeSet, VecDeque},
+    fs,
+    path::{Path, PathBuf},
+    time::Instant,
+};
+// The tests' scratch directories.
+#[cfg(test)]
+use std::{
+    env,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+// The KiCad files (pcb-kicad-file), KiCad's checks (pcb-kicad-check), a
+// board routed and placed (pcb-kicad-route-place) and the layout
+// (pcb-kicad).
+use pcb_kicad::{board_layout, congestion_rank};
+use pcb_kicad_file::corridors_fact::{KiCadCorridors, KiCadSearchKinds};
+use pcb_kicad_file::{
+    board_stats::*, copper_geometry::*, fs_util::*, kicad_nets::*, kicad_sexpr::*,
+};
+use pcb_kicad_file::{canonical_order, flip, fs_util, kicad_nets, outline};
+use pcb_kicad_route_place::*;
 
 mod coarse_probe;
 mod footprint_links;

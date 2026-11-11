@@ -86,7 +86,7 @@ pub(crate) fn cmd_normalize_kicad_footprint_links(mut arguments: Arguments) -> R
     if arguments.next().is_some() {
         return Err(usage.into());
     }
-    let report = pcb_kicad::lab::normalize_kicad_footprint_links(Path::new(&directory), &board_id)?;
+    let report = pcb_kicad_lab::normalize_kicad_footprint_links(Path::new(&directory), &board_id)?;
     let serialized = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
     if let Some(report_path) = report_path {
         fs::write(&report_path, format!("{serialized}\n"))
@@ -115,8 +115,7 @@ pub(crate) fn cmd_shrink_kicad_board(mut arguments: Arguments) -> Result<(), Str
     if arguments.next().is_some() {
         return Err(usage.into());
     }
-    let report =
-        pcb_kicad::lab::shrink_kicad_board(Path::new(&source), Path::new(&output), factor)?;
+    let report = pcb_kicad_lab::shrink_kicad_board(Path::new(&source), Path::new(&output), factor)?;
     println!(
         "wrote {output}: {:.1} x {:.1} mm -> {:.1} x {:.1} mm, {} footprints, {} pushed back inside: {}",
         report.size_before_mm[0],

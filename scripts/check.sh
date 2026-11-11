@@ -12,7 +12,7 @@
 #   - the unit and integration tests of every crate of the workspace
 #     (pcb-router, pcb-placer, pcb-global, pcb-topo, the pcb-kicad crates:
 #     pcb-kicad-file, pcb-kicad-check, pcb-kicad-route-place, pcb-kicad,
-#     pcb-kicad-import;
+#     pcb-kicad-import, pcb-kicad-lab;
 #     tools/config-reference) and the root binary's own unit tests;
 #   - the root package's CLI tests: exit codes, native verification, the
 #     router's fingerprints at 1 and 4 threads, the generated config
@@ -75,7 +75,7 @@ if [ "$mode" = fast ]; then
   step cargo test --release -p pcb-placer --lib --test orientation
 fi
 step cargo test --release -p pcb-router -p pcb-kicad-file -p pcb-kicad-check -p pcb-kicad-route-place \
-  -p pcb-kicad -p pcb-kicad-import -p pcb-global ${placer[@]+"${placer[@]}"} \
+  -p pcb-kicad -p pcb-kicad-import -p pcb-kicad-lab -p pcb-global ${placer[@]+"${placer[@]}"} \
   -p pcb-topo -p config-reference
 step cargo test --release -p pcb-maker --bins --test cli_exit_codes ${walkthrough[@]+"${walkthrough[@]}"} \
   --test native_verification --test router_fingerprint --test config_reference --test hostile_inputs --test fixtures

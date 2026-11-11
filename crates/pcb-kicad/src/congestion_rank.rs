@@ -509,7 +509,7 @@ impl RudyMaps {
 /// edges) above `alpha` times the tiles' free capacity, summed over the
 /// board's tiles on `frame`. Lower is better. `alpha` 0.25 ranked
 /// held-out placements best (fitted 0.2-0.3).
-pub(crate) fn rudy_overflow(board: &Board, frame: &TileFrame, alpha: f32) -> f32 {
+pub fn rudy_overflow(board: &Board, frame: &TileFrame, alpha: f32) -> f32 {
     rasterize(board, frame).overflow(alpha)
 }
 
