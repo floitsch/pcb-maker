@@ -174,6 +174,17 @@ class StrictRule(unittest.TestCase):
                                                      ("t9", "Track [GND] on F.Cu, length 1 mm"))])
         self.assertEqual(split["new"], {"shorting_items": 1})
         self.assertEqual(run.strict_findings([feed], None)["new"], {"shorting_items": 1})
+        # KiCad pairs the graphic with the ground pad only (osprey): the
+        # run's own record of the feed pad it wired through it adds its net,
+        # and nothing else.
+        ground_only = reference[1:]
+        walled = [{"part": "AE1", "pad": "1", "net": "Net-(AE1-A)",
+                   "graphics": [{"uuid": "g1", "kind": "fp_poly"}], "crossings": ["t1"]}]
+        self.assertEqual(run.strict_findings([feed], ground_only)["new"], {"shorting_items": 1})
+        split = run.strict_findings([feed, other], ground_only, None, walled)
+        self.assertEqual((split["new"], split["preexisting"]), ({"shorting_items": 1}, {"shorting_items": 1}))
+        # Without the designer's pairing, the run's record alone is no evidence.
+        self.assertEqual(run.strict_findings([feed], [], None, walled)["new"], {"shorting_items": 1})
 
     def test_a_copper_edge_finding_is_at_the_same_place_by_its_copper(self):
         def edge(outline, uuid, x, ring=("ring", (17.55, 125.0))):

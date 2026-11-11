@@ -4519,33 +4519,79 @@ fn set_walled_apart(facts: &KiCadRunFacts) -> (Option<KiCadRunFacts>, Vec<crate:
     (Some(apart), pads)
 }
 
-/// One line per walled pad with findings: what KiCad shows and the two
-/// ways on, accept it or rework the footprint, in KiCad's terms (kicad-cli
-/// 10.0.7: a net tie of the pads the graphic touches, or the graphic as a
-/// custom pad's primitive, takes the findings away; a net tie group of one
-/// pad does not).
+/// One line per footprint with walled pads that KiCad shows findings at:
+/// the pads, what KiCad shows, and the two ways on, accept it or rework
+/// the footprint, in KiCad's terms (kicad-cli 10.0.7: a net tie of the pads
+/// the graphic touches, or the graphic as a custom pad's primitive, takes
+/// the findings away; a net tie group of one pad does not).
 pub fn walled_pads_actions(pads: &[crate::KiCadWalledPad]) -> Vec<String> {
-    pads.iter()
-        .filter(|pad| !pad.findings.is_empty())
-        .map(|pad| {
+    let mut parts: Vec<&str> = Vec::new();
+    for pad in pads.iter().filter(|pad| !pad.findings.is_empty()) {
+        if !parts.contains(&pad.part.as_str()) {
+            parts.push(&pad.part);
+        }
+    }
+    parts
+        .into_iter()
+        .map(|part| {
+            let own: Vec<&crate::KiCadWalledPad> = pads
+                .iter()
+                .filter(|pad| pad.part == part && !pad.findings.is_empty())
+                .collect();
+            let mut touching: Vec<&str> = Vec::new();
+            let mut graphics: BTreeSet<&str> = BTreeSet::new();
+            let mut layers: BTreeSet<&str> = BTreeSet::new();
+            for pad in &own {
+                for number in &pad.touching {
+                    if !touching.contains(&number.as_str()) {
+                        touching.push(number);
+                    }
+                }
+                graphics.extend(pad.graphics.iter().map(|graphic| graphic.kind.as_str()));
+                layers.insert(&pad.layer);
+            }
             format!(
-                "walled pad {}: {}",
-                walled_pad_line(pad),
-                walled_pad_choices(pad)
+                "walled pads of {part}: {}, wired through {part}'s own {} on {}: {}",
+                own.iter()
+                    .map(|pad| format!(
+                        "{}.{} [{}] (KiCad shows {})",
+                        pad.part,
+                        pad.pad,
+                        pad.net,
+                        finding_counts(pad)
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                graphics.into_iter().collect::<Vec<_>>().join(" and "),
+                layers.into_iter().collect::<Vec<_>>().join(" and "),
+                walled_pad_choices(part, &touching)
             )
         })
         .collect()
 }
 
-/// A walled pad in one line: `AE1.1 [Net-(AE1-A)] wired through AE1's own
-/// fp_poly on F.Cu: KiCad shows shorting_items 1`.
-pub fn walled_pad_line(pad: &crate::KiCadWalledPad) -> String {
+/// A walled pad's findings by type: `shorting_items 1, clearance 1`.
+fn finding_counts(pad: &crate::KiCadWalledPad) -> String {
     let mut kinds: BTreeMap<&str, usize> = BTreeMap::new();
     for finding in &pad.findings {
         *kinds
             .entry(finding.split(':').next().unwrap_or(finding))
             .or_default() += 1;
     }
+    if kinds.is_empty() {
+        return "nothing there".into();
+    }
+    kinds
+        .iter()
+        .map(|(kind, count)| format!("{kind} {count}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// A walled pad in one line (stdout's `walled pad: ...`): `AE1.1
+/// [Net-(AE1-A)] wired through AE1's own fp_poly on F.Cu: KiCad shows
+/// shorting_items 1`.
+pub fn walled_pad_line(pad: &crate::KiCadWalledPad) -> String {
     let graphics: BTreeSet<&str> = pad
         .graphics
         .iter()
@@ -4559,34 +4605,26 @@ pub fn walled_pad_line(pad: &crate::KiCadWalledPad) -> String {
         pad.part,
         graphics.into_iter().collect::<Vec<_>>().join(" and "),
         pad.layer,
-        if kinds.is_empty() {
-            "nothing there".to_string()
-        } else {
-            kinds
-                .iter()
-                .map(|(kind, count)| format!("{kind} {count}"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        }
+        finding_counts(pad)
     )
 }
 
-/// The two ways on for a walled pad's findings.
-fn walled_pad_choices(pad: &crate::KiCadWalledPad) -> String {
-    let rework = if pad.touching.len() >= 2 {
-        let group = pad.touching.join(",");
+/// The two ways on for a footprint's walled pads, whose copper touches the
+/// pads `touching`.
+fn walled_pad_choices(part: &str, touching: &[&str]) -> String {
+    let rework = if touching.len() >= 2 {
+        let group = touching.join(",");
         format!(
-            "mark {} a net tie of the pads its copper touches: Net tie pad groups \"{group}\" in the footprint's properties ((net_tie_pad_groups \"{group}\") in the board file), with which kicad-cli 10.0.7 accepts those pads' nets' tracks on that copper",
-            pad.part
+            "mark {part} a net tie of the pads its copper touches: Net tie pad groups \"{group}\" in the footprint's properties ((net_tie_pad_groups \"{group}\") in the board file), with which kicad-cli 10.0.7 accepts those pads' nets' tracks on that copper"
         )
     } else {
         format!(
             "make that copper part of pad {}: a custom pad (pad type custom) whose primitives hold the graphic, with which kicad-cli 10.0.7 accepts the pad's net's tracks on it (a net tie group of one pad does not)",
-            pad.pad
+            touching.first().copied().unwrap_or("?")
         )
     };
     format!(
-        "the footprint draws copper of no net over the pad, so no track reaches it without touching that copper; these findings do not count here (verdict.walled_pads). Either accept them as forced by the footprint (KiCad's own DRC keeps reporting them: exclude them in its DRC dialog), or rework the footprint: {rework}; `walled_pad_exits: false` in the router config leaves such pads unwired instead"
+        "the footprint draws copper of no net over those pads, so no track reaches them without touching that copper; these findings do not count here (verdict.walled_pads). Either accept them as forced by the footprint (KiCad's own DRC keeps reporting them: exclude them in its DRC dialog), or rework the footprint: {rework}; `walled_pad_exits: false` in the router config leaves such pads unwired instead"
     )
 }
 
@@ -8253,7 +8291,7 @@ mod tests {
         let action = verdict
             .next_actions
             .iter()
-            .find(|line| line.starts_with("walled pad AE1.1 [Net-(AE1-A)] wired through AE1's own fp_poly on F.Cu: KiCad shows clearance 1, shorting_items 1"))
+            .find(|line| line.starts_with("walled pads of AE1: AE1.1 [Net-(AE1-A)] (KiCad shows clearance 1, shorting_items 1), wired through AE1's own fp_poly on F.Cu: "))
             .expect("the walled pad's action");
         assert!(action.contains("(net_tie_pad_groups \"1,2\")"), "{action}");
         assert!(

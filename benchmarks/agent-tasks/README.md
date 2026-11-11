@@ -129,10 +129,14 @@ machine (`wall_stretch`) instead of cutting rows (docs/router.md).
   stripped (`baseline-drc.json`) has it at the same place: the same type
   and items the same distances apart, or items at the same positions
   within 0.05 mm, each designer finding answering for one. Findings
-  between items of one footprint (`footprint_own`) are the designer's, and
-  so are mask bridges at an opening that bridges on the designer's boards
-  already (`strict_mask_openings`). Rows record the rule's version
-  (`strict_rule`, now 4; run.py's `STRICT_RULE` has the details);
+  between items of one footprint (`footprint_own`) are the designer's, so
+  is a track or via of net N against a footprint's own copper graphic
+  that the designer's board pairs with a pad of net N of that footprint
+  (`forced_by_footprint`, rule 5, 2026-11-11: a pad its own footprint's
+  copper walls in), and so are mask bridges at an opening that bridges
+  on the designer's boards already (`strict_mask_openings`). Rows record
+  the rule's version (`strict_rule`, now 5; run.py's `STRICT_RULE` has the
+  details);
   compare.py marks a count over several MIXED RULES, and `rejudge.py
   <log>[:<dir>] ... [--output FILE]` judges a stored run again.
 - **A killed run is no result:** a binary that exits with none of its

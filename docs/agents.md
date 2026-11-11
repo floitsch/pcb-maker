@@ -1283,6 +1283,38 @@ board). Until 2026-10-27 such findings were offered a rule that did not
 take. A via's finding names no footprint and stays
 judged.
 
+**Pads walled by their own footprint** (since 2026-11-11;
+`walled_pads`). Some footprints draw copper over their own pads: an
+inverted-F antenna's polygon over its feed pad, a microphone's ring over
+its ground pads. Unless the footprint is a net tie, KiCad keeps such a
+graphic copper of no net: it joins nothing, and any track or via that
+touches it is a finding (`shorting_items`, or `clearance` at 0 mm), so a
+pad it walls in cannot be connected without one. The router wires each
+such pad through a corridor it cuts in the graphic (`walled_pad_exits`,
+on; `false` leaves them unwired, reported as dead pads), and the verdict
+sets apart exactly the findings between that graphic (by uuid) and the
+written tracks and vias of the pad's net in that corridor; any other
+contact with the graphic (another net's track, a track of the pad's net
+away from the corridor) stays the run's. stdout says, before the
+verdict line, one line per pad: `walled pad: AE1.1 [ANT] wired through
+AE1's own fp_poly on F.Cu: KiCad shows shorting_items 2
+(verdict.walled_pads)`, and `next_actions` one line per footprint with the
+two ways on: accept the findings as forced by the footprint (KiCad's own
+DRC keeps reporting them; exclude them in its DRC dialog), or rework the
+footprint. KiCad 10.0.7 accepts the connection cleanly (kicad-cli, routed
+boards) when the footprint is a net tie of the pads its copper touches,
+`Net tie pad groups "1,2"` in the footprint's properties
+(`(net_tie_pad_groups "1,2")` in the file; also for pads of one net, a
+microphone's ground pads), or, where the copper touches one pad only,
+when that copper is part of the pad: a custom pad (`pad ... custom`)
+whose `primitives` hold the graphic. A net tie group of one pad does not
+help. The line names the one that fits: `walled pads of AE1: AE1.1 [ANT]
+(KiCad shows shorting_items 2), AE1.2 [GND] (KiCad shows shorting_items
+2), wired through AE1's own fp_poly on F.Cu: ... rework the footprint:
+mark AE1 a net tie of the pads its copper touches: Net tie pad groups
+"1,2" in the footprint's properties ((net_tie_pad_groups "1,2") in the
+board file), ...`.
+
 **The input's own findings** (since 2026-10-27, without a reference
 only; `input_findings`). A finding is the input's, and does not count,
 when it is of a type that is not electrical between two nets and every
@@ -1417,6 +1449,7 @@ A finished run also carries it as `verdict` in its report:
 | `preexisting_findings`, `preexisting_from` | Errors per type the reference board has at the same place, and its project. |
 | `footprint_findings` | Without a reference: errors per type that lie within one footprint each (no short), or are one pad's own ring, hole or padstack, which do not count; absent when there are none. next_actions has the custom rule that accepts them. |
 | `input_findings` | Without a reference: errors per type that are the input's (edge clearance, solder mask bridges, courtyards; every item a part kept where the input has it, the board edge, the input's board graphics or zones; never a short or a clearance), which do not count; absent when there are none. next_actions has the custom rule or the exclusion that accepts them. |
+| `walled_pads` | Route and layout (since 2026-11-11): the pads wired through their own footprint's copper ("Pads walled by their own footprint" above), each with `part`, `pad`, `net`, `layer`, `graphics` (`uuid`, `kind`), `touching` (the footprint's pads that copper touches), `crossings` (the uuids of the written tracks and vias in its corridors) and `findings` (KiCad's, `type: description`, set apart: they do not count); absent where there are none. |
 | `preexisting_unknown` | Types the reference has at KiCad's cap (199 or more): only the findings at the same place are subtracted. |
 | `clean_without_subtraction` | KiCad checked the result and finds no unconnected item and no error that counts, with nothing subtracted. |
 | `diff_pairs` | Route mode, and a layout whose router config sets `"diff_pairs": true` (absent in a layout's verdict otherwise; docs/router.md "Differential pairs"): `on`, `default` (`rules`: a custom `diff_pair_gap` or `diff_pair_uncoupled` rule holds for a paired net, so the pairs routed coupled by default; `off`: nothing asks, so they did not; `explicit`: the settings' `diff_pairs` or `PCB_ROUTER_DIFF_PAIRS` decided), `reason` (the rule and the net, or the setting); off, the counts are 0. With the pairs on: `found` (pairs KiCad names by `_P`/`_N`, `+`/`-` or `P`/`N`, both nets with pads), `coupled` (every link between the pair's parts a coupled run), `partly_coupled`, `fallen_back` (routed as two ordinary nets), `links`, `links_coupled`, `crossed` (coupled links whose pads lie in the other order at one end: the stubs cross there, uncoupled), `crossovers` (of those, links whose crossed end has a crossover in its lead: one net dives under the other with a via each side, so the stubs do not cross; since 2026-11-05 on, where the link carries the stubs to it), `coupled_mm`, `uncoupled_mm` (per coupled pair the longer net's tracks less its coupled run, KiCad's measure), `skew_mm` (the largest skew of a pair with a coupled link: its two nets' lengths apart in the written board, tracks and vias at the stackup's height), `meanders` (pairs whose shorter net got a meander, written as a KiCad tuning pattern, to match the custom rules' `skew` maximum, else the pair's gap, or a `length` minimum), `skews` (per pair with a coupled link: `positive`, `negative`, `lengths_mm`, `uncoupled_mm` (since 2026-11-05: the longer net's length less the coupled run, KiCad's uncoupled length, per pair), `skew_mm`, `target_mm`, `meander_mm`, `pair_vias`, `return_vias`), `not_routed` (the links whose coupled run was not routed, by cause: `a launch has no legal node`, `no path in the negotiation`, `the hard repair found no room`, `no hard repair: the attempt was judged hopeless`, `the hard repair's budget ran out before it`, `lost after the repair`, and with `diff_pair_give_up` `given up in the negotiation: no room` or `...: no path`; absent when none), `given_up` (the links the negotiation gave up, `diff_pair_give_up`: their pairs' nets routed uncoupled in the same attempt), `stubs_routed` (since 2026-11-05: stubs from a pad to its end of a coupled run that the attempt left out, routed after it with everything else kept, so that the link is coupled instead of falling back for "a pad's stub does not reach the run"; absent when none), `pair_vias` and `return_vias` (the kept links' vias, and the vias of the reference net placed beside them, each within 0.5 mm ring to ring where a pour of that net reaches it on two layers and every clearance holds; `diff_pair_return_vias: false` turns them off), `return_net` (their net: `diff_pair_return_net`, else `GND`), `work_seconds` (the fallback router's, which routes what the coupled runs left open, charged to the ladder). `board-router.json` also lists each pair: its nets, width, gap, where they came from, why links fell back. |
