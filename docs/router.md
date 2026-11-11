@@ -243,6 +243,28 @@ points of its contact (`contact_starts`; Hub 12 to 4 open).
 best point, or what blocks stubs from there; it changes no route and is
 written as `diagnostics.dead_pads[].wall`.
 
+**A pad walled by its own footprint's copper.** To KiCad 10.0.7 a copper
+graphic of a footprint that is not a net tie is copper of no net, also
+where it touches or covers a pad of that footprint: it never conducts
+(two pads joined only by it stay unconnected), the pad it touches has a
+clearance finding against it from the start (the footprint's own), and any
+track or via that touches it is a `shorting_items` (kicad-cli on hand-made
+boards; `board_router/lower/own_copper.rs` has the rule in full). An
+inverted-F antenna's feed inside its polygon (osprey, WLED_Matrix), a
+microphone's ground pads on its ring (reCamera's MIC1) or a meander's end
+pad (the laptop keyboard) therefore cannot be connected without a finding,
+and the designers' boards carry it. The lowering keeps the graphic copper
+of no net and gives a pad it walls (no point of the pad keeps a track's
+clearance from it, on every copper layer of the pad) up to four straight
+exits from the pad's centre through it (`own_copper_exits`): corridors of
+the pad's net wide enough for its class's track, the graphic cut back
+around them, every via kept off the whole graphic, the net's pours kept
+out of the corridors. A graphic over pads of two nets gives each walled pad
+exits of its own net, never one near the other net's pad, and stays no
+net's between them. Pads with a free point change nothing. The run then
+leaves one finding per connected walled pad, a track against the graphic,
+which KiCad reports as the designer's board has it.
+
 ## The negotiated search
 
 ### Costs
