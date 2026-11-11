@@ -15,6 +15,7 @@
 //! 3 GiB cap with two to four routers side by side.
 
 use super::*;
+use crate::proc_memory::{kilobytes_field, resident_mb, status_field};
 
 /// A router's peak resident size from its lattice maps (`memory: N MB in
 /// maps`): `PEAK_RESIDENT_PER_MAPS` times the maps and
@@ -85,49 +86,6 @@ pub(crate) fn configure_malloc() {
 /// (3.9 GB of routers) and three race probes of katia (4.5 GB).
 pub(crate) fn at_most_the_threads(count: usize) -> usize {
     count.min(rayon::current_num_threads().max(1)).max(1)
-}
-
-/// The process's resident size now, in megabytes (Linux; elsewhere 0).
-pub(crate) fn resident_mb() -> f64 {
-    status_field("VmRSS:").unwrap_or(0.0)
-}
-
-/// Process `pid`'s resident size now, in megabytes (0 when it is gone or
-/// off Linux).
-pub(crate) fn resident_mb_of(pid: u32) -> f64 {
-    fs::read_to_string(format!("/proc/{pid}/status"))
-        .ok()
-        .and_then(|text| kilobytes_field(&text, "VmRSS:"))
-        .unwrap_or(0.0)
-}
-
-/// The machine's available memory (MemAvailable), in megabytes (Linux;
-/// elsewhere None).
-pub(crate) fn memory_available_mb() -> Option<f64> {
-    kilobytes_field(&fs::read_to_string("/proc/meminfo").ok()?, "MemAvailable:")
-}
-
-/// A field of /proc/self/status in megabytes (Linux; elsewhere None).
-fn status_field(name: &str) -> Option<f64> {
-    kilobytes_field(&fs::read_to_string("/proc/self/status").ok()?, name)
-}
-
-/// The value of a `Name: N kB` line of a /proc file, in megabytes.
-fn kilobytes_field(text: &str, name: &str) -> Option<f64> {
-    text.lines()
-        .find(|line| line.starts_with(name))?
-        .split_whitespace()
-        .nth(1)?
-        .parse::<f64>()
-        .ok()
-        .map(|kb| kb / 1024.0)
-}
-
-/// The machine's memory, in megabytes: a fixed share of it decides what
-/// the ladder may attempt, so that the attempts do not depend on what else
-/// runs (the memory available decides only how many run at once).
-pub(crate) fn memory_total_mb() -> Option<f64> {
-    kilobytes_field(&fs::read_to_string("/proc/meminfo").ok()?, "MemTotal:")
 }
 
 /// The process's peak resident size and the memory free for it, in

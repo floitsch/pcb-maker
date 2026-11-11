@@ -2320,7 +2320,7 @@ mod tests {
     fn copies_keep_their_geometry_off_every_copys_frame() {
         // A rail along the first copy's left edge (x 0 to 6, a keepout)
         // and its image along the second copy's right edge (turned half a
-        // turn), as `sub_boards::Pieces::copies_keepouts` gives every copy
+        // turn), as `outline_pieces::Pieces::copies_keepouts` gives every copy
         // each copy's keepouts: one placement replicates to both copies,
         // off both.
         let mut problem = panel(false);

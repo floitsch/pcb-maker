@@ -175,53 +175,6 @@ pub struct KiCadClassLayer {
     pub rule_width_mm: Option<f64>,
 }
 
-/// The tracks of `pcb` per net (as the router names it) and copper layer:
-/// their length, mm (an arc by its two chords through its midpoint).
-pub(crate) fn track_lengths(pcb: &Expr) -> BTreeMap<String, BTreeMap<String, f64>> {
-    let names = NetNames::of(pcb);
-    let point = |item: &Expr, key: &str| -> Option<[f64; 2]> {
-        let form = item.child(key)?;
-        Some([
-            form.children().get(1)?.atom()?.parse().ok()?,
-            form.children().get(2)?.atom()?.parse().ok()?,
-        ])
-    };
-    // KiCad 9 and before name a track's net by its code (`(net 5)`).
-    let codes = crate::kicad_nets::net_codes(pcb);
-    let mut lengths: BTreeMap<String, BTreeMap<String, f64>> = BTreeMap::new();
-    for item in pcb.children() {
-        let kind = item.head();
-        if !matches!(kind, Some("segment" | "arc")) {
-            continue;
-        }
-        let (Some(net), Some(layer)) = (
-            crate::kicad_nets::item_net(item, &codes),
-            form_atom(item, "layer", 1),
-        ) else {
-            continue;
-        };
-        if !layer.ends_with(".Cu") || !names.routable(net) {
-            continue;
-        }
-        let (Some(start), Some(end)) = (point(item, "start"), point(item, "end")) else {
-            continue;
-        };
-        let length = match point(item, "mid").filter(|_| kind == Some("arc")) {
-            Some(mid) => {
-                pcb_router::geometry::distance(start, mid)
-                    + pcb_router::geometry::distance(mid, end)
-            }
-            None => pcb_router::geometry::distance(start, end),
-        };
-        *lengths
-            .entry(names.normalize(net).to_string())
-            .or_default()
-            .entry(layer.to_string())
-            .or_default() += length;
-    }
-    lengths
-}
-
 /// Per class with tracks on `pcb` (a routed board), the layers they went
 /// on, with a warning where a class went on a layer its width is not for
 /// (`KiCadClassLayers::warning`).

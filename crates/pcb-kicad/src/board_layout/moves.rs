@@ -404,7 +404,7 @@ fn try_pose(
     let rerouted = match router.update(&trial_board) {
         Ok(rerouted) => rerouted,
         Err(error)
-            if error == crate::sub_boards::OTHER_NETS
+            if error == crate::outline_pieces::OTHER_NETS
                 || (plan_work > 0.0 && error == core::router::UPDATE_NEEDS_SAME_NETS) =>
         {
             if error == core::router::UPDATE_NEEDS_SAME_NETS {

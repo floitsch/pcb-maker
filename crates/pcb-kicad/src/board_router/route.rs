@@ -4,6 +4,7 @@
 //! configuration, and the finish of the board kept.
 
 use super::*;
+use crate::proc_memory::{memory_total_mb, resident_mb};
 use pcb_router as core;
 
 /// Routes every connection of `<source>/<board_id>.kicad_pcb` and writes the

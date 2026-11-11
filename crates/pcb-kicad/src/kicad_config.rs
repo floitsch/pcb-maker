@@ -154,7 +154,7 @@ pub(crate) fn prepare(home: &Path, version: &str) -> Result<PathBuf, String> {
     ] {
         let path = directory.join(name);
         if fs::read(&path).ok().as_deref() != Some(contents.as_bytes()) {
-            crate::drc_cache::write_atomically(&path, contents.as_bytes())?;
+            crate::fs_util::write_atomically(&path, contents.as_bytes())?;
         }
     }
     Ok(home.to_path_buf())

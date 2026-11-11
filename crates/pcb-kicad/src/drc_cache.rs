@@ -54,6 +54,8 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use crate::fs_util::write_atomically;
+
 /// Entries kept at most; the oldest go first.
 pub const MAX_ENTRIES: usize = 2000;
 /// Bytes kept at most (2 GB).
@@ -313,40 +315,6 @@ pub(crate) fn key(context: &KeyContext, input: &Path) -> Result<String, String> 
     Ok(format!("{:x}", hash.finalize()))
 }
 
-/// A unique name for a temporary file next to `path`.
-fn temporary_next_to(path: &Path) -> PathBuf {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|time| time.as_nanos())
-        .unwrap_or(0);
-    let name = path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    path.with_file_name(format!(
-        ".{name}.{}.{nonce}.{}.tmp",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ))
-}
-
-/// Writes `bytes` to `path` so that readers see the old file or the whole
-/// new one: a temporary file in the same directory, renamed into place.
-pub fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let temporary = temporary_next_to(path);
-    let written = fs::write(&temporary, bytes)
-        .map_err(|error| format!("failed to write {}: {error}", temporary.display()))
-        .and_then(|()| {
-            fs::rename(&temporary, path)
-                .map_err(|error| format!("failed to rename to {}: {error}", path.display()))
-        });
-    if written.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    written
-}
-
 /// A DRC cache in `directory`.
 pub(crate) struct DrcCache {
     directory: PathBuf,
@@ -468,8 +436,9 @@ mod tests {
 
     impl Scratch {
         fn new(label: &str) -> Self {
-            let directory =
-                temporary_next_to(&std::env::temp_dir().join(format!("drc-cache-test-{label}")));
+            let directory = crate::fs_util::temporary_next_to(
+                &std::env::temp_dir().join(format!("drc-cache-test-{label}")),
+            );
             fs::create_dir_all(&directory).unwrap();
             Self(directory)
         }

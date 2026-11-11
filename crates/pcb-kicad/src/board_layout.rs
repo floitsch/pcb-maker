@@ -1391,7 +1391,7 @@ fn race_lines_probe(
     let mut lines_config = config.clone();
     lines_config.pin_lines = core::pin_lines::Lines::Exits;
     crate::ledger::reserve_at_least(
-        crate::board_router::resident_mb() + router_mb,
+        crate::proc_memory::resident_mb() + router_mb,
         "the race's probe with lines at the pin rows",
     );
     let mut router = core::router::Router::new(board, &lines_config);

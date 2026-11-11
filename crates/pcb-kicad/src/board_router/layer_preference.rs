@@ -25,7 +25,7 @@ const MAX_LINKS: usize = 32;
 /// prefers (`KiCadBoardRouterConfig::length_rule_layers`). `copper`: the
 /// board's copper layers in the router's order; `closed`: per net the
 /// layers a `disallow track` rule closes; `designer`: the designer's
-/// tracks per net and layer (`class_view::track_lengths`), if any.
+/// tracks per net and layer (`board_stats::track_lengths`), if any.
 /// A net of several such rules prefers the layers all of them prefer
 /// (none where they disagree).
 pub(crate) fn length_layer_preferences(
@@ -151,7 +151,7 @@ pub fn admit_length_rule_layers(
     let designer = if mode == "designer" {
         designer_boards.iter().find_map(|path| {
             let text = fs::read_to_string(path).ok()?;
-            let lengths = crate::class_view::track_lengths(&parse(&text).ok()?);
+            let lengths = crate::board_stats::track_lengths(&parse(&text).ok()?);
             lengths
                 .keys()
                 .any(|net| members.contains(net.as_str()))

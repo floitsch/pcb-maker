@@ -32,7 +32,8 @@ pub use necks::{NeckRepair, repair_kicad_necks};
 mod check_work;
 mod drc_cache;
 mod kicad_config;
-pub use drc_cache::{DrcCacheCounts, drc_cache_counts, write_atomically};
+pub use drc_cache::{DrcCacheCounts, drc_cache_counts};
+pub use fs_util::write_atomically;
 mod check_repairs;
 mod electrical_terminals;
 #[cfg(test)]
@@ -135,10 +136,12 @@ pub use free_dimension::{
     KiCadFreeDimensionStep,
 };
 mod pin_swap;
+mod proc_memory;
 pub use pin_swap::{
     KiCadPinChange, KiCadPinSwapConfig, KiCadPinSwapEstimate, KiCadPinSwapResult, KiCadPinSwapSpec,
     read_pin_swap_spec, swap_kicad_pins, swap_kicad_pins_in_place,
 };
+mod outline_pieces;
 mod sub_boards;
 pub use sub_boards::describe_sub_boards;
 mod project_rules;

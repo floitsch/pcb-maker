@@ -641,7 +641,7 @@ pub fn capacity_described() -> Option<(f64, String)> {
         .and_then(|value| value.trim().parse::<f64>().ok())
         .filter(|megabytes| megabytes.is_finite() && *megabytes >= 0.0)
         .unwrap_or(DEFAULT_MARGIN_MB);
-    let total = crate::board_router::memory_total_mb()?;
+    let total = crate::proc_memory::memory_total_mb()?;
     Some(machine_capacity_mb(
         total,
         margin,
@@ -1092,11 +1092,11 @@ fn short_override(value: Option<&str>, short: bool) -> bool {
 /// resident size, at least 0), in megabytes; None when unknown (off
 /// Linux).
 pub fn available_less_growth(others: &[&Reservation]) -> Option<f64> {
-    let available = crate::board_router::memory_available_mb()?;
+    let available = crate::proc_memory::memory_available_mb()?;
     let growth: f64 = others
         .iter()
         .filter(|r| r.megabytes > 0.0)
-        .map(|r| (r.megabytes - crate::board_router::resident_mb_of(r.pid)).max(0.0))
+        .map(|r| (r.megabytes - crate::proc_memory::resident_mb_of(r.pid)).max(0.0))
         .sum();
     Some(available - growth)
 }
@@ -1745,7 +1745,7 @@ pub fn routers_side_by_side(fixed_mb: f64, each_mb: f64, wanted: usize, why: &st
     let Some((base, extra)) = reserved_mb() else {
         return wanted;
     };
-    let resident = crate::board_router::resident_mb() + fixed_mb.max(0.0);
+    let resident = crate::proc_memory::resident_mb() + fixed_mb.max(0.0);
     let each = each_mb.max(1.0);
     let room = room_mb().map_or(f64::INFINITY, |room| room - extra);
     let count = (1..=wanted)
@@ -1923,7 +1923,7 @@ fn start_watchdog() {
                 let Some((base, extra)) = reserved_mb() else {
                     return;
                 };
-                let resident = crate::board_router::resident_mb();
+                let resident = crate::proc_memory::resident_mb();
                 if base <= 0.0 || resident < base * 0.9 {
                     if let Some(at) = over.take() {
                         // Back within its reservation: the entry no longer
@@ -1940,7 +1940,7 @@ fn start_watchdog() {
                 if let Some(at) = over.filter(|_| past) {
                     // Waiting: the kernel's margin every poll, the ledger
                     // every `WAIT_POLL`.
-                    let available = crate::board_router::memory_available_mb();
+                    let available = crate::proc_memory::memory_available_mb();
                     if available.is_some_and(|available| available < FLOOR_KEEP_MB) {
                         let reason = overgrown_ends(at.elapsed().as_secs_f64(), available, None, f64::INFINITY);
                         exceeded(resident, base, Some((at, reason.unwrap_or_default())));
@@ -1988,7 +1988,7 @@ fn start_watchdog() {
                 }
                 if let Some(reason) = overgrown_ends(
                     waited,
-                    crate::board_router::memory_available_mb(),
+                    crate::proc_memory::memory_available_mb(),
                     others_available_less_growth(),
                     GROWTH_WAIT_SECONDS,
                 ) {
@@ -3207,7 +3207,7 @@ mod tests {
         // samples, bounded by MemTotal less the margin.
         if std::env::var_os("PCB_MAKER_LEDGER_TOTAL_MB").is_none()
             && std::env::var_os("PCB_MAKER_LEDGER_MARGIN_MB").is_none()
-            && let Some(total) = crate::board_router::memory_total_mb()
+            && let Some(total) = crate::proc_memory::memory_total_mb()
         {
             let capacity = capacity_mb().unwrap();
             assert!((0.0..=(total - DEFAULT_MARGIN_MB).max(0.0)).contains(&capacity));

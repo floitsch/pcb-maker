@@ -40,22 +40,22 @@ pub(super) fn place_in_pieces(
         held_sub_boards: None,
         report: None,
     };
-    crate::sub_boards::note_designed(None);
+    crate::outline_pieces::note_designed(None);
     // A panel of copies whose cells share net names (the PolyKybd
     // molecules: every cell's 27 nets, no copper between cells): the
     // router splits those nets per cell and KiCad's items across cells
-    // are not counted (`sub_boards::note_cells`).
+    // are not counted (`outline_pieces::note_cells`).
     if let Some(copies) = &pieces.copies
         && copies.detected_by == "repeated references"
     {
-        let shared = crate::sub_boards::repeated_reference_nets(pcb);
+        let shared = crate::outline_pieces::repeated_reference_nets(pcb);
         if !shared.is_empty() {
             eprintln!(
                 "placer: panel copies: {} nets of one name in several cells: one net per cell",
                 shared.len()
             );
-            crate::sub_boards::note_designed(Some(shared));
-            crate::sub_boards::note_cells(Some(copies.regions.clone()));
+            crate::outline_pieces::note_designed(Some(shared));
+            crate::outline_pieces::note_cells(Some(copies.regions.clone()));
         }
     }
     if config.sub_boards {
@@ -180,7 +180,7 @@ fn keep_copies_off_frames(
     sub: &crate::sub_boards::PlacerSubBoards,
     lowered: &mut LoweredPlacement,
 ) -> crate::sub_boards::KiCadSubBoardsReport {
-    let frames = crate::sub_boards::CopyFrames {
+    let frames = crate::outline_pieces::CopyFrames {
         transforms: copies
             .transforms
             .iter()
@@ -240,7 +240,7 @@ fn hold_in_sub_boards(
     // A board beside its frame alone (one sub-board) has no nets on
     // several by design.
     if sub.count(&lowered.problem) >= 2 {
-        crate::sub_boards::note_designed(Some(crate::sub_boards::designed_nets(
+        crate::outline_pieces::note_designed(Some(crate::sub_boards::designed_nets(
             pcb,
             &sub,
             &lowered.net_names,
@@ -287,7 +287,7 @@ pub(super) fn copies_surroundings(
     copies: &panel::PanelCopies,
     sub: &crate::sub_boards::PlacerSubBoards,
 ) -> Vec<[f64; 4]> {
-    let margin = crate::sub_boards::TAB_MARGIN_MM;
+    let margin = crate::outline_pieces::TAB_MARGIN_MM;
     copies
         .members
         .iter()
@@ -326,7 +326,7 @@ pub(super) fn copies_surroundings(
 /// its movable parts is held (an edge or overhang constraint): as deep as
 /// the part's longer side and its edge distance (`max_mm`; the overhang's
 /// box), a millimetre more. The other copies' keepouts are not carried
-/// there (`sub_boards::CopyFrames::held`).
+/// there (`outline_pieces::CopyFrames::held`).
 pub(super) fn copies_held_bands(
     copies: &panel::PanelCopies,
     problem: &core::Problem,

@@ -373,15 +373,15 @@ fn run_kicad_report_untimed(arguments: &[&str], output: &Path, input: &Path) -> 
     )?;
     // KiCad's check judged per sub-board (a panel of different boards
     // sharing net names): the items across two sub-boards are moved out
-    // of the counted list (`sub_boards::excuse_across`).
+    // of the counted list (`outline_pieces::excuse_across`).
     if arguments.get(..2) == Some(&["pcb", "drc"]) {
-        let moved = crate::sub_boards::excuse_across_file(output, input)?;
+        let moved = crate::outline_pieces::excuse_across_file(output, input)?;
         if moved > 0 {
             eprintln!(
                 "kicad check: {moved} unconnected items join two sub-boards of a panel (nets of the same name no copper joins): not counted ({}){}",
-                crate::sub_boards::ACROSS_KEY,
+                crate::outline_pieces::ACROSS_KEY,
                 if crate::read_json(output).is_ok_and(|report: serde_json::Value| {
-                    report[crate::sub_boards::CAPPED_KEY].as_bool() == Some(true)
+                    report[crate::outline_pieces::CAPPED_KEY].as_bool() == Some(true)
                 }) {
                     "; KiCad's list stopped at its cap of 499, so those left are at least as many"
                 } else {
@@ -452,7 +452,7 @@ fn run_report_command_cached(
             .and_then(|report| validate_report(&report, kind, input));
         match valid {
             Ok(()) => {
-                crate::drc_cache::write_atomically(output, &bytes).map_err(|error| {
+                crate::fs_util::write_atomically(output, &bytes).map_err(|error| {
                     format!(
                         "failed to publish native report {}: {error}",
                         output.display()

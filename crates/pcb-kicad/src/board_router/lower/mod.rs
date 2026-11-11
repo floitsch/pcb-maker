@@ -312,18 +312,18 @@ impl Builder {
 }
 
 /// A panel of different boards: a net per sub-board where no copper joins
-/// them (`sub_boards::split_router_nets`). A panel's cells the placement
-/// found (`sub_boards::note_cells`): the nets on several of them by design,
+/// them (`outline_pieces::split_router_nets`). A panel's cells the placement
+/// found (`outline_pieces::note_cells`): the nets on several of them by design,
 /// a net per cell.
 fn split_sub_board_nets(ctx: &Context, board: &mut core::Board) {
-    let pieces = crate::sub_boards::Pieces::of_loops_cached(
+    let pieces = crate::outline_pieces::Pieces::of_loops_cached(
         &ctx.loops.piece_loops,
         &ctx.loops.cutouts,
-        &crate::sub_boards::Cuts::of_board(ctx.pcb),
+        &crate::outline_pieces::Cuts::of_board(ctx.pcb),
     )
     .map(|pieces| (pieces, None))
     .or_else(|| {
-        crate::sub_boards::noted_cells().map(|(cells, designed)| {
+        crate::outline_pieces::noted_cells().map(|(cells, designed)| {
             let only: BTreeSet<String> = designed
                 .iter()
                 .map(|net| ctx.net_names.normalize(net).to_string())
@@ -334,7 +334,7 @@ fn split_sub_board_nets(ctx: &Context, board: &mut core::Board) {
     if ctx.config.sub_board_nets != Some(false)
         && let Some((pieces, only)) = pieces
     {
-        let split = crate::sub_boards::split_router_nets(board, &pieces, only.as_ref());
+        let split = crate::outline_pieces::split_router_nets(board, &pieces, only.as_ref());
         if std::env::var_os("PCB_ROUTER_SUB_BOARD_DEBUG").is_some() {
             eprintln!(
                 "sub-boards: {} pieces, {} nets split ({} more nets), kept whole: {:?}",
