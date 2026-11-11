@@ -4,6 +4,7 @@
 //! and mask, its pads (pad.rs), and what its pads give together (pin-row
 //! gaps, a fan-out's part, the pads closed to vias, a net tie's copper).
 
+use super::own_copper::OwnCopper;
 use super::*;
 use pcb_router as core;
 
@@ -105,8 +106,8 @@ impl<'a> Footprint<'a> {
 impl Builder {
     /// A footprint: its rule areas, graphics, texts and pads, then what its
     /// pads give together (pin-row gaps, a fan-out's part, the pads closed
-    /// to vias), the exits of the pads its own copper walls and its net
-    /// tie's copper.
+    /// to vias), its own copper queued (own_copper.rs) and its net tie's
+    /// copper.
     pub(super) fn footprint(&mut self, ctx: &Context, item: &Expr) -> Result<(), String> {
         let mut footprint = Footprint::new(ctx, item)?;
         self.footprint_rule_areas(ctx, item, &footprint.reference)?;
@@ -125,7 +126,7 @@ impl Builder {
         self.footprint_pin_row_gaps(&footprint);
         self.fanout_part(ctx, &footprint);
         self.footprint_no_via_pads(ctx, &footprint);
-        self.own_copper_exits(ctx, &footprint);
+        self.own_copper.extend(OwnCopper::of(&footprint));
         self.net_tie_copper(ctx, footprint);
         Ok(())
     }

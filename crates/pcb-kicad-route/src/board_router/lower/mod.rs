@@ -10,10 +10,10 @@
 //!   outline, planned vias in pads and mask rules: what every stage reads.
 //! - `Builder::board_items` lowers the board file's items in their order:
 //!   footprints (footprint.rs: rule areas, graphics, texts, then each pad,
-//!   pad.rs, and the exits of pads its own copper walls, own_copper.rs),
-//!   kept tracks and vias (tracks.rs), graphics (graphics.rs) and
+//!   pad.rs), kept tracks and vias (tracks.rs), graphics (graphics.rs) and
 //!   rule areas (areas.rs). What needs every pad's net first is queued.
-//! - Then, once every pad's net is known: pads of one item merged into one
+//! - Then, once every pad's net is known: the exits of the pads their own
+//!   footprint's copper walls (own_copper.rs), pads of one item merged into one
 //!   terminal (merge.rs), the queued copper graphics (graphics.rs) and
 //!   mask openings (mask.rs), cutouts and keep-whole regions (areas.rs),
 //!   the planes (planes.rs), the prepared fan-outs (fanout.rs), and the
@@ -160,6 +160,7 @@ fn lower_board(
     let ctx = Context::new(pcb, config, connect_pours)?;
     let mut builder = Builder::default();
     builder.board_items(&ctx)?;
+    builder.place_own_copper_exits(&ctx);
     builder.merge_pads();
     builder.join_padstack_copper();
     builder.place_copper_graphics();

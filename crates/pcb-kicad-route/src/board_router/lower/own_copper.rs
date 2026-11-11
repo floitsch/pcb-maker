@@ -104,7 +104,46 @@ pub(super) struct Exit {
     pub half_width: f64,
 }
 
+/// A footprint with copper graphics of its own (not a net tie's), queued
+/// by `Builder::footprint` until every footprint's pads are known.
+pub(crate) struct OwnCopper {
+    pub reference: String,
+    /// Its copper graphics, by obstacle index.
+    pub graphics: Vec<usize>,
+    /// The mask openings its graphics queued (`Footprint::graphic_openings`).
+    pub openings: std::ops::Range<usize>,
+    /// Its pads with copper: number, centre, copper obstacles.
+    pub pads: Vec<(String, [f64; 2], Vec<usize>)>,
+}
+
+impl OwnCopper {
+    /// The footprint's own copper, once its pads are lowered; None without
+    /// any.
+    pub(super) fn of(footprint: &Footprint) -> Option<Self> {
+        (!footprint.own_copper.is_empty()).then(|| Self {
+            reference: footprint.reference.clone(),
+            graphics: footprint.own_copper.clone(),
+            openings: footprint.graphic_openings.clone(),
+            pads: footprint
+                .pads
+                .iter()
+                .zip(&footprint.copper)
+                .map(|(pad, copper)| (pad.number.clone(), pad.center, copper.clone()))
+                .collect(),
+        })
+    }
+}
+
 impl Builder {
+    /// The queued footprints' own copper (`own_copper_exits`), once every
+    /// footprint is lowered: a pad another item's copper of its net
+    /// touches is connected through it to KiCad already.
+    pub(super) fn place_own_copper_exits(&mut self, ctx: &Context) {
+        for footprint in std::mem::take(&mut self.own_copper) {
+            self.own_copper_exits(ctx, &footprint);
+        }
+    }
+
     /// The exits of the footprint's pads that its own copper graphics wall
     /// in (the module's doc), and the graphics cut back around them: each
     /// graphic a corridor crosses keeps its place among the obstacles as
@@ -113,8 +152,8 @@ impl Builder {
     /// every via clear, the footprint's own mask openings are cut back
     /// alike, and each corridor is copper of its pad's net and a pour
     /// keepout.
-    pub(super) fn own_copper_exits(&mut self, ctx: &Context, footprint: &Footprint) {
-        if footprint.own_copper.is_empty() {
+    pub(super) fn own_copper_exits(&mut self, ctx: &Context, footprint: &OwnCopper) {
+        if footprint.graphics.is_empty() {
             return;
         }
         let exits = self.walled_pad_exits(ctx, footprint);
@@ -140,7 +179,7 @@ impl Builder {
             .iter()
             .map(|exit| {
                 let walls: Vec<&core::Shape> = footprint
-                    .own_copper
+                    .graphics
                     .iter()
                     .map(|&graphic| &self.obstacles[graphic])
                     .filter(|graphic| graphic.layers & (1 << exit.layer) != 0)
@@ -153,7 +192,7 @@ impl Builder {
                 exit_fence(exit, &walls, &strips)
             })
             .collect();
-        for &index in &footprint.own_copper {
+        for &index in &footprint.graphics {
             let graphic = &self.obstacles[index];
             let crossing: Vec<&Exit> = exits
                 .iter()
@@ -203,7 +242,7 @@ impl Builder {
         // MIC1 bares its ring) would keep the track out of the corridor
         // too: they are cut back by the corridor and the reach a track
         // keeps from an opening (mask.rs, `place_mask_openings`).
-        for opening in &mut self.mask_openings[footprint.graphic_openings.clone()] {
+        for opening in &mut self.mask_openings[footprint.openings.clone()] {
             let reach = (ctx.mask.pad_mask_reach + opening.margin)
                 .max(ctx.mask.mask_to_copper + opening.expansion);
             let cuts: Vec<([f64; 2], [f64; 2], f64)> = exits
@@ -269,11 +308,11 @@ impl Builder {
 
     /// With `PCB_ROUTER_DEBUG`: one line per pad of the footprint that its
     /// own copper graphics touch, for a census of the boards.
-    fn print_touching_pads(&self, footprint: &Footprint) {
-        for (pad, copper) in footprint.pads.iter().zip(&footprint.copper) {
+    fn print_touching_pads(&self, footprint: &OwnCopper) {
+        for (number, _, copper) in &footprint.pads {
             let touching = copper.iter().any(|&index| {
                 let copper = &self.obstacles[index];
-                footprint.own_copper.iter().any(|&graphic| {
+                footprint.graphics.iter().any(|&graphic| {
                     let graphic = &self.obstacles[graphic];
                     graphic.layers & copper.layers != 0
                         && graphic.shape.aabb().intersects(copper.shape.aabb())
@@ -285,22 +324,52 @@ impl Builder {
                     .net
                     .map(|net| self.nets[net as usize].name.clone());
                 eprintln!(
-                    "{} own copper: touches pad {} of net {net:?}",
-                    footprint.reference, pad.number
+                    "{} own copper: touches pad {number} of net {net:?}",
+                    footprint.reference
                 );
             }
         }
     }
 
+    /// Whether copper of `net` outside the footprint touches the pad's
+    /// `copper`: another footprint's pad over it (the laptop keyboard's
+    /// C10.2 on its antenna's feed pad) joins it to KiCad without a track,
+    /// so it gets no exit.
+    fn joined_elsewhere(&self, footprint: &OwnCopper, copper: &[usize], net: core::NetId) -> bool {
+        let own: BTreeSet<usize> = footprint
+            .pads
+            .iter()
+            .flat_map(|(_, _, copper)| copper.iter().copied())
+            .collect();
+        copper.iter().any(|&index| {
+            let pad = &self.obstacles[index];
+            let bounds = pad.shape.aabb();
+            self.obstacles
+                .iter()
+                .enumerate()
+                .any(|(other_index, other)| {
+                    other.net == Some(net)
+                        && other.kind == core::ObstacleKind::Copper
+                        && !own.contains(&other_index)
+                        && other.layers & pad.layers != 0
+                        && other.shape.aabb().intersects(bounds)
+                        && core::verify::shape_distance(&other.shape, &pad.shape) <= 1.0e-6
+                })
+        })
+    }
+
     /// The exits of the footprint's walled pads: a pad of a net whose every
     /// copper layer the footprint's own graphics wall (`free_point` finds
     /// no point on it for its class's track), on each of those layers.
-    fn walled_pad_exits(&self, ctx: &Context, footprint: &Footprint) -> Vec<Exit> {
+    fn walled_pad_exits(&self, ctx: &Context, footprint: &OwnCopper) -> Vec<Exit> {
         let mut exits = Vec::new();
-        for (pad, copper) in footprint.pads.iter().zip(&footprint.copper) {
+        for (_, center, copper) in &footprint.pads {
             let Some(net) = self.obstacles[copper[0]].net else {
                 continue;
             };
+            if self.joined_elsewhere(footprint, copper, net) {
+                continue;
+            }
             let class = &self.classes[self.nets[net as usize].class];
             let half_width = class.trace_width / 2.0;
             let need = class.clearance.max(ctx.no_net_clearance) + half_width;
@@ -314,7 +383,7 @@ impl Builder {
                     }
                     let reach = copper.shape.aabb().inflated(need + half_width);
                     let walls: Vec<&core::Shape> = footprint
-                        .own_copper
+                        .graphics
                         .iter()
                         .map(|&graphic| &self.obstacles[graphic])
                         .filter(|graphic| {
@@ -335,15 +404,15 @@ impl Builder {
             }
             // Another net's pad of the footprint is no way out.
             let others: Vec<&core::Shape> = footprint
-                .copper
+                .pads
                 .iter()
-                .flatten()
+                .flat_map(|(_, _, copper)| copper)
                 .map(|&index| &self.obstacles[index])
                 .filter(|other| other.net != Some(net))
                 .map(|other| &other.shape)
                 .collect();
             for (layer, walls) in walled {
-                for (start, end) in pad_exits(pad.center, &walls, &others, need) {
+                for (start, end) in pad_exits(*center, &walls, &others, need) {
                     exits.push(Exit {
                         layer,
                         net,
@@ -630,6 +699,14 @@ mod tests {
     /// corridor is 0.4 mm wide each side) and the ids of the nets `/A`,
     /// `/B`.
     fn lowered(items: &str) -> (Builder, Option<core::NetId>, Option<core::NetId>) {
+        lowered_beside(items, "")
+    }
+
+    /// `lowered` with `beside` among the board's items.
+    fn lowered_beside(
+        items: &str,
+        beside: &str,
+    ) -> (Builder, Option<core::NetId>, Option<core::NetId>) {
         let pcb = parse(&format!(
             r#"(kicad_pcb (version 20240108)
               (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
@@ -637,7 +714,8 @@ mod tests {
               (gr_rect (start 0 0) (end 20 20) (layer "Edge.Cuts"))
               (footprint "Test" (layer "F.Cu") (at 10 10)
                 (property "Reference" "U1" (at 0 0) (layer "F.Fab"))
-                {items}))"#
+                {items})
+              {beside})"#
         ))
         .unwrap();
         let config = KiCadBoardRouterConfig {
@@ -652,10 +730,11 @@ mod tests {
         let ctx = Context::new(&pcb, &config, true).unwrap();
         let mut builder = Builder::default();
         builder.board_items(&ctx).unwrap();
+        builder.place_own_copper_exits(&ctx);
         // The lowering's names lose the root sheet's slash.
         let a = builder.net_ids.get("A").copied();
         let b = builder.net_ids.get("B").copied();
-        assert!(a.is_some() && b.is_some());
+        assert!(a.is_some());
         (builder, a, b)
     }
 
@@ -799,6 +878,28 @@ mod tests {
         assert_eq!(graphics.len(), 2);
         assert!(graphics.iter().all(|graphic| graphic.net.is_none()
             && matches!(&graphic.shape, core::Shape::Polygon { points } if points.len() == 4)));
+    }
+
+    #[test]
+    fn a_walled_pad_that_another_pad_of_its_net_touches_gets_no_exit() {
+        // C1.1 of /A over U1.1: KiCad joins them without a track.
+        let (builder, _, _) = lowered_beside(
+            &format!(
+                "{} {}",
+                poly(-0.4, -0.4, 1.5, 0.4),
+                pad("1", [0.0, 0.0], "/A")
+            ),
+            &format!(
+                r#"(footprint "C" (layer "F.Cu") (at 9.7 10)
+                  (property "Reference" "C1" (at 0 0) (layer "F.Fab")) {})"#,
+                pad("1", [0.0, 0.0], "/A")
+            ),
+        );
+        assert!(exits(&builder).is_empty());
+        assert!(matches!(
+            graphic(&builder).shape,
+            core::Shape::Polygon { .. }
+        ));
     }
 
     #[test]
