@@ -309,6 +309,7 @@ pub fn lower_placement(
     obstacles::add_copper_graphics(&context, &mut builder)?;
     let marks = obstacles::add_board_marks(&context, &mut builder)?;
     let cutouts = obstacles::add_cutouts(&context, &mut builder);
+    obstacles::add_breakaway_strips(&context, &mut builder);
     builder.problem.net_weights = net_weights(&builder.net_ids, &builder.problem.components);
     board_constraints(&context, &mut builder.problem, &marks, cutouts.solid);
     holds::fix_default_parts(&context, &mut builder, &keepouts);

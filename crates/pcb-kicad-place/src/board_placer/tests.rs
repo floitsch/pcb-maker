@@ -3134,3 +3134,104 @@ fn the_placer_settings_tuning_group_holds_every_moved_key() {
     let checked = check_tuning_group::<KiCadBoardPlacerConfig>("placer", top, tuning, &[]).unwrap();
     assert_eq!((checked.len(), tuning.len()), (23, 23));
 }
+
+#[test]
+fn a_breakaway_rail_too_thin_to_be_a_piece_keeps_parts_off() {
+    // USB_Keypad: 2.4 mm rails outside a row of mouse bites, too thin to
+    // be pieces of their own (the eroded core under `MIN_CORE_MM2`), so
+    // the board is one piece and the rails were placeable: C11 landed on
+    // one with GND and +3.3V open across the bites. Here a 2.4 mm rail
+    // joined by a 2 mm tab, with and without bites across the tab.
+    let board = |bites: bool| {
+        let holes = if bites {
+            r#"(footprint "MouseBites" (layer "F.Cu") (at 0 10)
+                (property "Reference" "MB1")
+                (pad "" np_thru_hole circle (at 0 -0.75) (size 0.4 0.4) (drill 0.4) (layers "*.Cu" "*.Mask"))
+                (pad "" np_thru_hole circle (at 0 -0.25) (size 0.4 0.4) (drill 0.4) (layers "*.Cu" "*.Mask"))
+                (pad "" np_thru_hole circle (at 0 0.25) (size 0.4 0.4) (drill 0.4) (layers "*.Cu" "*.Mask"))
+                (pad "" np_thru_hole circle (at 0 0.75) (size 0.4 0.4) (drill 0.4) (layers "*.Cu" "*.Mask")))"#
+        } else {
+            ""
+        };
+        parse(&format!(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+            (gr_poly (pts (xy 0 0) (xy 40 0) (xy 40 20) (xy 0 20) (xy 0 11) (xy -1 11) (xy -1 20)
+                (xy -3.4 20) (xy -3.4 0) (xy -1 0) (xy -1 9) (xy 0 9)) (layer "Edge.Cuts") (width 0.05))
+            {holes}
+            (footprint "Cap" (layer "F.Cu") (at 20 10)
+                (property "Reference" "C1")
+                (fp_rect (start -0.5 -0.3) (end 0.5 0.3) (layer "F.CrtYd"))
+                (pad "1" smd rect (at -0.3 0) (size 0.3 0.4) (layers "F.Cu" "F.Mask") (net 1 "GND"))
+                (pad "2" smd rect (at 0.3 0) (size 0.3 0.4) (layers "F.Cu" "F.Mask") (net 2 "VCC")))
+            (footprint "Cap" (layer "F.Cu") (at 30 10)
+                (property "Reference" "C2")
+                (fp_rect (start -0.5 -0.3) (end 0.5 0.3) (layer "F.CrtYd"))
+                (pad "1" smd rect (at -0.3 0) (size 0.3 0.4) (layers "F.Cu" "F.Mask") (net 1 "GND"))
+                (pad "2" smd rect (at 0.3 0) (size 0.3 0.4) (layers "F.Cu" "F.Mask") (net 2 "VCC"))))"#
+        ))
+        .unwrap()
+    };
+    let strips = |pcb: &Expr| {
+        let loops = crate::outline::board_loops(pcb).unwrap();
+        crate::outline_pieces::Pieces::strips(
+            &loops.piece_loops,
+            &loops.cutouts,
+            &crate::outline_pieces::Cuts::of_board(pcb),
+        )
+    };
+    let (bitten, plain) = (board(true), board(false));
+    assert!(
+        crate::outline_pieces::Pieces::of_board(&bitten)
+            .unwrap()
+            .is_none(),
+        "one piece"
+    );
+    let found = strips(&bitten);
+    assert_eq!(found.len(), 1, "{found:?}");
+    let bounds = found[0].boxes.iter().fold(
+        [
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ],
+        |a, b| {
+            [
+                a[0].min(b[0]),
+                a[1].min(b[1]),
+                a[2].max(b[2]),
+                a[3].max(b[3]),
+            ]
+        },
+    );
+    // The rail and the tab's stub beyond the bites, not the board.
+    assert!(
+        bounds[0] < -3.2 && bounds[2] < 0.3 && bounds[1] < 0.2 && bounds[3] > 19.8,
+        "{bounds:?}"
+    );
+    // Without the bites the rail is board set off by a neck: placeable.
+    assert!(strips(&plain).is_empty());
+    let config = KiCadBoardPlacerConfig {
+        tuning: crate::board_placer::KiCadPlacerTuning {
+            halo_scale: 0.0,
+            ..Default::default()
+        },
+        ..KiCadBoardPlacerConfig::default()
+    };
+    let legal_at = |pcb: &Expr, at: [f64; 2]| {
+        let lowered = lower_placement(pcb, &config).unwrap();
+        let part = lowered
+            .references
+            .iter()
+            .position(|name| name == "C1")
+            .unwrap();
+        assert!(!lowered.problem.components[part].fixed);
+        let mut poses = lowered.problem.poses.clone();
+        poses[part].position = at;
+        poses[part].angle = 90.0;
+        !core::legal::illegal_components(&lowered.problem, &poses).contains(&part)
+    };
+    assert!(legal_at(&plain, [-2.2, 5.0]), "the rail without bites");
+    assert!(!legal_at(&bitten, [-2.2, 5.0]), "the rail beyond the bites");
+    assert!(legal_at(&bitten, [10.0, 5.0]), "the board");
+}

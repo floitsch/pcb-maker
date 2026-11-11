@@ -171,6 +171,8 @@ change the board before it is lowered.
   mask there (`far_copper`); `mask_reach` in `lower/footprint.rs`.
   vaio_re's J1 opens the mask 1.625 mm around its mounting holes: parts
   on both sides sat in the opening and bridged.
+- **Breakaway strips.** A strip too thin to be a piece beyond mouse
+  bites or a V-cut is an obstacle ("Breakaway strips" under "Panels").
 - **Footprints without a courtyard.** Two such parts keep the boxes of
   their pads and outlines apart (`Component::courtless`) unless one is at
   most a quarter of the other (a diode under its key switch); against a
@@ -657,6 +659,27 @@ and nets) and keeps parts off tabs and frames.
 with a budget share by its parts (its own fullness decides its levels),
 then the unassigned parts. With every part stacked and no `--reference`,
 the pieces are only reported.
+
+### Breakaway strips
+
+A rail outside a row of mouse bites can be too thin to be a piece (its
+core after the erosion under 20 mm², `MIN_CORE_MM2`: USB_Keypad's
+2.4 mm rails leave 13 mm²), so the board is one piece and the rail was
+board to place on: C11 landed there with GND and +3.3V open across the
+bites. `Pieces::strips` finds such strips on a board of any number of
+pieces: what the erosion took from every piece (beyond the pieces'
+grown-back cores) in components that hold a core of their own under the
+minimum, touch at most one piece (between two it is a tab) and border a
+mouse bite's hole or a V-cut. The lowering makes each a fixed obstacle on
+both sides (`add_breakaway_strips` in `lower/obstacles.rs`; nothing on a
+board without bites or V-cuts). The conditions come from the sweep's
+boards: a strip set off by the outline alone is board (bumwings' 2 mm
+bridges between a switch's cutouts, a sensor on a narrow neck), a tab
+between two pieces is the sub-boards' (OpenRX's designer put C208 at its
+edge), and no designer's movable part lies on a strip the rule finds
+(USB_Keypad, WLED_Matrix, SmartSpin2k's panel, the 0xCB pcb-panel,
+protoesp, whose held USB connector CN10 lies on its breakaway strip and
+stays).
 
 ## The race
 

@@ -361,6 +361,30 @@ pub(super) fn add_cutouts(context: &LowerContext, builder: &mut ProblemBuilder) 
     cutouts
 }
 
+/// Adds the board's breakaway strips (`Pieces::strips`: board too thin
+/// to be a piece beside one piece across mouse bites or a V-cut, a
+/// rail) as fixed obstacles on both sides: a part placed there could not
+/// be connected across the bites, and breaks off with the strip
+/// (USB_Keypad's 2.4 mm rails, too thin to be pieces of their own, took
+/// C11 with GND and +3.3V open). Nothing without mouse bites or V-cuts.
+pub(super) fn add_breakaway_strips(context: &LowerContext, builder: &mut ProblemBuilder) {
+    let cuts = crate::outline_pieces::Cuts::of_board(context.pcb);
+    if cuts.holes.is_empty() && cuts.lines.is_empty() {
+        return;
+    }
+    let loops = &context.loops;
+    for strip in crate::outline_pieces::Pieces::strips(&loops.piece_loops, &loops.cutouts, &cuts) {
+        for b in strip.boxes {
+            let component = fixed_obstacle("strip", [b[2] - b[0], b[3] - b[1]], core::Side::Both);
+            let pose = core::Pose {
+                position: [(b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0],
+                angle: 0.0,
+            };
+            builder.push_obstacle(component, pose, "strip");
+        }
+    }
+}
+
 /// Adds a fixed footprint's own rule areas as obstacles, and a movable
 /// one's to its far side (bodies) or far copper (pads only) where they
 /// keep the other side.

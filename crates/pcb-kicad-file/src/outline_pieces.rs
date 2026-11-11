@@ -369,6 +369,41 @@ fn cut_line_tabs(
     (!boxes.is_empty()).then_some(boxes)
 }
 
+/// The board's area rasterised and eroded (`Pieces::opened`): cells of
+/// `cell` mm, `columns` by `rows` from `origin`, row-major.
+struct Opened {
+    origin: [f64; 2],
+    cell: f64,
+    columns: usize,
+    rows: usize,
+    /// Per cell: inside the board, not in a mouse bite's hole.
+    inside: Vec<bool>,
+    /// Per cell: in a mouse bite's hole.
+    cut: Vec<bool>,
+    /// Per cell: on a V-cut line.
+    scored: Vec<bool>,
+    /// The distance transform's infinity, and the erosion's radius (thirds
+    /// of a cell).
+    far: u32,
+    radius: u32,
+    /// Per cell: the core (component of the eroded area) it lies in,
+    /// `NONE` for none; per core, its cells.
+    core_label: Vec<u16>,
+    cores: Vec<usize>,
+}
+
+/// A breakaway strip (`Pieces::strips`): board too thin to be a piece,
+/// beside one piece across a row of mouse bites or a V-cut (USB_Keypad's
+/// 2.4 mm rails).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Strip {
+    /// Its cells as boxes, in blocks of `COPPER_BLOCK_MM`.
+    pub boxes: Vec<[f64; 4]>,
+    /// Its area and that of its own core (mm²).
+    pub area: f64,
+    pub core: f64,
+}
+
 /// The outline's pieces without its tabs (module comment): a raster of
 /// the board, each cell labelled with its piece.
 #[derive(Clone, Debug)]
@@ -406,13 +441,10 @@ impl Pieces {
         ))
     }
 
-    /// The pieces of the area inside `loops` (even-odd with `cutouts`),
-    /// less the mouse bites' holes and the V-cut lines of `cuts`.
-    pub fn of_loops(
-        loops: &[Vec<[f64; 2]>],
-        cutouts: &[Vec<[f64; 2]>],
-        cuts: &Cuts,
-    ) -> Option<Pieces> {
+    /// The area inside `loops` (even-odd with `cutouts`), less the mouse
+    /// bites' holes and the V-cut lines of `cuts`, rasterised and eroded
+    /// (`Opened`). None for an empty outline or too many cores.
+    fn opened(loops: &[Vec<[f64; 2]>], cutouts: &[Vec<[f64; 2]>], cuts: &Cuts) -> Option<Opened> {
         let mut all = [
             f64::INFINITY,
             f64::INFINITY,
@@ -569,6 +601,54 @@ impl Pieces {
                 return None;
             }
         }
+        Some(Opened {
+            origin,
+            cell,
+            columns,
+            rows,
+            inside,
+            cut,
+            scored,
+            far,
+            radius,
+            core_label,
+            cores,
+        })
+    }
+
+    /// The pieces of the area inside `loops` (even-odd with `cutouts`),
+    /// less the mouse bites' holes and the V-cut lines of `cuts`.
+    pub fn of_loops(
+        loops: &[Vec<[f64; 2]>],
+        cutouts: &[Vec<[f64; 2]>],
+        cuts: &Cuts,
+    ) -> Option<Pieces> {
+        let Opened {
+            origin,
+            cell,
+            columns,
+            rows,
+            inside,
+            cut,
+            scored,
+            far,
+            radius,
+            core_label,
+            cores,
+        } = Self::opened(loops, cutouts, cuts)?;
+        let mut stack = Vec::new();
+        let cell_range = |low: f64, high: f64, origin: f64, count: usize| {
+            let first = ((low - origin) / cell - 0.5).ceil().max(0.0) as usize;
+            let last = ((high - origin) / cell - 0.5).floor();
+            (
+                first,
+                if last < 0.0 {
+                    None
+                } else {
+                    Some((last as usize).min(count - 1))
+                },
+            )
+        };
         // Cores large enough are pieces, renumbered: a twentieth of the
         // largest at least (a strip a row of slots sets off, SNSP-CPU-01's
         // 15 x 16 mm beside its 216 x 159 mm, is part of its board).
@@ -780,6 +860,136 @@ impl Pieces {
             areas,
             cut_by,
         })
+    }
+
+    /// The breakaway strips of a board of any number of pieces (`Strip`):
+    /// the area the opening took from every piece (beyond the pieces'
+    /// grown-back cores), in 4-connected components that
+    ///
+    /// - hold a core of their own too small to be a piece (under
+    ///   `MIN_CORE_MM2`): a corner the erosion rounds and a neck narrower
+    ///   than twice the radius hold none, and a strip wider than that
+    ///   joined to the board along its length shares the board's core;
+    /// - touch at most one piece (what lies between two is a tab, the
+    ///   sub-boards' business);
+    /// - border a mouse bite's hole or a V-cut: made to break off. A
+    ///   strip set off by the outline alone stays board (bumwings' 2 mm
+    ///   bridges between a switch's cutouts; a sensor on a narrow neck).
+    pub fn strips(loops: &[Vec<[f64; 2]>], cutouts: &[Vec<[f64; 2]>], cuts: &Cuts) -> Vec<Strip> {
+        let Some(Opened {
+            origin,
+            cell,
+            columns,
+            rows,
+            inside,
+            cut,
+            scored,
+            far,
+            radius,
+            core_label,
+            cores,
+        }) = Self::opened(loops, cutouts, cuts)
+        else {
+            return Vec::new();
+        };
+        let largest = cores.iter().copied().max().unwrap_or(0) as f64 * cell * cell;
+        let area_of = |count: usize| count as f64 * cell * cell;
+        let piece_core: Vec<bool> = cores
+            .iter()
+            .map(|count| {
+                area_of(*count) >= MIN_CORE_MM2 && area_of(*count) >= MIN_PIECE_SHARE * largest
+            })
+            .collect();
+        if !piece_core.contains(&true) {
+            return Vec::new();
+        }
+        // The pieces grown back, as `of_loops` grows them.
+        let mut piece_of_core = vec![NONE; cores.len()];
+        let mut pieces = 0u16;
+        for (core, piece) in piece_core.iter().enumerate() {
+            if *piece {
+                piece_of_core[core] = pieces;
+                pieces += 1;
+            }
+        }
+        let mut grown: Vec<u32> = vec![far; columns * rows];
+        let mut labels = vec![NONE; columns * rows];
+        for index in 0..columns * rows {
+            if core_label[index] != NONE && piece_core[core_label[index] as usize] {
+                grown[index] = 0;
+                labels[index] = piece_of_core[core_label[index] as usize];
+            }
+        }
+        chamfer_labels(&mut grown, &mut labels, columns, rows);
+        let off = |at: usize| inside[at] && !scored[at] && grown[at] > radius + 3;
+        let on_piece = |at: usize| inside[at] && !scored[at] && grown[at] <= radius + 3;
+        let raster = Pieces {
+            origin,
+            cell,
+            columns,
+            rows,
+            labels: Vec::new(),
+            inside: Vec::new(),
+            boxes: Vec::new(),
+            tabs: Vec::new(),
+            areas: Vec::new(),
+            cut_by: Vec::new(),
+        };
+        let mut seen = vec![false; columns * rows];
+        let mut stack = Vec::new();
+        let mut strips = Vec::new();
+        for start in 0..columns * rows {
+            if !off(start) || seen[start] {
+                continue;
+            }
+            let (mut members, mut core, mut bitten) = (Vec::new(), 0usize, false);
+            let mut touching: BTreeSet<u16> = BTreeSet::new();
+            seen[start] = true;
+            stack.push(start);
+            while let Some(at) = stack.pop() {
+                members.push(at);
+                if core_label[at] != NONE && !piece_core[core_label[at] as usize] {
+                    core += 1;
+                }
+                let (row, column) = (at / columns, at % columns);
+                let mut neighbours = Vec::with_capacity(4);
+                if column > 0 {
+                    neighbours.push(at - 1);
+                }
+                if column + 1 < columns {
+                    neighbours.push(at + 1);
+                }
+                if row > 0 {
+                    neighbours.push(at - columns);
+                }
+                if row + 1 < rows {
+                    neighbours.push(at + columns);
+                }
+                for next in neighbours {
+                    bitten |= cut[next] || scored[next];
+                    if on_piece(next) {
+                        touching.insert(labels[next]);
+                    }
+                    if off(next) && !seen[next] {
+                        seen[next] = true;
+                        stack.push(next);
+                    }
+                }
+            }
+            if core == 0 || area_of(core) >= MIN_CORE_MM2 || touching.len() > 1 || !bitten {
+                continue;
+            }
+            let mut mask = vec![false; columns * rows];
+            for at in &members {
+                mask[*at] = true;
+            }
+            strips.push(Strip {
+                boxes: raster.mask_boxes(&mask, COPPER_BLOCK_MM),
+                area: area_of(members.len()),
+                core: area_of(core),
+            });
+        }
+        strips
     }
 
     pub fn count(&self) -> usize {
