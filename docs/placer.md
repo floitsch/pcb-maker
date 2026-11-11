@@ -700,7 +700,13 @@ diagnosis's eight sections) and its tabs 58 times against 62. On the Hub
 every part with a net not poured goes to the designer's module. Of the
 109 sweep and 46 expansion boards it fires on protoesp, the Hub,
 zpn_devboard and one expansion board, whose parts `keep_on_pieces` holds
-already (nothing changes). MEASUREMENT
+already (nothing changes). Off against on at placer seeds 1 to 401,
+KiCad's unconnected after full layouts went from 87, 15, 18, 16, 22 to 3,
+4, 2, 4, 1 on protoesp (seeds 501 to 801: 82, 7, 29, 51 to 1, 1, 3, 2;
+`placer_ab.py` BETTER at p 0.002 over the nine pairs) and from 18, 14, 15,
+16, 15 to 2 at every seed on the Hub, no strict pass on either side; the
+short tier and the other ten dense boards place and route byte for byte
+as before (placement digests and rows).
 
 ## The race
 

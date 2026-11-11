@@ -132,8 +132,11 @@ an off switch; a fresh-agent trial every few days.
    routing the designer's placement leaves 233 (nightly of 2026-11-10).
    The costliest: Batch_1 (142 against 2), protoesp (87 / 1), Glasgow
    (85 / 17), the OpenESC 4in1 (79 / 12), the 4in1-mini (88 / 37),
-   SmartSpin2k (51 / 0). Pinning the designer's non-passive parts (about
-   a quarter of the movable parts) recovers most of the designer's
+   SmartSpin2k (51 / 0); protoesp's parts landed in the wrong breakaway
+   module, which `keep_in_modules` fixes (22 to 2 open by the median of
+   nine seeds; placer.md, "Modules of one board"). Pinning the designer's
+   non-passive parts (about a quarter of the movable parts) recovers most
+   of the designer's
    first-route advantage, and our objective accepts that arrangement: the
    search does not reach it. Two losses:
    - *The coarse arrangement* is decided by the global placement. Its
