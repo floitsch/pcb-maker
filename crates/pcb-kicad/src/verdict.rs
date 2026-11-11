@@ -23,6 +23,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::board_router::{KiCadStarvedPad, starved_pad};
 use crate::exit::{
     EXIT_COMPLETE, EXIT_CUT, EXIT_INCOMPLETE, EXIT_INTERNAL, EXIT_USAGE, noted_input_actions,
 };
@@ -1461,41 +1462,6 @@ pub struct KiCadRunFacts {
     pub solid_starved: Option<crate::board_router::KiCadSolidStarved>,
 }
 
-/// A pad KiCad finds short of thermal spokes, for the verdict's line.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct KiCadStarvedPad {
-    /// `REF.NUMBER` (`U1.57`), as `solid_starved.pads` names pads.
-    pub pad: String,
-    pub layer: String,
-    pub advice: String,
-}
-
-/// A starved thermal of `diagnostics.starved_thermals` for the verdict's
-/// line: its pad as `REF.NUMBER`, the name `solid_starved.pads` gives it
-/// (a pad KiCad names without a number, "Pad [GND] of M12", as KiCad
-/// names it).
-pub(crate) fn starved_pad(finding: &crate::board_router::KiCadStarvedThermal) -> KiCadStarvedPad {
-    let pad = crate::board_router::solid_pads_of_findings(std::slice::from_ref(finding))
-        .first()
-        .filter(|pad| !pad.number.is_empty() && !pad.number.contains(['[', ' ']))
-        .map_or_else(
-            || {
-                finding
-                    .pad
-                    .split(" on ")
-                    .next()
-                    .unwrap_or(&finding.pad)
-                    .to_string()
-            },
-            |pad| format!("{}.{}", pad.reference, pad.number),
-        );
-    KiCadStarvedPad {
-        pad,
-        layer: finding.layer.clone(),
-        advice: finding.advice.clone(),
-    }
-}
-
 /// A part near a hot spot: its reference, its side (`front`, `back`) and
 /// the distance from the hot spot's point to what of it lies on the hot
 /// spot's layer: its pads there (a through-hole pad on every layer), and
@@ -1980,7 +1946,7 @@ fn skeleton_budget_action(facts: &KiCadRunFacts) -> Option<String> {
         "the placement ran without the race over skeletons (skeleton_race: {:.0} s of placement work a seed, under its min_work_seconds {:.0} s; every seed plain): a layout with total_seconds {:.0} or more (the default 1500) places by skeleton, another placement to try against these open connections",
         race.work_seconds.unwrap_or(0.0),
         race.min_work_seconds,
-        (race.min_work_seconds / crate::board_layout::PLACEMENT_SHARE).ceil()
+        (race.min_work_seconds / crate::board_placer::PLACEMENT_SHARE).ceil()
     ))
 }
 

@@ -7,8 +7,8 @@
 //! race's RUDY score of the same lowering and, on request, the race's
 //! router probe, so the three measures can be compared on one placement.
 
-use crate::board_layout::without_copper_texts;
 use crate::board_router::{KiCadPourMode, LayerTable, add_pour_zones, lower, planned_pours, pours};
+use crate::labels::without_copper_texts;
 use crate::*;
 use pcb_router as core;
 

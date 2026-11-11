@@ -5,7 +5,7 @@
 //! the rule lives. The placement is `pcb_placer::skeleton`'s.
 
 use super::*;
-use crate::board_layout::PLACEMENT_SHARE as LAYOUT_PLACEMENT_SHARE;
+use crate::board_placer::PLACEMENT_SHARE as LAYOUT_PLACEMENT_SHARE;
 use pcb_placer as core;
 use serde::{Deserialize, Serialize};
 

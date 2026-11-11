@@ -290,7 +290,7 @@ const CONNECTOR_NAMES: &[&str] = &[
 /// Whether a footprint is a connector that may reach over a panel's frame
 /// or tab where its copper stays on its board
 /// (`pcb_placer::constraints::FramePass`): a plug-in connector by its
-/// footprint name (`netlist_import::edge_connector`: USB, SMA, jacks,
+/// footprint name (`board_placer::edge_connector`: USB, SMA, jacks,
 /// card edges, terminal blocks), a connector family's name
 /// (`CONNECTOR_NAMES`: JST, Molex, Hirose, pin headers and sockets), the
 /// USB-C pads (A1, A12, B1 and B12), or a connector's reference (J, P,
@@ -303,7 +303,7 @@ pub(crate) fn overhang_connector(footprint: &Expr) -> bool {
         .and_then(Expr::atom)
         .unwrap_or_default()
         .to_ascii_lowercase();
-    if crate::netlist_import::edge_connector(&name)
+    if crate::board_placer::edge_connector(&name)
         || CONNECTOR_NAMES.iter().any(|key| name.contains(key))
     {
         return true;

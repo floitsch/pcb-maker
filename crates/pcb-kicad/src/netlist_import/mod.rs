@@ -7,6 +7,7 @@
 //! an automatic outline takes it from there.
 
 use super::*;
+use crate::board_placer::edge_connector;
 
 mod added_parts;
 mod clearances;
@@ -105,53 +106,6 @@ pub struct KiCadNetlistImport {
     /// `constraints.json` carries.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub near_entries: Option<usize>,
-}
-
-/// Connectors people plug something into from outside the device, by
-/// footprint name: designers put 90 % of USB and RF connectors and all
-/// audio jacks and card edges of 616 open-source boards at an edge.
-pub(crate) fn edge_connector(footprint_name: &str) -> bool {
-    let full = footprint_name.to_ascii_lowercase();
-    let library = full.rsplit_once(':').map_or("", |(library, _)| library);
-    let name = full.rsplit(':').next().unwrap_or(&full);
-    if name.contains("u.fl") {
-        return false;
-    }
-    // A diode's package is no connector: KiCad's `Diode_SMD:D_SMA` (the
-    // SMA package of DO-214AC, not the coax connector; ducktop2's right_io
-    // had its B340A clamp D2090 in the starter's edge list, trial 5).
-    if library.starts_with("diode") || name.starts_with("d_") {
-        return false;
-    }
-    // Short names as whole words (`USB_C`, `USB2`, `SMA_Amphenol`, not
-    // `Small`), longer ones anywhere (`BarrelJack`, `AudioJack`).
-    let words = name.split(|c: char| !c.is_ascii_alphanumeric());
-    let short = ["usb", "sma", "bnc", "rj45", "rj11", "rj12", "hdmi"];
-    let word = |word: &str| {
-        short.iter().any(|key| {
-            word.strip_prefix(key).is_some_and(|rest| {
-                rest.is_empty() || rest.starts_with(|c: char| c.is_ascii_digit())
-            })
-        })
-    };
-    words.into_iter().any(word)
-        || [
-            "coax",
-            "displayport",
-            "dsub",
-            "d-sub",
-            "barrel",
-            "jack",
-            "cardedge",
-            "card_edge",
-            "pcie",
-            "pciexpress",
-            "pci_express",
-            "terminalblock",
-            "terminal_block",
-        ]
-        .iter()
-        .any(|key| name.contains(key))
 }
 
 const HEADER: &str = r#"(kicad_pcb

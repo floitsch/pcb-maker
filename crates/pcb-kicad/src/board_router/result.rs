@@ -911,6 +911,41 @@ pub(super) fn diagnostics(
     }
 }
 
+/// A pad KiCad finds short of thermal spokes, for the verdict's line.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct KiCadStarvedPad {
+    /// `REF.NUMBER` (`U1.57`), as `solid_starved.pads` names pads.
+    pub pad: String,
+    pub layer: String,
+    pub advice: String,
+}
+
+/// A starved thermal of `diagnostics.starved_thermals` for the verdict's
+/// line: its pad as `REF.NUMBER`, the name `solid_starved.pads` gives it
+/// (a pad KiCad names without a number, "Pad [GND] of M12", as KiCad
+/// names it).
+pub(crate) fn starved_pad(finding: &crate::board_router::KiCadStarvedThermal) -> KiCadStarvedPad {
+    let pad = crate::board_router::solid_pads_of_findings(std::slice::from_ref(finding))
+        .first()
+        .filter(|pad| !pad.number.is_empty() && !pad.number.contains(['[', ' ']))
+        .map_or_else(
+            || {
+                finding
+                    .pad
+                    .split(" on ")
+                    .next()
+                    .unwrap_or(&finding.pad)
+                    .to_string()
+            },
+            |pad| format!("{}.{}", pad.reference, pad.number),
+        );
+    KiCadStarvedPad {
+        pad,
+        layer: finding.layer.clone(),
+        advice: finding.advice.clone(),
+    }
+}
+
 #[cfg(test)]
 mod layer_name_tests {
     use super::name_layers;

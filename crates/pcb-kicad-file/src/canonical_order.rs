@@ -343,6 +343,16 @@ pub(crate) fn canonical_order(pcb: &mut Expr) {
     );
 }
 
+pub fn footprint_items(pcb: &mut Expr) -> Result<Vec<&mut Expr>, String> {
+    let Expr::List(items) = pcb else {
+        return Err("PCB root is not a list".into());
+    };
+    Ok(items
+        .iter_mut()
+        .filter(|item| item.head() == Some("footprint"))
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

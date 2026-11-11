@@ -1535,7 +1535,7 @@ pub(super) fn solid_rounds(
         let names: Vec<String> = current
             .1
             .iter()
-            .map(|finding| crate::verdict::starved_pad(finding).pad)
+            .map(|finding| crate::board_router::starved_pad(finding).pad)
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect();

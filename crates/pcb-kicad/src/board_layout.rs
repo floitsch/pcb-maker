@@ -11,11 +11,15 @@
 //! board is verified natively once.
 
 use super::*;
-use crate::board_placer::{largest_clearance, lower_placement, write_footprint_pose};
+use crate::board_placer::{
+    PLACEMENT_SHARE, largest_clearance, lower_placement, write_footprint_pose,
+};
 use crate::board_router::{
     LayerTable, add_pour_zones, core_config, emit_routes, finish_routed_board, lower_for_route,
     planned_pours, pours,
 };
+use crate::canonical_order::footprint_items;
+use crate::labels::without_copper_texts;
 use crate::pin_swap::{KiCadPinSwapComponent, KiCadPinSwapGroup};
 use crate::placement_constraints::{
     KiCadConstraintStatus, constraint_report, default_area_factor, resolve_constraints,
@@ -849,47 +853,6 @@ fn body_congestion(
     if nodes > 0 { total / nodes as f64 } else { 0.0 }
 }
 
-pub(crate) fn footprint_items(pcb: &mut Expr) -> Result<Vec<&mut Expr>, String> {
-    let Expr::List(items) = pcb else {
-        return Err("PCB root is not a list".into());
-    };
-    Ok(items
-        .iter_mut()
-        .filter(|item| item.head() == Some("footprint"))
-        .collect())
-}
-
-/// Places and routes `<source>/<board_id>.kicad_pcb`. The placement goes to
-/// `output/placed`, the final routed board to `output/result`.
-/// The board the layout routes: with its copper texts where the input put
-/// them (`keep`: `keep_board_marks`, obstacles to the router as to KiCad),
-/// or else without them: decoration that moves off the copper afterwards
-/// (`labels`), not obstacles at their old spots (before 2026-10-21).
-pub(crate) fn without_copper_texts(pcb: &Expr, keep: bool) -> Expr {
-    let Expr::List(items) = pcb else {
-        return pcb.clone();
-    };
-    if keep {
-        return pcb.clone();
-    }
-    // Exposed-copper artwork (a copper text with its mask twin) is not
-    // moved afterwards, so it stays an obstacle here (Quanta75: routes
-    // under its 7 mm logo, 11 bridges and a short).
-    let twins = crate::labels::mask_twins(pcb);
-    Expr::List(
-        items
-            .iter()
-            .filter(|item| {
-                !(item.head() == Some("gr_text")
-                    && form_atom(item, "layer", 1).is_some_and(|layer| {
-                        layer.ends_with(".Cu") && !crate::labels::has_mask_twin(&twins, item, layer)
-                    }))
-            })
-            .cloned()
-            .collect(),
-    )
-}
-
 /// The open count past which a board the narrow-signal step applies to
 /// counts as far from complete after its first route: 2 % of its
 /// terminals, at least 10 (jetson: 31 open, the limit 27; the boards
@@ -1166,11 +1129,6 @@ fn placement_digest(
     );
     format!("{:x}", hash.finalize())
 }
-
-/// The placement's share of a layout's budget: 40 % of `total_seconds`
-/// (the race after it leaves the final route `RACE_MIN_FINAL_SHARE` at
-/// least).
-pub const PLACEMENT_SHARE: f64 = 0.4;
 
 pub fn placement_budget(config: &KiCadBoardLayoutConfig) -> f64 {
     PLACEMENT_SHARE * config.total_seconds.max(0.0)

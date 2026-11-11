@@ -727,3 +727,8 @@ pub(super) fn escape_fact(
         measure_every: config.measure_every,
     }
 }
+
+/// The placement's share of a layout's budget: 40 % of `total_seconds`
+/// (the race after it leaves the final route `RACE_MIN_FINAL_SHARE` at
+/// least).
+pub const PLACEMENT_SHARE: f64 = 0.4;

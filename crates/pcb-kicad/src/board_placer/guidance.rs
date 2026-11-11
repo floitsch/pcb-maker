@@ -7,8 +7,8 @@
 //! moves rank by.
 
 use super::*;
-use crate::board_layout::without_copper_texts;
 use crate::board_router::{KiCadPourMode, LayerTable, add_pour_zones, lower, planned_pours, pours};
+use crate::labels::without_copper_texts;
 use pcb_placer as core;
 use pcb_router as router;
 use std::collections::HashMap;
@@ -171,7 +171,7 @@ pub(super) fn lowered_at(
 ) -> Option<router::Board> {
     let mut candidate = base.clone();
     {
-        let mut footprints = crate::board_layout::footprint_items(&mut candidate).ok()?;
+        let mut footprints = crate::canonical_order::footprint_items(&mut candidate).ok()?;
         if footprints.len() > poses.len() {
             eprintln!(
                 "escape demand: {} footprints for {} poses: not measured",
@@ -298,7 +298,7 @@ pub(crate) fn evaluator(
         let started = std::time::Instant::now();
         let mut candidate = base.clone();
         {
-            let mut footprints = crate::board_layout::footprint_items(&mut candidate).ok()?;
+            let mut footprints = crate::canonical_order::footprint_items(&mut candidate).ok()?;
             // The footprints come first; the board's marks follow as
             // fixed components.
             if footprints.len() > poses.len() {

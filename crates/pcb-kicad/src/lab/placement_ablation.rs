@@ -23,12 +23,12 @@
 //! escape looks like (demand per side, the part it faces and the channel
 //! between them, the board edge, its connections' distance).
 
-use crate::board_layout::footprint_items;
 use crate::board_placer::{
     KiCadBoardPlacerConfig, attribution, courtyards_may_overlap, holes_in_courtyards_error,
     largest_clearance, lower_placement, reference_index, silk_over_parts_error,
     write_footprint_pose,
 };
+use crate::canonical_order::footprint_items;
 use crate::placement_constraints::{KiCadConstraintsSource, resolve_constraints};
 use crate::*;
 use pcb_placer as placer;

@@ -626,7 +626,7 @@ pub fn constraints_template(directory: &Path, board_id: &str) -> Result<serde_js
         if !wired {
             continue;
         }
-        if !crate::netlist_import::edge_connector(&part.name) {
+        if !crate::board_placer::edge_connector(&part.name) {
             if matches!(prefix(&part.reference), "J" | "P" | "CN" | "CON" | "USB") {
                 other_connectors.push(part.reference.clone());
             }
