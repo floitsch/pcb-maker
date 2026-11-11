@@ -10,7 +10,8 @@
 //!   outline, planned vias in pads and mask rules: what every stage reads.
 //! - `Builder::board_items` lowers the board file's items in their order:
 //!   footprints (footprint.rs: rule areas, graphics, texts, then each pad,
-//!   pad.rs), kept tracks and vias (tracks.rs), graphics (graphics.rs) and
+//!   pad.rs, and the exits of pads its own copper walls, own_copper.rs),
+//!   kept tracks and vias (tracks.rs), graphics (graphics.rs) and
 //!   rule areas (areas.rs). What needs every pad's net first is queued.
 //! - Then, once every pad's net is known: pads of one item merged into one
 //!   terminal (merge.rs), the queued copper graphics (graphics.rs) and
@@ -31,6 +32,7 @@ mod graphics;
 mod layers;
 mod mask;
 mod merge;
+mod own_copper;
 mod pad;
 mod pin_rows;
 mod planes;
