@@ -83,7 +83,7 @@ pub(super) fn lower_footprint(
     let far_graphics = !artwork && (!graphics.far.is_empty() || far_courtyard.is_some());
     let angle_options = angle_options(config, at[2]);
     let copper_graphics = copper_graphic_boxes(footprint)?;
-    let edge_inset = edge_inset(footprint, &own_pads, body_center, body_size)?;
+    let edge_inset = edge_inset(&own_pads, &copper_graphics, body_center, body_size);
     let shape = body_shape(
         context,
         footprint,
@@ -696,40 +696,28 @@ fn bounds_of(boxes: &[[f64; 4]]) -> [f64; 4] {
     )
 }
 
-/// How far the copper (`own_pads` and the copper graphics on a `.Cu`
-/// layer) stays inside the body: the body may come that much closer to
-/// the board edge. Zero for a footprint without pads.
+/// How far the copper (`own_pads` and the footprint's copper graphics,
+/// `copper_graphic_boxes`) stays inside the body: the body may come that
+/// much closer to the board edge. Zero for a footprint without pads.
 fn edge_inset(
-    footprint: &Expr,
     own_pads: &[[f64; 4]],
+    copper_graphics: &[[f64; 4]],
     body_center: [f64; 2],
     body_size: [f64; 2],
-) -> Result<f64, String> {
+) -> f64 {
     if own_pads.is_empty() {
-        return Ok(0.0);
+        return 0.0;
     }
-    let mut pads = bounds_of(own_pads);
-    // Copper graphics of the footprint count as copper too.
-    for child in footprint.children() {
-        if !form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(".Cu")) {
-            continue;
-        }
-        if let Some(graphic) = graphic_box(child)? {
-            pads = [
-                pads[0].min(graphic[0]),
-                pads[1].min(graphic[1]),
-                pads[2].max(graphic[2]),
-                pads[3].max(graphic[3]),
-            ];
-        }
-    }
+    // Copper graphics of the footprint count as copper too, on one copper
+    // layer or several (KiCad 9's `(layers "F.Cu" "F.Mask")`).
+    let pads = bounds_of(&[bounds_of(own_pads), bounds_of(copper_graphics)]);
     let body = [
         body_center[0] - body_size[0] / 2.0,
         body_center[1] - body_size[1] / 2.0,
         body_center[0] + body_size[0] / 2.0,
         body_center[1] + body_size[1] / 2.0,
     ];
-    Ok([
+    [
         pads[0] - body[0],
         pads[1] - body[1],
         body[2] - pads[2],
@@ -737,7 +725,7 @@ fn edge_inset(
     ]
     .into_iter()
     .fold(f64::INFINITY, f64::min)
-    .max(0.0))
+    .max(0.0)
 }
 
 /// What `body_shape` reads of a lowered footprint.

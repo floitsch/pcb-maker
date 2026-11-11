@@ -99,6 +99,31 @@ fn nets_named_for_a_switch_node_feedback_rf_or_crystal_are_kept_short() {
 }
 
 #[test]
+fn a_copper_graphic_on_several_layers_bounds_the_edge_inset_too() {
+    // A part whose courtyard reaches 2 mm past its pad on every side, with
+    // a copper polygon 1 mm short of the courtyard on the left: listed
+    // on one copper layer (KiCad 8) or with its mask (KiCad 9's
+    // `layers`), the copper stays 1 mm inside the body, not 2.
+    let inset = |layers: &str| {
+        let pcb = parse(&format!(
+            r#"(kicad_pcb
+            (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+            (gr_rect (start 0 0) (end 40 20) (layer "Edge.Cuts"))
+            (footprint "Tab" (layer "F.Cu") (at 20 10)
+                (fp_rect (start -2.5 -2.5) (end 2.5 2.5) (layer "F.CrtYd"))
+                (fp_poly (pts (xy -1.5 -0.5) (xy 0 -0.5) (xy 0 0.5) (xy -1.5 0.5)) {layers} (width 0))
+                (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "A"))))"#
+        ))
+        .unwrap();
+        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default()).unwrap();
+        lowered.problem.components[0].edge_inset
+    };
+    assert!((inset(r#"(layer "F.Cu")"#) - 1.0).abs() < 1.0e-9);
+    assert!((inset(r#"(layers "F.Cu" "F.Mask")"#) - 1.0).abs() < 1.0e-9);
+    assert!((inset(r#"(layer "F.SilkS")"#) - 2.0).abs() < 1.0e-9);
+}
+
+#[test]
 fn a_front_footprints_copper_on_the_back_blocks_back_parts_there() {
     // A netless logo on the front whose copper polygon lies on B.Cu
     // (Castor's LOGO), and a part with a courtyard whose B.Mask graphic
