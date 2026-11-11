@@ -185,7 +185,7 @@ runner's `lower`, `probe`, `resume` and `write`):
    drc_cache.rs, and writes `erc.json`, `drc.json` and
    `verification.json`.
 
-The pour model (pour.rs, router/pour_analysis.rs, fill.rs, spokes/,
+The pour model (pour.rs, router/pour_analysis/, fill.rs, spokes/,
 sever.rs, reclaim.rs) follows KiCad 10's fill and thermal spokes, so the
 router knows which pads a pour joins.
 
