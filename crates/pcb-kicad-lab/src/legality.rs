@@ -684,8 +684,8 @@ pub fn legality_kicad_board(
     let count = problem.components.len();
     let movable: Vec<bool> = problem.components.iter().map(|c| !c.fixed).collect();
     let mut placer_config = core::Config::new();
-    placer_config.maximum_utilization = config.maximum_utilization;
-    placer_config.overlap_far_side_pads = config.overlap_far_side_pads;
+    placer_config.maximum_utilization = config.tuning.maximum_utilization;
+    placer_config.overlap_far_side_pads = config.tuning.overlap_far_side_pads;
     placer_config.kicad_last_level = true;
     let levels = core::level_problems(problem, &placer_config);
     let poses = problem.poses.clone();

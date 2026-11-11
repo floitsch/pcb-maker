@@ -119,7 +119,7 @@ pub(super) fn prepare<'a>(
             "free_dimension: the layout-kicad-board command searches the sizes; a single layout takes none",
         ));
     }
-    crate::congestion_rank::check_score(&config.congestion_score)?;
+    crate::congestion_rank::check_score(&config.tuning.congestion_score)?;
     fs::create_dir_all(output_directory)
         .map_err(|error| format!("failed to create {}: {error}", output_directory.display()))?;
     // The budget counts work (`WorkLedger`); the wall clock only guards

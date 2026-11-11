@@ -37,23 +37,20 @@ mod report;
 mod setup;
 mod write;
 
+/// The layout settings: the keys an agent sets at the top level, the tuning
+/// of the machinery in `tuning` (docs/architecture.md, "Settings"). A
+/// top-level key that moved into `tuning` is refused with where it lives
+/// now (`settings_with_moved_keys!`); so is one in `placer` that moved into
+/// the placer's.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields, default)]
+#[serde(remote = "Self", deny_unknown_fields, default)]
 pub struct KiCadBoardLayoutConfig {
     /// Footprint moves to try after the first full route.
     pub moves: usize,
-    /// Stop after this many consecutive moves without improvement.
-    pub patience: usize,
-    /// Move distances tried, in millimetres, in the four axis directions.
-    pub steps_mm: Vec<f64>,
-    /// Budget of the move phase, in seconds of work (search expansions
-    /// and placement units at the run's work rates; docs/router.md,
-    /// "Determinism and the wall clock").
-    pub move_seconds: f64,
     /// Once every connection is routed, moves only polish (fewer vias,
     /// less copper): they stop after this many seconds of the move phase.
     pub polish_seconds: f64,
-    /// Budget of the whole layout, in seconds of work (as `move_seconds`;
+    /// Budget of the whole layout, in seconds of work (as `tuning.move_seconds`;
     /// the wall clock only guards it: `wall_guard`): the placement race
     /// stops at 40 % of it, the moves at 65 %, and the final ladder gets
     /// what is left. Every route stops by it (then only the native check
@@ -76,24 +73,6 @@ pub struct KiCadBoardLayoutConfig {
     /// functions such as `GPIO*` or pad numbers, globs) whose nets may be
     /// permuted. Used when `pin_swaps` is not given.
     pub swappable: Vec<KiCadSwappable>,
-    /// The pin-swap estimate's settings, for `pin_swaps` and `swappable`.
-    pub pin_swap: KiCadPinSwapConfig,
-    /// With a pre-ranking score, the placer makes at least this many
-    /// placements to rank (its `placement_seeds` when that is more).
-    pub congestion_candidates: usize,
-    /// With a pre-ranking score, how many of the best-ranked placements
-    /// the race routes (at least one).
-    pub congestion_probes: usize,
-    /// The placement race's pre-ranking (docs/placer.md, "The race"): the
-    /// placer makes `congestion_candidates` placements (seeds), they are
-    /// ranked by this score, and the race probes only the best
-    /// `congestion_probes`:
-    /// - `rudy` (default): RUDY routing demand above the tiles' free
-    ///   capacity (quick tier: KiCad unconnected 98 -> 64 against the
-    ///   plain race of three seeds);
-    /// - `none`: the plain race (the placer's `placement_seeds`, all
-    ///   probed).
-    pub congestion_score: String,
     /// One edge of a rectangular outline the layout may move, to find the
     /// smallest board that comes out clean (docs/constraints.md, "A free
     /// dimension"): `layout-kicad-board` then lays the board out at
@@ -103,21 +82,6 @@ pub struct KiCadBoardLayoutConfig {
     /// The footprints' Reference and Value fields on the silkscreen, placed
     /// after routing where KiCad's silkscreen checks find nothing.
     pub silkscreen: KiCadSilkscreenConfig,
-    /// The race's route probe (docs/placer.md, "The race's route probe";
-    /// off when absent, `{}` for the defaults): the race
-    /// probes its `seeds` best-ranked placements for `share` of
-    /// `total_seconds` of work each, all of them charged to the layout's
-    /// work clock and none dropped for the final route's minimum share
-    /// (without it, a probe gets the router's `probe_seconds`, 75 s, and
-    /// the race probes fewer placements where the final route would keep
-    /// less than `RACE_MIN_FINAL_SHARE`), ranks them by the probe's open
-    /// terminals (then its
-    /// unfinished nets, then its nets in conflict) and routes on with
-    /// the best. The pre-ranking (`congestion_score`) chooses the probed
-    /// placements as before, `seeds` of them instead of
-    /// `congestion_probes`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub race_probe: Option<KiCadRaceProbe>,
     /// A measurement mode (off by default; docs/benchmarks.md, "The
     /// ladder of placer measurements"): the layout ends after
     /// its first route. Sizing, placement, the race and the first route
@@ -128,17 +92,9 @@ pub struct KiCadBoardLayoutConfig {
     /// `first_unconnected_terminals` is the full layout's at the same
     /// `total_seconds`. The report says so (`stopped_after_first_route`).
     pub stop_after_first_route: bool,
-    /// What the race ranks its probes by (docs/placer.md, "The race ranks
-    /// its probes by the ripped count"; `"ripped"` by default
-    /// since the nine seed pairs of 2026-10-28): `"unfinished"` (the nets
-    /// each probe left unfinished; with `race_probe`, its standing) or
-    /// `"ripped"`: the board's open terminals once each probe's nets in
-    /// conflict lose their conflicted branches (the hard repair's rip-up
-    /// without its searches, on a copy of the probe's router: the kept
-    /// one routes on unripped), ties by the standing. Without
-    /// `race_probe` the pick then needs `RACE_RIPPED_MARGIN` over the
-    /// first-ranked placement's count. Not with `race_probe.repair`.
-    pub race_count: KiCadRaceCount,
+    /// The tuning of the layout's machinery: not for an agent's everyday
+    /// use (docs/architecture.md, "Settings").
+    pub tuning: KiCadLayoutTuning,
 }
 
 /// What the race ranks its probes by (`KiCadBoardLayoutConfig::race_count`).
@@ -460,27 +416,104 @@ impl Default for KiCadBoardLayoutConfig {
     fn default() -> Self {
         Self {
             moves: 40,
-            patience: 12,
-            steps_mm: vec![0.5, 1.0, 2.0, 4.0],
-            move_seconds: 600.0,
             polish_seconds: 60.0,
             total_seconds: 1500.0,
             wall_guard: DEFAULT_WALL_GUARD,
             placer: KiCadBoardPlacerConfig::default(),
             pin_swaps: None,
             swappable: Vec::new(),
+            free_dimension: None,
+            silkscreen: KiCadSilkscreenConfig::default(),
+            stop_after_first_route: false,
+            tuning: KiCadLayoutTuning::default(),
+        }
+    }
+}
+
+/// The layout settings' `tuning` group: settings of the layout's machinery
+/// an agent does not need (docs/architecture.md, "Settings"): the moves'
+/// patience, steps and budget, the race's pre-ranking and probes, the
+/// pin-swap estimate.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct KiCadLayoutTuning {
+    /// Stop after this many consecutive moves without improvement.
+    pub patience: usize,
+    /// Move distances tried, in millimetres, in the four axis directions.
+    pub steps_mm: Vec<f64>,
+    /// Budget of the move phase, in seconds of work (search expansions
+    /// and placement units at the run's work rates; docs/router.md,
+    /// "Determinism and the wall clock").
+    pub move_seconds: f64,
+    /// With a pre-ranking score, the placer makes at least this many
+    /// placements to rank (the placer's `tuning.placement_seeds` when that
+    /// is more).
+    pub congestion_candidates: usize,
+    /// With a pre-ranking score, how many of the best-ranked placements
+    /// the race routes (at least one).
+    pub congestion_probes: usize,
+    /// The placement race's pre-ranking (docs/placer.md, "The race"): the
+    /// placer makes `congestion_candidates` placements (seeds), they are
+    /// ranked by this score, and the race probes only the best
+    /// `congestion_probes`:
+    /// - `rudy` (default): RUDY routing demand above the tiles' free
+    ///   capacity (quick tier: KiCad unconnected 98 -> 64 against the
+    ///   plain race of three seeds);
+    /// - `none`: the plain race (the placer's `tuning.placement_seeds`, all
+    ///   probed).
+    pub congestion_score: String,
+    /// The race's route probe (docs/placer.md, "The race's route probe";
+    /// off when absent, `{}` for the defaults): the race
+    /// probes its `seeds` best-ranked placements for `share` of
+    /// `total_seconds` of work each, all of them charged to the layout's
+    /// work clock and none dropped for the final route's minimum share
+    /// (without it, a probe gets the router's `probe_seconds`, 75 s, and
+    /// the race probes fewer placements where the final route would keep
+    /// less than `RACE_MIN_FINAL_SHARE`), ranks them by the probe's open
+    /// terminals (then its
+    /// unfinished nets, then its nets in conflict) and routes on with
+    /// the best. The pre-ranking (`congestion_score`) chooses the probed
+    /// placements as before, `seeds` of them instead of
+    /// `congestion_probes`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub race_probe: Option<KiCadRaceProbe>,
+    /// What the race ranks its probes by (docs/placer.md, "The race ranks
+    /// its probes by the ripped count"; `"ripped"` by default
+    /// since the nine seed pairs of 2026-10-28): `"unfinished"` (the nets
+    /// each probe left unfinished; with `race_probe`, its standing) or
+    /// `"ripped"`: the board's open terminals once each probe's nets in
+    /// conflict lose their conflicted branches (the hard repair's rip-up
+    /// without its searches, on a copy of the probe's router: the kept
+    /// one routes on unripped), ties by the standing. Without
+    /// `race_probe` the pick then needs `RACE_RIPPED_MARGIN` over the
+    /// first-ranked placement's count. Not with `race_probe.repair`.
+    pub race_count: KiCadRaceCount,
+    /// The pin-swap estimate's settings, for `pin_swaps` and `swappable`.
+    pub pin_swap: KiCadPinSwapConfig,
+}
+
+impl Default for KiCadLayoutTuning {
+    fn default() -> Self {
+        Self {
+            patience: 12,
+            steps_mm: vec![0.5, 1.0, 2.0, 4.0],
+            move_seconds: 600.0,
             pin_swap: KiCadPinSwapConfig::default(),
             congestion_candidates: 16,
             congestion_probes: 3,
             congestion_score: "rudy".into(),
-            free_dimension: None,
-            silkscreen: KiCadSilkscreenConfig::default(),
             race_probe: None,
-            stop_after_first_route: false,
             race_count: KiCadRaceCount::default(),
         }
     }
 }
+
+pcb_kicad_route::settings_with_moved_keys!(
+    KiCadBoardLayoutConfig,
+    "layout",
+    KiCadLayoutTuning,
+    &[]
+);
 
 #[derive(Clone, Debug, Serialize)]
 pub struct KiCadBoardLayoutMove {
@@ -1103,6 +1136,7 @@ fn placement_digest(
         &format!(
             "{:?} None {:?} {:?} {:?}",
             placer_config
+                .tuning
                 .ratsnest_crossings
                 .as_ref()
                 .map(|crossings| crossings.rank_seeds),
@@ -1156,7 +1190,8 @@ pub fn layout_placer_config(
     if placer_config.solder_mask_to_copper_mm.is_none() {
         placer_config.solder_mask_to_copper_mm = router_config.solder_mask_to_copper_mm;
     }
-    placer_config.edge_margin_mm = placer_config
+    placer_config.tuning.edge_margin_mm = placer_config
+        .tuning
         .edge_margin_mm
         .max(router_config.edge_clearance_mm);
     if placer_config.copper_edge_clearance_mm.is_none() {
@@ -1168,14 +1203,14 @@ pub fn layout_placer_config(
     // layout depended on the load).
     placer_config.deadline = router_config.deadline;
     placer_config.work_seconds = Some(placement_budget(config));
-    if placer_config.escape_demand.is_some()
+    if placer_config.tuning.escape_demand.is_some()
         || crate::board_placer::pad_exits_settings(&placer_config).is_some()
     {
         placer_config.measure_router = Some(router_config.clone());
     }
     // The router's rules the placer keeps (the far side under vias in
     // pads, length maxima and minima), only where one applies.
-    if (placer_config.via_in_pad_far_side
+    if (placer_config.tuning.via_in_pad_far_side
         && (crate::board_router::admits_vias_in_pads(router_config)
             || crate::board_router::bga_fanout_on(router_config)))
         || (placer_config.length_maxima
@@ -1208,13 +1243,13 @@ pub fn layout_placer_config(
 /// placement with the full patience.
 pub fn race_core_config(router_config: &KiCadBoardRouterConfig) -> core::Config {
     let mut core_config = core_config(router_config);
-    if router_config.stall_drop.is_none() {
+    if router_config.tuning.stall_drop.is_none() {
         core_config.stall_drop = 0.1;
     }
-    if router_config.stall_at_cap.is_none() {
+    if router_config.tuning.stall_at_cap.is_none() {
         core_config.stall_at_cap = core_config.stall_at_cap.min(10);
     }
-    if router_config.present_growth.is_none() {
+    if router_config.tuning.present_growth.is_none() {
         core_config.present_growth = core_config.present_growth.max(2.0);
     }
     // A trial only ranks placements: below the price cap, eight
@@ -1227,7 +1262,7 @@ pub fn race_core_config(router_config: &KiCadBoardRouterConfig) -> core::Config 
 /// Whether the layout's race pre-ranks the placer's seeds (by RUDY): only
 /// with one router seed and no pin swaps.
 fn pre_ranks(config: &KiCadBoardLayoutConfig, router_config: &KiCadBoardRouterConfig) -> bool {
-    config.congestion_score == "rudy"
+    config.tuning.congestion_score == "rudy"
         && router_config.seeds.unwrap_or(1) <= 1
         && config.pin_swaps.is_none()
         && config.swappable.is_empty()
@@ -1240,8 +1275,9 @@ fn race_placement_seeds(
     placer_config: &KiCadBoardPlacerConfig,
 ) -> usize {
     placer_config
+        .tuning
         .placement_seeds
-        .max(config.congestion_candidates)
+        .max(config.tuning.congestion_candidates)
 }
 
 /// The placer's configuration of `place-kicad-board`: what the layout of
@@ -1268,7 +1304,7 @@ pub fn placement_check_config(
     };
     let mut placer_config = layout_placer_config(config, router_config, source_directory)?;
     if pre_ranks(config, router_config) {
-        placer_config.placement_seeds = race_placement_seeds(config, &placer_config);
+        placer_config.tuning.placement_seeds = race_placement_seeds(config, &placer_config);
     }
     Ok(placer_config)
 }
@@ -1801,13 +1837,39 @@ mod budget_tests {
         assert!(reason.contains("after the rip-up"), "{reason}");
     }
 
+    /// Every layout setting that moved into `tuning`, refused at the top
+    /// level with its new place, read there, written back as read; and a
+    /// placer key that moved, refused inside the layout's `placer`.
+    #[test]
+    fn the_layout_settings_tuning_group_holds_every_moved_key() {
+        use pcb_kicad_route::settings::{FieldNames, check_tuning_group, field_names};
+        let mut top: &'static [&'static str] = &[];
+        let _ = KiCadBoardLayoutConfig::deserialize(FieldNames(&mut top));
+        assert!(top.contains(&"moves") && top.contains(&"tuning"), "{top:?}");
+        let tuning = field_names::<KiCadLayoutTuning>();
+        let checked =
+            check_tuning_group::<KiCadBoardLayoutConfig>("layout", top, tuning, &[]).unwrap();
+        assert_eq!((checked.len(), tuning.len()), (9, 9));
+        let error = serde_json::from_str::<KiCadBoardLayoutConfig>(r#"{"placer": {"seed": 101}}"#)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(r#"the placer setting "seed" moved to "tuning.seed""#),
+            "{error}"
+        );
+        let config: KiCadBoardLayoutConfig =
+            serde_json::from_str(r#"{"placer": {"tuning": {"seed": 101}}}"#).unwrap();
+        assert_eq!(config.placer.tuning.seed, 101);
+    }
+
     #[test]
     fn the_race_probe_is_off_unless_named_and_an_empty_object_means_its_defaults() {
         let config: KiCadBoardLayoutConfig = serde_json::from_str("{}").unwrap();
-        assert_eq!(config.race_probe, None);
-        let config: KiCadBoardLayoutConfig = serde_json::from_str(r#"{"race_probe": {}}"#).unwrap();
+        assert_eq!(config.tuning.race_probe, None);
+        let config: KiCadBoardLayoutConfig =
+            serde_json::from_str(r#"{"tuning": {"race_probe": {}}}"#).unwrap();
         assert_eq!(
-            config.race_probe,
+            config.tuning.race_probe,
             Some(KiCadRaceProbe {
                 seeds: 3,
                 share: 0.08,
@@ -1815,9 +1877,10 @@ mod budget_tests {
             })
         );
         let config: KiCadBoardLayoutConfig =
-            serde_json::from_str(r#"{"race_probe": {"seeds": 2, "share": 0.1}}"#).unwrap();
+            serde_json::from_str(r#"{"tuning": {"race_probe": {"seeds": 2, "share": 0.1}}}"#)
+                .unwrap();
         assert_eq!(
-            config.race_probe,
+            config.tuning.race_probe,
             Some(KiCadRaceProbe {
                 seeds: 2,
                 share: 0.1,
@@ -1825,7 +1888,10 @@ mod budget_tests {
             })
         );
         assert!(
-            serde_json::from_str::<KiCadBoardLayoutConfig>(r#"{"race_probe": {"k": 2}}"#).is_err()
+            serde_json::from_str::<KiCadBoardLayoutConfig>(
+                r#"{"tuning": {"race_probe": {"k": 2}}}"#
+            )
+            .is_err()
         );
         // Off, the config serializes as before.
         let text = serde_json::to_string(&KiCadBoardLayoutConfig::default()).unwrap();
@@ -1836,17 +1902,18 @@ mod budget_tests {
     #[test]
     fn the_race_counts_ripped_terminals_unless_the_unfinished_nets_are_named() {
         let config: KiCadBoardLayoutConfig = serde_json::from_str("{}").unwrap();
-        assert_eq!(config.race_count, KiCadRaceCount::Ripped);
+        assert_eq!(config.tuning.race_count, KiCadRaceCount::Ripped);
         let config: KiCadBoardLayoutConfig =
-            serde_json::from_str(r#"{"race_count": "unfinished"}"#).unwrap();
-        assert_eq!(config.race_count, KiCadRaceCount::Unfinished);
+            serde_json::from_str(r#"{"tuning": {"race_count": "unfinished"}}"#).unwrap();
+        assert_eq!(config.tuning.race_count, KiCadRaceCount::Unfinished);
         assert!(
             serde_json::to_string(&config)
                 .unwrap()
                 .contains(r#""race_count":"unfinished""#)
         );
         assert!(
-            serde_json::from_str::<KiCadBoardLayoutConfig>(r#"{"race_count": "open"}"#).is_err()
+            serde_json::from_str::<KiCadBoardLayoutConfig>(r#"{"tuning": {"race_count": "open"}}"#)
+                .is_err()
         );
     }
 
@@ -1891,16 +1958,22 @@ mod budget_tests {
             stop_after_first_route: true,
             placer: KiCadBoardPlacerConfig {
                 fixed_patterns: if fixed { vec!["*".into()] } else { Vec::new() },
-                placement_seeds: if fixed { 1 } else { 3 },
+                tuning: crate::KiCadPlacerTuning {
+                    placement_seeds: if fixed { 1 } else { 3 },
+                    ..Default::default()
+                },
                 ..KiCadBoardPlacerConfig::default()
             },
-            congestion_score: "none".into(),
-            // Free parts: the route probe races the seeds' placements.
-            race_probe: (!fixed).then_some(KiCadRaceProbe {
-                seeds: 3,
-                share: 0.1,
-                repair: false,
-            }),
+            tuning: KiCadLayoutTuning {
+                congestion_score: "none".into(),
+                // Free parts: the route probe races the seeds' placements.
+                race_probe: (!fixed).then_some(KiCadRaceProbe {
+                    seeds: 3,
+                    share: 0.1,
+                    repair: false,
+                }),
+                ..Default::default()
+            },
             ..KiCadBoardLayoutConfig::default()
         };
         let router = KiCadBoardRouterConfig {
@@ -2041,7 +2114,10 @@ mod budget_tests {
         };
         let check = placement_check_config(&f1, "f1", &layout, &router).unwrap();
         assert_eq!(check.work_seconds, Some(12.0));
-        assert_eq!(check.placement_seeds, layout.congestion_candidates);
+        assert_eq!(
+            check.tuning.placement_seeds,
+            layout.tuning.congestion_candidates
+        );
         assert!(check.measure_router.is_some());
         assert_eq!(check.copper_clearance_mm, Some(largest_clearance(&router)));
         assert_eq!(
@@ -2051,11 +2127,12 @@ mod budget_tests {
         let own = layout_placer_config(&layout, &router, &f1).unwrap();
         assert_eq!(own.work_seconds, check.work_seconds);
         // The plain race places the placer's own seeds.
-        let plain = KiCadBoardLayoutConfig {
-            congestion_score: "none".into(),
-            ..layout.clone()
-        };
+        let mut plain = layout.clone();
+        plain.tuning.congestion_score = "none".into();
         let check = placement_check_config(&f1, "f1", &plain, &router).unwrap();
-        assert_eq!(check.placement_seeds, plain.placer.placement_seeds);
+        assert_eq!(
+            check.tuning.placement_seeds,
+            plain.placer.tuning.placement_seeds
+        );
     }
 }

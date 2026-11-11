@@ -397,6 +397,29 @@ class ProcessGroups(unittest.TestCase):
         self.assertLess(time.monotonic() - before, 30)
 
 
+class SettingsGroups(unittest.TestCase):
+    """The settings' tuning group (docs/architecture.md, "Settings"): run.py
+    merges its keys one by one and scales the moves' budget inside it."""
+
+    def test_the_tuning_keys_merge_one_by_one(self):
+        task = {"constraints": "c.json", "tuning": {"seed": 1, "halo_scale": 0.5}}
+        given = {"tuning": {"seed": 101}, "fixed": ["J1"]}
+        merged = run.merge_settings({"x": 1}, task, given)
+        self.assertEqual(merged, {"x": 1, "constraints": "c.json", "fixed": ["J1"],
+                                  "tuning": {"seed": 101, "halo_scale": 0.5}})
+        self.assertEqual(task["tuning"], {"seed": 1, "halo_scale": 0.5})
+
+    def test_the_budget_scale_reaches_the_moves_in_the_group(self):
+        given = {"tuning": {"race_count": "unfinished"}}
+        for _ in range(2):
+            layout = run.merge_settings({"total_seconds": 900}, given)
+            run.scale_layout_budgets(layout, 1 / 3)
+            self.assertEqual(layout, {"total_seconds": 300, "polish_seconds": 20,
+                                      "tuning": {"race_count": "unfinished", "move_seconds": 200}})
+        # --layout's own group is not changed (each board scales afresh).
+        self.assertEqual(given, {"tuning": {"race_count": "unfinished"}})
+
+
 class LayoutReuseTests(unittest.TestCase):
     """--reuse: a layout whose placement was routed before takes that run's
     row (run.LayoutReuse)."""
@@ -415,7 +438,7 @@ class LayoutReuseTests(unittest.TestCase):
         shutil.rmtree(self.temporary)
 
     def base(self, binary="b1", layout=None, environ=None):
-        layout = layout or {"placer": {"seed": 1}, "total_seconds": 375}
+        layout = layout or {"placer": {"tuning": {"seed": 1}}, "total_seconds": 375}
         return run.LayoutReuse.base(binary, {"name": "t", "board_id": "b"}, self.source, layout, 2,
                                     "3.15e6,150e6", environ=environ or {})
 
@@ -428,8 +451,8 @@ class LayoutReuseTests(unittest.TestCase):
         return directory
 
     def test_the_placer_settings_act_only_through_the_digest(self):
-        one = self.base(layout={"placer": {"seed": 1}, "total_seconds": 375})
-        other = self.base(layout={"placer": {"seed": 101, "ratsnest_crossings": {"anneal": True}},
+        one = self.base(layout={"placer": {"tuning": {"seed": 1}}, "total_seconds": 375})
+        other = self.base(layout={"placer": {"tuning": {"seed": 101, "ratsnest_crossings": {"anneal": True}}},
                                   "total_seconds": 375})
         self.assertEqual(run.LayoutReuse.key(one, self.DIGEST), run.LayoutReuse.key(other, self.DIGEST))
         self.assertNotEqual(run.LayoutReuse.key(one, self.DIGEST), run.LayoutReuse.key(one, "cd" * 32))
@@ -438,7 +461,7 @@ class LayoutReuseTests(unittest.TestCase):
         key = run.LayoutReuse.key(self.base(), self.DIGEST)
         self.assertNotEqual(key, run.LayoutReuse.key(self.base(binary="b2"), self.DIGEST))
         self.assertNotEqual(key, run.LayoutReuse.key(
-            self.base(layout={"placer": {"seed": 1}, "total_seconds": 1500}), self.DIGEST))
+            self.base(layout={"placer": {"tuning": {"seed": 1}}, "total_seconds": 1500}), self.DIGEST))
         self.assertNotEqual(key, run.LayoutReuse.key(
             self.base(environ={"PCB_ROUTER_NO_WALL_GUARD": "1"}), self.DIGEST))
         # The ledger's variables name the board's reservation: not in it.

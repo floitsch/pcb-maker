@@ -91,7 +91,7 @@ pub fn held_parts_as_given(
         .filter(|item| item.head() == Some("footprint"))
     {
         let (_, size, _) = crate::footprint_bodies::local_body(footprint)?;
-        part_area += (size[0] + config.spacing_mm) * (size[1] + config.spacing_mm);
+        part_area += (size[0] + config.tuning.spacing_mm) * (size[1] + config.tuning.spacing_mm);
     }
     apply_outline(&mut board, outline, part_area)?;
     held_parts(&board, config)

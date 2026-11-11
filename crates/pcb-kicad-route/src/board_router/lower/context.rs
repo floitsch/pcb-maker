@@ -96,7 +96,8 @@ impl<'a> Context<'a> {
         } else {
             Default::default()
         };
-        let pairs_on = config.diff_pairs_on() && config.engine.as_deref() != Some("topological");
+        let pairs_on =
+            config.diff_pairs_on() && config.tuning.engine.as_deref() != Some("topological");
         let board_pad_to_mask = pcb
             .child("setup")
             .and_then(|setup| form_f64(setup, "pad_to_mask_clearance", 1).ok())

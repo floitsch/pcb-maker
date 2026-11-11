@@ -479,8 +479,11 @@ mod tests {
         let mut results = Vec::new();
         for (name, race) in [("off", None), ("on", Some(KiCadSkeletonRace::default()))] {
             let config = KiCadBoardPlacerConfig {
-                placement_seeds: 2,
                 skeleton_race: race,
+                tuning: KiCadPlacerTuning {
+                    placement_seeds: 2,
+                    ..Default::default()
+                },
                 ..KiCadBoardPlacerConfig::default()
             };
             let result = place_kicad_board(&source, "board", &root.join(name), &config).unwrap();
@@ -551,8 +554,11 @@ mod tests {
         fs::create_dir_all(&source).unwrap();
         fs::write(source.join("board.kicad_pcb"), &pcb).unwrap();
         let config = KiCadBoardPlacerConfig {
-            placement_seeds: 2,
             skeleton_race: Some(KiCadSkeletonRace::default()),
+            tuning: KiCadPlacerTuning {
+                placement_seeds: 2,
+                ..Default::default()
+            },
             ..KiCadBoardPlacerConfig::default()
         };
         let result = place_kicad_board(&source, "board", &root.join("on"), &config).unwrap();
@@ -601,9 +607,12 @@ mod tests {
         fs::write(source.join("board.kicad_pcb"), board()).unwrap();
         let place = |name: &str, race: Option<KiCadSkeletonRace>| {
             let config = KiCadBoardPlacerConfig {
-                placement_seeds: 2,
                 work_seconds: Some(30.0),
                 skeleton_race: race,
+                tuning: KiCadPlacerTuning {
+                    placement_seeds: 2,
+                    ..Default::default()
+                },
                 ..KiCadBoardPlacerConfig::default()
             };
             let result = place_kicad_board(&source, "board", &root.join(name), &config).unwrap();

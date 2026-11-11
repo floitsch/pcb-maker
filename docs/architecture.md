@@ -19,13 +19,13 @@ problems in [handover.md](handover.md).
 | `crates/pcb-kicad` | The top of the KiCad side: `layout-kicad-board` (`board_layout`, `congestion_rank`, `free_dimension`), the verdict (`verdict`) and the other commands' reports and outputs (`describe`, `class_view`, `run_diagnosis`, `silkscreen`, `fab_export`, `fab_release`). Its `lib.rs` re-exports what the binary uses of the crates below, so `src/` reads one API. | pcb-kicad-place, pcb-kicad-route, pcb-kicad-check, pcb-kicad-file |
 | `crates/pcb-kicad-import` | `import-kicad-netlist` and the starters it writes. Beside pcb-kicad: neither uses the other. | pcb-kicad-place, pcb-kicad-route, pcb-kicad-check, pcb-kicad-file |
 | `crates/pcb-kicad-place` | A board placed: the lowering to the placer's problem, `place_kicad_board` and its seed race, placement constraints, panels, sub-boards, labels. | pcb-kicad-route, pcb-kicad-check, pcb-kicad-file, pcb-placer, pcb-router, pcb-global |
-| `crates/pcb-kicad-route` | A board routed: the project's rules, the lowering to the router's problem, `route_kicad_board` and its ladder, pairs, lengths, fan-outs, pours, necks, pin swaps, and `quality`. | pcb-kicad-check, pcb-kicad-file, pcb-router, pcb-placer, pcb-topo |
+| `crates/pcb-kicad-route` | A board routed: the project's rules, the lowering to the router's problem, `route_kicad_board` and its ladder, pairs, lengths, fan-outs, pours, necks, pin swaps, and `quality`; `settings`, how the settings files are layered (below, "Settings"). | pcb-kicad-check, pcb-kicad-file, pcb-router, pcb-placer, pcb-topo |
 | `crates/pcb-kicad-check` | KiCad's own checks: kicad-cli runs with a library-free configuration, the DRC cache, the reports read, a routed result's verification; and the machine: the memory ledger, `/proc` memory, the work rate. | pcb-kicad-file |
 | `crates/pcb-kicad-file` | KiCad's files as data: the S-expression tree, canonical order, nets, pad and outline geometry, the outline's pieces, copper written back, statistics, file utilities, the exit codes and the errors that are the input's. | pcb-router, pcb-placer (types only) |
 | `crates/pcb-router` | A format-free, in-memory whole-board router: `Board` (nets, terminals, obstacles, planes, rules, via spans) in, `RoutingResult` out. The lattice and its static maps, the pour model, the search, PathFinder negotiation, the repairs, the polish and an exact copper verifier (`verify`). `Router` keeps its state between calls (`new`, `run`, `probe`, `resume`, `update`, `reroute`), which the layout's race and moves use. | none |
 | `crates/pcb-placer` | A format-free placer: `Problem` (components, pins, nets, constraints) in, `Placement` (poses, legality, the constraints' status) out, through `place`. | none |
 | `crates/pcb-global` | A coarse tile-graph global router (capacities per tile boundary, PathFinder on tiles), the placer's measure: the measured escape demand (`Incremental`, on by default) and two research commands use it. | pcb-router |
-| `crates/pcb-topo` | A TopoR-style topological router (a constrained Delaunay mesh, crossings resolved topologically, taut geometry) and `tighten`, which pulls any router's copper taut. Only with the router settings `engine: "topological"` or `tighten: true`. | pcb-router |
+| `crates/pcb-topo` | A TopoR-style topological router (a constrained Delaunay mesh, crossings resolved topologically, taut geometry) and `tighten`, which pulls any router's copper taut. Only with the router settings `tuning.engine: "topological"` or `tuning.tighten: true`. | pcb-router |
 | `tools/config-reference` | Generates [config-reference.md](config-reference.md) and the environment index at the end of [handover.md](handover.md) from the settings structs and every `PCB_*` name in the sources; `tests/config_reference.rs` fails while either is stale. | pcb-kicad, pcb-placer, pcb-router |
 
 pcb-router and pcb-placer know nothing of KiCad or of each other; the
@@ -246,10 +246,29 @@ held skeleton; `constraints.rs` holds the hard and soft constraints;
   src/kicad_commands.rs and src/lab_commands.rs) call the
   measurement-only modules above.
 
+## Settings
+
+Three layers. A settings file (router, placer, layout) holds at its top
+level the keys an agent sets: the ones docs/agents.md, docs/constraints.md
+and the skill name, the benchmark tasks set and the CLI help lists. The
+machinery's own settings sit in one nested group per file, `tuning`
+(`KiCadRouterTuning`, `KiCadPlacerTuning`, `KiCadLayoutTuning`): experiment
+and calibration knobs no agent needs. Below both is the core's config
+(`pcb_router::Config`, `pcb_placer::Config`), which no file reads: the
+KiCad layer builds it per attempt. The router's group declares its `core`
+section with `tuning_group!` (pcb-kicad-route `settings.rs`): each key is
+an optional override of the core field of the same name and type, all set
+in one step (`KiCadRouterTuning::apply` in `core_config`), so exposing a
+new core knob is one line there and the compiler checks it against the
+core. A top-level key that moved into the group is refused with where it
+lives now (`"x" moved to "tuning.x"`, `settings_with_moved_keys!`); any
+other unknown key is refused as before. config-reference.md lists the
+top-level keys and the groups in separate tables.
+
 ## Off by default, still in the code
 
-- **The topological engine** (`engine: "topological"`, pcb-topo) and
-  `tighten`.
+- **The topological engine** (`tuning.engine: "topological"`, pcb-topo) and
+  `tuning.tighten`.
 - **Pad exits** (`pad_exits`, pcb-placer exits.rs, board_placer/exits.rs,
   pcb-router router/pad_exits.rs), **pair rows** (`pair_rows`,
   board_placer/pair_rows.rs, pcb-placer facing.rs), **length minima**
@@ -260,7 +279,7 @@ Removed on 2026-11-10, each lost or null under its measurement: the move
 descent (`move_descent`), bus bundles (`bus_bundles`), the router's
 global plan (`global_routing`) and fixed escape stubs (`escape_stub_mm`);
 on 2026-11-11 the global route as the race's pre-ranker
-(`congestion_score: "global"`) and global guidance (`global_guidance`);
+(`tuning.congestion_score: "global"`) and global guidance (`global_guidance`);
 git history has the code.
 
 ## Where things happen

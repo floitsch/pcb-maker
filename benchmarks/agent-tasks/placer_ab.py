@@ -12,7 +12,7 @@ docs/benchmarks.md, "Measurement discipline: placer defaults". A layout is
 deterministic in its binary, tasks, rates and placer settings, but a placer
 change moves every board to another draw of its seed noise: on the eleven
 dense boards one board's KiCad unconnected count spreads by 13 to 30 (video
-by 200) over seeds. A comparison of k seed pairs (`--placer '{"seed": N}'`
+by 200) over seeds. A comparison of k seed pairs (`--placer '{"tuning": {"seed": N}}'`
 on both sides) resolves an effect only when it is larger than that noise
 allows; this tool says how large that is and whether a comparison
 resolved its effect.

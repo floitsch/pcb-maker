@@ -219,7 +219,7 @@ fn run_race(
     copper: &Copper,
 ) -> Result<Race, String> {
     let config = ctx.config;
-    let race_probe = config.race_probe.as_ref();
+    let race_probe = config.tuning.race_probe.as_ref();
     let probe_seconds = match race_probe {
         Some(probe) => probe.share.max(0.0) * config.total_seconds.max(0.0),
         None => shortened.unwrap_or(ctx.router_config.probe_seconds.unwrap_or(75.0)),
@@ -235,7 +235,7 @@ fn run_race(
     // negotiated (the kept one routes on). One router at a time, in
     // the ranking's order, as each wave of probes ends: deterministic.
     // No search runs: nothing is charged to the work clock.
-    let ripped_asked = config.race_count == KiCadRaceCount::Ripped;
+    let ripped_asked = config.tuning.race_count == KiCadRaceCount::Ripped;
     let ripped = ripped_asked && !repair;
     let (probes, router_mb) =
         probe_placements(&boards, core_config, probe_seconds, repair, ripped_asked);

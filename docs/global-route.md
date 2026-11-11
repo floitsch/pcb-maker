@@ -35,7 +35,7 @@ one line per negotiation iteration.
 
 ## Where it runs
 
-- **By default: the placer's escape demand.** With `escape_demand.measured`
+- **By default: the placer's escape demand.** With `tuning.escape_demand.measured`
   (on), the placer's refinement corrects its per-part escape estimate by
   the global route's overflow attribution: per boundary the usage above
   `threshold` (0.5) of its capacity, per part the excess on the boundaries

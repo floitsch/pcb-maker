@@ -67,7 +67,7 @@ This is the format the breadboard fence generator writes
 
 The assignment is chosen by simulated annealing, finished with a steepest
 descent over all exchanges, on a ratsnest estimate of the board. The
-settings are the `pin_swap` object of the router or layout config (or the
+settings are the `tuning.pin_swap` object of the router or layout config (or the
 `config.json` of `swap-kicad-pins`):
 
 - **Nets and pads.** Each net is a minimum spanning tree over its pads.

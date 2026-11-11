@@ -322,8 +322,8 @@ fn repair_as_placed(
     let prepared = prepare_board(source_directory, board_id, &config, None)?;
     let (pcb, config, lowered) = (&prepared.pcb, &prepared.config, &prepared.lowered);
     let mut placer_config = core::Config::new();
-    placer_config.maximum_utilization = config.maximum_utilization;
-    placer_config.overlap_far_side_pads = config.overlap_far_side_pads;
+    placer_config.maximum_utilization = config.tuning.maximum_utilization;
+    placer_config.overlap_far_side_pads = config.tuning.overlap_far_side_pads;
     placer_config.kicad_last_level = true;
     let poses = lowered.problem.poses.clone();
     let levels = core::level_problems(&lowered.problem, &placer_config);

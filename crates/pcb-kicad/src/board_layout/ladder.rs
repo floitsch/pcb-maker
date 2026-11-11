@@ -213,9 +213,9 @@ fn ladder_config(
         } else {
             KiCadPourMode::Tracks
         };
-        narrow.refine_pitches_mm = Some(Vec::new());
+        narrow.tuning.refine_pitches_mm = Some(Vec::new());
         let (negotiation, cleanup, keeps) = narrow_with_continuation(ladder_left);
-        narrow.negotiation_seconds = Some(negotiation);
+        narrow.tuning.negotiation_seconds = Some(negotiation);
         narrow.cleanup_seconds = Some(cleanup);
         // It leaves the attempt after it its share (the other pour mode:
         // DSP-ADAU1452 73 to 30 open by it).
@@ -365,7 +365,7 @@ fn run_continuation(
             KiCadPourMode::Tracks
         };
         let (negotiation, cleanup) = direct_narrow_budget(left);
-        other.negotiation_seconds = Some(negotiation);
+        other.tuning.negotiation_seconds = Some(negotiation);
         other.cleanup_seconds = Some(cleanup);
         eprintln!(
             "layout: {left:.0} s of work left after the narrow-signal attempt: it again with pours {} (negotiation {negotiation:.0} s, clean-up {cleanup:.0} s)",

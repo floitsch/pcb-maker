@@ -246,9 +246,9 @@ impl ProblemBuilder {
                 components: Vec::new(),
                 net_weights: Vec::new(),
                 poses: Vec::new(),
-                spacing: config.spacing_mm,
-                grid: config.grid_mm,
-                edge_margin: config.edge_margin_mm,
+                spacing: config.tuning.spacing_mm,
+                grid: config.tuning.grid_mm,
+                edge_margin: config.tuning.edge_margin_mm,
                 min_spacing: config.copper_clearance_mm.unwrap_or(0.2),
                 far_side_pads_only: false,
                 escape: None,
@@ -335,7 +335,7 @@ pub fn lower_placement(
     if config.keep_on_pieces {
         keep_on_pieces(&mut builder.problem, footprint_count);
     }
-    if config.keep_copies {
+    if config.tuning.keep_copies {
         pieces::keep_copies_apart(&mut builder.problem, footprint_count);
     }
     builder.problem.constraints.link_pairs();

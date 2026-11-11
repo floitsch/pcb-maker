@@ -121,7 +121,7 @@ pub(super) fn placement_report(
         seeds_run: work.run as usize,
         seed_kept,
         footprints,
-        bus_groups: config.bus_groups.as_ref().map(|bus_groups| {
+        bus_groups: config.tuning.bus_groups.as_ref().map(|bus_groups| {
             KiCadBusGroupsReport::of(
                 &lowered.problem,
                 &bus_groups.settings(),

@@ -86,8 +86,8 @@ pub use board_router::{
     KiCadBoardRouterConfig, KiCadBoardRouterNet, KiCadBoardRouterResult, KiCadBoardRouterViolation,
     KiCadClosedPads, KiCadDiffPair, KiCadDiffPairRule, KiCadDiffPairs, KiCadExistingTracks,
     KiCadKeepWhole, KiCadKeptCopper, KiCadNetLength, KiCadPourMode, KiCadPourQuality,
-    KiCadViaInPad, KiCadViaInPadEntry, KiCadViaInPadFootprint, KiCadViaInPadReport,
-    KiCadViaSpanEntry, admit_length_rule_layers, admit_reference_via_spans,
+    KiCadRouterTuning, KiCadViaInPad, KiCadViaInPadEntry, KiCadViaInPadFootprint,
+    KiCadViaInPadReport, KiCadViaSpanEntry, admit_length_rule_layers, admit_reference_via_spans,
     admit_reference_vias_in_pads, blind_vias_override, dump_kicad_pour_map,
     keep_whole_input_warnings, measure_pours, route_kicad_board, write_kicad_board_without_tracks,
     write_kicad_board_without_tracks_except,
@@ -116,8 +116,8 @@ pub use quality::{KiCadDecoupling, KiCadQualityReport, score_kicad_board};
 pub use board_placer::{
     KiCadBoardPlacerConfig, KiCadBoardPlacerResult, KiCadClosedPad, KiCadExitMove, KiCadPadExits,
     KiCadPadExitsCensus, KiCadPadExitsReport, KiCadPanelCellClass, KiCadPanelCopiesReport,
-    KiCadPanelCopy, KiCadPlacedFootprint, pad_exits_kicad_board, pad_exits_override,
-    place_kicad_board,
+    KiCadPanelCopy, KiCadPlacedFootprint, KiCadPlacerTuning, pad_exits_kicad_board,
+    pad_exits_override, place_kicad_board,
 };
 pub use labels::KiCadLabelReport;
 use pcb_kicad_place::{
@@ -143,9 +143,9 @@ mod run_diagnosis;
 mod silkscreen;
 mod verdict;
 pub use board_layout::{
-    KiCadBoardLayoutConfig, KiCadBoardLayoutMove, KiCadBoardLayoutResult, KiCadOutlineTrial,
-    KiCadRaceProbe, KiCadRaceProbeScore, KiCadRaceReport, KiCadSilkscreenConfig, KiCadSwappable,
-    layout_kicad_board, placement_check_config,
+    KiCadBoardLayoutConfig, KiCadBoardLayoutMove, KiCadBoardLayoutResult, KiCadLayoutTuning,
+    KiCadOutlineTrial, KiCadRaceProbe, KiCadRaceProbeScore, KiCadRaceReport, KiCadSilkscreenConfig,
+    KiCadSwappable, layout_kicad_board, placement_check_config,
 };
 pub use class_view::{
     KiCadClassLayer, KiCadClassLayers, KiCadClassRow, KiCadControlledImpedance, KiCadDesignerWidth,
