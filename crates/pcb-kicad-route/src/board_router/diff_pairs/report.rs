@@ -67,8 +67,8 @@ pub struct KiCadDiffPairs {
     /// run"). Their work is in `work_seconds`.
     #[serde(default, skip_serializing_if = "is_no_count")]
     pub stubs_routed: usize,
-    /// The fallback router's work (seconds of an idle machine), charged
-    /// to the ladder.
+    /// The fallback router's and the stub repair's work (seconds of an
+    /// idle machine), charged to the ladder.
     pub work_seconds: f64,
     /// The largest skew of a pair with a coupled link (its nets' lengths
     /// apart after the route, from the written copper: tracks, and vias at

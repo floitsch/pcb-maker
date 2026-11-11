@@ -1825,3 +1825,29 @@ fn a_failed_stub_is_pruned_through_its_via() {
     assert_eq!(route.segments.len(), 2);
     assert_eq!(route.vias.len(), 1);
 }
+
+/// The fallback adds its work to the report's, beside what the stub repair
+/// added before it (it set the report's, and the repair's work dropped
+/// out of the work charged to the ladder).
+#[test]
+fn the_fallbacks_work_adds_to_the_stub_repairs() {
+    let (mut board, config) = lowered();
+    plan_pairs(&mut board, &config);
+    let plan = plan_of(&board).unwrap();
+    let routed = core::route(&board, &core_config(&config));
+    let fallback_work = |before: f64| {
+        let mut result = routed.clone();
+        let mut finish = Finish::new(&plan, &board, &mut result, &config);
+        finish.report.work_seconds = before;
+        finish.open_pairs.insert(0);
+        finish.fall_back(&mut result, &BTreeSet::new());
+        finish.report.work_seconds
+    };
+    let alone = fallback_work(0.0);
+    assert!(alone > 0.0, "{alone}");
+    let after_repair = fallback_work(1.5);
+    assert!(
+        (after_repair - (1.5 + alone)).abs() < 1.0e-9,
+        "{after_repair} {alone}"
+    );
+}
