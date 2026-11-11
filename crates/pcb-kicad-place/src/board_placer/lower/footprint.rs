@@ -399,8 +399,23 @@ fn lower_pads(
         let boxes = pad_boxes(config, pad, footprint, pad_type, pad_at, at)?;
         let pad_box = boxes.pad;
         pads.own_pads.push(pad_box);
-        if boxes.keep_away > 0.0 {
-            pads.hole_rings.push(pad_box);
+        // Its mask opening on its own side, where its own margin reaches
+        // past the copper clearance: other parts' pads on that side keep
+        // the web plus their expansion from it at every level, as from a
+        // hole's ring (vaio_re's J1 again: U35 and C84 on the front sat
+        // inside its mounting hole's opening and bridged twice, the
+        // board-wide gap, `pad_mask_gap`, knowing nothing of the 1.625).
+        let own_mask = if sides.back { "B.Mask" } else { "F.Mask" };
+        let opening = mask_reach(
+            pad,
+            footprint,
+            own_mask,
+            context.board_mask_expansion,
+            context.mask_web,
+        ) - context.copper_clearance;
+        let grow = (opening - boxes.keep_away).max(0.0);
+        if boxes.keep_away > 0.0 || grow > 1.0e-9 {
+            pads.hole_rings.push(grown(pad_box, grow));
         }
         pads.pin_centers.push([pad_at[0], pad_at[1]]);
         let on_other_side = pad.child("layers").is_some_and(|layers| {
@@ -444,7 +459,7 @@ fn lower_pads(
             // socket on the front: its 2.3 mm mounting holes open the
             // mask 1.625 mm around on both sides, and a TSOT-23 and an
             // 0805 on the back under it bridged five times).
-            let reach = far_mask_reach(
+            let reach = mask_reach(
                 pad,
                 footprint,
                 other_mask,
@@ -452,13 +467,8 @@ fn lower_pads(
                 context.mask_web,
             ) - context.copper_clearance;
             if reach > boxes.keep_away + 1.0e-9 {
-                let grow = reach - boxes.keep_away;
-                pads.far_copper.push([
-                    pad_box[0] - grow,
-                    pad_box[1] - grow,
-                    pad_box[2] + grow,
-                    pad_box[3] + grow,
-                ]);
+                pads.far_copper
+                    .push(grown(pad_box, reach - boxes.keep_away));
             }
         }
         let Some(net) = node_net(pad)
@@ -945,17 +955,24 @@ pub(super) fn halo(config: &KiCadBoardPlacerConfig, reference: &str, pins: usize
     }
 }
 
-/// How far a pad's mask opening on the side `mask` (the side its part is
-/// not on) keeps other copper's openings there, from the pad's copper:
-/// its own expansion (its `solder_mask_margin`, else its footprint's)
+/// A box grown by `by` on every side.
+fn grown(b: [f64; 4], by: f64) -> [f64; 4] {
+    [b[0] - by, b[1] - by, b[2] + by, b[3] + by]
+}
+
+/// How far a pad's mask opening on the mask layer `mask` keeps other
+/// copper's openings there, from the pad's copper: its own expansion
 /// plus the other opening's (the board's `pad_to_mask_clearance`) plus
 /// the minimum web (KiCad 10.0.7's solder_mask_bridge: two openings
-/// closer than the web bridge their items). Zero for a pad that does not
-/// open the mask there, and for one without a margin of its own: the
-/// board's expansion and web alone (`pad_mask_gap`, which parts on one
-/// side keep) brought no far-side bridge in the 2026-10-27 sweep, and
+/// closer than the web bridge their items). The expansion is KiCad's
+/// (`PAD::GetSolderMaskExpansion`): the pad's `solder_mask_margin`, else
+/// its footprint's, else the board's, each replacing the next. Zero for
+/// a pad that does not open the mask there, and for one without a margin
+/// of its own or its footprint's: the board's expansion and web alone
+/// are `pad_mask_gap`, which parts on one side keep at KiCad's legality;
+/// on the far side they brought no bridge in the 2026-10-27 sweep, and
 /// would move every through-hole part on 20-odd boards.
-pub(super) fn far_mask_reach(
+pub(super) fn mask_reach(
     pad: &Expr,
     footprint: &Expr,
     mask: &str,

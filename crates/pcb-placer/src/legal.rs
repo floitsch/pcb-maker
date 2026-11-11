@@ -1448,7 +1448,7 @@ pub fn conflict_kind(
         } else if mine.copper_only || theirs.copper_only {
             "pads in a cutout or pad keepout"
         } else if pads_in_hole_rings(problem, index, pose, other, poses[other], &mut work) {
-            "pads in a hole's clearance"
+            "pads in a hole's clearance or a mask opening"
         } else if mine.hollow_for(theirs) || theirs.hollow_for(mine) {
             "shaped or hollow boxes"
         } else if overlaps(

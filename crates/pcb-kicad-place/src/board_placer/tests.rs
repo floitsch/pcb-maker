@@ -1901,6 +1901,80 @@ fn a_holes_own_mask_margin_keeps_far_side_pads_out_of_its_opening() {
 }
 
 #[test]
+fn a_pads_own_mask_margin_keeps_same_side_pads_out_of_its_opening() {
+    // vaio_re's J1 on the same side: U35 and C84 on the front sat inside
+    // its mounting hole's opening (1.15 mm hole radius plus its 1.625 mm
+    // margin) and KiCad 10.0.7 bridged them ("NPTH pad of J1 || Pad 5 of
+    // U35"); the board-wide gap knew nothing of the pad's margin. KiCad's
+    // order: the pad's margin, else the footprint's, else the board's.
+    let lowered = |pad_margin: &str, footprint_margin: &str| {
+        let pcb = parse(&format!(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+            (setup (pad_to_mask_clearance 0.05) (solder_mask_min_width 0.1))
+            (gr_rect (start 0 0) (end 60 30) (layer "Edge.Cuts"))
+            (footprint "Socket" (layer "F.Cu") (at 20 15) (attr through_hole)
+                (property "Reference" "J1")
+                {footprint_margin}
+                (fp_rect (start -1.2 -1.2) (end 1.2 1.2) (layer "F.CrtYd"))
+                (pad "" np_thru_hole circle (at 0 0) (size 2.3 2.3) (drill 2.3) (layers "*.Cu" "*.Mask") {pad_margin}))
+            (footprint "Reg" (layer "F.Cu") (at 50 15)
+                (property "Reference" "U1")
+                (fp_rect (start -1.6 -0.6) (end 1.6 0.6) (layer "F.CrtYd"))
+                (pad "1" smd rect (at -1 0) (size 0.6 0.6) (layers "F.Cu" "F.Mask") (net 1 "A"))
+                (pad "2" smd rect (at 1 0) (size 0.6 0.6) (layers "F.Cu" "F.Mask") (net 2 "B"))))"#
+        ))
+        .unwrap();
+        let config = KiCadBoardPlacerConfig {
+            fixed: vec!["J1".to_string()],
+            ..KiCadBoardPlacerConfig::default()
+        };
+        lower_placement(&pcb, &config).unwrap()
+    };
+    let index = |lowered: &LoweredPlacement, name: &str| {
+        lowered
+            .problem
+            .components
+            .iter()
+            .position(|component| component.name == name)
+            .unwrap()
+    };
+    let ring = |lowered: &LoweredPlacement| {
+        lowered.problem.components[index(lowered, "J1")]
+            .hole_rings
+            .iter()
+            .map(|ring| ring[2])
+            .fold(0.0, f64::max)
+    };
+    // The opening's reach less the copper clearance the ring test adds:
+    // 1.15 + 1.625 (its own) + 0.05 (the other pad's) + 0.1 (the web)
+    // - 0.2.
+    let with = lowered("(solder_mask_margin 1.625)", "");
+    assert!((ring(&with) - 2.725).abs() < 1.0e-9, "{}", ring(&with));
+    // The footprint's margin where the pad has none; the pad's first.
+    let footprint = lowered("", "(solder_mask_margin 1.625)");
+    assert!((ring(&footprint) - 2.725).abs() < 1.0e-9);
+    let pad_first = lowered("(solder_mask_margin 0)", "(solder_mask_margin 1.625)");
+    let without = lowered("", "");
+    assert!(ring(&pad_first) < 1.5 && ring(&without) < 1.5);
+    let legal_at = |lowered: &LoweredPlacement, x: f64| {
+        let part = index(lowered, "U1");
+        let mut poses = lowered.problem.poses.clone();
+        poses[part].position = [x, 15.0];
+        !core::legal::illegal_components(&lowered.problem, &poses).contains(&part)
+    };
+    // U1 at 24.05: its body and halo 0.6 mm from J1's body, its near pad
+    // 2.75 mm from the hole's centre, past the copper clearance and
+    // inside the opening (2.925 mm).
+    for lowered in [&with, &footprint] {
+        assert!(!legal_at(lowered, 24.05));
+    }
+    assert!(legal_at(&without, 24.05));
+    assert!(legal_at(&pad_first, 24.05));
+    // 0.3 mm beyond the opening.
+    assert!(legal_at(&with, 20.0 + 2.925 + 0.3 + 1.3));
+}
+
+#[test]
 fn a_parts_copper_graphics_keep_the_edge_margin_from_a_cutout() {
     // osprey's AE1, a PCB antenna: its meander is a B.Cu polygon beyond
     // its pads, and the placement put it over the battery cutout's edge

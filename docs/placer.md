@@ -159,6 +159,18 @@ change the board before it is lowered.
   out. Board copper graphics are obstacles; a footprint's own copper and
   mask graphics are part of its body (`tuning.mask_openings`, on: an RF module's
   mask opening once took parts whose pads KiCad flagged as mask bridges).
+- **Mask openings of pads.** Two pads' openings must keep the mask's
+  least web apart (KiCad's solder_mask_bridge), each opening its pad's
+  expansion wide: the pad's `solder_mask_margin`, else its footprint's,
+  else the board's `pad_to_mask_clearance`, each replacing the next
+  (KiCad's order). The board's alone is `pad_mask_gap`, which pads keep
+  at KiCad's legality. A pad whose own margin (or its footprint's)
+  reaches past the copper clearance keeps other parts' pads its opening
+  plus their expansion plus the web away at every level, on its side (a
+  ring, `Component::hole_rings`) and on the far side where it opens the
+  mask there (`far_copper`); `mask_reach` in `lower/footprint.rs`.
+  vaio_re's J1 opens the mask 1.625 mm around its mounting holes: parts
+  on both sides sat in the opening and bridged.
 - **Footprints without a courtyard.** Two such parts keep the boxes of
   their pads and outlines apart (`Component::courtless`) unless one is at
   most a quarter of the other (a diode under its key switch); against a

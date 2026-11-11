@@ -125,7 +125,7 @@ pub(super) struct LowerContext<'a> {
     /// How far a mask opening reaches beyond the bodies' spacing
     /// (`mask_opening_growth`).
     pub mask_growth: f64,
-    /// The board's mask expansion and minimum web (`far_mask_reach`).
+    /// The board's mask expansion and minimum web (`mask_reach`).
     pub board_mask_expansion: f64,
     pub mask_web: f64,
     pub copper_clearance: f64,
@@ -154,9 +154,9 @@ impl<'a> LowerContext<'a> {
             _ => (copper_layers - 2) as f64,
         };
         let mask_growth = mask_opening_growth(pcb, config);
-        // The board's mask expansion and minimum web: a pad's mask opening on
-        // the side its part is not on keeps other parts' openings the web
-        // apart there (`far_mask_reach`).
+        // The board's mask expansion and minimum web: a pad's mask opening
+        // with a margin of its own keeps other parts' openings the web apart
+        // on both sides (`mask_reach`).
         let mask_setup = |key: &str| {
             pcb.child("setup")
                 .and_then(|setup| form_f64(setup, key, 1).ok())
