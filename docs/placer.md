@@ -506,7 +506,8 @@ sides (`inflate`, 1), the rotations prefer dense sides facing free space
 within `turn_tolerance` (5 %) of the best wirelength, and the legaliser
 and refinement pay `weight` (2 mm) per track of overflow. In a layout the
 refinement corrects the estimate by the global route's overflow per part
-(`measured`, every 20 kept moves; `board_placer/guidance.rs`).
+(`measured`, every 20 kept moves; `board_placer/measured.rs`,
+[global-route.md](global-route.md)).
 
 Guard: where at least `fixed_share` (0.6) of the footprints are held,
 escape demand is not applied. On such boards the movable parts are mostly
@@ -659,7 +660,7 @@ route). The layout (`layout_kicad_board`, `board_layout.rs`) races:
    per 16 x 16-node router tile above a quarter of the tile's free
    capacity. With `rank_seeds` the order sums the RUDY and crossings ranks;
    placements at the courtyard level or on marks go last. `"none"` races
-   plain seeds; `"global"` (an experiment) scores the global route.
+   plain seeds.
 3. **Probes**: the best `congestion_probes` (3) are routed side by side
    for the router's `probe_seconds` (75 s of work), all charged to the
    clock; the kept placement's probe starts its first route. To leave the
@@ -868,9 +869,10 @@ Objective terms:
   +4.2 % at stage 1; rows bought with wire and crossings.
 - The crossings weight scaled by layer count (`per_layer`, October): lost
   a strict pass, dense rows moved both ways.
-- The global route inside the anneal (`global_guidance`, an experiment,
-  October): its gain was undone by the legaliser and refinement; see
-  [global-route.md](global-route.md).
+- The global route inside the anneal and the coupled loop's moves
+  (`global_guidance`, October): the dense boards 1179 to 1132 unconnected
+  but within the seed noise, a short-tier strict pass lost; removed
+  2026-11-11.
 - The move descent after the first route (`move_descent`: single parts
   nudged, turned or swapped where the incremental global route and a
   local reroute said fewer terminals stay open): the dense boards 973 to

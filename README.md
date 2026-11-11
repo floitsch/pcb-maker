@@ -369,7 +369,7 @@ benchmarks/github/freerouting.py build/freerouting --ours      # both routers, h
 | `benchmarks/github` | the harvested open-source boards: harvest, manifest, Freerouting comparison |
 | `benchmarks/pcbench` | 617 open-source boards (PCBench through PCBWorld's D3 preparation): fetch, manifest, runner, triage |
 | `benchmarks/agent-tasks` | layout tasks as an agent poses them: stacked parts, constraints, a finished board |
-| `crates/pcb-global` | a coarse tile-graph global router; used only by opt-in experiments and research commands |
+| `crates/pcb-global` | a coarse tile-graph global router; the placer measures escape demand with it |
 | `docs/` | design notes and results; [the hand-over](docs/handover.md) (current state, open problems, how to work on it) and [the architecture](docs/architecture.md) (where each stage lives in the code) |
 | `skills/pcb-maker` | the agent skill (`SKILL.md`): the short form of docs/agents.md for agent CLIs; tests/cli_exit_codes.rs checks it against the command table and the exit codes |
 | `scripts/` | `worktree.sh`, `check.sh` (the test set), `snapshot.sh`, `release.sh` (the `snapshot` release by hand), `check_links.py` |

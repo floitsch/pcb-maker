@@ -995,3 +995,6 @@ code is in git history.
   on 75 s probes) as the race's pre-ranker: no better than RUDY among seeds
   of one board, because the probe it learns from is itself noisy (two
   probes agree at about 0.44).
+- The coarse global route's soft overflow as the race's pre-ranker (the
+  congestion score `global`): the dense boards 1096 to 1140 KiCad
+  unconnected against RUDY; removed 2026-11-11.

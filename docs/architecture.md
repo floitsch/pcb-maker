@@ -14,17 +14,17 @@ problems in [handover.md](handover.md).
 
 | Crate | Owns | Depends on |
 | --- | --- | --- |
-| `src/` (the `pcb-maker` binary) | The command line. `agent_cli.rs` is the agent contract: `AGENT_COMMANDS`, the input checks, the exit codes, `verdict.json`; `agent_cli/free_dimension.rs` runs a layout at several sizes of one edge as child processes. `main.rs` dispatches through its `COMMANDS` table and prints the help (`ENVIRONMENT_HELP`); `kicad_commands.rs` and `lab_commands.rs` hold the research and utility commands it runs. | pcb-kicad, pcb-kicad-import, pcb-kicad-lab, pcb-global |
+| `src/` (the `pcb-maker` binary) | The command line. `agent_cli.rs` is the agent contract: `AGENT_COMMANDS`, the input checks, the exit codes, `verdict.json`; `agent_cli/free_dimension.rs` runs a layout at several sizes of one edge as child processes. `main.rs` dispatches through its `COMMANDS` table and prints the help (`ENVIRONMENT_HELP`); `kicad_commands.rs` and `lab_commands.rs` hold the research and utility commands it runs. | pcb-kicad, pcb-kicad-import, pcb-kicad-lab |
 | `crates/pcb-kicad-lab` | The measurement tools the research commands run (below). | pcb-kicad and the crates below it |
 | `crates/pcb-kicad` | The top of the KiCad side: `layout-kicad-board` (`board_layout`, `congestion_rank`, `free_dimension`), the verdict (`verdict`) and the other commands' reports and outputs (`describe`, `class_view`, `run_diagnosis`, `silkscreen`, `fab_export`, `fab_release`). Its `lib.rs` re-exports what the binary uses of the crates below, so `src/` reads one API. | pcb-kicad-place, pcb-kicad-route, pcb-kicad-check, pcb-kicad-file |
 | `crates/pcb-kicad-import` | `import-kicad-netlist` and the starters it writes. Beside pcb-kicad: neither uses the other. | pcb-kicad-place, pcb-kicad-route, pcb-kicad-check, pcb-kicad-file |
 | `crates/pcb-kicad-place` | A board placed: the lowering to the placer's problem, `place_kicad_board` and its seed race, placement constraints, panels, sub-boards, labels. | pcb-kicad-route, pcb-kicad-check, pcb-kicad-file, pcb-placer, pcb-router, pcb-global |
-| `crates/pcb-kicad-route` | A board routed: the project's rules, the lowering to the router's problem, `route_kicad_board` and its ladder, pairs, lengths, fan-outs, pours, necks, pin swaps, and `quality`. | pcb-kicad-check, pcb-kicad-file, pcb-router, pcb-placer, pcb-global, pcb-topo |
+| `crates/pcb-kicad-route` | A board routed: the project's rules, the lowering to the router's problem, `route_kicad_board` and its ladder, pairs, lengths, fan-outs, pours, necks, pin swaps, and `quality`. | pcb-kicad-check, pcb-kicad-file, pcb-router, pcb-placer, pcb-topo |
 | `crates/pcb-kicad-check` | KiCad's own checks: kicad-cli runs with a library-free configuration, the DRC cache, the reports read, a routed result's verification; and the machine: the memory ledger, `/proc` memory, the work rate. | pcb-kicad-file |
 | `crates/pcb-kicad-file` | KiCad's files as data: the S-expression tree, canonical order, nets, pad and outline geometry, the outline's pieces, copper written back, statistics, file utilities, the exit codes and the errors that are the input's. | pcb-router, pcb-placer (types only) |
 | `crates/pcb-router` | A format-free, in-memory whole-board router: `Board` (nets, terminals, obstacles, planes, rules, via spans) in, `RoutingResult` out. The lattice and its static maps, the pour model, the search, PathFinder negotiation, the repairs, the polish and an exact copper verifier (`verify`). `Router` keeps its state between calls (`new`, `run`, `probe`, `resume`, `update`, `reroute`), which the layout's race and moves use. | none |
 | `crates/pcb-placer` | A format-free placer: `Problem` (components, pins, nets, constraints) in, `Placement` (poses, legality, the constraints' status) out, through `place`. | none |
-| `crates/pcb-global` | A coarse tile-graph global router (capacities per tile boundary, PathFinder on tiles, corridors per net). Not on the default path: the placer's global guidance and research commands use it. | pcb-router |
+| `crates/pcb-global` | A coarse tile-graph global router (capacities per tile boundary, PathFinder on tiles), the placer's measure: the measured escape demand (`Incremental`, on by default) and two research commands use it. | pcb-router |
 | `crates/pcb-topo` | A TopoR-style topological router (a constrained Delaunay mesh, crossings resolved topologically, taut geometry) and `tighten`, which pulls any router's copper taut. Only with the router settings `engine: "topological"` or `tighten: true`. | pcb-router |
 | `tools/config-reference` | Generates [config-reference.md](config-reference.md) and the environment index at the end of [handover.md](handover.md) from the settings structs and every `PCB_*` name in the sources; `tests/config_reference.rs` fails while either is stale. | pcb-kicad, pcb-placer, pcb-router |
 
@@ -82,8 +82,8 @@ compiler holds it.
   - `board_placer/`: the lowering (`lower/`, with `courtyards.rs`,
     `rules.rs`), `place/` (`place_kicad_board`) and `seed_race.rs`,
     `panel` (panels of copies), `skeleton`, `decoupling`, `edges`,
-    `pair_rows`, `marks`, `exits`, `guidance`, `result.rs`, and
-    `trace.rs` (measurement only). The footprint bodies it places are
+    `pair_rows`, `marks`, `exits`, `measured` (the escape demand's global
+    route), `result.rs`, and `trace.rs` (measurement only). The footprint bodies it places are
     pcb-kicad-file's `footprint_bodies`, which `quality` and the router's
     pour plan read too.
   - `placement_constraints/` (constraints.json), `placement_room`,
@@ -99,8 +99,9 @@ compiler holds it.
   `board_footprints`, `constraints_template`, `key_matrix`.
 - **pcb-kicad-lab** (`crates/pcb-kicad-lab/src/`), reached from research
   commands and not from the agent commands: `coarse_probe`,
-  `trouble_probe`, `global_route`, `placement_ablation`, `shrink`,
-  `footprint_links`, `legality`.
+  `trouble_probe`, `placement_ablation`, `shrink`, `footprint_links`,
+  `legality`, and `lowering` (the placed board as the layout routes it,
+  which they share).
 
 ## `layout-kicad-board`
 
@@ -249,9 +250,6 @@ held skeleton; `constraints.rs` holds the hard and soft constraints;
 
 - **The topological engine** (`engine: "topological"`, pcb-topo) and
   `tighten`.
-- **Global guidance** (`global_guidance`, board_placer/guidance.rs and
-  pcb-placer guidance.rs): the global route's overflow in the anneal and
-  in the layout's moves.
 - **Pad exits** (`pad_exits`, pcb-placer exits.rs, board_placer/exits.rs,
   pcb-router router/pad_exits.rs), **pair rows** (`pair_rows`,
   board_placer/pair_rows.rs, pcb-placer facing.rs), **length minima**
@@ -261,6 +259,8 @@ held skeleton; `constraints.rs` holds the hard and soft constraints;
 Removed on 2026-11-10, each lost or null under its measurement: the move
 descent (`move_descent`), bus bundles (`bus_bundles`), the router's
 global plan (`global_routing`) and fixed escape stubs (`escape_stub_mm`);
+on 2026-11-11 the global route as the race's pre-ranker
+(`congestion_score: "global"`) and global guidance (`global_guidance`);
 git history has the code.
 
 ## Where things happen
