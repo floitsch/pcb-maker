@@ -136,9 +136,8 @@ an off switch; a fresh-agent trial every few days.
    module, which `keep_in_modules` fixes (22 to 2 open by the median of
    nine seeds; placer.md, "Modules of one board"). Pinning the designer's
    non-passive parts (about a quarter of the movable parts) recovers most
-   of the designer's
-   first-route advantage, and our objective accepts that arrangement: the
-   search does not reach it. Two losses:
+   of the designer's first-route advantage, and our objective accepts that
+   arrangement: the search does not reach it. Two losses:
    - *The coarse arrangement* is decided by the global placement. Its
      quadratic start from the netlist, the race over skeletons and the
      glued bus banks each moved it nearer the designer's. Open: the
