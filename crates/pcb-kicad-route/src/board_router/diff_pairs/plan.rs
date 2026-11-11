@@ -349,7 +349,7 @@ fn merge_linked_terminals(
 /// Whether a route with `config` plans the pairs (`plan_pairs`): the
 /// router's `diff_pairs` on, and not the topological engine.
 pub fn pairs_planned(config: &KiCadBoardRouterConfig) -> bool {
-    config.diff_pairs_on() && config.engine.as_deref() != Some("topological")
+    config.diff_pairs_on() && config.tuning.engine.as_deref() != Some("topological")
 }
 
 /// The modelled work of the pairs' plan on `board` (`plan_pairs`), zero

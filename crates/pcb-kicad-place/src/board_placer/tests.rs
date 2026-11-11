@@ -355,7 +355,10 @@ fn a_part_that_would_sit_under_a_board_label_is_placed_beside_it() {
     for keep in [true, false] {
         let config = KiCadBoardPlacerConfig {
             keep_board_marks: keep,
-            placement_seeds: 1,
+            tuning: KiCadPlacerTuning {
+                placement_seeds: 1,
+                ..Default::default()
+            },
             ..KiCadBoardPlacerConfig::default()
         };
         let output = root.join(format!("placed-{keep}"));
@@ -476,8 +479,11 @@ fn board_marks_give_way_when_nothing_else_seats_a_part() {
     fs::create_dir_all(&source).unwrap();
     fs::write(source.join("board.kicad_pcb"), board).unwrap();
     let config = KiCadBoardPlacerConfig {
-        placement_seeds: 1,
         free: vec!["R1".into()],
+        tuning: KiCadPlacerTuning {
+            placement_seeds: 1,
+            ..Default::default()
+        },
         ..KiCadBoardPlacerConfig::default()
     };
     let result = place_kicad_board(&source, "board", &root.join("placed"), &config).unwrap();
@@ -804,7 +810,10 @@ fn copies_of_a_tabbed_panel_keep_their_parts() {
     );
     // Switched off, or a single copy, or copies whose nets join: none.
     let off = KiCadBoardPlacerConfig {
-        keep_copies: false,
+        tuning: KiCadPlacerTuning {
+            keep_copies: false,
+            ..Default::default()
+        },
         ..KiCadBoardPlacerConfig::default()
     };
     assert!(
@@ -1041,7 +1050,10 @@ fn a_fixed_parts_mask_opening_keeps_other_parts_pads_out() {
     let off = lower_placement(
         &pcb,
         &KiCadBoardPlacerConfig {
-            mask_openings: false,
+            tuning: KiCadPlacerTuning {
+                mask_openings: false,
+                ..config.tuning.clone()
+            },
             ..config.clone()
         },
     )
@@ -1240,7 +1252,10 @@ fn a_courtyard_less_quad_blocks_inside_its_pad_ring() {
         "the body fills the pad ring"
     );
     let off = KiCadBoardPlacerConfig {
-        solid_pin_rows: false,
+        tuning: KiCadPlacerTuning {
+            solid_pin_rows: false,
+            ..Default::default()
+        },
         ..KiCadBoardPlacerConfig::default()
     };
     assert!(inside(&off), "off: only the pads block");
@@ -1284,7 +1299,10 @@ fn a_header_without_a_courtyard_keeps_parts_from_between_its_rows() {
     // Off, the two headers' bodies without courtyards (their pads' box)
     // still may not overlap (2026-11-04: `Component::courtless`).
     assert!(!interleaved(&KiCadBoardPlacerConfig {
-        solid_pin_rows: false,
+        tuning: KiCadPlacerTuning {
+            solid_pin_rows: false,
+            ..Default::default()
+        },
         ..KiCadBoardPlacerConfig::default()
     }));
 }
@@ -1573,7 +1591,10 @@ mod order_tests {
         let root =
             std::env::temp_dir().join(format!("pcb-maker-order-{}-{nonce}", std::process::id()));
         let config = KiCadBoardPlacerConfig {
-            placement_seeds: 2,
+            tuning: KiCadPlacerTuning {
+                placement_seeds: 2,
+                ..Default::default()
+            },
             ..KiCadBoardPlacerConfig::default()
         };
         let mut placed = Vec::new();
@@ -1985,8 +2006,11 @@ fn far_side_config(rules: Option<KiCadBoardRouterConfig>) -> KiCadBoardPlacerCon
     KiCadBoardPlacerConfig {
         copper_clearance_mm: Some(0.1),
         hole_clearance_mm: Some(0.1),
-        grid_mm: 0.1,
         router_rules: rules.map(std::sync::Arc::new),
+        tuning: KiCadPlacerTuning {
+            grid_mm: 0.1,
+            ..Default::default()
+        },
         ..KiCadBoardPlacerConfig::default()
     }
 }
@@ -2044,7 +2068,7 @@ fn a_part_on_the_far_side_of_an_admitted_bgas_via_in_pad_is_illegal_and_moves() 
     assert_eq!(poses[bga], problem.poses[bga]);
     // The switch off: the same problem as without the rules.
     let mut off = far_side_config(Some(far_side_rules(true)));
-    off.via_in_pad_far_side = false;
+    off.tuning.via_in_pad_far_side = false;
     let off = lower_placement(&pcb, &off).unwrap();
     let none = lower_placement(&pcb, &far_side_config(None)).unwrap();
     assert_eq!(format!("{:?}", off.problem), format!("{:?}", none.problem));
@@ -2537,7 +2561,10 @@ fn the_room_around_a_grid_array_keeps_its_bands_and_lets_only_its_decoupling_und
     // No routing halos: the bodies' own gaps (the 0.5 mm spacing).
     let config = |on: bool| KiCadBoardPlacerConfig {
         bga_room: on,
-        halo_scale: 0.0,
+        tuning: KiCadPlacerTuning {
+            halo_scale: 0.0,
+            ..far_side_config(Some(array_room_rules())).tuning.clone()
+        },
         ..far_side_config(Some(array_room_rules()))
     };
     let off = lower_placement(&pcb, &config(false)).unwrap();
@@ -2734,7 +2761,10 @@ fn a_pair_row_faces_its_pairs_two_ends() {
     fs::write(source.join("board.kicad_pcb"), board).unwrap();
     let config = KiCadBoardPlacerConfig {
         pair_rows: Some(true),
-        placement_seeds: 1,
+        tuning: KiCadPlacerTuning {
+            placement_seeds: 1,
+            ..Default::default()
+        },
         ..KiCadBoardPlacerConfig::default()
     };
     let output = root.join("placed");
@@ -2990,4 +3020,18 @@ fn the_start_reads_the_designers_poses_and_the_trace_is_well_formed() {
     assert!(last[2].as_f64().unwrap() >= 0.0);
     assert!(seed["skeleton"].is_null());
     let _ = fs::remove_dir_all(&root);
+}
+
+/// Every placer setting that moved into `tuning`, refused at the top level
+/// with its new place, read there, written back as read; in a layout's
+/// `placer` too.
+#[test]
+fn the_placer_settings_tuning_group_holds_every_moved_key() {
+    use pcb_kicad_route::settings::{FieldNames, check_tuning_group, field_names};
+    let mut top: &'static [&'static str] = &[];
+    let _ = KiCadBoardPlacerConfig::deserialize(FieldNames(&mut top));
+    assert!(top.contains(&"fixed") && top.contains(&"tuning"), "{top:?}");
+    let tuning = field_names::<KiCadPlacerTuning>();
+    let checked = check_tuning_group::<KiCadBoardPlacerConfig>("placer", top, tuning, &[]).unwrap();
+    assert_eq!((checked.len(), tuning.len()), (23, 23));
 }

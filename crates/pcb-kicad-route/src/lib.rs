@@ -48,6 +48,7 @@ pub mod net_classes;
 pub mod pin_swap;
 pub mod project_rules;
 pub mod quality;
+pub mod settings;
 
 // What the route flow reads from below without a path.
 use pcb_kicad_check::drc_cache::drc_cache_counts;
@@ -59,8 +60,8 @@ pub use board_router::{
     KiCadBoardRouterConfig, KiCadBoardRouterNet, KiCadBoardRouterResult, KiCadBoardRouterViolation,
     KiCadClosedPads, KiCadDiffPair, KiCadDiffPairRule, KiCadDiffPairs, KiCadExistingTracks,
     KiCadKeepWhole, KiCadKeptCopper, KiCadNetLength, KiCadPourMode, KiCadPourQuality,
-    KiCadViaInPad, KiCadViaInPadEntry, KiCadViaInPadFootprint, KiCadViaInPadReport,
-    KiCadViaSpanEntry, admit_length_rule_layers, admit_reference_via_spans,
+    KiCadRouterTuning, KiCadViaInPad, KiCadViaInPadEntry, KiCadViaInPadFootprint,
+    KiCadViaInPadReport, KiCadViaSpanEntry, admit_length_rule_layers, admit_reference_via_spans,
     admit_reference_vias_in_pads, blind_vias_override, dump_kicad_pour_map,
     keep_whole_input_warnings, measure_pours, route_kicad_board, write_kicad_board_without_tracks,
     write_kicad_board_without_tracks_except,

@@ -262,7 +262,7 @@ pub(super) fn route_kicad_board_lowered(
                 ..
             } = lower(&pcb, config, connect_pours)?;
             let kept = keep_existing_copper(&mut board, false);
-            if config.diff_pairs_on() && config.engine.as_deref() != Some("topological") {
+            if config.diff_pairs_on() && config.tuning.engine.as_deref() != Some("topological") {
                 plan_pairs(&mut board, config);
             }
             (board, lowering_work_of(expressions), kept)
@@ -273,22 +273,22 @@ pub(super) fn route_kicad_board_lowered(
     let routing_started = std::time::Instant::now();
     // The router's lattice maps, for sizing routers side by side.
     let mut maps_mb = 0.0;
-    let result = match &config.frame_directory {
-        _ if config.engine.as_deref() == Some("topological") => {
+    let result = match &config.tuning.frame_directory {
+        _ if config.tuning.engine.as_deref() == Some("topological") => {
             let mut topological = pcb_topo::Config {
-                iterations: config.topological_rounds.unwrap_or(30),
-                seed: config.first_seed.unwrap_or(1).max(1),
+                iterations: config.tuning.topological_rounds.unwrap_or(30),
+                seed: config.tuning.first_seed.unwrap_or(1).max(1),
                 verbose: true,
                 ..pcb_topo::Config::default()
             };
-            config.topological.apply(&mut topological);
+            config.tuning.topological.apply(&mut topological);
             pcb_topo::route(&board, &topological)
         }
-        None if config.seeds.unwrap_or(1) > 1 || config.first_seed.unwrap_or(0) > 0 => {
+        None if config.seeds.unwrap_or(1) > 1 || config.tuning.first_seed.unwrap_or(0) > 0 => {
             let (result, maps) = route_seeds(
                 &board,
                 &core_config(config),
-                config.first_seed.unwrap_or(0),
+                config.tuning.first_seed.unwrap_or(0),
                 config.seeds.unwrap_or(1),
                 config.seeds_side_by_side.unwrap_or(usize::MAX),
             );
@@ -439,7 +439,7 @@ pub(super) fn write_attempt(
         );
     }
     let mut result = result;
-    if config.tighten && config.engine.as_deref() != Some("topological") {
+    if config.tuning.tighten && config.tuning.engine.as_deref() != Some("topological") {
         let tightening = std::time::Instant::now();
         let (routes, report) = pcb_topo::tighten::tighten(board, &result.routes);
         eprintln!(

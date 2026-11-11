@@ -144,17 +144,17 @@ pub(super) fn try_moves(
             break;
         }
         ctx.arm(&mut routing.router, ledger.clock());
-        if routing.best.0 == 0 && trials.since_improvement >= config.patience {
+        if routing.best.0 == 0 && trials.since_improvement >= config.tuning.patience {
             break;
         }
         let budget = if routing.best.0 == 0 {
-            config.move_seconds.min(config.polish_seconds)
+            config.tuning.move_seconds.min(config.polish_seconds)
         } else {
-            config.move_seconds
+            config.tuning.move_seconds
         }
         .min((0.65 * config.total_seconds - move_work_started).max(0.0));
-        if trials.since_improvement >= 2 * config.patience
-            || (routing.best.0 > 0 && trials.since_fewer_open >= config.patience / 2)
+        if trials.since_improvement >= 2 * config.tuning.patience
+            || (routing.best.0 > 0 && trials.since_fewer_open >= config.tuning.patience / 2)
             || ledger.work - move_work_started > budget
             || routing.router.past_deadline()
         {
@@ -169,7 +169,12 @@ pub(super) fn try_moves(
         ) else {
             break;
         };
-        let candidates = candidate_poses(&kept.problem, index, &config.steps_mm, &routing.result);
+        let candidates = candidate_poses(
+            &kept.problem,
+            index,
+            &config.tuning.steps_mm,
+            &routing.result,
+        );
         if candidates.is_empty() {
             trials.since_improvement += 1;
             continue;

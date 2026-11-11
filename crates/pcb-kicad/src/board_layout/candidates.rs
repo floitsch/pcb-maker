@@ -153,9 +153,10 @@ pub(super) fn digest(
 /// `congestion_probes`; at least one.
 pub(super) fn race_probes(config: &KiCadBoardLayoutConfig) -> usize {
     config
+        .tuning
         .race_probe
         .as_ref()
-        .map_or(config.congestion_probes, |probe| probe.seeds)
+        .map_or(config.tuning.congestion_probes, |probe| probe.seeds)
         .max(1)
 }
 
@@ -213,7 +214,7 @@ pub(super) fn pre_rank(
     let keep: Vec<usize> = order.iter().copied().take(probes).collect();
     eprintln!(
         "placement pre-ranking ({}): {} placements scored in {:.2} s (lowering {:.2} s, scoring {:.2} s); probing {:?} (scores {:?})",
-        config.congestion_score,
+        config.tuning.congestion_score,
         pool.len(),
         ranked.seconds,
         ranked.lower_seconds,
@@ -253,6 +254,7 @@ fn seed_crossings(
     pool: &[OtherPlacement],
 ) -> Option<Vec<u64>> {
     placer_config
+        .tuning
         .ratsnest_crossings
         .as_ref()
         .filter(|crossings| crossings.rank_seeds)
@@ -326,7 +328,7 @@ pub(super) fn limit_race(
     no_pin_swaps: bool,
 ) {
     let config = ctx.config;
-    if config.race_probe.is_some() {
+    if config.tuning.race_probe.is_some() {
         // Without a pre-ranking all seeds' placements would race: the
         // probe takes the first `probes` (the kept one, then seed order).
         let probes = race_probes(config);
@@ -345,7 +347,7 @@ pub(super) fn limit_race(
     // ran and a gate dropped every one judged past 40 % of the budget,
     // uncharged: the race kept the placer's pick on the boards whose
     // placement takes its whole share.)
-    if config.race_probe.is_none()
+    if config.tuning.race_probe.is_none()
         && ctx.seeds == 1
         && no_pin_swaps
         && !candidates.others.is_empty()

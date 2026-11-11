@@ -100,15 +100,11 @@ mod pour_request_tests {
             ..KiCadBoardRouterConfig::default()
         };
         assert_eq!(exclusive(&all), vec![1, 2, 3, 4]);
-        let two = KiCadBoardRouterConfig {
-            exclusive_layers: Some(2),
-            ..all.clone()
-        };
+        let mut two = all.clone();
+        two.tuning.exclusive_layers = Some(2);
         assert_eq!(exclusive(&two), vec![1, 4]);
-        let one = KiCadBoardRouterConfig {
-            exclusive_layers: Some(1),
-            ..all.clone()
-        };
+        let mut one = all.clone();
+        one.tuning.exclusive_layers = Some(1);
         assert_eq!(exclusive(&one), vec![1]);
     }
 
@@ -932,10 +928,8 @@ mod pour_request_tests {
             .map(|index| index as core::NetId);
         assert_eq!(openings(&board)[0].0, net_b);
         // Off: the pad is nothing to the router.
-        let off = KiCadBoardRouterConfig {
-            mask_only_pad_openings: Some(false),
-            ..KiCadBoardRouterConfig::default()
-        };
+        let mut off = KiCadBoardRouterConfig::default();
+        off.tuning.mask_only_pad_openings = Some(false);
         assert!(openings(&lowered("", off)).is_empty());
     }
 
@@ -2231,12 +2225,12 @@ mod rule_layer_tests {
     fn a_layers(config: &KiCadBoardRouterConfig, rung: Rung) -> core::LayerMask {
         let pcb = parse(BOARD).unwrap();
         let (connect, skeleton, exclusive, stubs) = rung;
-        let attempt = KiCadBoardRouterConfig {
-            plane_skeleton: Some(skeleton),
+        let mut attempt = KiCadBoardRouterConfig {
             exclusive_planes: Some(exclusive),
-            fixed_plane_stubs: Some(stubs),
             ..config.clone()
         };
+        attempt.tuning.plane_skeleton = Some(skeleton);
+        attempt.tuning.fixed_plane_stubs = Some(stubs);
         let board = lower(&pcb, &attempt, connect).unwrap().board;
         let net = board.nets.iter().position(|net| net.name == "A").unwrap();
         let routed = core::route(&board, &core_config(&attempt));
@@ -4762,4 +4756,31 @@ fn a_board_of_many_zones_scores_in_seconds() {
     eprintln!("scored in {seconds:.2} s");
     // Generous for a loaded machine (about a second unloaded).
     assert!(seconds < 15.0, "scored in {seconds:.1} s");
+}
+
+mod tuning_group_tests {
+    use super::*;
+    use crate::settings::{FieldNames, check_tuning_group, field_names};
+
+    /// Every router setting that moved into `tuning`, refused at the top
+    /// level with its new place, read there, written back as read.
+    #[test]
+    fn the_router_settings_tuning_group_holds_every_moved_key() {
+        let mut top: &'static [&'static str] = &[];
+        let _ = KiCadBoardRouterConfig::deserialize(FieldNames(&mut top));
+        assert!(top.contains(&"seeds") && top.contains(&"tuning"), "{top:?}");
+        let tuning = field_names::<KiCadRouterTuning>();
+        let checked =
+            check_tuning_group::<KiCadBoardRouterConfig>("router", top, tuning, ROUTER_RENAMED)
+                .unwrap();
+        assert_eq!(checked.len(), tuning.len());
+        assert_eq!(tuning.len(), 43);
+        // The core section: the core's own fields, set where given.
+        let mut config = KiCadBoardRouterConfig::default();
+        config.tuning.via_cost = Some(3.0);
+        config.tuning.pitches = Some(vec![0.05]);
+        let core = core_config(&config);
+        assert_eq!((core.via_cost, core.pitches), (3.0, vec![0.05]));
+        assert_eq!(KiCadRouterTuning::CORE.len(), 27);
+    }
 }

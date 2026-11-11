@@ -53,9 +53,14 @@ pub(super) fn resume_first_route(
         full.stall_patience = defaults.stall_patience;
         full.stall_at_cap = ctx
             .router_config
+            .tuning
             .stall_at_cap
             .unwrap_or(defaults.stall_at_cap);
-        full.stall_drop = ctx.router_config.stall_drop.unwrap_or(defaults.stall_drop);
+        full.stall_drop = ctx
+            .router_config
+            .tuning
+            .stall_drop
+            .unwrap_or(defaults.stall_drop);
     }
     let resumed = router.resume_polished(share, false);
     ledger.work += router.expansions().saturating_sub(expansions_before) as f64

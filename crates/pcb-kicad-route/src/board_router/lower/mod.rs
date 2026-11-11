@@ -318,7 +318,7 @@ fn split_sub_board_nets(ctx: &Context, board: &mut core::Board) {
             (std::sync::Arc::new(cells), Some(only))
         })
     });
-    if ctx.config.sub_board_nets != Some(false)
+    if ctx.config.tuning.sub_board_nets != Some(false)
         && let Some((pieces, only)) = pieces
     {
         let split = crate::outline_pieces::split_router_nets(board, &pieces, only.as_ref());

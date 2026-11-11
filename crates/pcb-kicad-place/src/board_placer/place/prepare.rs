@@ -135,7 +135,7 @@ fn take_project_rules(
     if config.copper_clearance_mm.is_none()
         || config.copper_edge_clearance_mm.is_none()
         || config.hole_clearance_mm.is_none()
-        || (config.mask_openings && config.solder_mask_to_copper_mm.is_none())
+        || (config.tuning.mask_openings && config.solder_mask_to_copper_mm.is_none())
     {
         let rules = project_rules::resolve_project_rules(
             &source_directory.join(format!("{board_id}.kicad_pro")),
@@ -201,7 +201,8 @@ fn apply_board_constraints(
             .filter(|item| item.head() == Some("footprint"))
         {
             let (_, size, _) = local_body(footprint).map_err(crate::exit::input_error)?;
-            part_area += (size[0] + config.spacing_mm) * (size[1] + config.spacing_mm);
+            part_area +=
+                (size[0] + config.tuning.spacing_mm) * (size[1] + config.tuning.spacing_mm);
         }
         outline_size =
             Some(apply_outline(pcb, outline, part_area).map_err(crate::exit::input_error)?);

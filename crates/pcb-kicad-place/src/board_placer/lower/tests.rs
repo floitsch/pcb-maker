@@ -45,7 +45,10 @@ fn a_part_turns_by_quarters_and_square_to_the_board_from_an_odd_angle() {
         assert!(odd.contains(&board), "{odd:?}");
     }
     let kept = KiCadBoardPlacerConfig {
-        keep_rotation: true,
+        tuning: KiCadPlacerTuning {
+            keep_rotation: true,
+            ..Default::default()
+        },
         ..KiCadBoardPlacerConfig::default()
     };
     assert_eq!(angle_options(&kept, -30.0), vec![-30.0]);
@@ -54,17 +57,20 @@ fn a_part_turns_by_quarters_and_square_to_the_board_from_an_odd_angle() {
 #[test]
 fn a_halo_grows_with_the_pins_up_to_its_maximum_unless_overridden() {
     let mut config = KiCadBoardPlacerConfig {
-        pins_per_halo_track: 4.0,
-        track_pitch_mm: 0.5,
-        maximum_halo_mm: 2.0,
-        halo_scale: 1.0,
+        tuning: KiCadPlacerTuning {
+            pins_per_halo_track: 4.0,
+            track_pitch_mm: 0.5,
+            maximum_halo_mm: 2.0,
+            halo_scale: 1.0,
+            ..Default::default()
+        },
         ..KiCadBoardPlacerConfig::default()
     };
     assert_eq!(halo(&config, "U1", 5), 1.0);
     assert_eq!(halo(&config, "U1", 100), 2.0);
-    config.halo_overrides_mm.insert("U1".into(), 0.25);
+    config.tuning.halo_overrides_mm.insert("U1".into(), 0.25);
     assert_eq!(halo(&config, "U1", 100), 0.25);
-    config.pins_per_halo_track = 0.0;
+    config.tuning.pins_per_halo_track = 0.0;
     assert_eq!(halo(&config, "U2", 100), 0.0);
 }
 

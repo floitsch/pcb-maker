@@ -22,7 +22,7 @@ pub(super) fn add_routing_demand(
         .filter(|component| component.fixed)
         .count();
     let fixed_share = fixed as f64 / lowered.problem.components.len().max(1) as f64;
-    if let Some(escape) = &config.escape_demand
+    if let Some(escape) = &config.tuning.escape_demand
         && let Some(guard) = escape.fixed_share
         && fixed_share >= guard
     {
@@ -31,7 +31,7 @@ pub(super) fn add_routing_demand(
             lowered.problem.components.len(),
             fixed_share
         );
-    } else if let Some(escape) = &config.escape_demand {
+    } else if let Some(escape) = &config.tuning.escape_demand {
         // The measured version lowers the board as the layout routes it,
         // with the layout's router configuration (its rules): a placement
         // alone has none and runs on the estimate.
@@ -47,12 +47,12 @@ pub(super) fn add_routing_demand(
         };
         lowered.problem.escape = Some(std::sync::Arc::new(escape_fact(
             escape,
-            config.track_pitch_mm,
+            config.tuning.track_pitch_mm,
             lowered,
             measured,
         )));
     }
-    if let Some(crossings) = &config.ratsnest_crossings
+    if let Some(crossings) = &config.tuning.ratsnest_crossings
         && (crossings.legalise || crossings.refine || crossings.anneal)
     {
         lowered.problem.crossings = Some(std::sync::Arc::new(core::crossings::Crossings {

@@ -23,7 +23,7 @@ pub(super) fn fix_default_parts(
         let component = &problem.components[index];
         let pose = problem.poses[index];
         let (center, half) = (component.center(pose), component.half_extent(pose.angle));
-        let reach = config.edge_keep_mm;
+        let reach = config.tuning.edge_keep_mm;
         let in_keepout = keepouts.iter().any(|keepout| {
             center[0] + half[0] + reach > keepout.minimum[0]
                 && center[0] - half[0] - reach < keepout.maximum[0]
@@ -37,7 +37,7 @@ pub(super) fn fix_default_parts(
                     problem,
                     index,
                     problem.poses[index],
-                    config.edge_keep_mm,
+                    config.tuning.edge_keep_mm,
                 ));
         let default_fixed =
             builder.locked[index] || problem.components[index].pins.is_empty() || on_edge;

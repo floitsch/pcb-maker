@@ -501,7 +501,10 @@ fn a_layouts_routed_stages_lower_with_the_pairs_plan_and_book_its_work() {
     let (_, again) = lower_for_route(&pcb, &on, true).unwrap();
     assert_eq!(again, work);
     let topological = KiCadBoardRouterConfig {
-        engine: Some("topological".into()),
+        tuning: KiCadRouterTuning {
+            engine: Some("topological".into()),
+            ..on.tuning.clone()
+        },
         ..on
     };
     assert!(!pairs_planned(&topological));

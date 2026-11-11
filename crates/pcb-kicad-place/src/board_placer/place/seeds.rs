@@ -72,7 +72,7 @@ pub(super) fn place_seeds(
     // parts, then the least missed constraints, then the least wirelength
     // wins. Placement takes seconds; the constraints are what the user asked
     // for.
-    let seeds = config.placement_seeds.max(1) as u64;
+    let seeds = config.tuning.placement_seeds.max(1) as u64;
     // The seeds share the placement's work budget: seed k is kept only
     // while the seeds before it, in seed order, used less than the budget
     // (three seeds at least). They run in a pool (`race_seeds`), as many
@@ -90,7 +90,7 @@ pub(super) fn place_seeds(
         |placement: &core::Placement| placement.work,
         |offset| {
             let mut seeded = placer_config.clone();
-            seeded.global.seed = config.seed + offset;
+            seeded.global.seed = config.tuning.seed + offset;
             seeded.anneal.seed = seeded.anneal.seed.wrapping_add(offset);
             // The pad-exits repair is a whole board's (its test
             // names parts by the board's indices): not inside a
@@ -141,7 +141,7 @@ pub(super) fn place_seeds(
     let mut placements: Vec<(u64, core::Placement)> = race
         .kept
         .into_iter()
-        .map(|(offset, placement)| (config.seed + offset, placement))
+        .map(|(offset, placement)| (config.tuning.seed + offset, placement))
         .collect();
     sort_by_rank(&mut placements);
     let (kept_seeds, placements) = placements.into_iter().unzip();

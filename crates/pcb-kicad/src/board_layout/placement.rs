@@ -68,7 +68,7 @@ pub(super) fn place(ctx: &LayoutContext, ledger: &mut WorkLedger) -> Result<Plac
     // swaps.
     let pre_ranking = pre_ranks(config, router_config);
     if pre_ranking {
-        placer_config.placement_seeds = race_placement_seeds(config, &placer_config);
+        placer_config.tuning.placement_seeds = race_placement_seeds(config, &placer_config);
     }
     let placement = place_kicad_board(
         ctx.source_directory,
@@ -133,7 +133,7 @@ pub(super) fn swap_pins(ctx: &LayoutContext) -> Result<Option<KiCadPinSwapResult
                 &ctx.placed_directory,
                 ctx.board_id,
                 &spec,
-                &config.pin_swap,
+                &config.tuning.pin_swap,
             )?)
         }
         None if !config.swappable.is_empty() => {
@@ -148,7 +148,7 @@ pub(super) fn swap_pins(ctx: &LayoutContext) -> Result<Option<KiCadPinSwapResult
                 &ctx.placed_directory,
                 ctx.board_id,
                 &spec,
-                &config.pin_swap,
+                &config.tuning.pin_swap,
             )?)
         }
         None => None,
