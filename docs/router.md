@@ -160,7 +160,7 @@ Setting `sub_board_nets` (on).
 
 ## The lattice
 
-`Grid::choose` (`pcb-router/src/grid.rs`) picks a pitch and phase per axis
+`Grid::choose` (`pcb-router/src/grid/mod.rs`; the static maps are built in `grid/build.rs`) picks a pitch and phase per axis
 from `pitches` (0.127, 0.125, 0.1 mm; KiCad key `grid_pitches_mm`). Pad
 centres vote (only pads narrower than 0.35 mm, when there are any), and so
 do tight channels: gaps between fenced-in pads that the narrowest track
@@ -242,7 +242,7 @@ written as `diagnostics.dead_pads[].wall`.
 
 ### Costs
 
-`Router::search` (`router/search.rs`) is an A* over (layer, node). A trace
+`Router::search` (`router/search/`) is an A* over (layer, node). A trace
 step costs the pitch times the layer's direction cost (even layers prefer
 horizontal, odd vertical; across costs `against_direction`, 1.6) times (1 +
 history) and (1 + present price × occupancy). On top come

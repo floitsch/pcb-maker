@@ -39,7 +39,7 @@ perf report -i castor.data --no-children --sort srcline --stdio -g none \
 ```
 
 - `--sort srcline` names a sample's innermost inlined frame; for its outermost
-  line of search.rs resolve `perf script -F ip,sym,symoff --no-inline -G`'s
+  line of router/search/ resolve `perf script -F ip,sym,symoff --no-inline -G`'s
   addresses with `addr2line -a -i -f` (without `--no-inline`, minutes per
   thousand samples). Keep the binary at its recorded path until every report
   is written; record to disk, not /tmp (20 to 85 MB a profile).

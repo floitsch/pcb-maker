@@ -150,7 +150,7 @@ impl Builder {
                         .unwrap_or(ctx.mask.board_pad_to_mask)
                         .max(0.0);
                     // A touch electrode's own opening leaves its net the
-                    // vias inside its pad (`grid.rs`, `own_opening`).
+                    // vias inside its pad (`grid/build.rs`, `own_opening`).
                     let kind = graphic.head().unwrap_or("graphic");
                     let kind = if footprint.electrode {
                         format!("{kind} of the touch electrode {reference}")
