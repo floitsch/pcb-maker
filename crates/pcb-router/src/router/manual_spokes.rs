@@ -837,6 +837,25 @@ impl Router {
             let kept: Vec<[bool; 4]> = vias
                 .iter()
                 .map(|(at, radius)| {
+                    // A via whose copper another thermal item's ring
+                    // overlaps is joined by that ring: KiCad adds the rings
+                    // after the reliefs (fillCopperZone, "plus-thermal-
+                    // rings"), so a pad's ring refills a via's relief beside
+                    // it whatever the via's spokes (le_chiffre's GND vias
+                    // beside their capacitors' pads on B.Cu: C4.2's track
+                    // ends on such a via, which KiCad fills up to). The
+                    // lattice holds no rings: the via keeps its corridors.
+                    let ringed = (0..16).any(|step| {
+                        let angle = std::f64::consts::TAU * step as f64 / 16.0;
+                        let rim = radius + 0.01;
+                        probe.in_ring(
+                            layer,
+                            [at[0] + rim * angle.cos(), at[1] + rim * angle.sin()],
+                        )
+                    });
+                    if ringed {
+                        return [true; 4];
+                    }
                     let width = bridge.min(2.0 * radius);
                     let mut kept = [false; 4];
                     // No spoke narrower than the minimum width.

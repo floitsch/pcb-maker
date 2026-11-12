@@ -360,3 +360,51 @@ fn a_vias_spoke_ending_in_another_items_spoke_is_kept() {
         assert_eq!(label([5.55, 5.55]), 0, "pad {pad}");
     }
 }
+
+#[test]
+fn a_via_in_another_items_thermal_ring_keeps_its_corridors() {
+    // le_chiffre's GND vias beside their capacitors' pads: KiCad adds a
+    // hatched zone's thermal rings after the reliefs, so P.2's ring runs
+    // over the via's relief and joins the via whatever its spokes. Here
+    // every spoke of the via ends in a keepout: without P.2 none is kept
+    // and its relief holds no fill; with P.2 beside it the via keeps its
+    // corridors.
+    let square = |at: [f64; 2]| {
+        let h = 0.2;
+        vec![
+            [at[0] - h, at[1] - h],
+            [at[0] + h, at[1] - h],
+            [at[0] + h, at[1] + h],
+            [at[0] - h, at[1] + h],
+        ]
+    };
+    let ends = [[6.455, 5.0], [3.545, 5.0], [5.0, 6.455], [5.0, 3.545]];
+    let board = |pad: bool| {
+        let mut obstacles = vec![
+            copper(rect([2.0, 2.0], [0.5, 0.5]), 0, "P.1"),
+            copper(circle([5.0, 5.0], 0.3), 0, "existing via"),
+        ];
+        let mut terminals = vec![terminal(0, [2.0, 2.0], "P.1")];
+        if pad {
+            obstacles.push(copper(rect([5.0, 6.2], [0.25, 0.25]), 0, "P.2"));
+            terminals.push(terminal(2, [5.0, 6.2], "P.2"));
+        }
+        let web = Hatch {
+            thickness: 1.3,
+            gap: 0.5,
+            ..hatch()
+        };
+        one_net_board(
+            obstacles,
+            terminals,
+            pour(Some(web), ends.iter().map(|end| square(*end)).collect()),
+        )
+    };
+    let corridor = |pad: bool| {
+        let router = router_of(&board(pad), false);
+        let (pours, _, _) = router.analyze_pours(0);
+        pours.label[0][router.grid.nearest_node([5.0, 4.5]).unwrap()]
+    };
+    assert_eq!(corridor(false), 0);
+    assert_ne!(corridor(true), 0);
+}

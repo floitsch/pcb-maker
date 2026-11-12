@@ -447,7 +447,10 @@ Three rules of KiCad's fill that decide whether a pad joins at all:
   (`cut_via_reliefs`, `manual_spokes.rs`; zone_filler.cpp's two tests): a
   dropped spoke's corridor joins nothing (capybully's SW48.3, a 0.4 mm
   solid strip whose tip pokes out of its footprint's keepout beside a GND
-  via whose spoke towards it ends in the keepout).
+  via whose spoke towards it ends in the keepout). A via that another
+  item's thermal ring overlaps keeps every corridor: KiCad adds the rings
+  after the reliefs, and the lattice holds no rings (le_chiffre's vias
+  beside their capacitors' pads).
 - A pad merged into its terminal that connects solidly (in a solid pour,
   or in the measurement by its own setting) joins the pieces its own copper
   touches, an item of each (`join_solid_merged_pads`; capybully's SW39.3,
