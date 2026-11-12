@@ -591,8 +591,10 @@ fn write_kicad_cache_trace(
                     event_path.display()
                 )
             })?;
-        let serialized = serde_json::to_string(trace).map_err(|error| error.to_string())?;
-        writeln!(events, "{serialized}").map_err(|error| {
+        // One write of the whole line: processes appending to one log at
+        // once do not interleave within a line (O_APPEND).
+        let line = serde_json::to_string(trace).map_err(|error| error.to_string())? + "\n";
+        events.write_all(line.as_bytes()).map_err(|error| {
             format!(
                 "failed to append cache event log {}: {error}",
                 event_path.display()

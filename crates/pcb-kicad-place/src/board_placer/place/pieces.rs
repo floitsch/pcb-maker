@@ -16,6 +16,9 @@ pub(super) struct BoardPieces {
     pub held_sub_boards: Option<crate::sub_boards::PlacerSubBoards>,
     /// board-placer.json's `sub_boards`.
     pub report: Option<crate::sub_boards::KiCadSubBoardsReport>,
+    /// board-placer.json's `modules`: the breakaway modules of one board
+    /// that hold their parts (`modules::hold_in_modules`).
+    pub modules: Option<crate::modules::KiCadModulesReport>,
 }
 
 /// Finds the panel's copies and the sub-boards, and changes the problem
@@ -39,6 +42,7 @@ pub(super) fn place_in_pieces(
         copies,
         held_sub_boards: None,
         report: None,
+        modules: None,
     };
     crate::outline_pieces::note_designed(None);
     // A panel of copies whose cells share net names (the PolyKybd
@@ -60,6 +64,33 @@ pub(super) fn place_in_pieces(
     }
     if config.sub_boards {
         place_sub_boards(config, pcb, lowered, &mut pieces)?;
+    }
+    // The breakaway modules of one board (`keep_in_modules`): not a
+    // panel's copies or sub-boards.
+    if config.keep_in_modules && pieces.copies.is_none() && pieces.report.is_none() {
+        let footprint_count = pcb
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("footprint"))
+            .count();
+        pieces.modules = crate::modules::hold_in_modules(
+            pcb,
+            &mut lowered.problem,
+            footprint_count,
+            &lowered.poured,
+        )?;
+        if let Some(report) = &pieces.modules {
+            eprintln!(
+                "placer: modules: {} ({}), {} parts held in their module, {} without one; the assignment crosses modules {} times, tabs {} times, {} tracks over the tabs' capacity",
+                report.modules,
+                report.kind,
+                report.held,
+                report.unassigned,
+                report.crossings,
+                report.tab_crossings,
+                report.overflow
+            );
+        }
     }
     Ok(pieces)
 }

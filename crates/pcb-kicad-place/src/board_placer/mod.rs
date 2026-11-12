@@ -32,6 +32,7 @@ pub use self::exits::closed_pad_reason;
 pub use self::exits::pad_exits_settings;
 pub use self::measured::{attribution, reference_index};
 pub use self::place::room_hint;
+pub(crate) use self::skeleton::passive_mask;
 pub use self::{
     config::*,
     exits::{
@@ -43,7 +44,7 @@ pub use self::{
     result::*,
     skeleton::{KiCadSkeletonRace, KiCadSkeletonRaceReport},
 };
-use self::{courtyards::*, decoupling::*, edges::*, skeleton::passive_mask, trace::*};
+use self::{courtyards::*, decoupling::*, edges::*, trace::*};
 pub use self::{lower::*, pair_rows::*, rules::*};
 pub(crate) use self::{marks::*, seed_race::*};
 use crate::board_router::largest_clearance;

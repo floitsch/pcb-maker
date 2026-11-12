@@ -104,6 +104,14 @@ pub struct KiCadBoardPlacerConfig {
     /// zpn_devboard passes (its parts had spread over an empty breakaway,
     /// 129 open after the first route); nothing changes on the quick tier.
     pub keep_on_pieces: bool,
+    /// On a board divided into breakaway modules (slots and rows of holes
+    /// whose tabs pass a few tracks, protoesp; or separate outline loops,
+    /// the Modular Hub), each movable part stays in the module the netlist
+    /// assigns it (a partition seeded by the parts that stay where they
+    /// are, each module's parts within its area, the fewest tracks over
+    /// the tabs): docs/placer.md, "Modules of one board". No change on a
+    /// board without modules.
+    pub keep_in_modules: bool,
     /// Panel-aware placement (on since 2026-10-26; false turns it off):
     /// where the board holds
     /// copies of one circuit (the same footprints, nets that map one to
@@ -516,6 +524,7 @@ impl Default for KiCadBoardPlacerConfig {
             decoupling_mm: None,
             decoupling_near: false,
             keep_on_pieces: true,
+            keep_in_modules: true,
             panel_copies: true,
             sub_boards: true,
             sub_board_reference: None,

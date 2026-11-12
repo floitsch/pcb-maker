@@ -646,6 +646,68 @@ with a budget share by its parts (its own fullness decides its levels),
 then the unassigned parts. With every part stacked and no `--reference`,
 the pieces are only reported.
 
+### Modules of one board
+
+A board can be one circuit cut into breakaway modules. protoesp's outline
+holds ten sections parted by slots and rows of 0.5 mm holes, and the
+designer runs one to three tracks across each tab through wider gaps
+between the holes (1.5 and 2.5 mm apart where a mouse bite's are at most
+1.25 mm, so `outline_pieces` sees one board and splits no net). The
+Modular Hub's three boards are separate outline loops. The placer's costs
+are straight-line, so parts land in another module and the nets that
+then cross the tabs overflow them: protoesp's layouts crossed modules 84,
+46 and 50 times (per net not poured, the modules it spans less one) where
+the designer's crosses 35.
+
+`keep_in_modules` (on; `modules.rs`) places by module:
+
+- **Detect** (`modules::detect`): where `outline_pieces` finds no pieces,
+  the holes of footprints made only of small non-plated drills chained at
+  3 mm (`Cuts::perforation`), each row's gaps drawn as cut lines and the
+  outline's pieces taken again; or the outline's loops. Per pair of
+  neighbouring modules, the tracks the gaps between them pass (one per
+  0.9 mm of clear width).
+- **Assign** (`modules::assign`): a k-way partition of the movable parts
+  from the netlist, seeded by the parts that stay where they are, a
+  region's module and the modules an edge constraint reaches; each
+  module's parts take at most 0.7 of its area on a side, less the fixed
+  parts' bodies; it minimises, over the nets not poured and not on every
+  module already, the tabs a tree over each net's modules crosses plus
+  twice the tracks over a tab's capacity: a greedy start (the part most
+  attached to the assigned ones first), then Fiduccia-Mattheyses passes
+  from it and from eight perturbations of the best. A part on poured nets
+  alone gets no module and is placed freely.
+- **Hold** (`modules::hold_in_modules`): each assigned part's module box,
+  1 mm inside it towards tabs and slots, is a region the tool gives
+  (`automatic_regions`, as `keep_on_pieces`'s: the race over skeletons
+  still leaves the passives out), from the global placement to the
+  refinement. A part an edge, overhang or region holds stays as it is; no
+  part gets a start (a start names a passive, and the race then has no
+  skeleton); the board's copper texts stop yielding (a connector held in
+  protoesp's middle strip seated its pads on "I'm a bitmask!"). A module
+  that is not a box (protoesp's protoboard wraps three small ones) holds
+  its parts in its box. The layout's moves after the first route lower the
+  placed board again without the regions, as with sub-boards.
+
+`modules-kicad-board <project-dir> <board-id> [layout.json] --designer
+<board>` prints the modules and the assignment without placing. The
+partition finds an assignment as good as the designer's by its measure,
+not the designer's own: on protoesp 44 of the 69 active movable parts
+land in the designer's module (net ties and jumpers on a tab, connectors
+between two modules are ambiguous by the netlist), but the assignment
+crosses modules 54 times against the designer's 52 (36 against 35 in the
+diagnosis's eight sections) and its tabs 58 times against 62. On the Hub
+every part with a net not poured goes to the designer's module. Of the
+109 sweep and 46 expansion boards it fires on protoesp, the Hub,
+zpn_devboard and one expansion board, whose parts `keep_on_pieces` holds
+already (nothing changes). Off against on at placer seeds 1 to 401,
+KiCad's unconnected after full layouts went from 87, 15, 18, 16, 22 to 3,
+4, 2, 4, 1 on protoesp (seeds 501 to 801: 82, 7, 29, 51 to 1, 1, 3, 2;
+`placer_ab.py` BETTER at p 0.002 over the nine pairs) and from 18, 14, 15,
+16, 15 to 2 at every seed on the Hub, no strict pass on either side; the
+short tier and the other ten dense boards place and route byte for byte
+as before (placement digests and rows).
+
 ## The race
 
 The shortest placement is often not the one that routes (the most

@@ -68,21 +68,24 @@ pub(super) fn own_pad_gaps(
         .arg(&report)
         .arg(&board);
     crate::kicad_config::configure_drc(&mut command, &crate::native_report::kicad_cli(), &board);
-    let Ok(output) = crate::ledger::kicad_check(|| command.output()) else {
-        let _ = fs::remove_dir_all(&directory);
-        return Ok(BTreeMap::new());
-    };
-    let text = fs::read_to_string(&report);
+    // Run once more when kicad-cli exited 0 without a readable report (a
+    // full disk: `read_kicad_report`). A kicad-cli that does not start
+    // gives no findings (Null).
+    let drc = crate::native_report::with_one_rerun(|| {
+        let _ = fs::remove_file(&report);
+        let Ok(output) = crate::ledger::kicad_check(|| command.output()) else {
+            return Ok(Ok(serde_json::Value::Null));
+        };
+        if !output.status.success() {
+            return Err(format!(
+                "kicad-cli pcb drc failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        Ok(crate::native_report::read_kicad_report(&report))
+    });
     let _ = fs::remove_dir_all(&directory);
-    if !output.status.success() {
-        return Err(format!(
-            "kicad-cli pcb drc failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    let text =
-        text.map_err(|error| format!("failed to read the pad check's DRC report: {error}"))?;
-    let drc: serde_json::Value = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+    let drc = drc?;
     // "Clearance violation (netclass 'Default' clearance 0.2800 mm; actual 0.2496 mm)"
     let number_after = |text: &str, key: &str| -> Option<f64> {
         let rest = &text[text.find(key)? + key.len()..];

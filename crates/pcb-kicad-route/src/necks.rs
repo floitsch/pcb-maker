@@ -1517,10 +1517,7 @@ fn repair_with(
         fs::write(&board_path, format!("{}\n", encode(&repaired)))
             .map_err(|error| format!("failed to write {}: {error}", board_path.display()))?;
         verify_materialized_rung(directory, board_id)?;
-        let text =
-            fs::read_to_string(directory.join("drc.json")).map_err(|error| error.to_string())?;
-        let after_report: serde_json::Value =
-            serde_json::from_str(&text).map_err(|error| error.to_string())?;
+        let after_report = pcb_kicad_file::fs_util::read_json(&directory.join("drc.json"))?;
         let (new_counts, new_unconnected) = error_counts(&after_report);
         let worse: Vec<String> = new_counts
             .iter()

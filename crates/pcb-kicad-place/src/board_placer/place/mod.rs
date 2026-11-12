@@ -109,7 +109,15 @@ pub fn place_kicad_board(
     let written = write_poses(&mut pcb, &lowered, &picked.placement)?;
     check_written_pads(&pcb, &lowered, &picked.placement.poses)?;
     write_placed_directory(&context, &pcb, &lowered, &picked.placement)?;
-    let result = placement_report(&context, &pcb, &lowered, pieces.report, picked, written);
+    let result = placement_report(
+        &context,
+        &pcb,
+        &lowered,
+        pieces.report,
+        pieces.modules,
+        picked,
+        written,
+    );
     write_report(&context, &result)?;
     Ok(result)
 }
