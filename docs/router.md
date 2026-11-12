@@ -264,8 +264,11 @@ them, every via kept off the whole graphic, the net's pours kept out of
 the corridors. A graphic over pads of two nets gives each walled pad exits
 of its own net, never one near the other net's pad, and stays no net's
 between them. Pads with a free point change nothing, nor does a pad
-another item's copper of its net already joins (the keyboard's C10.2 over
-its antenna's feed). `walled_pad_exits: false` leaves walled pads unwired
+another item's copper of its net already joins: another part's pad (the
+keyboard's C10.2 over its antenna's feed) or a board graphic of its net
+(Batch_1's feed and ground rectangles on its antenna's pads, at the
+designer's placement: wired anyway, the redundant crossings and corridors
+cost it 0 to 3 connections over four router seeds). `walled_pad_exits: false` leaves walled pads unwired
 (dead pads, as before 2026-11-11).
 
 What KiCad then reports there is the footprint's, not the route's: the
