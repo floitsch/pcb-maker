@@ -164,8 +164,9 @@ impl OwnCopper {
 
 impl Builder {
     /// The queued footprints' own copper (`own_copper_exits`), once every
-    /// footprint is lowered: a pad another item's copper of its net
-    /// touches is connected through it to KiCad already.
+    /// footprint and the board's copper graphics are lowered: a pad
+    /// another item's copper of its net touches is connected through it to
+    /// KiCad already.
     pub(super) fn place_own_copper_exits(&mut self, ctx: &Context) {
         for footprint in std::mem::take(&mut self.own_copper) {
             self.own_copper_exits(ctx, &footprint);
@@ -420,8 +421,9 @@ impl Builder {
 
     /// Whether copper of `net` outside the footprint touches the pad's
     /// `copper`: another footprint's pad over it (the laptop keyboard's
-    /// C10.2 on its antenna's feed pad) joins it to KiCad without a track,
-    /// so it gets no exit.
+    /// C10.2 on its antenna's feed pad), or a board graphic of the net
+    /// (Batch_1's GND and feed rectangles at its antenna's pads), joins it
+    /// to KiCad without a track, so it gets no exit.
     fn joined_elsewhere(&self, footprint: &OwnCopper, copper: &[usize], net: core::NetId) -> bool {
         let own: BTreeSet<usize> = footprint
             .pads
@@ -882,6 +884,8 @@ mod tests {
         let ctx = Context::new(&pcb, &config, true).unwrap();
         let mut builder = Builder::default();
         builder.board_items(&ctx).unwrap();
+        builder.merge_pads();
+        builder.place_copper_graphics();
         builder.place_own_copper_exits(&ctx);
         // The lowering's names lose the root sheet's slash.
         let a = builder.net_ids.get("A").copied();
@@ -1081,6 +1085,23 @@ mod tests {
             graphic(&builder).shape,
             core::Shape::Polygon { .. }
         ));
+    }
+
+    #[test]
+    fn a_walled_pad_that_a_board_graphic_of_its_net_touches_gets_no_exit() {
+        // A copper rectangle of /A drawn on the board to U1.1 (Batch_1's
+        // feed): KiCad joins them without a track.
+        let (builder, _, _) = lowered_beside(
+            &format!(
+                "{} {}",
+                poly(-0.4, -0.4, 1.5, 0.4),
+                pad("1", [0.0, 0.0], "/A")
+            ),
+            r#"(gr_rect (start 9.9 8) (end 10.1 10) (stroke (width 0) (type solid)) (fill solid)
+                 (layer "F.Cu") (net 1 "/A"))"#,
+        );
+        assert!(exits(&builder).is_empty());
+        assert!(builder.walled_pads.is_empty());
     }
 
     #[test]
