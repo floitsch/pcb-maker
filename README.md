@@ -25,8 +25,8 @@ Not finished, but already useful.
   and routes **71 of 109** to a clean KiCad verdict under the strict
   rule (0 unconnected, no copper error beyond what the designer's board
   has at the same place; 70 under the per-type rule) within 1500 s of
-  work each, every board placed from stacked parts (sweep v39, the
-  nightly of 2026-11-12). Per board against the designer's own board
+  work each, every board placed from stacked parts (sweep v40, the
+  nightly of 2026-11-13). Per board against the designer's own board
   (medians): 0.65 times the vias, 0.98 times the track length, 0.99
   times the bends per connection, nothing left open on more than half
   the boards (5 % of the connections open on average), no via in a small
@@ -36,10 +36,10 @@ Not finished, but already useful.
   boards' parts are mixed: 392 movable parts belong to no sub-board).
   Routed by the same binary on the designer's own placement at the
   layout's routing budget, on all 100 target boards our placement
-  accounts for 62 % of the open connections and our router for 38 %
-  (71 % and 29 % without MegaDrive, whose designer placement leaves as
+  accounts for 61 % of the open connections and our router for 39 %
+  (69 % and 31 % without MegaDrive, whose designer placement leaves as
   much open as ours or more)
-  ([results](docs/benchmarks.md#layout-sweep-v39-2026-11-12)).
+  ([results](docs/benchmarks.md#layout-sweep-v40-2026-11-13)).
 - **What a layout handles** besides parts and nets: panels of copies
   (one copy placed and replicated) and panels of different boards, whose
   pieces are found by their necks, mouse-bite rows and V-cuts, each
@@ -313,8 +313,8 @@ the main corpus ([docs/benchmarks.md](docs/benchmarks.md)):
 
 | Sweep | Boards | pcb-maker | Freerouting |
 | --- | --- | --- | --- |
-| Layout from stacked parts and constraints, 1500 s of work (v39, nightly 2026-11-12, main bc69e68) | 109 | 71 clean (strict rule 4; 70 per type), 1451 connections open in all (1451 on the 106 boards with a result in v38 too, which left 1552 there), no row cut or killed | - |
-| Routing the designer's placement at the layout's routing budget, 919.5 s of work (matched designer tier, nightly 2026-11-12) | 109 | 76 clean (strict rule 4; 75 per type), 232 open on the 100 target boards, against 605 of the v39 layout there | - |
+| Layout from stacked parts and constraints, 1500 s of work (v40, nightly 2026-11-13, main 86554c6) | 109 | 71 clean (strict rule 4; 70 per type), 1451 connections open in all (1451 on the 106 boards with a result in v39 too, which left 1451 there), no row cut or killed | - |
+| Routing the designer's placement at the layout's routing budget, 892.5 s of work (matched designer tier, nightly 2026-11-13) | 109 | 76 clean (strict rule 4; 75 per type), 238 open on the 100 target boards, against 605 of the v40 layout there | - |
 | Layout from stacked parts and constraints, 1500 s of work (v21, x1832, 2026-10-26) | 109 | 56 clean (strict rule 4; 56 per type), 2444 connections open in all (1672 on the 100 boards with a result in the nightly of 2026-10-25 too, which left 1788 there), no row cut or killed | - |
 | Routing the designer's placement at the layout's routing budget, 1143 s of work (matched designer tier x1832, 2026-10-26) | 109 | 62 clean (strict rule 4; 66 per type), 742 open on the 100 target boards, against 1740 of the v21 layout there | - |
 | Layout from stacked parts and constraints, 1500 s of work (v20, x1725, 2026-10-23) | 109 | 53 clean (strict rule 4; 53 per type), 1848 connections open in all (1568 on the 99 boards with a result in v19 too), no row cut or killed | - |
