@@ -215,6 +215,11 @@ pub(super) fn propose(
             }
         })
         .collect();
+    let plane_pads = if budget.is_none() {
+        plane_landing::candidate_pads(pcb, &board, &rules, native, &candidates, pieces)
+    } else {
+        BTreeMap::new()
+    };
     if let Some(budget) = &budget {
         if !budget.can_check_trial() {
             return Ok(Vec::new());
@@ -247,6 +252,36 @@ pub(super) fn propose(
     let mut panel = pieces.map(|pieces| NativePanelScope::new(pcb, pieces));
     let mut refilled = None;
     let filled_board = std::sync::OnceLock::new();
+    let probe_plane = |target: &Target<'_>| {
+        let pads = plane_pads.get(target.native_net)?;
+        let filled =
+            filled_board.get_or_init(|| native_report::read_refilled_board(path, || false).ok());
+        plane_landing::propose(plane_landing::Inputs {
+            pcb,
+            filled: filled.as_ref()?,
+            model: &board,
+            layers: &layers,
+            config: &rules,
+            native_net: target.native_net,
+            net: target.net,
+            witnesses: pads,
+        })
+    };
+    // A modeled plane near a pad is only a shortlist. A real candidate
+    // must reach refilled copper before it takes an ordinary search slot.
+    let mut plane_candidates = BTreeMap::new();
+    if search_scope == SearchScope::Ordinary && !plane_pads.is_empty() {
+        for target in targets
+            .iter()
+            .filter(|target| target.blocked.is_none() && plane_pads.contains_key(target.native_net))
+            .take(MAX_TRIALS)
+        {
+            if let Some(candidate) = probe_plane(target) {
+                plane_candidates.insert(target.native_net, candidate);
+            }
+        }
+        targets.sort_by_key(|target| !plane_candidates.contains_key(target.native_net));
+    }
     let mut result = Vec::new();
     let bridge_checks = pad_bridge::checks_needed(pad_bridge::has_fills(pcb));
     for target in targets.into_iter().take(MAX_TRIALS) {
@@ -303,7 +338,6 @@ pub(super) fn propose(
                 Some(([a_end, b_end], [a["uuid"].as_str()?, b["uuid"].as_str()?]))
             })
             .collect();
-        let open_items: BTreeSet<_> = pairs.iter().flat_map(|(_, ids)| ids).copied().collect();
         let mut proposal = if let Some(blocked) = target.blocked {
             let mut proposal = Proposal::skipped(blocked);
             if blocked == "single_net_search_cannot_certify_pair_coupling"
@@ -492,42 +526,21 @@ pub(super) fn propose(
                 .objects
                 .retain(|item| item_id(item).is_some_and(|id| occupied.insert(id)));
         }
-        if search_scope == SearchScope::Named
-            && budget.is_none()
-            && layers.len() > 2
-            && proposal.objects.is_empty()
+        if proposal.objects.is_empty()
             && target.blocked.is_none()
-            && !has_length_rule(target.net)
-            && !report_capped(native)
-            && finding_types_at_cap(native, "schematic_parity").is_empty()
-            && board.planes.iter().any(|plane| {
-                plane.hatch.is_none() && board.nets[plane.net as usize].name == target.net
-            })
             && let Some(search) = &mut proposal.search
-        {
-            let filled = filled_board.get_or_init(|| {
-                let deadline = Instant::now() + LOCAL_WALL;
-                native_report::read_refilled_board(path, || Instant::now() >= deadline).ok()
-            });
-            if let Some((objects, landing)) = filled.as_ref().and_then(|filled| {
-                plane_landing::propose(plane_landing::Inputs {
-                    pcb,
-                    filled,
-                    model: &board,
-                    layers: &layers,
-                    config: &rules,
-                    native_net: target.native_net,
-                    net: target.net,
-                    witnesses: &open_items,
-                })
-            }) && objects
+            && let Some((objects, landing)) = if search_scope == SearchScope::Named {
+                probe_plane(&target)
+            } else {
+                plane_candidates.remove(target.native_net)
+            }
+            && objects
                 .iter()
                 .all(|object| item_id(object).is_some_and(|id| !occupied.contains(&id)))
-            {
-                search.plane_landing = Some(landing);
-                occupied.extend(objects.iter().filter_map(item_id));
-                proposal.objects = objects;
-            }
+        {
+            search.plane_landing = Some(landing);
+            occupied.extend(objects.iter().filter_map(item_id));
+            proposal.objects = objects;
         }
         if let (Some(budget), Some(search)) = (&mut budget, &proposal.search) {
             budget.search_work_seconds += search.work_seconds;
@@ -868,8 +881,21 @@ pub fn same_as_standalone(
                 selected,
             )?;
             let (layout, searched) = lower_for_local(&searched, config.clone())?;
-            let (standalone, published) = lower_for_local(&published, standalone)?;
-            Ok(layout.net_rules == standalone.net_rules && searched == published)
+            let (standalone, model) = lower_for_local(&published, standalone)?;
+            let pieces = Pieces::of_board(&published)?;
+            let codes = net_codes(&published);
+            let opens = native_opens(&published, native[1], &codes);
+            let plane_pads = plane_landing::candidate_pads(
+                &published,
+                &model,
+                &standalone,
+                native[1],
+                &opens,
+                pieces.as_ref(),
+            );
+            Ok(layout.net_rules == standalone.net_rules
+                && searched == model
+                && plane_pads.is_empty())
         };
         Ok((compare_models().unwrap_or(false), work))
     };

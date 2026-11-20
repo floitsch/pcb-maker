@@ -2729,15 +2729,19 @@ checks the candidate as stored and after refill before it is accepted.
 On stacks with more than two copper layers, the search excludes dedicated
 foreign plane layers from new track paths. It reports them as
 `reserved_plane_layers` and applies the board's via span and layer rules.
-For an explicitly named net, standalone local repair can try a short
-escape from an isolated surface pad to a nearby existing solid plane
-when the ordinary search finds no route. It uses the active track width,
-the normal through-via size or a listed smaller preset. The ring stays
+Standalone `--local` can find an isolated surface pad with a native open
+near a same-net solid plane. Nets with a candidate that reaches actual
+refilled copper get priority within the existing four-net limit. Use
+`--net` to restrict the search to specific rails if needed. This recovery
+is available through the layout verdict's `local_open_repair` retry. If
+the ordinary search finds no route, the plane escape uses the active
+track width and the normal through-via size or a listed smaller preset.
+The ring stays
 off the pad and the drill stays outside its mask opening. The report's
 `plane_landing` entry gives the pad UUID, plane UUID and layer, route
 geometry, and number of filled islands checked. KiCad's Python bindings
-must prove the pad joins the named
-plane through the added copper, preserves every other component and
+must prove the pad joins the named plane through the added copper,
+preserves every other component and
 original island's attachments, and adds no native findings. This is a
 refilled result. Use the printed `--save-filled` command to deliver a
 reopened, verified copy.

@@ -148,8 +148,9 @@ impl Trial<'_> {
         let version = before["kicad_version"]
             .as_str()
             .ok_or("missing native version")?;
-        let wall = Instant::now() + local::LOCAL_WALL;
-        let expired = || Instant::now() >= wall;
+        // Plane landing is standalone-only. Each subprocess keeps the
+        // native report timeout rather than sharing a layout wall guard.
+        let expired = || false;
         let candidate = fs::read(self.board).map_err(|error| error.to_string())?;
         write_additions(self.board, self.original, &self.additions[..self.previous])?;
         let baseline = fs::read(self.board).map_err(|error| error.to_string())?;

@@ -10,6 +10,89 @@ use pcb_router::{Board, Point, geometry};
 const MAX_PADS: usize = 4;
 const MAX_LENGTH_MM: f64 = 2.0;
 
+/// Shortlist physical open pads that could reach an authored same-net
+/// plane. Actual refill copper is checked later by `propose`.
+pub(super) fn candidate_pads(
+    pcb: &Expr,
+    board: &Board,
+    rules: &KiCadBoardRouterConfig,
+    native: &Value,
+    candidates: &[(&str, &[Value])],
+    pieces: Option<&Pieces>,
+) -> BTreeMap<String, BTreeSet<String>> {
+    let mut result = BTreeMap::<String, BTreeSet<String>>::new();
+    if board.layer_count <= 2
+        || board.planes.iter().all(|plane| plane.hatch.is_some())
+        || native["coordinate_units"] != "mm"
+        || report_capped(native)
+        || !finding_types_at_cap(native, "schematic_parity").is_empty()
+        || crate::board_router::vias_tented(pcb) != [true, true]
+    {
+        return result;
+    }
+    let mut panel = pieces.map(|pieces| NativePanelScope::new(pcb, pieces));
+    let witnesses: BTreeSet<_> = candidates
+        .iter()
+        .filter(|(_, items)| {
+            panel.as_mut().is_none_or(|scope| {
+                matches!(
+                    scope.location(items),
+                    pcb_kicad_file::outline_pieces::NativeFindingLocation::Piece(_)
+                )
+            })
+        })
+        .flat_map(|(net, items)| {
+            items
+                .iter()
+                .filter_map(move |item| Some((*net, item["uuid"].as_str()?)))
+        })
+        .collect();
+    let names = NetNames::of(pcb);
+    for pad in pads(pcb)
+        .into_iter()
+        .filter(|pad| witnesses.contains(&(pad.net.as_str(), pad.id.as_str())))
+    {
+        let name = names.normalize(&pad.net);
+        if rules.length_rules.iter().any(|rule| {
+            rule.nets
+                .iter()
+                .any(|member| project_rules::wildcard_match(&member.net, name))
+        }) || project_rules::diff_pair_of(name)
+            .is_some_and(|(mate, _, _)| board.nets.iter().any(|net| net.name == mate))
+        {
+            continue;
+        }
+        let Some((net, terminal)) = contact_on_net(board, &pad.label, name) else {
+            continue;
+        };
+        if !board.planes.iter().any(|plane| {
+            plane.net as usize == net
+                && terminal.layers != (1 << plane.layer)
+                && plane.hatch.is_none()
+                && (geometry::point_in_polygon(terminal.anchor, &plane.polygon)
+                    || geometry::polygon_edges(&plane.polygon).any(|(a, b)| {
+                        geometry::point_segment_distance(terminal.anchor, a, b) <= MAX_LENGTH_MM
+                    }))
+        }) {
+            continue;
+        }
+        let land = &board.obstacles[terminal.pad].shape;
+        let extent = land.aabb();
+        let connected = board.obstacles.iter().enumerate().any(|(index, obstacle)| {
+            index != terminal.pad
+                && obstacle.net == Some(net as pcb_router::NetId)
+                && obstacle.layers & terminal.layers != 0
+                && obstacle.kind == pcb_router::ObstacleKind::Copper
+                && extent.intersects(obstacle.shape.aabb())
+                && pcb_router::verify::shape_distance(land, &obstacle.shape) <= 1e-9
+        });
+        if !connected {
+            result.entry(pad.net).or_default().insert(pad.id);
+        }
+    }
+    result
+}
+
 #[derive(Serialize)]
 pub struct PlaneLanding {
     pub pad: String,
@@ -34,7 +117,7 @@ pub(super) struct Inputs<'a> {
     pub config: &'a KiCadBoardRouterConfig,
     pub native_net: &'a str,
     pub net: &'a str,
-    pub witnesses: &'a BTreeSet<&'a str>,
+    pub witnesses: &'a BTreeSet<String>,
 }
 
 pub(super) fn propose(input: Inputs<'_>) -> Option<(Vec<Expr>, PlaneLanding)> {
@@ -90,7 +173,7 @@ pub(super) fn propose(input: Inputs<'_>) -> Option<(Vec<Expr>, PlaneLanding)> {
     let mut best = None::<(usize, f64, PlaneLanding)>;
     for pad in pads(input.pcb)
         .into_iter()
-        .filter(|pad| pad.net == input.native_net && input.witnesses.contains(pad.id.as_str()))
+        .filter(|pad| pad.net == input.native_net && input.witnesses.contains(&pad.id))
         .take(MAX_PADS)
     {
         let Some((net, terminal)) = contact_on_net(input.model, &pad.label, input.net) else {
@@ -258,4 +341,51 @@ fn fill_polygon(polygon: &Expr, layers: &LayerTable) -> Option<(usize, Vec<Point
         })
         .collect::<Option<Vec<_>>>()?;
     (points.len() >= 3).then_some((layer, points))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn shortlist_uses_local_isolated_pad_geometry_and_requires_complete_native_evidence() {
+        let pcb = parse(
+            r#"(kicad_pcb (version 20260206)
+              (layers (0 "F.Cu" signal) (4 "In1.Cu" signal) (6 "In2.Cu" signal)
+                      (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+              (gr_rect (start 0 0) (end 30 20) (layer "Edge.Cuts"))
+              (footprint "test" (layer "F.Cu") (at 3 5) (property "Reference" "J1")
+                (pad "1" smd circle (at 0 0) (size 1 1) (layers "F.Cu") (net "/V") (uuid "ready")))
+              (footprint "test" (layer "F.Cu") (at 7 5) (property "Reference" "J2")
+                (pad "1" smd circle (at 0 0) (size 1 1) (layers "F.Cu") (net "/V") (uuid "wired")))
+              (footprint "test" (layer "F.Cu") (at 23 5) (property "Reference" "J3")
+                (pad "1" smd circle (at 0 0) (size 1 1) (layers "F.Cu") (net "/V") (uuid "far")))
+              (segment (start 7 5) (end 9 5) (width 0.2) (layer "F.Cu") (net "/V"))
+              (zone (net "/V") (layer "In1.Cu")
+                  (polygon (pts (xy 2 2) (xy 11 2) (xy 11 10) (xy 2 10)))))"#,
+        )
+        .unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.25,
+                clearance_mm: 0.2,
+                via_size_mm: 0.7,
+                via_drill_mm: 0.35,
+            }),
+            ..Default::default()
+        };
+        let (rules, board) = local::lower_for_local(&pcb, config).unwrap();
+        let nearby = [json!({"uuid":"ready"}), json!({"uuid":"wired"})];
+        let distant = [json!({"uuid":"far"}), json!({"uuid":"wired"})];
+        let candidates = [("/V", &nearby[..]), ("/V", &distant[..])];
+        let report = json!({"coordinate_units":"mm", "violations":[], "unconnected_items":[]});
+        assert_eq!(
+            candidate_pads(&pcb, &board, &rules, &report, &candidates, None),
+            BTreeMap::from([("/V".into(), BTreeSet::from(["ready".into()]))])
+        );
+        let mut capped = report;
+        capped[CAPPED_KEY] = json!(true);
+        assert!(candidate_pads(&pcb, &board, &rules, &capped, &candidates, None).is_empty());
+    }
 }

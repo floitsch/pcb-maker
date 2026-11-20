@@ -222,8 +222,20 @@ from 25 to 24 (29 to 28 raw). Independent stored and refilled checks of
 the public `--save-filled` copy found 28 raw opens, the same 48 warnings,
 zero errors and zero schematic parity findings. The +3V3 control declined
 without changing the board. Its U2 pad launches remain blocked under the
-current clearance and track rules. See `power-escape-local/` in the Katia
-benchmark tree.
+current clearance and track rules. The layout verdict's unqualified
+`local_open_repair.retry_argv` previously spent four net slots and found
+no repair. It now finds the same +5V branch without the agent naming a
+net. The repaired PCB matches the named run byte-for-byte. The unqualified
+run took 39.9 wall seconds, compared with 36.2 for the named run, and kept
+the same four-slot limit. A second +5V retry found no legal path for a
+remaining pad. See `power-escape-local/` in the Katia benchmark tree.
+
+The unqualified selector also kept the existing GND bridge on ClearBell
+(three to two opens) and matched the Sisu control byte-for-byte after
+reconnecting a deliberately removed +3.3V feed at J_LCD1:1 (one to zero
+opens). On the RP2040 motor panel neither tested plane had a legal short
+escape. The PCB stayed byte-identical with nine opens and the ordinary
+four-net ordering. See `power-escape-local/agent-actual-*` for the results.
 
 On the returned board, all 138 socket solids also cleared the 230
 LED solids and 48 solids from the four connectors that have STEP
