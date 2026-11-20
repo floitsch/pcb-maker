@@ -1564,8 +1564,8 @@ impl FloodGrid {
                 from(y * width + x, &mut reached);
             }
         }
-        for cell in 0..width * height {
-            if self.via_fits[cell] {
+        for (cell, &fits) in self.via_fits[..width * height].iter().enumerate() {
+            if fits {
                 from(cell, &mut reached);
             }
         }

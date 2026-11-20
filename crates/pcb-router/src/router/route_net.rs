@@ -904,10 +904,9 @@ impl Router {
             .max_by_key(|(root, count)| (*count, usize::MAX - *root))
             .map_or(0, |(root, _)| root);
         let mut complete = true;
-        for terminal in 0..terminal_count {
-            let connected = find(&mut parent, terminal) == main;
-            net_state.connected[terminal] = connected;
-            complete &= connected;
+        for (terminal, connected) in net_state.connected[..terminal_count].iter_mut().enumerate() {
+            *connected = find(&mut parent, terminal) == main;
+            complete &= *connected;
         }
         net_state.complete = complete;
         if !hard && !complete {

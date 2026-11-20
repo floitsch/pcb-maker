@@ -2030,8 +2030,8 @@ impl Outline {
         for index in 0..polygon.len() {
             let (a, b) = (polygon[index], polygon[(index + 1) % polygon.len()]);
             let (low, high) = (outline.band(a[1].min(b[1])), outline.band(a[1].max(b[1])));
-            for band in low..=high {
-                outline.bands[band].push(index as u32);
+            for band in &mut outline.bands[low..=high] {
+                band.push(index as u32);
             }
         }
         outline

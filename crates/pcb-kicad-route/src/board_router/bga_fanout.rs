@@ -1638,9 +1638,9 @@ mod tests {
         sites.dedup();
         assert_eq!(sites.len(), 36);
         for fanout in &plan.fanouts {
-            for axis in 0..2 {
-                assert!(fanout.via[axis] >= 1.5 * 0.8 - 1.0e-9);
-                assert!(fanout.via[axis] <= 7.5 * 0.8 + 1.0e-9);
+            for coordinate in fanout.via {
+                assert!(coordinate >= 1.5 * 0.8 - 1.0e-9);
+                assert!(coordinate <= 7.5 * 0.8 + 1.0e-9);
             }
         }
         // Every inner ring takes part: rings 2, 3 and 4.

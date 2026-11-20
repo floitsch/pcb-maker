@@ -33,7 +33,7 @@ impl Builder {
                     self.classes.push(brush);
                     self.classes.len() - 1
                 });
-            for layer in 0..layers.len() {
+            for (layer, name) in layers.names.iter().enumerate() {
                 if pour.layers & (1 << layer) == 0 {
                     continue;
                 }
@@ -78,7 +78,7 @@ impl Builder {
                     thermal_gap: pour.thermal_gap,
                     // An inner layer poured over nearly the whole board is
                     // a plane: it carries no signals.
-                    exclusive: layers.names[layer].starts_with("In")
+                    exclusive: name.starts_with("In")
                         && polygon_area(&pour.polygon) >= 0.9 * board_area,
                     solid: pour.solid,
                     hatch: pour.hatch,

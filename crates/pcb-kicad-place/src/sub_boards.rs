@@ -575,8 +575,8 @@ pub(crate) fn detect_for_placer(
         part
     }
     let mut first_on_net: BTreeMap<usize, usize> = BTreeMap::new();
-    for part in 0..footprints {
-        for pin in &problem.components[part].pins {
+    for (part, component) in problem.components[..footprints].iter().enumerate() {
+        for pin in &component.pins {
             if split_set.contains(&pin.net) || ambiguous.contains(&pin.net) {
                 continue;
             }
@@ -805,8 +805,12 @@ pub(crate) fn keep_off_frames(
     }
     applied.kept_clear_mm2 = keepouts.iter().map(|b| (b[2] - b[0]) * (b[3] - b[1])).sum();
     let mut passes = Vec::new();
-    for part in 0..sub.part_piece.len().min(problem.components.len()) {
-        let component = &problem.components[part];
+    for (part, component) in problem
+        .components
+        .iter()
+        .take(sub.part_piece.len())
+        .enumerate()
+    {
         if component.fixed || component.pins.is_empty() {
             continue;
         }

@@ -1409,8 +1409,8 @@ fn apply_lowered(
         report.via_minimums[1].max(lowered.via_drill_min_all),
         report.via_minimums[2].max(lowered.annulus_min_all),
     ];
-    for index in 0..board.nets.len() {
-        if lowered.width_opt[index].is_some() {
+    for (index, width) in lowered.width_opt[..board.nets.len()].iter().enumerate() {
+        if width.is_some() {
             resolved.ruled_widths.insert(key(index));
         }
     }
