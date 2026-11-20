@@ -44,6 +44,8 @@ pub struct LocalSearch {
     pub preset_via_mm: Option<[f64; 2]>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub same_footprint_pad_bridge: Option<pad_bridge::SameFootprintPadBridge>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plane_landing: Option<plane_landing::PlaneLanding>,
     #[serde(skip)]
     work_seconds: f64,
 }
@@ -301,6 +303,7 @@ pub(super) fn propose(
                 Some(([a_end, b_end], [a["uuid"].as_str()?, b["uuid"].as_str()?]))
             })
             .collect();
+        let open_items: BTreeSet<_> = pairs.iter().flat_map(|(_, ids)| ids).copied().collect();
         let mut proposal = if let Some(blocked) = target.blocked {
             let mut proposal = Proposal::skipped(blocked);
             if blocked == "single_net_search_cannot_certify_pair_coupling"
@@ -489,6 +492,43 @@ pub(super) fn propose(
                 .objects
                 .retain(|item| item_id(item).is_some_and(|id| occupied.insert(id)));
         }
+        if search_scope == SearchScope::Named
+            && budget.is_none()
+            && layers.len() > 2
+            && proposal.objects.is_empty()
+            && target.blocked.is_none()
+            && !has_length_rule(target.net)
+            && !report_capped(native)
+            && finding_types_at_cap(native, "schematic_parity").is_empty()
+            && board.planes.iter().any(|plane| {
+                plane.hatch.is_none() && board.nets[plane.net as usize].name == target.net
+            })
+            && let Some(search) = &mut proposal.search
+        {
+            let filled = filled_board.get_or_init(|| {
+                let deadline = Instant::now() + LOCAL_WALL;
+                native_report::read_refilled_board(path, || Instant::now() >= deadline).ok()
+            });
+            if let Some((objects, landing)) = filled.as_ref().and_then(|filled| {
+                plane_landing::propose(plane_landing::Inputs {
+                    pcb,
+                    filled,
+                    model: &board,
+                    layers: &layers,
+                    config: &rules,
+                    native_net: target.native_net,
+                    net: target.net,
+                    witnesses: &open_items,
+                })
+            }) && objects
+                .iter()
+                .all(|object| item_id(object).is_some_and(|id| !occupied.contains(&id)))
+            {
+                search.plane_landing = Some(landing);
+                occupied.extend(objects.iter().filter_map(item_id));
+                proposal.objects = objects;
+            }
+        }
         if let (Some(budget), Some(search)) = (&mut budget, &proposal.search) {
             budget.search_work_seconds += search.work_seconds;
         }
@@ -654,7 +694,16 @@ pub fn propose_generated_branch(
 }
 
 fn compact_via(rules: &KiCadBoardRouterConfig, class: core::board::RuleClass) -> Option<[f64; 2]> {
-    let report = rules.project_rules.as_ref()?;
+    compact_vias(rules, class).first().copied()
+}
+
+pub(super) fn compact_vias(
+    rules: &KiCadBoardRouterConfig,
+    class: core::board::RuleClass,
+) -> Vec<[f64; 2]> {
+    let Some(report) = rules.project_rules.as_ref() else {
+        return Vec::new();
+    };
     if report.custom_rules_error.is_some()
         || report.custom_rules.iter().any(|rule| {
             matches!(
@@ -663,10 +712,10 @@ fn compact_via(rules: &KiCadBoardRouterConfig, class: core::board::RuleClass) ->
             )
         })
     {
-        return None;
+        return Vec::new();
     }
     let [diameter_min, drill_min, annulus_min] = report.via_minimums;
-    report
+    let mut sizes: Vec<_> = report
         .via_sizes
         .iter()
         .copied()
@@ -681,7 +730,10 @@ fn compact_via(rules: &KiCadBoardRouterConfig, class: core::board::RuleClass) ->
                 && diameter < class.via_diameter
                 && drill <= class.via_drill
         })
-        .max_by(|a, b| a[0].total_cmp(&b[0]).then(a[1].total_cmp(&b[1])))
+        .collect();
+    sizes.sort_unstable_by(|a, b| b[0].total_cmp(&a[0]).then(b[1].total_cmp(&a[1])));
+    sizes.dedup();
+    sizes
 }
 
 fn refilled_partition(
@@ -1132,6 +1184,7 @@ fn search(
             teardrop_contacts: Vec::new(),
             preset_via_mm: None,
             same_footprint_pad_bridge: None,
+            plane_landing: None,
             work_seconds: 0.0,
         }),
         ..Proposal::skipped("no_local_path")

@@ -6,7 +6,7 @@ use super::*;
 use pcb_router as core;
 use pcb_router::{ObstacleKind, Shape, Terminal};
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, VecDeque};
+use std::collections::{BTreeMap, BinaryHeap, VecDeque};
 
 const PITCH_MM: f64 = 0.025;
 const SEARCH_RADIUS_MM: f64 = 2.0;
@@ -187,8 +187,8 @@ pub(super) fn plan(
                     .copied()
                     .unwrap_or(0.0),
             );
-            let search = Pocket::new(&board, net, target, other_net, &donor, width);
-            let Some(path) = search.find(&mut probes) else {
+            let search = Pocket::new(&board, net, target, Some((other_net, &donor)), width);
+            let Some(path) = search.find(&mut probes, |_| true) else {
                 continue;
             };
             let via = *path.last().unwrap();
@@ -344,7 +344,7 @@ fn donor_escape(pcb: &Expr, pad: &Pad, terminal: &Terminal, layer: &str) -> Opti
     None
 }
 
-struct Pocket<'a> {
+pub(in crate::open_repair) struct Pocket<'a> {
     board: &'a core::Board,
     origin: Point,
     layer: u32,
@@ -355,9 +355,11 @@ struct Pocket<'a> {
     drill: f64,
     obstacles: Vec<(&'a core::Obstacle, f64)>,
     donor_tracks: Vec<Shape>,
-    donor_via: Shape,
-    donor_hole: Shape,
+    donor_via: Option<Shape>,
+    donor_hole: Option<Shape>,
     donor_clearance: f64,
+    edge_clearance: Option<f64>,
+    mask_margins: Option<&'a BTreeMap<String, f64>>,
 }
 
 impl<'a> Pocket<'a> {
@@ -365,12 +367,10 @@ impl<'a> Pocket<'a> {
         board: &'a core::Board,
         net: usize,
         pad: &Terminal,
-        other_net: usize,
-        donor: &Donor,
+        neighbor: Option<(usize, &Donor)>,
         width: f64,
     ) -> Self {
         let class = board.classes[board.nets[net].class];
-        let donor_class = board.classes[board.nets[other_net].class];
         let extent = SEARCH_RADIUS_MM + class.via_diameter + board.hole_clearance + 1.0;
         let obstacles = board
             .obstacles
@@ -390,9 +390,9 @@ impl<'a> Pocket<'a> {
                 (obstacle, clearance)
             })
             .collect();
-        let donor_tracks = donor
-            .items
-            .iter()
+        let donor_tracks = neighbor
+            .into_iter()
+            .flat_map(|(_, donor)| &donor.items)
             .filter_map(|item| {
                 let start = form_xy(item, "start").ok()?;
                 let end = form_xy(item, "end").ok()?;
@@ -411,21 +411,56 @@ impl<'a> Pocket<'a> {
             drill: class.via_drill,
             obstacles,
             donor_tracks,
-            donor_via: Shape::Circle {
+            donor_via: neighbor.map(|(_, donor)| Shape::Circle {
                 center: donor.via_mm,
                 radius: donor.diameter / 2.0,
-            },
-            donor_hole: Shape::Circle {
+            }),
+            donor_hole: neighbor.map(|(_, donor)| Shape::Circle {
                 center: donor.via_mm,
                 radius: donor.drill / 2.0,
-            },
-            donor_clearance: class.clearance.max(donor_class.clearance),
+            }),
+            donor_clearance: neighbor.map_or(0.0, |(other, _)| {
+                class
+                    .clearance
+                    .max(board.classes[board.nets[other].class].clearance)
+            }),
+            edge_clearance: None,
+            mask_margins: None,
         }
+    }
+
+    pub(in crate::open_repair) fn on_routed_board(
+        board: &'a core::Board,
+        net: usize,
+        pad: &Terminal,
+        edge_clearance: f64,
+        via: [f64; 2],
+        mask_margins: &'a BTreeMap<String, f64>,
+    ) -> Self {
+        let width = board.classes[board.nets[net].class].trace_width;
+        let mut search = Self::new(board, net, pad, None, width);
+        search.edge_clearance = Some(edge_clearance);
+        search.mask_margins = Some(mask_margins);
+        [search.diameter, search.drill] = via;
+        search
+    }
+
+    fn edge_gap(&self, a: Point, b: Point, radius: f64) -> bool {
+        self.edge_clearance.is_none_or(|gap| {
+            let outline = &self.board.outline;
+            outline
+                .iter()
+                .zip(outline.iter().cycle().skip(1))
+                .all(|(&x, &y)| {
+                    core::geometry::segment_segment_distance(a, b, x, y) + 1e-9 >= radius + gap
+                })
+        })
     }
 
     fn wire(&self, a: Point, b: Point) -> bool {
         let half = self.width / 2.0;
         core::geometry::point_in_polygon(b, &self.board.outline)
+            && self.edge_gap(a, b, half)
             && self.obstacles.iter().all(|&(obstacle, gap)| {
                 if obstacle.layers & self.layer == 0 || !obstacle.blocks_tracks {
                     return true;
@@ -435,6 +470,11 @@ impl<'a> Pocket<'a> {
                         return true;
                     }
                     ObstacleKind::Copper => gap,
+                    ObstacleKind::Hole
+                        if self.edge_clearance.is_some() && obstacle.label == "board cutout" =>
+                    {
+                        obstacle.clearance
+                    }
                     ObstacleKind::Hole => self.board.hole_clearance,
                     ObstacleKind::Keepout => obstacle.clearance,
                 };
@@ -444,16 +484,43 @@ impl<'a> Pocket<'a> {
                 .donor_tracks
                 .iter()
                 .all(|track| track.distance_to_segment(a, b) + 1e-9 >= half + self.donor_clearance)
-            && self.donor_via.distance_to_segment(a, b) + 1e-9 >= half + self.donor_clearance
-            && self.donor_hole.distance_to_segment(a, b) + 1e-9 >= half + self.board.hole_clearance
+            && self.donor_via.as_ref().is_none_or(|via| {
+                via.distance_to_segment(a, b) + 1e-9 >= half + self.donor_clearance
+            })
+            && self.donor_hole.as_ref().is_none_or(|hole| {
+                hole.distance_to_segment(a, b) + 1e-9 >= half + self.board.hole_clearance
+            })
     }
 
     fn via(&self, at: Point) -> bool {
         let ring = self.diameter / 2.0;
         let hole = self.drill / 2.0;
         let hole_clearance = self.board.hole_clearance;
+        let pad_clear = if let Some(margins) = self.mask_margins {
+            // Preserve the ordinary no-via-in-pad geometry on this path.
+            // Copper stays off its own lands and drill stays off the mask.
+            self.board.nets[self.net]
+                .terminals
+                .iter()
+                .map(|terminal| terminal.pad)
+                .chain(
+                    self.board
+                        .merged_pads
+                        .iter()
+                        .filter(|pad| pad.net as usize == self.net)
+                        .map(|pad| pad.pad),
+                )
+                .all(|pad| {
+                    let pad = &self.board.obstacles[pad];
+                    let expansion = margins.get(&pad.label).copied().unwrap_or_default();
+                    pad.shape.distance_to_point(at) >= ring.max(hole + expansion) + 0.000_001
+                })
+        } else {
+            self.board.obstacles[self.pad].shape.distance_to_point(at) + 1e-9 >= ring
+        };
         plane_at(self.board, self.net, self.layer, at)
-            && self.board.obstacles[self.pad].shape.distance_to_point(at) + 1e-9 >= ring
+            && self.edge_gap(at, at, ring)
+            && pad_clear
             && self.obstacles.iter().all(|&(obstacle, gap)| {
                 if !obstacle.blocks_vias {
                     return true;
@@ -463,6 +530,11 @@ impl<'a> Pocket<'a> {
                         return true;
                     }
                     ObstacleKind::Copper => (ring + gap).max(hole + hole_clearance),
+                    ObstacleKind::Hole
+                        if self.edge_clearance.is_some() && obstacle.label == "board cutout" =>
+                    {
+                        ring + obstacle.clearance
+                    }
                     ObstacleKind::Hole => {
                         (hole + self.board.hole_to_hole).max(ring + hole_clearance)
                     }
@@ -474,13 +546,21 @@ impl<'a> Pocket<'a> {
                 track.distance_to_point(at) + 1e-9
                     >= (ring + self.donor_clearance).max(hole + hole_clearance)
             })
-            && self.donor_via.distance_to_point(at) + 1e-9
-                >= (ring + self.donor_clearance).max(hole + hole_clearance)
-            && self.donor_hole.distance_to_point(at) + 1e-9
-                >= (hole + self.board.hole_to_hole).max(ring + hole_clearance)
+            && self.donor_via.as_ref().is_none_or(|via| {
+                via.distance_to_point(at) + 1e-9
+                    >= (ring + self.donor_clearance).max(hole + hole_clearance)
+            })
+            && self.donor_hole.as_ref().is_none_or(|donor| {
+                donor.distance_to_point(at) + 1e-9
+                    >= (hole + self.board.hole_to_hole).max(ring + hole_clearance)
+            })
     }
 
-    fn find(&self, probes: &mut u64) -> Option<Vec<Point>> {
+    pub(in crate::open_repair) fn find(
+        &self,
+        probes: &mut u64,
+        goal: impl Fn(Point) -> bool,
+    ) -> Option<Vec<Point>> {
         if self.drill <= 0.0 || self.diameter <= self.drill {
             return None;
         }
@@ -498,7 +578,7 @@ impl<'a> Pocket<'a> {
             let Reverse((cost, key)) = queue.pop()?;
             let at = xy(key);
             *probes += 1;
-            if self.via(at) {
+            if goal(at) && self.via(at) {
                 let mut path = vec![at];
                 let mut current = key;
                 while let Some(parent) = seen[&current] {
@@ -530,7 +610,7 @@ impl<'a> Pocket<'a> {
     }
 }
 
-fn compact(path: &[Point]) -> Vec<Point> {
+pub(in crate::open_repair) fn compact(path: &[Point]) -> Vec<Point> {
     let step = |a: Point, b: Point| {
         let (a, b) = (nm(a), nm(b));
         [b[0] - a[0], b[1] - a[1]]

@@ -211,6 +211,20 @@ budget to publish the fill. See `courtyard-final/` for the outcome and
 `solid-study/declared-final-placed-assembly/` for the STEP measurements
 under `build/schematic-corpus-screen-20261120/katia/`.
 
+On that same panel, a named local repair (`repair-kicad-opens --local`
+with `--net +5V`) found an escape from LED27:4 into the existing In2.Cu
+plane. It added two 0.600 mm back traces totaling 1.288 mm and used the
+project's 0.50/0.30 mm tented via preset, with the entire ring clear of
+the pad. The repair preserved all 230 poses and existing copper. KiCad
+proved the +5V pad joined its intended island, with the original ordinary
+copper and 45 filled-island attachments preserved. Panel-local opens fell
+from 25 to 24 (29 to 28 raw). Independent stored and refilled checks of
+the public `--save-filled` copy found 28 raw opens, the same 48 warnings,
+zero errors and zero schematic parity findings. The +3V3 control declined
+without changing the board. Its U2 pad launches remain blocked under the
+current clearance and track rules. See `power-escape-local/` in the Katia
+benchmark tree.
+
 On the returned board, all 138 socket solids also cleared the 230
 LED solids and 48 solids from the four connectors that have STEP
 models. The archived placement passed the same checks. The exports
@@ -242,13 +256,17 @@ a private copy of the socket footprints, the stored and refilled
 native partitions agree for all 5,893
 ordinary copper objects in 204 groups. Some changed open witnesses name
 zone or teardrop copper, including +3V3 teardrops on F.Cu and B.Cu.
-The partition does not establish whether those filled items still
-connect. The public fill handoff refuses the copy and reports the
-affected witnesses' UUIDs, layers and coordinates for inspection. The
-original PCB bytes match after the refusal. July's independent stored
-fill control still delivered with zero opens, errors and parity
-findings. See `solid-study/{partition-study,zone-witness-public,zone-witness-original-public/july-control}`
-in the Katia benchmark tree.
+The original handoff refused because the ordinary partition could only
+verify pads, tracks and vias. The current `--save-filled` checked all 45
+native island shapes and their exact attachments against the captured
+refill. It published a source-preserving copy with 32 raw opens, four
+errors and zero parity findings, the same as the refilled DRC. A control
+with identical ordinary components and raw open counts but one altered
+island attachment fails the proof. July's independent stored fill control
+delivered with zero opens, errors and parity findings. See
+`solid-study/{partition-study,zone-witness-original-public}` and
+`power-escape-local/{ship-legacy-witness,island-swap-control}` in the
+Katia benchmark tree.
 
 0xCB-Static had clean parity and a historical strict pass. Its layout
 exited 1 with two solder-mask bridge errors. KiCad locates both on the

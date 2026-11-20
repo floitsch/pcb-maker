@@ -582,7 +582,18 @@ pub fn save_filled_kicad_board(
                         if forms == SourceForms::Preserved
                             && connectivity::eligible(&before, &filled, &stored) =>
                     {
-                        connectivity = Some(
+                        let proof = if connectivity::has_changed_fill_witnesses(&filled, &stored) {
+                            connectivity::prove_saved_islands(
+                                &board,
+                                &native,
+                                &filled,
+                                &stored,
+                                &mut connectivity_checks,
+                            )
+                            .map_err(|why| {
+                                format!("native filled-island proof failed: {why}. Inspect the named nets, filled polygons and their attachments in a private KiCad copy before retrying --save-filled")
+                            })
+                        } else {
                             connectivity::prove(
                                 &board,
                                 &original,
@@ -592,8 +603,8 @@ pub fn save_filled_kicad_board(
                                 || false,
                                 None,
                             )
-                            .map_err(|why| format!("{error}. Connectivity proof failed: {why}"))?,
-                        );
+                        };
+                        connectivity = Some(proof.map_err(|why| format!("{error}. {why}"))?);
                         inherited_findings(&before, &stored)
                     }
                     Err(error) if forms == SourceForms::Preserved => {

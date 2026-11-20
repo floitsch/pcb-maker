@@ -125,6 +125,96 @@ fn verify_replayed_open_pairs(
 }
 
 impl Trial<'_> {
+    pub(super) fn prove_plane_landing(
+        &self,
+        before: &Value,
+        after: &Value,
+        landing: &plane_landing::PlaneLanding,
+    ) -> Result<(OpenConnectivityProof, usize), String> {
+        if !self.refill
+            || !same_check_policy(before, after)
+            || [before, after].into_iter().any(|report| {
+                report_capped(report)
+                    || !finding_types_at_cap(report, "schematic_parity").is_empty()
+            })
+            || finding_counts(before, "violations")? != finding_counts(after, "violations")?
+            || finding_counts(before, "schematic_parity")?
+                != finding_counts(after, "schematic_parity")?
+        {
+            return Err(
+                "plane landing requires complete matching native rule and parity findings".into(),
+            );
+        }
+        let version = before["kicad_version"]
+            .as_str()
+            .ok_or("missing native version")?;
+        let wall = Instant::now() + local::LOCAL_WALL;
+        let expired = || Instant::now() >= wall;
+        let candidate = fs::read(self.board).map_err(|error| error.to_string())?;
+        write_additions(self.board, self.original, &self.additions[..self.previous])?;
+        let baseline = fs::read(self.board).map_err(|error| error.to_string())?;
+        let a = native_report::connectivity_islands(self.board, version, true, expired);
+        let unchanged = fs::read(self.board).is_ok_and(|board| board == baseline);
+        write_atomically(self.board, &candidate)?;
+        if !unchanged {
+            return Err("KiCad modified the baseline during its island check".into());
+        }
+        let a = a?;
+        let b = native_report::connectivity_islands(self.board, version, true, expired)?;
+        if !fs::read(self.board).is_ok_and(|board| board == candidate) {
+            return Err("KiCad modified the candidate during its island check".into());
+        }
+        let (Some(mut old_opens), Some(new_opens)) = (a.open_counts(before), b.open_counts(after))
+        else {
+            return Err(
+                "KiCad's reported open endpoints could not all be attributed to their nets".into(),
+            );
+        };
+        let mut removed = old_opens.iter().filter_map(|(key, count)| {
+            (new_opens.get(key).copied().unwrap_or(0) < *count).then_some(key)
+        });
+        let closed = removed
+            .next()
+            .filter(|_| removed.next().is_none())
+            .ok_or("native opens did not decrease in exactly one finding category")?
+            .clone();
+        if closed.0 != self.target {
+            return Err("the removed native open belongs to a different net".into());
+        }
+        let prior = old_opens
+            .get_mut(&closed)
+            .expect("original finding category");
+        *prior -= 1;
+        old_opens.retain(|_, count| *count != 0);
+        if old_opens != new_opens {
+            return Err(
+                "native open finding counts did not decrease by exactly one on the nominated net"
+                    .into(),
+            );
+        }
+        let pad = landing.pad_uuid.to_ascii_lowercase();
+        let additions = &self.additions[self.previous..];
+        if !a
+            .ordinary
+            .iter()
+            .any(|(net, members)| net == self.target && members == std::slice::from_ref(&pad))
+            || !b.keeps_island_attachments(&a)
+            || !b.islands.iter().any(|(key, members)| {
+                key.0 == self.target
+                    && key.1 == landing.plane_layer
+                    && key.5 == landing.zone_uuid
+                    && members.contains(&pad)
+                    && additions
+                        .iter()
+                        .all(|item| item_id(item).is_some_and(|id| members.contains(&id)))
+            })
+        {
+            return Err("the isolated pad did not join its nominated filled zone with all added copper and unchanged original island attachments".into());
+        }
+        let proof = verify(a.ordinary, b.ordinary, self.target, 1, additions)?;
+        Ok((proof, b.islands.len()))
+    }
+
     pub(super) fn prove(
         &self,
         before: &Value,

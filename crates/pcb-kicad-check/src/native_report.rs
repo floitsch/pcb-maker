@@ -7,6 +7,7 @@
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
+    collections::BTreeMap,
     ffi::OsStr,
     fs,
     path::{Path, PathBuf},
@@ -677,8 +678,18 @@ pub fn read_refilled_board(
     expired: impl Fn() -> bool,
 ) -> Result<pcb_kicad_file::kicad_sexpr::Expr, String> {
     let scratch = ReportDirectory::new(&std::env::temp_dir())?;
+    let saved = refilled_board_copy(board, &scratch.0, expired)?;
+    let text = fs::read_to_string(&saved).map_err(|error| error.to_string())?;
+    pcb_kicad_file::canonical_order::parse_board(&text)
+}
+
+fn refilled_board_copy(
+    board: &Path,
+    scratch: &Path,
+    expired: impl Fn() -> bool,
+) -> Result<PathBuf, String> {
     let name = board.file_name().ok_or("missing PCB filename")?;
-    let saved = scratch.0.join(name);
+    let saved = scratch.join(name);
     fs::copy(board, &saved).map_err(|error| error.to_string())?;
     for extension in ["kicad_pro", "kicad_dru"] {
         let source = board.with_extension(extension);
@@ -686,9 +697,8 @@ pub fn read_refilled_board(
             fs::copy(source, saved.with_extension(extension)).map_err(|error| error.to_string())?;
         }
     }
-    save_kept_route_fill(&saved, &scratch.0.join("drc.json"), false, expired)?;
-    let text = fs::read_to_string(&saved).map_err(|error| error.to_string())?;
-    pcb_kicad_file::canonical_order::parse_board(&text)
+    save_kept_route_fill(&saved, &scratch.join("drc.json"), false, expired)?;
+    Ok(saved)
 }
 
 fn check_scoped_drc(
@@ -764,17 +774,152 @@ pub fn connectivity_partition(
     refill: bool,
     wall_passed: impl Fn() -> bool,
 ) -> Result<Vec<(String, Vec<String>)>, String> {
+    let bytes = connectivity_evidence(board, version, refill, false, wall_passed)?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| format!("invalid native connectivity result: {error}"))
+}
+
+/// A native filled polygon keyed by net, layer, teardrop and isolated
+/// flags, its exact integer bounds, and its authored zone ID when available.
+pub type FilledIslandKey = (String, String, bool, bool, [i64; 4], String);
+
+#[derive(serde::Deserialize)]
+pub struct NativeIslandTopology {
+    pub ordinary: Vec<(String, Vec<String>)>,
+    pub islands: Vec<(FilledIslandKey, Vec<String>)>,
+    pub shapes: Vec<(FilledIslandKey, String)>,
+}
+
+impl NativeIslandTopology {
+    /// The island identifiers must match exactly. Each previous island must
+    /// still attach to the complete native group of its original members.
+    pub fn keeps_island_attachments(&self, before: &Self) -> bool {
+        let by_member: BTreeMap<_, _> = self
+            .ordinary
+            .iter()
+            .flat_map(|group| group.1.iter().map(move |id| (id.as_str(), group)))
+            .collect();
+        !before.islands.is_empty()
+            && self.islands.len() == before.islands.len()
+            && before.islands.iter().zip(&self.islands).all(
+                |((old_key, old_members), (key, members))| {
+                    old_key == key
+                        && !old_members.is_empty()
+                        && old_members.iter().all(|id| {
+                            by_member
+                                .get(id.as_str())
+                                .is_some_and(|(net, group)| net == &key.0 && group == members)
+                        })
+                },
+            )
+    }
+
+    /// Count native open descriptions by net and full finding metadata.
+    /// Endpoint positions on a native zone can be its outline origin, so
+    /// a fill witness only names a net here. Its attachment proof is separate.
+    pub fn open_counts(&self, report: &Value) -> Option<BTreeMap<(String, String), usize>> {
+        let by_member: BTreeMap<_, _> = self
+            .ordinary
+            .iter()
+            .enumerate()
+            .flat_map(|(index, (net, group))| {
+                group
+                    .iter()
+                    .map(move |id| (id.as_str(), (net.as_str(), Some(index))))
+            })
+            .collect();
+        let net_of = |item: &Value| {
+            let id = item["uuid"].as_str()?.to_ascii_lowercase();
+            if let Some((net, index)) = by_member.get(id.as_str()) {
+                return Some(((*net).to_owned(), *index));
+            }
+            let label = item["description"].as_str()?;
+            let (teardrop, name) = label
+                .strip_prefix("Teardrop [")
+                .map(|name| (true, name))
+                .or_else(|| label.strip_prefix("Zone [").map(|name| (false, name)))?;
+            let (net, layer) = name.rsplit_once("] on ")?;
+            let layer = layer.split(',').next()?;
+            self.islands
+                .iter()
+                .any(|(key, _)| {
+                    key.0 == net && key.1 == layer && key.2 == teardrop && (teardrop || key.5 == id)
+                })
+                .then(|| (net.to_owned(), None))
+        };
+        let mut counts = BTreeMap::new();
+        let local = report["unconnected_items"].as_array()?;
+        let across = match report.get(pcb_kicad_file::outline_pieces::ACROSS_KEY) {
+            Some(across) => Some(across.as_array()?),
+            None => None,
+        };
+        for item in local.iter().chain(across.into_iter().flatten()) {
+            if item["severity"] != "error"
+                || item["type"] != "unconnected_items"
+                || item["excluded"] == true
+            {
+                return None;
+            }
+            let mut header = item.clone();
+            let endpoints = header.as_object_mut()?.remove("items")?;
+            let [a, b] = endpoints.as_array()?.as_slice() else {
+                return None;
+            };
+            let (net, a_group) = net_of(a)?;
+            let (other, b_group) = net_of(b)?;
+            if net != other || (a_group.is_some() && a_group == b_group) {
+                return None;
+            }
+            *counts.entry((net, header.to_string())).or_default() += 1;
+        }
+        Some(counts)
+    }
+}
+
+/// Complete native memberships for every supported fill island. The
+/// private probe proves its one-polygon copies preserve the ordinary
+/// native partition before using their finer attribution.
+pub fn connectivity_islands(
+    board: &Path,
+    version: &str,
+    refill: bool,
+    wall_passed: impl Fn() -> bool,
+) -> Result<NativeIslandTopology, String> {
+    let bytes = connectivity_evidence(board, version, refill, true, wall_passed)?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| format!("invalid native island connectivity result: {error}"))
+}
+
+fn connectivity_evidence(
+    board: &Path,
+    version: &str,
+    refill: bool,
+    islands: bool,
+    wall_passed: impl Fn() -> bool,
+) -> Result<Vec<u8>, String> {
     let parent = board
         .parent()
         .ok_or("connectivity PCB needs a project directory")?;
     let scratch = ReportDirectory::new(parent)?;
     let result = scratch.0.join("partition.json");
+    let filled;
+    let (board, refill) = if islands && refill {
+        // The Python zone filler alone does not construct native teardrops.
+        // Use the same CLI fill as the native DRC, including derived copper.
+        filled = refilled_board_copy(board, &scratch.0, &wall_passed)?;
+        (filled.as_path(), false)
+    } else {
+        (board, refill)
+    };
     let mut command = Command::new("python3");
     command
         .args(["-I", "-c", include_str!("connectivity_partition.py")])
         .arg(board)
         .arg(&result)
         .args([if refill { "refill" } else { "stored" }, version]);
+    if islands {
+        command.arg("islands");
+    }
     crate::kicad_config::configure_drc(&mut command, &kicad_cli(), board);
     let (status, log) = crate::ledger::kicad_check(|| {
         run_bounded_unreserved(&mut command, &scratch.0, wall_passed)
@@ -786,8 +931,7 @@ pub fn connectivity_partition(
             log.lines().last().unwrap_or("no native result")
         ));
     }
-    serde_json::from_slice(&fs::read(&result).map_err(|error| error.to_string())?)
-        .map_err(|error| format!("invalid native connectivity result: {error}"))
+    fs::read(&result).map_err(|error| error.to_string())
 }
 
 /// Prove contacts between footprint copper graphics and pads on a private
@@ -1378,6 +1522,49 @@ fn run_bounded_unreserved(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn filled_island_attachments_distinguish_equal_ordinary_partitions() {
+        let ordinary = vec![
+            ("GND".to_owned(), vec!["pad-a".to_owned()]),
+            ("GND".to_owned(), vec!["pad-b".to_owned()]),
+        ];
+        let key = (
+            "GND".into(),
+            "F.Cu".into(),
+            false,
+            false,
+            [0, 0, 2, 3],
+            "zone".into(),
+        );
+        let before = NativeIslandTopology {
+            ordinary: ordinary.clone(),
+            islands: vec![(key.clone(), vec!["pad-a".into()])],
+            shapes: Vec::new(),
+        };
+        let candidate = NativeIslandTopology {
+            ordinary,
+            islands: vec![(key, vec!["pad-b".into()])],
+            shapes: Vec::new(),
+        };
+        let open = json!({"type":"unconnected_items", "severity":"error", "items":[
+            {"uuid":"pad-a"}, {"uuid":"zone", "description":"Zone [GND] on F.Cu, priority 0"}
+        ]});
+        let report = json!({"unconnected_items":[open.clone()]});
+        let mut repartitioned = json!({"unconnected_items":[]});
+        repartitioned[pcb_kicad_file::outline_pieces::ACROSS_KEY] = json!([open]);
+        assert!(before.keeps_island_attachments(&before));
+        assert!(!candidate.keeps_island_attachments(&before));
+        assert!(before.open_counts(&report).is_some());
+        assert_eq!(
+            before.open_counts(&report),
+            candidate.open_counts(&repartitioned)
+        );
+        let mut wrong_net = report;
+        wrong_net["unconnected_items"][0]["items"][1]["description"] =
+            json!("Zone [OTHER] on F.Cu");
+        assert!(before.open_counts(&wrong_net).is_none());
+    }
 
     #[test]
     fn stale_run_reports_are_removed_without_removing_project_inputs() {

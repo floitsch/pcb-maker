@@ -9,6 +9,8 @@ pub struct FillConnectivityProof {
     pub copper_objects: usize,
     pub components: usize,
     pub nets: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filled_islands: Option<usize>,
 }
 
 /// Gate the more expensive proof on the exact report's only permitted
@@ -166,6 +168,14 @@ fn fill_open_witnesses(
     (!shown.is_empty()).then(|| shown.join(" / "))
 }
 
+pub(super) fn has_changed_fill_witnesses(first: &Value, second: &Value) -> bool {
+    let a = keys(first, "unconnected_items");
+    let b = keys(second, "unconnected_items");
+    let unknown = BTreeMap::new();
+    fill_open_witnesses(&a, &b, &unknown, "").is_some()
+        || fill_open_witnesses(&b, &a, &unknown, "").is_some()
+}
+
 fn compare_fill_witnesses(
     membership: &Membership<'_>,
     refilled_report: &Value,
@@ -226,6 +236,55 @@ fn verify(
         copper_objects: membership.len(),
         components: saved.len(),
         nets: nets.len(),
+        filled_islands: None,
+    })
+}
+
+pub(super) fn prove_saved_islands(
+    staged: &Path,
+    native_fill: &[u8],
+    refilled: &Value,
+    stored: &Value,
+    checks: &mut usize,
+) -> Result<FillConnectivityProof, String> {
+    let version = refilled["kicad_version"]
+        .as_str()
+        .ok_or("missing version for native island proof")?;
+    let candidate = fs::read(staged).map_err(|error| error.to_string())?;
+    // Read the exact snapshot emitted by the first native refill DRC.
+    fs_util::write_atomically(staged, native_fill)?;
+    *checks += 1;
+    let before = native_report::connectivity_islands(staged, version, false, || false);
+    let unchanged = fs::read(staged).is_ok_and(|bytes| bytes == native_fill);
+    fs_util::write_atomically(staged, &candidate)?;
+    if !unchanged {
+        return Err("checking refilled islands changed the staged board".into());
+    }
+    let before = before?;
+    *checks += 1;
+    let after = native_report::connectivity_islands(staged, version, false, || false)?;
+    if !fs::read(staged).is_ok_and(|bytes| bytes == candidate) {
+        return Err("checking stored islands changed the staged board".into());
+    }
+    let original_opens = before.open_counts(refilled);
+    if before.ordinary != after.ordinary
+        || before.shapes != after.shapes
+        || !after.keeps_island_attachments(&before)
+        || original_opens.is_none()
+        || original_opens != after.open_counts(stored)
+    {
+        return Err("the saved board did not reproduce the exact island shapes, copper attachments and counts of native open evidence by net".into());
+    }
+    Ok(FillConnectivityProof {
+        copper_objects: membership(&after.ordinary)?.len(),
+        components: after.ordinary.len(),
+        nets: after
+            .ordinary
+            .iter()
+            .map(|(net, _)| net)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        filled_islands: Some(after.islands.len()),
     })
 }
 

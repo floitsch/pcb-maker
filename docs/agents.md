@@ -2728,6 +2728,18 @@ checks the candidate as stored and after refill before it is accepted.
 On stacks with more than two copper layers, the search excludes dedicated
 foreign plane layers from new track paths. It reports them as
 `reserved_plane_layers` and applies the board's via span and layer rules.
+For an explicitly named net, standalone local repair can try a short
+escape from an isolated surface pad to a nearby existing solid plane
+when the ordinary search finds no route. It uses the active track width,
+the normal through-via size or a listed smaller preset. The ring stays
+off the pad and the drill stays outside its mask opening. The report's
+`plane_landing` entry gives the pad UUID, plane UUID and layer, route
+geometry, and number of filled islands checked. KiCad's Python bindings
+must prove the pad joins the named
+plane through the added copper, preserves every other component and
+original island's attachments, and adds no native findings. This is a
+refilled result. Use the printed `--save-filled` command to deliver a
+reopened, verified copy.
 On a single board, standalone local repair can try one recognized pair
 with two pads and a native open on each conductor, with neither
 conductor already routed. If using `--net`, select both names. The two
@@ -2742,8 +2754,9 @@ of an accepted trial stays on the piece whose open count decreased. If
 KiCad changes the endpoint it reports across the gap, the repair can
 accept a newly added track at the same copper contact with the original
 net, layer and peer. `panel_witness_replacements` records the track and
-original endpoint UUIDs. KiCad
-refills zones for the checks when the board contains zones. On a single
+original endpoint UUIDs. For a plane escape, the component and island
+proof compares raw opens by net, including cross-piece items.
+KiCad refills zones for the checks when the board contains zones. On a single
 board, if the trial closes an open and the only new findings are narrow
 joints between new track tips and existing straight tracks, the repair can
 retry once with those tips on the existing centerlines. The

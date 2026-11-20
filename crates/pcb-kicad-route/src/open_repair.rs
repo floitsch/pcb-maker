@@ -17,6 +17,7 @@ mod pad_bridge;
 mod paired;
 mod panel_witness;
 mod plane_escape;
+mod plane_landing;
 mod silk_cap;
 mod teardrop;
 mod terminal_launch;
@@ -1138,6 +1139,10 @@ fn repair_in_copy(
                     .local_search
                     .as_ref()
                     .is_some_and(|search| search.preset_via_mm.is_some());
+                let plane_landing = trial
+                    .local_search
+                    .as_ref()
+                    .is_some_and(|search| search.plane_landing.is_some());
                 let complementary = if pad_bridge && refill {
                     Some("same-footprint-pad-bridge-stored")
                 } else if preset {
@@ -1147,6 +1152,7 @@ fn repair_in_copy(
                         "preset-via-refilled"
                     })
                 } else if refill
+                    && !plane_landing
                     && trial
                         .local_search
                         .as_ref()
@@ -1197,6 +1203,7 @@ fn repair_in_copy(
                 if matches!(method, Method::Local(_))
                     && trial.paired_search.is_none()
                     && !pad_bridge
+                    && !plane_landing
                     && pieces.is_none()
                     && !capped
                     && count(&next) < count(&native)
@@ -1250,6 +1257,31 @@ fn repair_in_copy(
                         && !finding_types_at_cap(&next, "schematic_parity").is_empty())
                 {
                     "native_trial_report_capped"
+                } else if let Some(landing) = trial
+                    .local_search
+                    .as_mut()
+                    .and_then(|search| search.plane_landing.as_mut())
+                {
+                    let native_name = unescape(&trial.net);
+                    let proof = connectivity::Trial {
+                        board,
+                        original,
+                        additions: &kept,
+                        previous,
+                        target: &native_name,
+                        refill,
+                    };
+                    match proof.prove_plane_landing(&native, &next, landing) {
+                        Ok((proof, islands)) => {
+                            landing.verified_filled_islands = Some(islands);
+                            trial.connectivity_proof = Some(proof);
+                            "accepted"
+                        }
+                        Err(error) => {
+                            trial.connectivity_proof_error = Some(error);
+                            "plane_landing_without_native_proof"
+                        }
+                    }
                 } else if let Some(piece) = panel_piece
                     && report
                         .panel_after
