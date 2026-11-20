@@ -261,21 +261,48 @@ fn pad_groups(pcb: &Expr, codes: &BTreeMap<String, String>, side: ContactSide<'_
     groups
 }
 
-fn compatible_layer_stack(prior: &Expr, current: &Expr) -> Result<bool, String> {
-    let stackup = |pcb: &Expr| {
-        pcb.child("setup")
-            .and_then(|setup| setup.child("stackup"))
-            .cloned()
-    };
+fn layer_stack_mismatch(prior: &Expr, current: &Expr) -> Result<Option<String>, String> {
+    let prior_layers = LayerTable::from_pcb(prior)?.names;
+    let current_layers = LayerTable::from_pcb(current)?.names;
+    if prior_layers != current_layers {
+        return Ok(Some(format!(
+            "the ordered copper layers differ (prior [{}], current [{}])",
+            prior_layers.join(", "),
+            current_layers.join(", "),
+        )));
+    }
+
+    fn stackup(pcb: &Expr) -> Option<&Expr> {
+        pcb.child("setup")?.child("stackup")
+    }
+    match (stackup(prior), stackup(current)) {
+        (Some(_), None) => return Ok(Some(
+            "the current board lacks the prior board's setup.stackup declaration. If a board's fabrication stackup has been confirmed for this design, import with --stackup-from <confirmed-board.kicad_pcb>".into(),
+        )),
+        (None, Some(_)) => return Ok(Some(
+            "the prior board lacks the current board's setup.stackup declaration".into(),
+        )),
+        (Some(prior), Some(current)) if prior != current => return Ok(Some(
+            "the prior and current boards have different setup.stackup declarations".into(),
+        )),
+        _ => {}
+    }
+
     let thickness = |pcb: &Expr| {
         pcb.child("general")
             .and_then(|general| form_f64(general, "thickness", 1).ok())
     };
-    Ok(
-        LayerTable::from_pcb(prior)?.names == LayerTable::from_pcb(current)?.names
-            && stackup(prior) == stackup(current)
-            && thickness(prior) == thickness(current),
-    )
+    let (prior, current) = (thickness(prior), thickness(current));
+    Ok((prior != current).then(|| {
+        let describe = |value: Option<f64>| {
+            value.map_or_else(|| "unspecified".into(), |mm| format!("{mm} mm"))
+        };
+        format!(
+            "the board thickness declarations differ (prior {}, current {})",
+            describe(prior),
+            describe(current),
+        )
+    }))
 }
 
 fn target_group<'a>(
@@ -533,8 +560,8 @@ pub fn prepare_route_reuse_for_project(
         new_findings: BTreeMap::new(),
         new_finding_examples: Vec::new(),
     };
-    if !compatible_layer_stack(previous, current)? {
-        report.reason = Some("the board layer stacks differ".into());
+    if let Some(reason) = layer_stack_mismatch(previous, current)? {
+        report.reason = Some(reason);
         return Ok((None, report));
     }
     if config.route_reuse_clearance_unverified {
@@ -1226,6 +1253,46 @@ mod tests {
         format!(
             r#"(segment (start 1 4) (end 2 4) (width 0.2) (layer "F.Cu") (net {net}) (uuid "{id}"))"#
         )
+    }
+
+    #[test]
+    fn route_reuse_explains_each_layer_stack_mismatch() {
+        let declaration = |thickness, copper| {
+            board(&[
+                format!("(general (thickness {thickness}))"),
+                format!(r#"(setup (stackup (layer "F.Cu" (type "copper") (thickness {copper}))))"#),
+            ])
+        };
+        let prior = declaration(1.6, 0.035);
+        let bare = board(&["(general (thickness 1.6))".into()]);
+        let other_layers = parse(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+                (general (thickness 1.6)))"#,
+        )
+        .unwrap();
+        let mismatch =
+            |previous: &Expr, current: &Expr| layer_stack_mismatch(previous, current).unwrap();
+        assert_eq!(mismatch(&prior, &declaration(1.6, 0.035)), None);
+        assert_eq!(mismatch(&bare, &bare), None);
+        assert!(mismatch(&prior, &bare).unwrap().contains("--stackup-from"));
+        let missing_prior = mismatch(&bare, &prior).unwrap();
+        assert!(missing_prior.contains("prior board lacks"));
+        assert!(!missing_prior.contains("--stackup-from"));
+        assert!(
+            mismatch(&prior, &declaration(1.6, 0.050))
+                .unwrap()
+                .contains("different setup.stackup declarations")
+        );
+        assert!(
+            mismatch(&prior, &declaration(1.2, 0.035))
+                .unwrap()
+                .contains("prior 1.6 mm, current 1.2 mm")
+        );
+        assert!(
+            mismatch(&prior, &other_layers)
+                .unwrap()
+                .contains("ordered copper layers differ")
+        );
     }
 
     #[test]
