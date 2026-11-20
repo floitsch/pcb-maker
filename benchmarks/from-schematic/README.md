@@ -3543,6 +3543,23 @@ schematic parity findings after refill. The routed PCB before fill
 publication had 36 stored GND opens. No published commercial run on
 this electrical input was available for comparison.
 
+Running the same schematic and mechanical brief with two routing
+policies shows how the requested ground pours affect track length and
+via count. To reproduce the comparison, set `RAYON_NUM_THREADS=2` in
+the command above. Omit `--router-config` for the default row. Both
+runs used the same work rate and the same 1,500-second budget.
+
+| Schematic routing policy | Track length (mm) | Vias | Modeled seconds |
+| --- | ---: | ---: | ---: |
+| Default, ground connected with tracks | 7,299.975 | 246 | 351.99 |
+| GND pours on both copper layers | 6,981.195 | 314 | 360.14 |
+
+Both boards satisfied all 79 placement constraints. Independent KiCad
+checks found zero opens, errors and parity findings and 53 warnings on
+each board, both as saved and after refill. The explicit-pour result
+was byte-identical to the earlier schematic replay. These measurements
+are under `build/giga-commercial-main-20261120/`.
+
 With enough budget, normal layout saves the verified fills in
 `layout/result/`. A matched replay published 66 polygons in the two
 GND zones. Fresh KiCad checks with all track errors and schematic parity
