@@ -1224,11 +1224,13 @@ class MemoryLedger(unittest.TestCase):
         # The ledger's capacity reads the samples beside it; the variable
         # still replaces it.
         environ = {"PCB_MAKER_LEDGER": str(self.ledger.path)}
-        h.atomic_json(h.headroom_path(self.ledger.path), {"summary": dict(summary, updated=time.time())})
-        machine = h.memory_total_mb()
-        described = h.ledger_capacity_described(environ)
-        self.assertEqual(described[0], min(machine - 6144, machine - p50))
-        self.assertIn("the median of 1091 headroom samples", described[1])
+        h.atomic_json(h.headroom_path(self.ledger.path), {"summary": summary})
+        with patch.object(h.time, "time", return_value=now):
+            for machine, expected in ((16_384.0, 0.0), (total, total - p50)):
+                with self.subTest(machine=machine), patch.object(h, "memory_total_mb", return_value=machine):
+                    described = h.ledger_capacity_described(environ)
+                    self.assertEqual(described[0], expected)
+                    self.assertIn("the median of 1091 headroom samples", described[1])
         self.assertEqual(h.ledger_capacity_described(dict(environ, PCB_MAKER_LEDGER_TOTAL_MB="4000")),
                          (4000, "PCB_MAKER_LEDGER_TOTAL_MB"))
 
