@@ -660,6 +660,19 @@ clearance in placement removed both cross-footprint errors. KiCad still
 reported the four clearance errors inside U10 and four zero-width
 annular rings on the USB and card connector footprints.
 
+The November 20 panel-placement build (`acfc9bac62b4`) passed strict
+routing on all 12 boards and full schematic acceptance on seven.
+The v7 task definitions and per-board modeled budgets matched the
+previous run. Eleven returned PCBs were byte-identical. SLAB left
+connected 76 of 76 nets, up from 75, using 326 vias and 7,690.7 mm
+of track. A separate cold rerun produced the same PCB bytes.
+Independent KiCad checks of that board, both as saved and after refill,
+reported zero opens, zero active rule errors, 70 warnings, and six
+schematic net conflicts. The strict routing gain leaves its full
+schematic acceptance open. See
+`build/schematic-regression-20261120-sheet-courtyard/independent-comparison.json`
+and `build/slab-schematic-native-audit-20261120/comparison.json`.
+
 The schematic tier's `--import-near` imports with `import-kicad-netlist
 --near-decoupling` (the decoupling capacitors' `near` entries in the new
 `constraints.json`). Measured on the tier, it keeps the unconnected count
@@ -1479,6 +1492,32 @@ errors. Independent refill found two opens and eight edge-clearance errors.
 The stripped input also has eight edge-clearance errors. The route charged
 40.04 modeled seconds, including zero modeled seconds for its native checks
 under standalone route accounting.
+
+## Placement seeds from repeated schematic sheets (2026-11-20)
+
+A separate cold-start trial matched source-symbol UUIDs across sheet
+instances, checked local pad connectivity, and used held connector
+positions to transform the first placement into a seed for the other
+instance. It screened out transfers that disagreed with mechanical
+constraints. On Katia, translating one USB connector to the other put
+only two of 16 movable origins inside the receiving piece. The fixed
+LED positions also disagreed with a single rigid transform.
+
+| Board and placement seed | KiCad opens | Vias | Track length (mm) |
+| --- | ---: | ---: | ---: |
+| Eurorack, ordinary alternate | 13 | 178 | 3,180.4 |
+| Eurorack, start from the same parts' previous poses | 12 | 137 | 3,141.9 |
+| Eurorack, transfer between repeated instances | 11 | 150 | 3,199.7 |
+| Glasgow, ordinary alternate | 65 | 842 | 7,167.8 |
+| Glasgow, transfer between repeated instances | 73 | 709 | 7,822.9 |
+
+Saved and refilled counts agreed in every row. Routing took 152–154
+modeled seconds on Eurorack and 242 on Glasgow. Both Glasgow placements
+had the same requested budget, but the transfer used 17.4 seconds
+more placement work. The transfer improved one board's open count and
+worsened the other's. The ordinary placer uses its existing seeds.
+The survey, transformations and native readbacks are in
+`build/repeated-sheet-sample-20261120/`.
 
 ## Glasgow placement beside an authored rule area (2026-11-20)
 
