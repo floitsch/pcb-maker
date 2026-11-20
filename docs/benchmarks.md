@@ -229,6 +229,14 @@ left five native opens and retained the six input clearance findings.
 The full and reduced trials are under `pair-comparison/` and
 `usb-launch-coupon/`.
 
+The coupon's paired verdict now reports the 33 copper-related warnings
+separately from those six pad-pair warnings. KiCad measured a minimum
+USB_D track or via gap of 0.1026 mm against a class clearance of
+0.4000 mm. Each group's examples carry native item IDs, nets and
+locations. The warning-severity and error-severity replays retained
+the same respective PCB bytes and verdict outcomes as before the
+feedback change. See `usb-launch-coupon/clearance-feedback-verification.json`.
+
 On the separate Katia trial with the measured courtyard drawn into
 a private copy of the socket footprints, the stored and refilled
 native partitions agree for all 5,893

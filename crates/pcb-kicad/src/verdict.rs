@@ -29,6 +29,8 @@ use crate::exit::{
 };
 use crate::placement_constraints::HELD_BOUNDING_BOXES;
 
+mod class_clearance;
+pub use class_clearance::KiCadClassClearanceWarnings;
 mod fixed_mask_bridge;
 mod footprint_clearance;
 mod hatched_neck;
@@ -1679,6 +1681,7 @@ pub struct KiCadRunFacts {
     /// (`class_view::class_layers`).
     pub class_layers: Vec<crate::class_view::KiCadClassLayers>,
     pub class_track_widths: Vec<crate::class_view::KiCadClassTrackWidths>,
+    pub class_clearance_warnings: Vec<KiCadClassClearanceWarnings>,
     pub(crate) saved_class_rules: Option<crate::project_rules::KiCadProjectRulesReport>,
     /// The nets the written board runs at most half the designer's
     /// width (`class_view::note_designer_widths`).
@@ -2682,6 +2685,7 @@ impl KiCadRunFacts {
             narrowed: Vec::new(),
             class_layers: Vec::new(),
             class_track_widths: Vec::new(),
+            class_clearance_warnings: Vec::new(),
             saved_class_rules: None,
             designer_widths: Vec::new(),
             designer_pours: None,
@@ -3004,6 +3008,9 @@ pub struct KiCadVerdict {
     /// Observed track lengths by layer and width for nets in wider classes.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub class_track_widths: Vec<crate::class_view::KiCadClassTrackWidths>,
+    /// Active native clearance warnings grounded in the written PCB.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub class_clearance_warnings: Vec<KiCadClassClearanceWarnings>,
     /// Route and layout with a designer's board (the `--reference`, else
     /// the input with its tracks): per net the board written runs at most
     /// half the designer's width (`net`, `class`, `designer_width_mm` and
@@ -3953,6 +3960,7 @@ fn next_actions(
             .and_then(DrcTally::unassigned_fill_action),
     );
     actions.extend(narrowed_action(&facts.narrowed));
+    actions.extend(class_clearance::actions(&facts.class_clearance_warnings));
     actions.extend(crate::class_view::class_layers_action(&facts.class_layers));
     actions.extend(crate::class_view::wide_track_actions(
         &facts.class_track_widths,
@@ -4943,31 +4951,34 @@ fn shared_clearance_item<'a>(findings: &[&'a DrcFinding]) -> Option<&'a str> {
     None
 }
 
+fn finding_rule_clause(text: &str) -> Option<&str> {
+    // The rule as KiCad states it: the first parenthesis of the first
+    // finding's description ("Clearance violation (netclass 'Default'
+    // clearance 0.2000 mm; actual 0.1500 mm)"; a layer may follow in a
+    // second one).
+    let start = text.find('(')? + 1;
+    let mut depth = 1;
+    let end = text[start..].char_indices().find_map(|(index, c)| {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            _ => {}
+        }
+        (depth == 0).then_some(start + index)
+    });
+    let rule = text[start..end?].trim();
+    (!rule.is_empty()).then_some(rule)
+}
+
 fn finding_action(
     kind: &str,
     count: usize,
     findings: &[&DrcFinding],
     kept: KeptParts<'_>,
 ) -> String {
-    // The rule as KiCad states it: the first parenthesis of the first
-    // finding's description ("Clearance violation (netclass 'Default'
-    // clearance 0.2000 mm; actual 0.1500 mm)"; a layer may follow in a
-    // second one).
-    let rule = findings.first().and_then(|finding| {
-        let text = &finding.description;
-        let start = text.find('(')? + 1;
-        let mut depth = 1;
-        let end = text[start..].char_indices().find_map(|(index, c)| {
-            match c {
-                '(' => depth += 1,
-                ')' => depth -= 1,
-                _ => {}
-            }
-            (depth == 0).then_some(start + index)
-        })?;
-        let rule = text[start..end].trim();
-        (!rule.is_empty()).then(|| rule.to_string())
-    });
+    let rule = findings
+        .first()
+        .and_then(|finding| finding_rule_clause(&finding.description));
     let mut nets: BTreeMap<String, usize> = BTreeMap::new();
     for finding in findings {
         let mut names = finding.nets.clone();
@@ -4981,7 +4992,7 @@ fn finding_action(
     }
     let mut what = Vec::new();
     if let Some(rule) = rule {
-        what.push(rule);
+        what.push(rule.to_owned());
     }
     if !nets.is_empty() {
         what.push(format!("nets {}", top_counts(&nets, 4)));
@@ -6021,6 +6032,7 @@ pub(crate) fn judge_at(
         narrowed_classes: facts.narrowed.clone(),
         class_layers: facts.class_layers.clone(),
         class_track_widths: facts.class_track_widths.clone(),
+        class_clearance_warnings: facts.class_clearance_warnings.clone(),
         designer_widths: facts.designer_widths.clone(),
         designer_pours: facts.designer_pours.clone(),
         reference_keepout_overlaps: facts.reference_keepout_overlaps.clone(),
@@ -6173,6 +6185,7 @@ pub fn route_facts(
             && let Some(native) = &mut facts.native
         {
             native.footprint_filter_mismatches = parity::footprint_filter_matches(report, &board);
+            facts.class_clearance_warnings = class_clearance::collect(&board, report);
             facts.via_in_pad_retries = Some(via_in_pad::grouped_retries(
                 &board,
                 report,

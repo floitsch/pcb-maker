@@ -36,7 +36,7 @@ fn named_pad(description: &str) -> Option<Pad<'_>> {
     Some(Pad { owner, number, net })
 }
 
-fn millimetres(text: &str) -> Option<f64> {
+pub(super) fn millimetres(text: &str) -> Option<f64> {
     let mut fields = text.split_whitespace();
     let length: f64 = fields.next()?.parse().ok()?;
     let scale = match fields.next()? {

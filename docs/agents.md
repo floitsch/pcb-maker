@@ -843,6 +843,14 @@ echo '{"placer": {"constraints": "constraints.json"}}' > layout.json
 pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
 ```
 
+- **Class clearance warnings.** Route and layout verdicts expose active
+  KiCad netclass warnings in `class_clearance_warnings`, with the
+  configured and measured gaps, exact item IDs, available net names, and
+  locations from `drc.json`. A report can show these warnings with a
+  `complete` status under the project's configured severity. Inspect
+  track and via examples for a legal route at the configured gap. Review
+  pad-pair examples in the footprint and placement.
+
 - **Panel assignments.** Add `--check-sub-boards` to the layout command
   to check the configured outline and sub-board assignments before the
   placement and routing search. The check prints JSON to stdout and
