@@ -27,24 +27,30 @@ use crate::board_router::{KiCadStarvedPad, starved_pad};
 use crate::exit::{
     EXIT_COMPLETE, EXIT_CUT, EXIT_INCOMPLETE, EXIT_INTERNAL, EXIT_USAGE, noted_input_actions,
 };
+use crate::placement_constraints::HELD_BOUNDING_BOXES;
 
-/// DRC finding types that do not count against a result, as the
-/// benchmarks' `COSMETIC` pattern.
-const COSMETIC_PREFIXES: [&str; 7] = [
-    "silk_",
-    "text_",
-    "lib_footprint",
-    "footprint_type_mismatch",
-    "missing_courtyard",
-    "isolated_copper",
-    "nonmirrored_text",
-];
+mod fixed_mask_bridge;
+mod footprint_clearance;
+mod hatched_neck;
+mod held_geometry;
+pub use held_geometry::{KiCadHeldPad, KiCadHeldPadShort};
+mod invalid_padstack;
+mod mask_opening;
+mod parity;
+mod retry;
+mod via_cost;
+mod via_in_pad;
+pub use footprint_clearance::{KiCadFootprintClearance, KiCadFootprintClearancePad};
+pub use invalid_padstack::KiCadInvalidPadstack;
+pub use parity::{
+    KiCadFootprintFilterMismatch, KiCadMissingSchematicFootprint, KiCadMissingSchematicPad,
+    KiCadSchematicNetMismatch, KiCadSchematicPinConnection, KiCadSchematicPinEvidence,
+};
+pub use retry::{KiCadFixedPadFinding, KiCadFixedPadItem, KiCadRetryGuidance};
+pub use via_cost::KiCadViaCostRetry;
+pub use via_in_pad::{KiCadEnclosedOpenPad, KiCadViaInPadRetry};
 
-pub fn is_cosmetic(kind: &str) -> bool {
-    COSMETIC_PREFIXES
-        .iter()
-        .any(|prefix| kind.starts_with(prefix))
-}
+pub use crate::native_report::is_cosmetic_drc as is_cosmetic;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -159,15 +165,41 @@ pub struct DrcTally {
     /// Warning-severity findings that are not cosmetic.
     pub warnings: usize,
     pub unconnected: usize,
+    /// KiCad describes the single open with the same zone as both endpoints.
+    pub zone_island_open: bool,
+    /// Advice for the sole reported open within a single-layer zone.
+    pub single_layer_island_action: Option<String>,
+    /// Layers where KiCad explicitly reported isolated fill on a zone with no net.
+    pub unassigned_fill_layers: BTreeSet<String>,
     /// The nets of KiCad's unconnected items, with how many.
     pub unconnected_nets: BTreeMap<String, usize>,
     pub schematic_parity: usize,
+    /// The corresponding native invocation included this check.
+    pub schematic_parity_checked: bool,
     /// The schematic parity findings by type (`net_conflict`,
     /// `missing_footprint`, ...).
     pub schematic_parity_types: BTreeMap<String, usize>,
-    /// Every parity finding is a symbol pin the footprint has no pad for
-    /// (`no_connect_parity_only`).
-    pub schematic_parity_pins_only: bool,
+    pub missing_schematic_footprints: Vec<KiCadMissingSchematicFootprint>,
+    pub missing_schematic_pads: Vec<KiCadMissingSchematicPad>,
+    pub schematic_net_mismatches: Vec<KiCadSchematicNetMismatch>,
+    pub footprint_filter_mismatches: Vec<KiCadFootprintFilterMismatch>,
+}
+
+impl DrcTally {
+    pub fn unassigned_fill_action(&self) -> Option<String> {
+        if self.unassigned_fill_layers.is_empty() {
+            return None;
+        }
+        let layers: Vec<_> = self
+            .unassigned_fill_layers
+            .iter()
+            .map(String::as_str)
+            .collect();
+        Some(format!(
+            "KiCad reports isolated fill in a zone with no assigned net on {}. Check the intended plane net in the design brief. Compare drc-kicad-board --no-refill (saved copper) with its default refill. If this zone was meant to carry a net, assign it on a copy, refill, and rerun DRC.",
+            layers.join(", ")
+        ))
+    }
 }
 
 /// One violation of KiCad's report with its items.
@@ -204,6 +236,19 @@ pub fn tally_drc(report: &Value) -> DrcTally {
         }
         if is_cosmetic(kind) {
             tally.cosmetic += 1;
+            if kind == "isolated_copper" {
+                for item in finding["items"].as_array().into_iter().flatten() {
+                    if let Some(layer) = item["description"]
+                        .as_str()
+                        .and_then(|text| text.strip_prefix("Zone [<no net>] on "))
+                        .and_then(|text| text.rsplit_once(", priority "))
+                        .map(|(layer, _)| layer)
+                        .filter(|layer| !layer.is_empty())
+                    {
+                        tally.unassigned_fill_layers.insert(layer.to_owned());
+                    }
+                }
+            }
         } else if finding["severity"].as_str() == Some("error") {
             *tally.errors.entry(kind.to_string()).or_default() += 1;
             tally.findings.push(drc_finding(finding));
@@ -212,6 +257,8 @@ pub fn tally_drc(report: &Value) -> DrcTally {
         }
     }
     tally.unconnected = report["unconnected_items"].as_array().map_or(0, Vec::len);
+    tally.zone_island_open = crate::zone_island::zone_island_open(report).is_some();
+    tally.single_layer_island_action = crate::zone_island::single_layer_island_action(report);
     for finding in report["unconnected_items"].as_array().into_iter().flatten() {
         // Both items of an unconnected pair are on the one net.
         if let Some(net) = finding["items"]
@@ -223,20 +270,13 @@ pub fn tally_drc(report: &Value) -> DrcTally {
             *tally.unconnected_nets.entry(net).or_default() += 1;
         }
     }
-    tally.schematic_parity = report["schematic_parity"].as_array().map_or(0, Vec::len);
-    for finding in report["schematic_parity"].as_array().into_iter().flatten() {
-        *tally
-            .schematic_parity_types
-            .entry(finding["type"].as_str().unwrap_or("unknown").to_string())
-            .or_default() += 1;
-    }
-    tally.schematic_parity_pins_only = no_connect_parity_only(report).is_some();
+    parity::tally(report, &mut tally);
     tally
 }
 
 /// The net a DRC item's description names: `Pad 2 [GND] of C1 on F.Cu`
 /// gives `GND`; `None` without one or for `<no net>`.
-fn item_net(description: &str) -> Option<String> {
+pub(crate) fn item_net(description: &str) -> Option<String> {
     let start = description.find('[')? + 1;
     let rest = &description[start..];
     let end = rest.find("] ").or_else(|| rest.rfind(']'))?;
@@ -250,6 +290,10 @@ pub fn read_drc_tally(path: &Path) -> Option<DrcTally> {
 
 /// `read_drc_tally`, saying why a report cannot be read.
 pub fn load_drc_tally(path: &Path) -> Result<DrcTally, String> {
+    load_drc_report(path).map(|report| tally_drc(&report))
+}
+
+fn load_drc_report(path: &Path) -> Result<Value, String> {
     let text = fs::read_to_string(path)
         .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
     let report: Value = serde_json::from_str(&text)
@@ -257,7 +301,7 @@ pub fn load_drc_tally(path: &Path) -> Result<DrcTally, String> {
     if !report["violations"].is_array() {
         return Err(format!("{} holds no DRC violations list", path.display()));
     }
-    Ok(tally_drc(&report))
+    Ok(report)
 }
 
 /// The errors per type of the reference board (the findings that were
@@ -292,6 +336,82 @@ pub fn reference_findings(
     Ok(tally_drc(&kicad_drc_report(
         project, board_id, report, true,
     )?))
+}
+
+/// Use the route verdict's severity, scope and reference matching when
+/// comparing native checks of successive route candidates.
+pub fn route_candidate_ranker(
+    source: &Path,
+    board_id: &str,
+    reference: Option<&Path>,
+) -> crate::board_router::KiCadNativeCandidateRanker {
+    use std::sync::{Arc, OnceLock};
+    use std::time::{Duration, Instant};
+
+    let board = format!("{board_id}.kicad_pcb");
+    let source = source.join(&board);
+    let reference = reference.map(|project| project.join(&board));
+    let baseline = OnceLock::<Option<Vec<DrcFinding>>>::new();
+    let input_bytes = OnceLock::new();
+    crate::board_router::KiCadNativeCandidateRanker(Arc::new(move |report, result, deadline| {
+        let tally = tally_drc(report);
+        if tally.findings.is_empty() {
+            return (0, 0);
+        }
+        let mut checks = 0;
+        let reference = baseline.get_or_init(|| {
+            let board = reference.as_ref()?;
+            let cap = Instant::now() + Duration::from_secs(20);
+            let deadline = deadline.map_or(cap, |deadline| deadline.min(cap));
+            if Instant::now() >= deadline {
+                return None;
+            }
+            let stage = pcb_kicad_file::fs_util::temporary_next_to(&result.join("rank-reference"));
+            let checked = (|| {
+                fs::create_dir(&stage).ok()?;
+                let destination = stage.join(board.file_name()?);
+                fs::copy(board, &destination).ok()?;
+                for extension in ["kicad_pro", "kicad_dru"] {
+                    let file = board.with_extension(extension);
+                    if file.is_file() {
+                        fs::copy(file, destination.with_extension(extension)).ok()?;
+                    }
+                }
+                checks += 1;
+                let report = crate::native_report::check_kept_route_input(
+                    &destination,
+                    &stage.join("drc.json"),
+                    false,
+                    true,
+                    || Instant::now() >= deadline,
+                )
+                .ok()?;
+                crate::native_report::count_scoped_drc_errors(&report)?;
+                Some(tally_drc(&report).findings)
+            })();
+            let _ = fs::remove_dir_all(&stage);
+            checked
+        });
+        if let Some(reference) = reference {
+            return (
+                split_findings_strict(&tally.findings, reference)
+                    .new_indices
+                    .len(),
+                checks,
+            );
+        }
+        let input = input_bytes
+            .get_or_init(|| fs::read_to_string(&source).ok())
+            .as_deref()
+            .zip(fs::read_to_string(result.join(&board)).ok())
+            .and_then(|(input, output)| input_items(input, &output).ok());
+        let errors = tally
+            .findings
+            .iter()
+            .filter(|finding| unreferenced_apart(finding, input.as_ref()).is_none())
+            .count();
+        (errors, checks)
+    }))
 }
 
 /// KiCad's DRC of `project`'s board, every severity, zones refilled when
@@ -1034,7 +1154,6 @@ pub fn input_findings_note(findings: &[&DrcFinding], dru: &str, alone: bool) -> 
 /// by, where a rule for one footprint can set it.
 fn custom_rule_constraint(kind: &str) -> Option<&'static str> {
     Some(match kind {
-        "clearance" => "clearance",
         "hole_clearance" => "hole_clearance",
         "hole_to_hole" => "hole_to_hole",
         "copper_edge_clearance" => "edge_clearance",
@@ -1064,6 +1183,8 @@ struct OwnGroup {
     /// Whether KiCad held one to the board's minimum ("board minimum hole
     /// clearance 0.2500 mm"): a custom rule below it does not take.
     board_minimum: bool,
+    /// Plated through holes for which KiCad measured no positive ring.
+    zero_annuli: Vec<Option<[f64; 2]>>,
 }
 
 /// The board setup minimum (`board.design_settings.rules` in the
@@ -1079,11 +1200,19 @@ fn board_minimum_setting(kind: &str) -> &'static str {
 }
 
 /// What a result's footprint findings (`footprint_own_unreferenced`) are and
-/// how KiCad's own DRC accepts them: per footprint and type, a custom rule
-/// for `dru` (the board's `.kicad_dru`) at the smallest value KiCad
-/// measured, rounded down to 0.01 mm, or an exclusion. `None` without such
-/// findings.
+/// what to review in the footprint or the applicable rule. `None` without
+/// such findings.
 pub fn footprint_findings_note(findings: &[&DrcFinding], dru: &str) -> Option<String> {
+    let board = Path::new(dru).with_extension("kicad_pcb");
+    let review = footprint_clearance::Review::assess(findings, Some(&board), board.parent());
+    footprint_findings_note_with_review(findings, dru, &review)
+}
+
+fn footprint_findings_note_with_review(
+    findings: &[&DrcFinding],
+    dru: &str,
+    review: &footprint_clearance::Review,
+) -> Option<String> {
     let mut groups: BTreeMap<(String, String), OwnGroup> = BTreeMap::new();
     for finding in findings {
         let Some(owner) = finding.item_descriptions.first().and_then(|description| {
@@ -1099,6 +1228,7 @@ pub fn footprint_findings_note(findings: &[&DrcFinding], dru: &str) -> Option<St
                 single: true,
                 over_max: false,
                 board_minimum: false,
+                zero_annuli: Vec::new(),
             });
         entry.count += 1;
         if let Some(actual) = actual_mm(&finding.description) {
@@ -1107,13 +1237,21 @@ pub fn footprint_findings_note(findings: &[&DrcFinding], dru: &str) -> Option<St
                     .smallest
                     .map_or(actual, |smallest: f64| smallest.min(actual)),
             );
+            if finding.kind == "annular_width"
+                && actual <= 0.0
+                && let [item] = finding.items.as_slice()
+                && finding.item_descriptions[0].starts_with("PTH pad")
+            {
+                entry.zero_annuli.push(item.located());
+            }
         }
         entry.single &= finding.items.len() == 1;
         entry.over_max |= finding.description.contains(" max ");
         entry.board_minimum |= finding.description.contains("(board minimum ");
     }
+    let copper = review.note();
     if groups.is_empty() {
-        return None;
+        return copper.map(|detail| format!("{INPUT_FOOTPRINT_REVIEW_TAG}{}", detail.trim_start()));
     }
     let listed: Vec<String> = groups
         .iter()
@@ -1121,8 +1259,30 @@ pub fn footprint_findings_note(findings: &[&DrcFinding], dru: &str) -> Option<St
         .collect();
     let mut rules = Vec::new();
     let mut excluded = Vec::new();
+    let mut zero_annuli = Vec::new();
     let mut minimums: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     for ((owner, kind), group) in &groups {
+        if kind == "clearance" {
+            continue;
+        }
+        if !group.zero_annuli.is_empty() {
+            let positions = group
+                .zero_annuli
+                .iter()
+                .flatten()
+                .take(4)
+                .map(|[x, y]| format!("({x:.2}, {y:.2})"))
+                .collect::<Vec<_>>();
+            let locations = if positions.is_empty() {
+                String::new()
+            } else {
+                format!(" at {} mm", positions.join(", "))
+            };
+            let quantity = group.zero_annuli.len();
+            let item = if quantity == 1 { "PTH pad" } else { "PTH pads" };
+            zero_annuli.push(format!("{owner} ({quantity} {item}{locations})"));
+            continue;
+        }
         if group.board_minimum {
             // KiCad reports "board minimum" where the rule that holds
             // (here J1's own 0.1 mm clearance) is below the board setup's
@@ -1173,12 +1333,45 @@ pub fn footprint_findings_note(findings: &[&DrcFinding], dru: &str) -> Option<St
             which.join(", ")
         ));
     }
-    Some(format!(
-        "{} DRC findings lie within one footprint each ({}): the footprint's own geometry as its library draws it, which no placement or route changes, so they are not judged (footprint_findings) and fab-kicad-board releases with them. KiCad's own DRC still reports them; to accept them there, {}",
-        groups.values().map(|group| group.count).sum::<usize>(),
-        listed.join(", "),
-        accept.join("; or ")
-    ))
+    let total = groups.values().map(|group| group.count).sum::<usize>();
+    let mut note = if copper.is_some() {
+        let subject = if total == 1 {
+            "finding lies"
+        } else {
+            "findings lie"
+        };
+        format!(
+            "{total} DRC {subject} within one footprint each ({}). These findings concern the footprint geometry stored in the PCB. The layout verdict tracks them under footprint_findings. KiCad's own DRC still reports them",
+            listed.join(", "),
+        )
+    } else {
+        format!(
+            "{total} DRC findings lie within one footprint each ({}): the footprint's own geometry as its library draws it, which no placement or route changes, so they are not judged (footprint_findings) and fab-kicad-board releases with them. KiCad's own DRC still reports them",
+            listed.join(", "),
+        )
+    };
+    if zero_annuli.is_empty() && copper.is_none() {
+        note.push_str(&format!("; to accept them there, {}", accept.join("; or ")));
+    } else {
+        note.insert_str(0, INPUT_FOOTPRINT_REVIEW_TAG);
+        if !zero_annuli.is_empty() {
+            note.push_str(&format!(
+                ". KiCad measured zero annular width on plated through holes in {}. Confirm the intended plating in the footprint. For a mechanical hole intended to be nonplated, use an NPTH feature. For a plated pad, correct its pad and drill sizes to meet the project's minimum annular width",
+                zero_annuli.join(", ")
+            ));
+        }
+        note.push('.');
+        if let Some(copper) = copper {
+            note.push_str(&copper);
+        }
+        if !accept.is_empty() {
+            note.push_str(&format!(
+                " For the other footprint findings, {}.",
+                accept.join("; or ")
+            ));
+        }
+    }
+    Some(note)
 }
 
 /// A result's errors split by the strict rule.
@@ -1244,6 +1437,9 @@ pub struct KiCadRepairs {
     /// length.
     pub neck_tracks: usize,
     pub neck_track_mm: f64,
+    /// Checks affordable when the work budget prevented neck repair.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub neck_budget_checks_available: Option<usize>,
     /// The kept board's pour mode (`pours` of board-router.json:
     /// `connect`, `tracks`, `none`, ...), and whether it routed the pour
     /// nets as tracks.
@@ -1257,8 +1453,88 @@ impl KiCadRepairs {
         Self {
             neck_tracks: neck.map_or(0, |repair| repair.tracks),
             neck_track_mm: neck.map_or(0.0, |repair| repair.track_mm),
+            neck_budget_checks_available: result
+                .neck_repair
+                .as_ref()
+                .and_then(|repair| repair.budget_checks_available),
             pour_mode: result.pours.clone(),
             pours_as_tracks: result.pours == "tracks" || result.pours.contains("as tracks"),
+        }
+    }
+}
+
+/// What the opt-in reuse trial contributed to the returned board.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct KiCadRouteReuseOutcome {
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    pub retained_nets: usize,
+    pub retained_segments: usize,
+    pub retained_arcs: usize,
+    pub retained_vias: usize,
+    /// Per-net branch evidence for reuse accepted on the saved board.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub partial_nets: BTreeMap<String, crate::KiCadRouteReusePartialNet>,
+    /// References matched by unique schematic identity in accepted reuse.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub renamed_references: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub keepout_skipped_nets: Vec<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub baseline_schematic_parity_by_type: BTreeMap<String, usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub restored_poses: Option<usize>,
+    /// Router counts for the work left after keeping the prior copper.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pending_routed_connections: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pending_routable_connections: Option<usize>,
+    /// Named nets with multiple electrical contacts on the saved board,
+    /// measured when the native result has zero opens or parity findings.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub saved_routable_nets: Option<usize>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub new_findings: BTreeMap<String, usize>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub new_finding_examples: Vec<crate::KiCadRouteReuseFinding>,
+}
+
+impl KiCadRouteReuseOutcome {
+    fn from_report(report: &crate::KiCadRouteReuse) -> Self {
+        let retained = (report.status == "accepted").then_some(report);
+        Self {
+            status: report.status.clone(),
+            reason: report.reason.clone(),
+            retained_nets: retained.map_or(0, |report| report.matched_nets.len()),
+            retained_segments: retained.map_or(0, |report| report.segments),
+            retained_arcs: retained.map_or(0, |report| report.arcs),
+            retained_vias: retained.map_or(0, |report| report.vias),
+            partial_nets: retained.map_or_else(BTreeMap::new, |report| report.partial_nets.clone()),
+            renamed_references: retained
+                .map_or_else(BTreeMap::new, |report| report.renamed_references.clone()),
+            keepout_skipped_nets: report.keepout_skipped_nets.clone(),
+            baseline_schematic_parity_by_type: report.baseline_schematic_parity_by_type.clone(),
+            new_findings: report.new_findings.clone(),
+            new_finding_examples: report.new_finding_examples.clone(),
+            ..Self::default()
+        }
+    }
+
+    pub fn note_layout_placement(&mut self, proposed_restored_poses: usize) {
+        self.restored_poses = Some(if self.status == "accepted" {
+            proposed_restored_poses
+        } else {
+            0
+        });
+    }
+
+    pub fn placement_blocked() -> Self {
+        Self {
+            status: "skipped".into(),
+            reason: Some("the initial placement has unplaced or illegal footprints".into()),
+            restored_poses: Some(0),
+            ..Self::default()
         }
     }
 }
@@ -1326,16 +1602,35 @@ pub struct KiCadRunFacts {
     /// without a reference (`input_own`); `None`: not known, nothing is
     /// left to the input.
     pub input: Option<KiCadInputItems>,
+    /// Where to resolve the input project’s local footprint library.
+    pub source_project: Option<PathBuf>,
     pub routable_connections: usize,
     pub routed_connections: usize,
     pub unconnected_terminals: usize,
+    pub saved_copper: Option<pcb_kicad_file::board_stats::KiCadSavedCopper>,
+    pub input_connectivity: Option<crate::board_router::KiCadInputConnectivity>,
     pub internal_violations: usize,
+    /// The route can reassign pad nets when it ran pin swapping.
+    pub pin_swapped: bool,
     pub starved_thermals: usize,
     pub dead_pads: usize,
+    /// Router clearance witnesses on pads that KiCad identifies as open.
+    pub native_blocked_pads: Vec<String>,
+    pub open_pad_concentration: Option<crate::KiCadOpenPadConcentration>,
     pub hot_spots: usize,
     pub constraints_missed: Vec<String>,
+    pub strict_pad_near_misses: usize,
+    pub body_near_pin_misses: usize,
+    pub geometry_near_misses: Vec<String>,
+    /// Strict pad pairs whose source can move, when pad-near refinement is off.
+    pub refinable_pad_near_misses: Vec<String>,
     pub unplaced: Vec<String>,
     pub placement_hints: Vec<String>,
+    pub placement_actions: Vec<String>,
+    pub rear_placement_recovery: Option<crate::KiCadRearPlacementRecovery>,
+    pub rear_routing_candidates: Option<crate::KiCadRearRoutingCandidates>,
+    pub automatic_rear_retry: Option<crate::KiCadAutoRearRetry>,
+    pub outline_from_input: bool,
     /// Pads without a way out at the placement (`pad_exits` in
     /// board-placer.json; empty with the switch off).
     pub closed_pads: Vec<crate::board_placer::KiCadClosedPad>,
@@ -1359,8 +1654,17 @@ pub struct KiCadRunFacts {
     pub room: Option<crate::placement_room::KiCadRoom>,
     /// What the run repaired for KiCad's DRC (a route's or a layout's).
     pub repairs: Option<KiCadRepairs>,
+    /// The outcome of the optional route reuse trial.
+    pub route_reuse: Option<KiCadRouteReuseOutcome>,
+    pub fill_publication: Option<crate::FillPublication>,
+    pub plane_escape: Option<crate::PlaneEscapeRepair>,
+    pub terminal_launch_retry: Option<pcb_kicad_route::open_repair::TerminalLaunchRetry>,
+    pub terminal_launch_advice: Option<pcb_kicad_route::open_repair::TerminalLaunchAdvice>,
+    pub prepared_row_escape_advice: Option<pcb_kicad_route::open_repair::PreparedRowEscapeAdvice>,
+    pub local_open_repair: Option<crate::board_layout::LayoutOpenRepair>,
+    pub zone_island_recovery: Option<crate::KiCadZoneIslandRecovery>,
     /// Route mode with `diff_pairs`: the differential pairs found and what
-    /// became of them (`KiCadDiffPairs`, less the per-pair list).
+    /// became of them, with per-pair entries for measured unmatched ends.
     pub diff_pairs: Option<crate::KiCadDiffPairs>,
     /// Why the pairs' links fell back, each reason with the pairs it holds
     /// for (`KiCadDiffPair::why` less its "link N: "), for the
@@ -1374,9 +1678,14 @@ pub struct KiCadRunFacts {
     /// Per class, the layers its tracks went on in the written board
     /// (`class_view::class_layers`).
     pub class_layers: Vec<crate::class_view::KiCadClassLayers>,
-    /// The nets the written board runs at under half the designer's
+    pub class_track_widths: Vec<crate::class_view::KiCadClassTrackWidths>,
+    pub(crate) saved_class_rules: Option<crate::project_rules::KiCadProjectRulesReport>,
+    /// The nets the written board runs at most half the designer's
     /// width (`class_view::note_designer_widths`).
     pub designer_widths: Vec<crate::class_view::KiCadDesignerWidth>,
+    /// Nets that lost their zones relative to an explicitly supplied board.
+    pub designer_pours: Option<crate::KiCadDesignerPours>,
+    pub reference_keepout_overlaps: Vec<crate::KiCadReferenceKeepoutOverlap>,
     /// The spans the designer's board pierces with blind, buried or micro
     /// vias where the run laid through vias only (`blind_vias` off):
     /// `KiCadProjectRulesReport::via_spans_designer`.
@@ -1438,13 +1747,14 @@ pub struct KiCadRunFacts {
     /// board written): below `DECOUPLING_SHARE` of the capacitors within
     /// 3 mm of a supply pin adds a next action.
     pub decoupling: Option<crate::quality::KiCadDecoupling>,
-    /// Whether the layout's placer had `decoupling_near` on.
-    pub decoupling_near: bool,
+    /// Capacitor targets corroborated by the schematic and board nets.
+    pub decoupling_targets: Vec<crate::quality::KiCadDecouplingTarget>,
     /// The parts a `near` constraint of the layout held (its capacitors
     /// among them).
     pub decoupling_constrained: BTreeSet<String>,
     /// What the via-in-pad rule did (`KiCadBoardRouterResult::vias_in_pads`).
     pub vias_in_pads: Option<crate::KiCadViaInPadReport>,
+    pub via_in_pad_retries: Option<Vec<KiCadViaInPadRetry>>,
     /// The nets the router left open (partial or unreachable), as it names
     /// them.
     pub open_nets: Vec<String>,
@@ -1454,6 +1764,9 @@ pub struct KiCadRunFacts {
     /// The parts a layout's placement kept where they are (board-placer
     /// json's `footprints[].fixed`): no `near` brings them anywhere.
     pub fixed_parts: BTreeSet<String>,
+    /// The authored mechanical brief, before board-only additions expand
+    /// into placement holds.
+    pub authored_layout_constraints: Option<crate::KiCadPlacementConstraints>,
     /// The pads KiCad finds short of thermal spokes, each as `REF.NUMBER`
     /// with its layer and advice (`diagnostics.starved_thermals`).
     pub starved_pads: Vec<KiCadStarvedPad>,
@@ -1472,6 +1785,14 @@ pub struct KiCadNearPart {
     pub reference: String,
     pub side: String,
     pub distance_mm: f64,
+    /// Footprint identity and origin when the reference names several parts.
+    pub occurrence: Option<KiCadPartOccurrence>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct KiCadPartOccurrence {
+    pub uuid: Option<String>,
+    pub at: Option<[f64; 3]>,
 }
 
 /// The hot spot the open connections' action names (`hot_spot_note`): its
@@ -1507,17 +1828,120 @@ pub struct KiCadOpenLink {
     pub ends: [(String, String); 2],
     pub distance_mm: f64,
     pub pads: [usize; 2],
+    pub occurrences: [KiCadOpenPadOccurrence; 2],
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct KiCadOpenPadOccurrence {
+    pub at: [f64; 2],
+    pub pad_uuid: Option<String>,
+    pub footprint_uuid: Option<String>,
+    /// The current board supports an unqualified reference and pad number.
+    pub unique_near_target: bool,
+}
+
+fn footprints_by_reference(board: Option<&crate::Expr>) -> BTreeMap<String, Vec<&crate::Expr>> {
+    let mut footprints = BTreeMap::<_, Vec<_>>::new();
+    for part in board.map(crate::Expr::children).unwrap_or_default() {
+        if matches!(part.head(), Some("footprint" | "module"))
+            && let Some(reference) = crate::footprint_reference(part)
+        {
+            footprints.entry(reference).or_default().push(part);
+        }
+    }
+    footprints
+}
+
+/// Identify a native pad on the current board. A repeated reference needs
+/// the checked pad's UUID to identify its owning footprint.
+fn open_pad_occurrence(
+    candidates: &[&crate::Expr],
+    pin: &str,
+    at: [f64; 2],
+    uuid: Option<&str>,
+) -> (KiCadOpenPadOccurrence, usize) {
+    let mut occurrence = KiCadOpenPadOccurrence {
+        at,
+        pad_uuid: uuid.map(str::to_owned),
+        ..Default::default()
+    };
+    let mut found = None;
+    for &part in candidates {
+        let all_pads = part
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("pad"));
+        let matching = || {
+            all_pads
+                .clone()
+                .filter(|item| item.children().get(1).and_then(crate::Expr::atom) == Some(pin))
+        };
+        let mut matched = matching().filter(|item| {
+            uuid.map_or(candidates.len() == 1, |uuid| {
+                crate::footprint_uuid(item).is_some_and(|id| id.eq_ignore_ascii_case(uuid))
+            })
+        });
+        let Some(pad) = matched.next() else {
+            continue;
+        };
+        if found.is_some() || (uuid.is_some() && matched.next().is_some()) {
+            return (occurrence, 0);
+        }
+        found = Some((part, pad, all_pads.count()));
+    }
+    let Some((part, pad, count)) = found else {
+        return (occurrence, 0);
+    };
+    occurrence.footprint_uuid = crate::footprint_uuid(part);
+    occurrence.pad_uuid = crate::footprint_uuid(pad).or(occurrence.pad_uuid);
+    occurrence.unique_near_target = candidates.len() == 1
+        && crate::kicad_sexpr::form_at(pad).is_ok_and(|[x, y, _]| {
+            part.children()
+                .iter()
+                .filter(|item| {
+                    item.head() == Some("pad")
+                        && item.children().get(1).and_then(crate::Expr::atom) == Some(pin)
+                })
+                .all(|item| {
+                    crate::kicad_sexpr::form_at(item).is_ok_and(|[ix, iy, _]| ix == x && iy == y)
+                })
+        });
+    (occurrence, count)
 }
 
 /// A pad as KiCad's report names it ("Pad 11 [/Display/TMDS_D0_C_N] of J1
 /// on F.Cu"): its number and its footprint's reference.
 fn report_pad(description: &str) -> Option<(String, String)> {
-    let rest = description.strip_prefix("Pad ")?;
+    let rest = ["Pad ", "PTH pad ", "NPTH pad "]
+        .into_iter()
+        .find_map(|prefix| description.strip_prefix(prefix))?;
     let (number, rest) = rest.split_once(" [")?;
     let (_, rest) = rest.rsplit_once("] of ")?;
     let reference = rest.split(" on ").next()?;
     (!number.is_empty() && !reference.is_empty())
         .then(|| (reference.to_string(), number.to_string()))
+}
+
+fn blocked_open_pads(report: &Value, blocked: &[crate::board_router::KiCadDeadPad]) -> Vec<String> {
+    let mut pads = BTreeSet::new();
+    for open in report["unconnected_items"].as_array().into_iter().flatten() {
+        for item in open["items"].as_array().into_iter().flatten() {
+            let Some(description) = item["description"].as_str() else {
+                continue;
+            };
+            if let (Some((part, number)), Some(net)) =
+                (report_pad(description), item_net(description))
+            {
+                pads.insert((format!("{part}.{number}"), net));
+            }
+        }
+    }
+    blocked
+        .iter()
+        .filter(|pad| pads.contains(&(pad.pad.clone(), pad.net.clone())))
+        .take(3)
+        .map(|pad| format!("{} [{}]: {}", pad.pad, pad.net, pad.wall))
+        .collect()
 }
 
 /// The first of KiCad's unconnected items (`report`, its drc.json) between
@@ -1528,6 +1952,7 @@ pub fn open_link_of(
     nets: &[String],
     board: Option<&crate::Expr>,
 ) -> Option<KiCadOpenLink> {
+    let footprints = footprints_by_reference(board);
     let links: Vec<KiCadOpenLink> = report["unconnected_items"]
         .as_array()
         .into_iter()
@@ -1537,44 +1962,42 @@ pub fn open_link_of(
             let [first, second] = &items[..] else {
                 return None;
             };
-            let end = |item: &Value| -> Option<((String, String), [f64; 2], String)> {
+            let end = |item: &Value| {
                 let description = item["description"].as_str()?;
-                let pad = report_pad(description)?;
+                let label = report_pad(description)?;
                 let at = [item["pos"]["x"].as_f64()?, item["pos"]["y"].as_f64()?];
-                Some((pad, at, item_net(description)?))
+                let candidates = footprints
+                    .get(&label.0)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default();
+                let (evidence, count) =
+                    open_pad_occurrence(candidates, &label.1, at, item["uuid"].as_str());
+                Some((label, evidence, count, item_net(description)?))
             };
-            let (a, a_at, net) = end(first)?;
-            let (b, b_at, other) = end(second)?;
-            (net == other && a.0 != b.0).then(|| KiCadOpenLink {
+            let (a, a_pad, a_count, net) = end(first)?;
+            let (b, b_pad, b_count, other) = end(second)?;
+            let different_parts = a.0 != b.0
+                || a_pad
+                    .footprint_uuid
+                    .as_ref()
+                    .zip(b_pad.footprint_uuid.as_ref())
+                    .is_some_and(|(a, b)| a != b);
+            (net == other && different_parts).then(|| KiCadOpenLink {
                 net: bare_net(&net).to_string(),
                 ends: [a, b],
-                distance_mm: distance(a_at, b_at),
-                pads: [0, 0],
+                distance_mm: distance(a_pad.at, b_pad.at),
+                pads: [a_count, b_count],
+                occurrences: [a_pad, b_pad],
             })
         })
         .collect();
-    let mut link = nets
-        .iter()
-        .find_map(|net| links.iter().find(|link| link.net == bare_net(net)).cloned())?;
-    for (index, (reference, _)) in link.ends.clone().iter().enumerate() {
-        link.pads[index] = board
-            .map(crate::Expr::children)
-            .unwrap_or_default()
+    nets.iter().find_map(|net| {
+        links
             .iter()
-            .filter(|item| item.head() == Some("footprint"))
-            .find(|footprint| {
-                crate::kicad_nets::footprint_reference(footprint).as_deref()
-                    == Some(reference.as_str())
-            })
-            .map_or(0, |footprint| {
-                footprint
-                    .children()
-                    .iter()
-                    .filter(|child| child.head() == Some("pad"))
-                    .count()
-            });
-    }
-    Some(link)
+            .filter(|link| link.net == bare_net(net))
+            .min_by_key(|link| link.ends[0].0 == link.ends[1].0)
+            .cloned()
+    })
 }
 
 /// What the hot spot's action says of its open link (`KiCadOpenLink`): its
@@ -1585,6 +2008,26 @@ pub fn open_link_of(
 /// 10.4 mm from J1:11.
 fn open_link_text(link: &KiCadOpenLink, command: &str, fixed: &BTreeSet<String>) -> String {
     let pin = |index: usize| format!("{}:{}", link.ends[index].0, link.ends[index].1);
+    if link.occurrences.iter().any(|end| !end.unique_near_target) {
+        let occurrence = |index: usize| {
+            let end = &link.occurrences[index];
+            let [x, y] = end.at;
+            let mut label = format!("{} at ({x:.2}, {y:.2}) mm", pin(index));
+            if let Some(uuid) = &end.pad_uuid {
+                label.push_str(&format!(", pad UUID {uuid}"));
+            }
+            if let Some(uuid) = &end.footprint_uuid {
+                label.push_str(&format!(", footprint UUID {uuid}"));
+            }
+            label
+        };
+        return format!(
+            "KiCad's open link on {} joins {} and {}. A near entry by reference cannot identify both endpoints. Use the pad coordinates and footprint UUIDs to identify the occurrences before editing their placement.",
+            link.net,
+            occurrence(0),
+            occurrence(1)
+        );
+    }
     let head = format!(
         "its open link on {} runs from {} to {}, {:.1} mm apart (KiCad's unconnected item)",
         link.net,
@@ -1606,15 +2049,16 @@ fn open_link_text(link: &KiCadOpenLink, command: &str, fixed: &BTreeSet<String>)
             link.ends[0].0, link.ends[1].0
         );
     };
-    let part = &link.ends[mover].0;
+    let (part, pad) = &link.ends[mover];
     let anchor = pin(1 - mover);
+    let entry = serde_json::json!({"part": part, "pad": pad, "pin_of": anchor, "minimize": true});
     if command.starts_with("route") {
         return format!(
-            "{head}: route mode keeps every part; bring {part} nearer {anchor} in the input, or lay the board out with a near constraint for it ({{\"part\": \"{part}\", \"pin_of\": \"{anchor}\", \"max_mm\": 2}})"
+            "{head}. Route mode keeps every part. Bring {part}:{pad} closer to {anchor} in the input or add {entry} to constraints.json's near list for a layout run."
         );
     }
     format!(
-        "{head}: bring {part} to {anchor} with a near constraint (constraints.json's near: {{\"part\": \"{part}\", \"pin_of\": \"{anchor}\", \"max_mm\": 2}})"
+        "{head}. To bring {part}:{pad} closer to {anchor}, add {entry} to constraints.json's near list."
     )
 }
 
@@ -1667,6 +2111,7 @@ pub fn hot_spot_note(
         .position(|spot| !open_in(spot).is_empty())
         .or_else(|| (!hot_spots.is_empty()).then_some(0))?;
     let spot = &hot_spots[index];
+    let occurrence_groups = footprints_by_reference(board);
     let mut parts: Vec<KiCadNearPart> = Vec::new();
     for footprint in board
         .map(crate::Expr::children)
@@ -1713,10 +2158,18 @@ pub fn hot_spot_note(
             distance = distance.min(to(body));
         }
         if distance.is_finite() {
+            let occurrence = occurrence_groups
+                .get(&reference)
+                .is_some_and(|parts| parts.len() > 1)
+                .then(|| KiCadPartOccurrence {
+                    uuid: crate::footprint_uuid(footprint),
+                    at: crate::kicad_sexpr::form_at(footprint).ok(),
+                });
             parts.push(KiCadNearPart {
                 reference,
                 side: side.into(),
                 distance_mm: distance,
+                occurrence,
             });
         }
     }
@@ -1781,8 +2234,17 @@ fn via_in_pad_actions(facts: &KiCadRunFacts) -> Vec<String> {
             .collect(),
         None => facts.open_nets.iter().map(|net| bare(net)).collect(),
     };
-    let mut actions = Vec::new();
-    for closed in &report.closed {
+    let mut actions: Vec<_> = facts
+        .via_in_pad_retries
+        .iter()
+        .flatten()
+        .map(KiCadViaInPadRetry::action)
+        .collect();
+    for closed in report
+        .closed
+        .iter()
+        .filter(|_| facts.via_in_pad_retries.is_none())
+    {
         let nets: Vec<&String> = closed
             .nets
             .iter()
@@ -2033,114 +2495,133 @@ fn narrowed_action(narrowed: &[crate::board_router::KiCadNarrowedClass]) -> Opti
     ))
 }
 
-/// The next action for a layout whose decoupling capacitors lie far from
-/// their supply pins (`DECOUPLING_SHARE`), naming the farthest pins that a
-/// capacitor could still serve: one of 1 uF or less on the pin's rail (a
-/// regulator's: also a bulk one) that no `near` constraint holds
-/// (`constrained`). The placer's `decoupling_near` is offered only when it
-/// is off and such a capacitor exists (the schematic trial followed it on a
-/// board whose every capacitor was constrained and got the same board).
+fn decoupling_suggestions(facts: &KiCadRunFacts) -> Vec<crate::quality::KiCadDecouplingTarget> {
+    if !facts
+        .decoupling
+        .as_ref()
+        .is_some_and(decoupling_needs_attention)
+    {
+        return Vec::new();
+    }
+    let mut targets: Vec<_> = facts
+        .decoupling_targets
+        .iter()
+        .filter(|target| {
+            target.distance_mm > target.max_mm + pcb_placer::constraints::RELATION_TOLERANCE
+                && !facts.decoupling_constrained.contains(&target.part)
+                && !facts.fixed_parts.contains(&target.part)
+        })
+        .cloned()
+        .collect();
+    targets.sort_by(|a, b| {
+        (b.distance_mm - b.max_mm)
+            .total_cmp(&(a.distance_mm - a.max_mm))
+            .then_with(|| a.part.cmp(&b.part))
+    });
+    targets
+}
+
+pub fn decoupling_needs_attention(decoupling: &crate::quality::KiCadDecoupling) -> bool {
+    decoupling.capacitors >= 3
+        && decoupling
+            .capacitors_within_3mm
+            .is_some_and(|share| share < DECOUPLING_SHARE)
+}
+
 fn decoupling_action(
     decoupling: &crate::quality::KiCadDecoupling,
-    decoupling_near: bool,
-    constrained: &BTreeSet<String>,
+    suggestions: &[crate::quality::KiCadDecouplingTarget],
 ) -> Option<String> {
     let share = decoupling.capacitors_within_3mm?;
-    if decoupling.capacitors < 3 || share >= DECOUPLING_SHARE {
+    if !decoupling_needs_attention(decoupling) {
         return None;
     }
-    // Per far pin, the capacitors free to serve it (`None`: not known).
-    let far: Vec<(&str, f64, Option<Vec<&String>>)> = decoupling
-        .worst
-        .iter()
-        .enumerate()
-        .filter_map(|(index, (pin, distance))| {
-            let distance = distance.filter(|distance| *distance > 3.0)?;
-            let free = decoupling.worst_capacitors.get(index).map(|serving| {
-                serving
-                    .iter()
-                    .filter(|part| !constrained.contains(*part))
-                    .collect::<Vec<_>>()
-            });
-            Some((pin.as_str(), distance, free))
-        })
-        .collect();
-    let line = |pins: &[&(&str, f64, Option<Vec<&String>>)]| {
-        pins.iter()
-            .map(|(pin, distance, _)| format!("{pin} {distance:.1} mm"))
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-    let named: Vec<&(&str, f64, Option<Vec<&String>>)> = far
-        .iter()
-        .filter(|(_, _, free)| free.as_ref().is_none_or(|free| !free.is_empty()))
-        .collect();
-    let unnamed: Vec<&(&str, f64, Option<Vec<&String>>)> = far
-        .iter()
-        .filter(|(_, _, free)| free.as_ref().is_some_and(Vec::is_empty))
-        .collect();
-    let head = format!(
-        "decoupling: {:.0} % of the decoupling capacitors lie within 3 mm of a supply pin (designers 60 % or more), a median {} mm",
+    let mut text = format!(
+        "{:.0} % of decoupling capacitors are within 3 mm of a same-rail supply pin, with a median distance of {} mm.",
         share * 100.0,
         decoupling
             .capacitor_median_mm
-            .map_or("?".to_string(), |median| format!("{median:.1}")),
+            .map_or("?".into(), |median| format!("{median:.1}")),
     );
-    let mut steps = Vec::new();
-    if let Some((pin, _, free)) = named.first() {
-        let part = free
-            .as_ref()
-            .and_then(|free| free.first())
-            .map_or("<capacitor>", |part| part.as_str());
-        steps.push(format!(
-            "give the capacitors of those pins a near constraint ({{\"part\": \"{part}\", \"pin_of\": \"{pin}\", \"max_mm\": 1.5}} in constraints.json; describe-kicad-board --constraints-template writes them for every capacitor)"
-        ));
-    }
-    let any_free = far.is_empty()
-        || far
-            .iter()
-            .any(|(_, _, free)| free.as_ref().is_none_or(|free| !free.is_empty()));
-    if !decoupling_near && any_free {
-        steps.push("turn on the placer's decoupling_near (layout.json {\"placer\": {\"decoupling_near\": true}}: every capacitor within 1 mm of the nearest supply pin of its rail, off by default)".into());
-    }
-    let mut text = head;
-    if !named.is_empty() {
+    let far: Vec<_> = decoupling
+        .worst
+        .iter()
+        .filter_map(|(pin, distance)| {
+            distance
+                .filter(|distance| *distance > 3.0)
+                .map(|distance| format!("{pin} at {distance:.1} mm"))
+        })
+        .collect();
+    if !far.is_empty() {
         text.push_str(&format!(
-            "; supply pins farthest from a capacitor: {}",
-            line(&named)
+            " The farthest measured supply pins include {}.",
+            far.join(", ")
         ));
     }
-    if !steps.is_empty() {
-        text.push_str(&format!(": {}", steps.join(", or ")));
-    }
-    if !unnamed.is_empty() {
+    if let Some(target) = suggestions.first() {
+        let near = serde_json::json!({"part": target.part, "pin_of": target.pin_of, "max_mm": target.max_mm});
         text.push_str(&format!(
-            "; {} ({}) have no capacitor of their own: every capacitor of 1 uF or less on their rails is held at another pin by a near constraint{}, so no placement brings one nearer, and one at them is a schematic change",
-            if named.is_empty() {
-                "the supply pins farthest from a capacitor"
-            } else {
-                "these other far pins"
-            },
-            line(&unnamed),
-            if decoupling_near {
-                " (and decoupling_near is on)"
-            } else {
-                ""
-            },
+            " The placed-board template pairs {} with {} on its schematic-assigned IC. Its body is {:.2} mm from that pin. Consider adding {near} to near in constraints.json. See decoupling_near_suggestions for the measured pairs.",
+            target.part, target.pin_of, target.distance_mm,
         ));
+    } else {
+        text.push_str(
+            " Review the schematic and existing placement constraints for capacitor assignments.",
+        );
     }
     Some(text)
 }
 
 impl KiCadRunFacts {
+    fn outline_is_authored(&self) -> bool {
+        self.outline_from_input
+            || self
+                .authored_layout_constraints
+                .as_ref()
+                .and_then(|brief| brief.outline.as_ref())
+                .is_some_and(|outline| !outline.automatic())
+    }
+
+    fn rear_mounting_advice(&self) -> Option<&crate::KiCadRearRoutingCandidates> {
+        if self.command == "layout-kicad-board"
+            && self.routes
+            && self.unplaced.is_empty()
+            && self.constraints_missed.is_empty()
+            && self
+                .native
+                .as_ref()
+                .is_some_and(|native| native.unconnected > 0)
+        {
+            self.rear_routing_candidates.as_ref()
+        } else {
+            None
+        }
+    }
+
+    /// Keep authored pose entries for diagnostics that may need to cite
+    /// them. Board-only additions remain identifiable before expansion.
+    pub fn note_authored_layout_constraints(
+        &mut self,
+        source: &Path,
+        placer: &crate::board_placer::KiCadBoardPlacerConfig,
+    ) {
+        if self.native.as_ref().is_some_and(|native| {
+            native.errors.contains_key("solder_mask_bridge")
+                || native.errors.contains_key("courtyards_overlap")
+        }) && let Ok(resolved) =
+            crate::placement_constraints::resolve_constraints(placer, source)
+            && let Some(crate::KiCadConstraintsSource::Inline(brief)) = resolved.constraints
+        {
+            self.authored_layout_constraints = Some(brief);
+        }
+    }
+
     /// The panel's sub-boards when their parts were placed mixed: more
     /// than a tenth of the movable parts belong to no sub-board, so the
     /// placement held none in its board (`sub_boards.held` false); a
     /// panel of copies places each copy in its region (`copies`).
     pub fn boards_mixed(&self) -> Option<&crate::sub_boards::KiCadSubBoardsReport> {
-        self.sub_boards
-            .as_ref()
-            .filter(|sub| sub.count >= 2 && sub.unassigned > 0 && !sub.held && !sub.copies)
+        self.sub_boards.as_ref().filter(|sub| sub.boards_mixed())
     }
 
     pub fn new(command: &str) -> Self {
@@ -2149,16 +2630,31 @@ impl KiCadRunFacts {
             native: None,
             reference: KiCadReference::None,
             input: None,
+            source_project: None,
             routable_connections: 0,
             routed_connections: 0,
             unconnected_terminals: 0,
+            saved_copper: None,
+            input_connectivity: None,
             internal_violations: 0,
+            pin_swapped: false,
             starved_thermals: 0,
             dead_pads: 0,
+            native_blocked_pads: Vec::new(),
+            open_pad_concentration: None,
             hot_spots: 0,
             constraints_missed: Vec::new(),
+            strict_pad_near_misses: 0,
+            body_near_pin_misses: 0,
+            geometry_near_misses: Vec::new(),
+            refinable_pad_near_misses: Vec::new(),
             unplaced: Vec::new(),
             placement_hints: Vec::new(),
+            placement_actions: Vec::new(),
+            rear_placement_recovery: None,
+            rear_routing_candidates: None,
+            automatic_rear_retry: None,
+            outline_from_input: false,
             closed_pads: Vec::new(),
             cut: Vec::new(),
             work_seconds: None,
@@ -2172,12 +2668,24 @@ impl KiCadRunFacts {
             routes: true,
             room: None,
             repairs: None,
+            route_reuse: None,
+            fill_publication: None,
+            plane_escape: None,
+            terminal_launch_retry: None,
+            terminal_launch_advice: None,
+            prepared_row_escape_advice: None,
+            local_open_repair: None,
+            zone_island_recovery: None,
             diff_pairs: None,
             diff_pair_why: BTreeMap::new(),
             lengths: Vec::new(),
             narrowed: Vec::new(),
             class_layers: Vec::new(),
+            class_track_widths: Vec::new(),
+            saved_class_rules: None,
             designer_widths: Vec::new(),
+            designer_pours: None,
+            reference_keepout_overlaps: Vec::new(),
             designer_via_spans: Vec::new(),
             pin_lines: None,
             hot_spot_fine_rows: Vec::new(),
@@ -2197,12 +2705,14 @@ impl KiCadRunFacts {
             panel_copies: None,
             sub_boards: None,
             decoupling: None,
-            decoupling_near: false,
+            decoupling_targets: Vec::new(),
             decoupling_constrained: BTreeSet::new(),
             vias_in_pads: None,
+            via_in_pad_retries: None,
             open_nets: Vec::new(),
             hot_spot: None,
             fixed_parts: BTreeSet::new(),
+            authored_layout_constraints: None,
             starved_pads: Vec::new(),
             solid_starved: None,
         }
@@ -2233,6 +2743,11 @@ pub struct KiCadVerdict {
     pub open_connections: usize,
     /// Pads the router did not reach, by its own count.
     pub unconnected_terminals: usize,
+    /// Track centreline length and object counts of the saved PCB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved_copper: Option<pcb_kicad_file::board_stats::KiCadSavedCopper>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_connectivity: Option<crate::board_router::KiCadInputConnectivity>,
     /// Whether KiCad's DRC checked the result (false with
     /// `PCB_SKIP_NATIVE` or `skip_native_verification`, and for a
     /// placement).
@@ -2240,6 +2755,24 @@ pub struct KiCadVerdict {
     /// KiCad's unconnected items on the result (`None`: KiCad did not
     /// check it). This, not the router's count, decides.
     pub kicad_unconnected_items: Option<usize>,
+    /// Footprints accounting for at least half of the native open nets
+    /// through pads alone in their saved copper groups.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub open_pad_concentration: Option<crate::KiCadOpenPadConcentration>,
+    /// Named native open pads eligible for the optional second-ring BGA retry.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub bga_second_ring_open_pads: Vec<String>,
+    /// Optional generated via moves with exact open-pad and placed provenance.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub generated_pad_via_retries: Vec<crate::GeneratedPadViaRetry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generated_dangling_retry: Option<crate::GeneratedDanglingLeaf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generated_pad_via_recovery: Option<crate::board_layout::LayoutGeneratedPadViaRecovery>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body_near_grid_retry: Option<crate::board_layout::LayoutBodyNearGridRetry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unchanged_hatch_width_repair: Option<crate::board_layout::LayoutUnchangedHatchRecovery>,
     /// KiCad errors per type that the reference board does not have at the
     /// same place (`split_findings_strict`): the run's own. They decide.
     pub new_findings_strict: BTreeMap<String, usize>,
@@ -2258,10 +2791,16 @@ pub struct KiCadVerdict {
     /// footprint each (its pads and holes as the library draws them; no
     /// short) or are one pad's own ring, hole or padstack (`pad_own`),
     /// which no placement or route changes
-    /// (`footprint_own_unreferenced`). They do not count; next_actions says
-    /// how KiCad's own DRC accepts them (a custom rule, an exclusion).
+    /// (`footprint_own_unreferenced`). They do not count. next_actions
+    /// describes the finding and what to review.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub footprint_findings: BTreeMap<String, usize>,
+    /// Resolved different-net pad gaps within individual footprints, up to four.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub footprint_clearances: Vec<KiCadFootprintClearance>,
+    /// Examples of blocking geometry errors on individual custom pads.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub invalid_padstacks: Vec<KiCadInvalidPadstack>,
     /// Without a reference board: KiCad errors per type that are the
     /// input's (`input_own`): of a type that is not electrical between two
     /// nets (`INPUT_KINDS`: edge clearance, solder mask bridges,
@@ -2289,9 +2828,19 @@ pub struct KiCadVerdict {
     pub silkscreen: Option<crate::silk_fields::KiCadSilkscreenReport>,
     /// Other warning-severity findings, which do not count.
     pub warnings: usize,
+    #[serde(default)]
+    pub schematic_parity_checked: bool,
     pub schematic_parity_issues: usize,
     /// `schematic_parity_issues` by KiCad's type.
     pub schematic_parity_by_type: BTreeMap<String, usize>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub missing_schematic_footprints: Vec<KiCadMissingSchematicFootprint>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub missing_schematic_pads: Vec<KiCadMissingSchematicPad>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub schematic_net_mismatches: Vec<KiCadSchematicNetMismatch>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub footprint_filter_mismatches: Vec<KiCadFootprintFilterMismatch>,
     /// Clearance violations the router's own exact check found.
     pub internal_violations: usize,
     /// Pads KiCad finds short of thermal spokes (counted in
@@ -2299,6 +2848,12 @@ pub struct KiCadVerdict {
     pub starved_thermals: usize,
     pub constraints_missed: Vec<String>,
     pub unplaced: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rear_placement_recovery: Option<crate::KiCadRearPlacementRecovery>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rear_routing_candidates: Option<crate::KiCadRearRoutingCandidates>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub automatic_rear_retry: Option<crate::KiCadAutoRearRetry>,
     /// What the wall clock cut short rather than the work (`deadline`,
     /// `negotiation guard`, `budget guard`, `ladder`, `placement`,
     /// `layout`): the result depends on the machine's load.
@@ -2355,6 +2910,18 @@ pub struct KiCadVerdict {
     pub skipped: Vec<String>,
     /// What to do next, if anything; factual.
     pub next_actions: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_guidance: Option<KiCadRetryGuidance>,
+    /// An alternate start recommended by the ordinary placement search.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alternate_placement_seed: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub via_cost_retry: Option<KiCadViaCostRetry>,
+    /// Geometry-equivalent enclosed pads with exact native open witnesses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub via_in_pad_retries: Option<Vec<KiCadViaInPadRetry>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fixed_route_comparison: Option<crate::KiCadFixedRouteComparison>,
     /// The input's own observations (fixed parts on the board's texts,
     /// fixed parts on top of each other, the footprints' and the input's
     /// own findings, schematic parity, the reference's findings the
@@ -2368,10 +2935,40 @@ pub struct KiCadVerdict {
     /// to try when parts found no place (`null` for a route).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub room: Option<crate::placement_room::KiCadRoom>,
+    /// Placement used the edge geometry supplied in the input PCB.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub outline_from_input: bool,
     /// What the run repaired for KiCad's DRC (`KiCadRepairs`; absent for a
     /// placement and an error).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repairs: Option<KiCadRepairs>,
+    /// What the optional reuse trial contributed to the returned board.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub route_reuse: Option<KiCadRouteReuseOutcome>,
+    /// Outcome and actual work of the opt-in protected plane-pad retry.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plane_escape: Option<crate::PlaneEscapeRepair>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_launch_retry: Option<pcb_kicad_route::open_repair::TerminalLaunchRetry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_launch_advice: Option<pcb_kicad_route::open_repair::TerminalLaunchAdvice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prepared_row_escape_advice: Option<pcb_kicad_route::open_repair::PreparedRowEscapeAdvice>,
+    /// Outcome of the default bounded local repair of the selected layout.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_open_repair: Option<crate::board_layout::LayoutOpenRepair>,
+    /// Schematic-paired capacitors outside their template's near distance.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub decoupling_near_suggestions: Vec<crate::quality::KiCadDecouplingTarget>,
+    /// The zone and bounded retry for a single same-zone native open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zone_island_recovery: Option<crate::KiCadZoneIslandRecovery>,
+    /// Native different-net shorts between pads of two held footprints.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub held_pad_shorts: Vec<KiCadHeldPadShort>,
+    /// Stored zone copper checked on the returned layout board.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fill_publication: Option<crate::FillPublication>,
     /// Route mode: whether differential pairs routed coupled and why
     /// (`on`, `default`: "rules", "off" or "explicit", `reason`); with them
     /// on, pairs found, coupled, partly coupled, fallen back, links,
@@ -2404,8 +3001,11 @@ pub struct KiCadVerdict {
     /// microstrip and a stripline). KiCad's DRC checks neither.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub class_layers: Vec<crate::class_view::KiCadClassLayers>,
+    /// Observed track lengths by layer and width for nets in wider classes.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub class_track_widths: Vec<crate::class_view::KiCadClassTrackWidths>,
     /// Route and layout with a designer's board (the `--reference`, else
-    /// the input with its tracks): per net the board written runs at under
+    /// the input with its tracks): per net the board written runs at most
     /// half the designer's width (`net`, `class`, `designer_width_mm` and
     /// `routed_width_mm`, each the width at half the tracks' length, the
     /// lengths, and `unassigned_class` where the project defines a class of
@@ -2413,6 +3013,12 @@ pub struct KiCadVerdict {
     /// the minimum.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub designer_widths: Vec<crate::class_view::KiCadDesignerWidth>,
+    /// Only present when a reference copper comparison was performed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub designer_pours: Option<crate::KiCadDesignerPours>,
+    /// Substantial antenna-area overlap on a supplied reference that disappeared.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub reference_keepout_overlaps: Vec<crate::KiCadReferenceKeepoutOverlap>,
     /// Route mode: whether the router's lattice had lines through the pads
     /// of fine-pitch rows the regular lattice misses (`pin_lines`), and
     /// why, in one line: the router setting, or the ladder's decision at
@@ -2559,6 +3165,14 @@ pub fn decide(
     facts: &KiCadRunFacts,
     new_findings: &BTreeMap<String, usize>,
 ) -> (KiCadRunStatus, String) {
+    decide_with_padstacks(facts, new_findings, 0)
+}
+
+fn decide_with_padstacks(
+    facts: &KiCadRunFacts,
+    new_findings: &BTreeMap<String, usize>,
+    invalid_padstacks: usize,
+) -> (KiCadRunStatus, String) {
     let mut problems = Vec::new();
     // First: a panel whose boards' parts were placed mixed is not the
     // board as designed, whatever else holds (the OpenESC panel's place
@@ -2594,8 +3208,19 @@ pub fn decide(
     if facts.routes {
         match &facts.native {
             Some(native) => {
+                problems.extend(parity::problems(native));
                 if native.unconnected > 0 {
                     problems.push(format!("{} unconnected items in KiCad", native.unconnected));
+                }
+                if invalid_padstacks > 0 {
+                    problems.push(format!(
+                        "{invalid_padstacks} custom pad geometry {} in the source footprints",
+                        if invalid_padstacks == 1 {
+                            "error"
+                        } else {
+                            "errors"
+                        },
+                    ));
                 }
                 if !new_findings.is_empty() {
                     problems.push(format!("new DRC errors: {}", counts(new_findings)));
@@ -2636,11 +3261,73 @@ pub fn decide(
                 ),
             );
         }
+        let native_scope = match &facts.fill_publication {
+            Some(fill)
+                if fill.status == "saved"
+                    && fill
+                        .saved_as_stored
+                        .as_ref()
+                        .is_some_and(|native| native.opens == 0) =>
+            {
+                " on the PCB as stored"
+            }
+            Some(fill) if fill.status == "skipped" => " after refilling zones",
+            _ if facts.input_connectivity.as_ref().is_some_and(|input| {
+                input.stored_open_items == Some(0) && input.stored_errors == Some(0)
+            }) =>
+            {
+                " on the PCB as stored"
+            }
+            _ if facts.input_connectivity.is_some() => " after refilling zones",
+            _ => "",
+        };
         let reason = if !facts.routes {
             "complete: every part placed, every constraint kept".to_string()
+        } else if let Some(input) = facts
+            .input_connectivity
+            .as_ref()
+            .filter(|input| input.status == "unchanged")
+        {
+            let stored = match (input.stored_open_items, input.stored_errors) {
+                (Some(0), Some(0)) => " The board as stored also passed.".to_string(),
+                (Some(opens), Some(errors)) => {
+                    format!(" The board as stored has {opens} open items and {errors} DRC errors.")
+                }
+                _ => " Stored connectivity was not checked.".to_string(),
+            };
+            format!(
+                "complete: Kept the existing PCB unchanged. KiCad checked {} connected nets after refilling zones.{stored}",
+                facts.routable_connections
+            )
+        } else if let Some(reuse) = facts
+            .route_reuse
+            .as_ref()
+            .filter(|reuse| reuse.status == "accepted")
+        {
+            let inventory = match reuse.saved_routable_nets {
+                Some(nets) => format!(" ({nets} routable nets)"),
+                None => String::new(),
+            };
+            let pending = if facts.routable_connections == 0 {
+                "No pending connections needed routing".to_string()
+            } else {
+                format!(
+                    "Routed {}/{} pending connections",
+                    facts.routed_connections, facts.routable_connections
+                )
+            };
+            format!(
+                "complete: KiCad finds no open item{native_scope}{inventory} and no new DRC error. Retained prior copper on {} nets. {pending}",
+                reuse.retained_nets
+            )
+        } else if facts.routed_connections < facts.routable_connections {
+            format!(
+                "complete: KiCad finds no unconnected item{native_scope} and no error beyond the reference's at the same place (router model: {}/{} connections)",
+                facts.routed_connections, facts.routable_connections
+            )
         } else {
             format!(
-                "complete: {}/{} connections, KiCad finds no unconnected item and no error beyond the reference's at the same place",
+                "complete: {}/{} connections, KiCad finds no unconnected item{native_scope} and no error beyond the reference's at the same place",
                 facts.routed_connections, facts.routable_connections
             )
         };
@@ -2663,6 +3350,24 @@ pub fn decide(
     }
 }
 
+fn neck_budget_action(facts: &KiCadRunFacts) -> Option<String> {
+    let checks = facts.repairs.as_ref()?.neck_budget_checks_available?;
+    let errors = facts
+        .native
+        .as_ref()?
+        .errors
+        .get("connection_width")
+        .copied()
+        .filter(|errors| *errors > 0)?;
+    let project = facts.outputs.get("project")?;
+    let board = Path::new(facts.outputs.get("board")?);
+    let board_id = board.file_stem()?.to_str()?.replace('\'', "'\\''");
+    Some(format!(
+        "KiCad reports {errors} connection_width {} and the work budget skipped neck repair ({checks} KiCad checks affordable). Copy the result project at `{project}` and run `pcb-maker repair-kicad-necks <copied-project-dir> '{board_id}' auto` on the copy. The repair edits that directory in place. If the layout used a router config, pass that file in place of `auto`.",
+        if errors == 1 { "error" } else { "errors" }
+    ))
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "the verdict's findings split by kind, each its own slice"
@@ -2675,9 +3380,40 @@ fn next_actions(
     own: &[&DrcFinding],
     unknown: &[String],
     footprint: &[&DrcFinding],
+    clearance_review: &footprint_clearance::Review,
     input: &[&DrcFinding],
+    retry_guidance: Option<&KiCadRetryGuidance>,
+    decoupling_near_suggestions: &[crate::quality::KiCadDecouplingTarget],
 ) -> (Vec<String>, Vec<String>) {
     let mut actions = Vec::new();
+    if let Some(destination) = facts
+        .input_connectivity
+        .as_ref()
+        .filter(|input| !input.retry_argv.is_empty())
+        .and_then(|input| input.retry_argv.last())
+    {
+        actions.push(format!(
+            "Save and verify zone fills in {destination} using input_connectivity.retry_argv."
+        ));
+    }
+    if let Some(input) = facts.input_connectivity.as_ref()
+        && let Some(reason) = &input.trial_rejection
+    {
+        let counts = input
+            .trial_refilled_open_items
+            .map_or_else(String::new, |trial| {
+                format!(
+                    " The trial had {trial} opens after refill. The returned PCB has {}.",
+                    input.refilled_open_items
+                )
+            });
+        let report = input.rejected_drc.map_or_else(String::new, |path| {
+            format!(" Review {path} for the affected rule and items.")
+        });
+        actions.push(format!(
+            "Kept the input after the protected-plane trial. {reason}.{counts}{report}"
+        ));
+    }
     // First, ahead of the input's warnings: on a panel whose parts' boards
     // are unknown nothing after it is about the boards as designed (the
     // OpenESC panel's line came 21st, after its frames' marks, and before
@@ -2749,11 +3485,46 @@ fn next_actions(
             facts.unplaced.len()
         ));
     } else if !facts.unplaced.is_empty() {
-        actions.push(format!(
-            "give the unplaced parts room: a larger outline, a looser region or edge constraint, or the other side ({})",
-            if facts.placement_hints.is_empty() { "see hints in board-placer.json".to_string() } else { facts.placement_hints.join("; ") }
-        ));
-        if let Some(room) = &facts.room
+        if let Some(retry) = &facts.automatic_rear_retry {
+            let edit = serde_json::json!({ "front": [&retry.front_part] });
+            actions.push(format!(
+                "{} was assigned to the rear by placer.allow_back and lacks a legal pose. Add its reference to front in the placement constraints (merge {edit}) and retry with the existing placer.allow_back permissions if front mounting is permitted.",
+                retry.front_part,
+            ));
+        }
+        if let Some(recovery) = &facts.rear_placement_recovery {
+            let refs = recovery
+                .allow_back_additions
+                .iter()
+                .take(6)
+                .cloned()
+                .collect::<Vec<_>>();
+            actions.push(format!(
+                "If the assembly permits rear mounting, append the approved references from rear_placement_recovery.allow_back_additions to placer.allow_back in the layout settings and retry. Eligible parts include {}. The report lists {} in total and estimates rear area. The retry still needs legal placement and routing.",
+                refs.join(", "),
+                recovery.allow_back_additions.len(),
+            ));
+        }
+        if facts.placement_actions.is_empty() {
+            let action = if facts.outline_from_input {
+                "review available room and movable constraints within the input PCB's supplied Edge.Cuts"
+            } else {
+                "give the unplaced parts room with a larger outline or a looser region or edge constraint"
+            };
+            actions.push(format!(
+                "{action} ({})",
+                if facts.placement_hints.is_empty() {
+                    "see hints in board-placer.json".to_string()
+                } else {
+                    facts.placement_hints.join("; ")
+                }
+            ));
+        } else {
+            actions.extend(facts.placement_actions.iter().take(3).cloned());
+        }
+        if facts.placement_actions.is_empty()
+            && !facts.outline_from_input
+            && let Some(room) = &facts.room
             && let Some(size) = room.suggested_outline_mm
         {
             let mut action = room_action_beside(room, size, &facts.placement_hints);
@@ -2772,6 +3543,17 @@ fn next_actions(
         actions.push(format!(
             "the wall clock cut the run ({}): rerun on a less loaded machine, or with a larger budget (total_seconds in the layout config, ladder_budget_seconds in the router config)",
             facts.cut.join(", ")
+        ));
+    }
+    actions.extend(retry_guidance.map(KiCadRetryGuidance::action));
+    if let Some(native) = facts
+        .native
+        .as_ref()
+        .filter(|native| native.schematic_parity > 0)
+    {
+        actions.extend(parity::actions(
+            native,
+            facts.outputs.get("drc").map_or("drc.json", String::as_str),
         ));
     }
     let open = facts
@@ -2797,7 +3579,41 @@ fn next_actions(
         actions.push(format!("{action}; {spent}"));
     }
     actions.extend(first_route_pairs_action(facts));
-    if facts.routes && open > 0 {
+    actions.extend(fallback_pair_length_action(facts));
+    if let Some(advice) = &facts.prepared_row_escape_advice {
+        let pads = advice
+            .escapes
+            .iter()
+            .map(|escape| format!("{} ({})", escape.pad, escape.net))
+            .collect::<Vec<_>>()
+            .join(", ");
+        actions.push(format!(
+            "KiCad reports opens at {pads}. The fixed placement has room for compatible short planar launches at these pads. Merge prepared_row_escape_advice.router_config_patch into the router settings and rerun with the same placement brief. Compare native opens and DRC before adopting the result."
+        ));
+    }
+    if let Some(rear) = facts.rear_mounting_advice() {
+        actions.push(format!(
+            "The front is above the placement's area target and KiCad reports open connections. If the assembly permits rear mounting, add approved exact references from rear_routing_candidates.allow_back_additions to placer.allow_back and rerun layout. The {} candidate surface-mount passives account for {:.1} mm² of modeled front-side area including spacing, with {:.1} mm² of estimated rear headroom. Check placement and native connectivity on the retry.",
+            rear.allow_back_additions.len(), rear.front_body_area_mm2, rear.rear_headroom_mm2,
+        ));
+    }
+    if facts.routes
+        && open > 0
+        && let Some(recovery) = &facts.zone_island_recovery
+    {
+        actions.push(format!(
+            "KiCad reports the only open between filled regions of {} zone {}. Run zone_island_recovery.retry_argv to test whether one through via can connect its regions.",
+            recovery.net, recovery.zone_uuid,
+        ));
+    } else if facts.routes
+        && open > 0
+        && let Some(action) = facts
+            .native
+            .as_ref()
+            .and_then(|n| n.single_layer_island_action.as_ref())
+    {
+        actions.push(action.clone());
+    } else if facts.routes && open > 0 {
         let mut where_ = Vec::new();
         if facts.hot_spots > 0 {
             where_.push(format!(
@@ -2835,6 +3651,34 @@ fn next_actions(
             if where_.is_empty() { "the router's count; drc.json lists KiCad's unconnected items".to_string() } else { where_.join(", ") },
             open_evidence(facts)
         ));
+        if !facts.native_blocked_pads.is_empty() {
+            actions.push(format!(
+                "KiCad reports an open at each of these pads, and the router found no legal track entry. Inspect the obstacles at these pads before retrying the route. {}",
+                facts.native_blocked_pads.join(" | ")
+            ));
+        }
+        if facts.terminal_launch_advice.is_some() {
+            actions.push("The named native open pads have room for short outward tracks on this placement. Apply terminal_launch_advice.layout_config_patch and reserve modeled work with --terminal-launch-budget for a verified retry. To keep the ordinary layout budget, increase total_seconds by the reserved amount.".into());
+        }
+        if let Some(concentration) = &facts.open_pad_concentration {
+            let parts = concentration
+                .footprints
+                .iter()
+                .map(|part| {
+                    format!(
+                        "{} ({} pads, {} nets)",
+                        part.reference,
+                        part.pads.len(),
+                        part.distinct_nets
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            actions.push(format!(
+                "{}/{} nets with native opens have a pad alone in its saved copper group at {parts}. Review the named pads, their escape paths and nearby copper together. open_pad_concentration lists the pins and nets.",
+                concentration.concentrated_nets, concentration.native_open_nets
+            ));
+        }
         actions.extend(
             facts
                 .hot_spot
@@ -2854,6 +3698,7 @@ fn next_actions(
     if thermal_action {
         actions.push(thermal_action_text(facts));
     }
+    actions.extend(neck_budget_action(facts));
     let other: BTreeMap<String, usize> = new_findings
         .iter()
         .filter(|(kind, _)| kind.as_str() != "starved_thermal")
@@ -2865,18 +3710,49 @@ fn next_actions(
             "new DRC errors ({}): see {drc}",
             counts(new_findings)
         ));
+        actions.extend(unassigned_mask_action(own.iter().copied()));
+        if other.contains_key("connection_width") {
+            actions.extend(hatched_neck::action(facts, own));
+        }
         // The largest types, each with what to do.
         let mut kinds: Vec<(&String, &usize)> = new_findings
             .iter()
             .filter(|(kind, _)| !(thermal_action && kind.as_str() == "starved_thermal"))
             .collect();
         kinds.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+        let held_geometry = kinds
+            .iter()
+            .take(FINDING_ACTIONS)
+            .any(|(kind, _)| {
+                matches!(
+                    kind.as_str(),
+                    "courtyards_overlap" | "copper_edge_clearance"
+                )
+            })
+            .then(|| held_geometry::HeldGeometry::load(facts))
+            .flatten();
         for (kind, count) in kinds.into_iter().take(FINDING_ACTIONS) {
             let findings: Vec<&DrcFinding> = own
                 .iter()
                 .copied()
                 .filter(|finding| &finding.kind == kind)
                 .collect();
+            if let Some((action, remaining)) =
+                held_geometry
+                    .as_ref()
+                    .and_then(|geometry| match kind.as_str() {
+                        "courtyards_overlap" => geometry.courtyard_action(&findings),
+                        "copper_edge_clearance" => geometry.edge_action(&findings),
+                        _ => None,
+                    })
+            {
+                actions.push(action);
+                let count = count.saturating_sub(findings.len() - remaining.len());
+                if count > 0 {
+                    actions.push(finding_action(kind, count, &remaining, KeptParts::Unknown));
+                }
+                continue;
+            }
             let kept = kept_parts_of(&findings, facts.input.as_ref()).map(|mut parts| {
                 parts.sort_by(|a, b| crate::canonical_order::natural_cmp(a, b));
                 let how = if facts.command == "route-kicad-board" {
@@ -2910,6 +3786,19 @@ fn next_actions(
                 (None, None) => KeptParts::Unknown,
             };
             let mut action = finding_action(kind, *count, &findings, context);
+            if kind == "solder_mask_bridge" {
+                let board = facts
+                    .outputs
+                    .get("board")
+                    .and_then(|path| fs::read_to_string(path).ok())
+                    .and_then(|text| crate::parse(&text).ok());
+                if let Some(detail) = fixed_mask_bridge::action(&findings, board.as_ref(), facts) {
+                    action = format!("{kind} {count}. {detail}");
+                } else if let Some(detail) = mask_graphic_action(&findings, board.as_ref()) {
+                    action.push_str(". ");
+                    action.push_str(&detail);
+                }
+            }
             if matches!(kind.as_str(), "length_out_of_range" | "skew_out_of_range")
                 && let Some(summary) =
                     lengths_summary(&facts.lengths, facts.command.starts_with("route"))
@@ -2917,10 +3806,35 @@ fn next_actions(
                 action.push_str(&format!("; {summary}"));
             }
             if kind.starts_with("diff_pair_") {
+                if let Some(pairs) = &facts.diff_pairs {
+                    let affected: Vec<String> = pairs
+                        .skews
+                        .iter()
+                        .filter(|pair| {
+                            findings.iter().any(|finding| {
+                                finding.nets.contains(&pair.positive)
+                                    && finding.nets.contains(&pair.negative)
+                            })
+                        })
+                        .map(|pair| format!("{} and {}", pair.positive, pair.negative))
+                        .collect();
+                    if !affected.is_empty() {
+                        action.push_str(&format!(
+                            ". KiCad found this violation on a pair with a routed coupled link ({})",
+                            affected.join(", ")
+                        ));
+                    }
+                }
                 action.push_str(&format!(
                     "; {}",
                     pairs_summary(facts.diff_pairs.as_ref(), &facts.diff_pair_why)
                 ));
+                if kind == "diff_pair_uncoupled_length_too_long" {
+                    for detail in pair_endpoint_actions(facts.diff_pairs.as_ref(), &findings) {
+                        action.push_str(". ");
+                        action.push_str(&detail);
+                    }
+                }
             }
             actions.push(action);
         }
@@ -2933,19 +3847,64 @@ fn next_actions(
             None => "the board's .kicad_dru".to_string(),
         },
     );
-    observations.extend(footprint_findings_note(footprint, &dru));
+    observations.extend(footprint_findings_note_with_review(
+        footprint,
+        &dru,
+        clearance_review,
+    ));
     observations.extend(input_findings_note(input, &dru, false));
     if !facts.constraints_missed.is_empty() {
+        if !facts.geometry_near_misses.is_empty() {
+            actions.extend(facts.geometry_near_misses.iter().take(4).cloned());
+            actions.push("Check whether a different permitted target pose or source side makes room. Use another pin only if it provides the same required electrical connection.".into());
+        }
+        if !facts.refinable_pad_near_misses.is_empty()
+            && facts.unplaced.is_empty()
+            && facts.boards_mixed().is_none()
+        {
+            let pairs = &facts.refinable_pad_near_misses;
+            let mut shown = pairs.iter().take(4).cloned().collect::<Vec<_>>();
+            if pairs.len() > shown.len() {
+                shown.push(format!("{} more", pairs.len() - shown.len()));
+            }
+            let setting = if facts.command == "place-kicad-board" {
+                "tuning.refine_pad_near in the placer options (placer.tuning.refine_pad_near in layout.json)"
+            } else {
+                "placer.tuning.refine_pad_near in layout.json"
+            };
+            actions.push(format!(
+                "Retry missed pad distances ({}) with {setting} set to true. Use the same mechanical brief and a fresh output directory.",
+                shown.join(", ")
+            ));
+        }
         // Which report holds them (trial 5: "constraints[]" named no file).
         let report = if facts.command == "place-kicad-board" {
             "board-placer.json"
         } else {
             "board-layout.json"
         };
+        let review = if !facts.geometry_near_misses.is_empty() {
+            "review the required distances, held poses and available clearance"
+        } else if facts.strict_pad_near_misses > 0 {
+            "review the required pad distances, held poses and available clearance"
+        } else if facts.body_near_pin_misses > 0 {
+            "check a closer legal pose or angle for each named body at its target pin, subject to the existing holds and clearances"
+        } else if facts.outline_is_authored() {
+            "review the named poses and available clearance within the supplied outline"
+        } else {
+            "relax them or give the parts room"
+        };
         let mut action = format!(
-            "constraints missed ({report}'s constraints[] has violation_mm for each): relax them or give the parts room"
+            "constraints missed ({report}'s constraints[] records distances and violations): {review}"
         );
-        if let Some(note) = facts.room.as_ref().and_then(one_side_crowded_note) {
+        if facts.body_near_pin_misses == 0
+            && facts.strict_pad_near_misses == 0
+            && facts.geometry_near_misses.is_empty()
+            && let Some(note) = facts
+                .room
+                .as_ref()
+                .and_then(|room| one_side_crowded_note(room, facts.outline_is_authored()))
+        {
             action.push_str(&format!("; {note}"));
         }
         actions.push(action);
@@ -2987,20 +3946,37 @@ fn next_actions(
     for pour in facts.pours.iter().filter(|pour| pour.in_many_pieces()) {
         actions.push(pour_action(pour));
     }
+    actions.extend(
+        facts
+            .native
+            .as_ref()
+            .and_then(DrcTally::unassigned_fill_action),
+    );
     actions.extend(narrowed_action(&facts.narrowed));
     actions.extend(crate::class_view::class_layers_action(&facts.class_layers));
+    actions.extend(crate::class_view::wide_track_actions(
+        &facts.class_track_widths,
+    ));
+    actions.extend(crate::reference_keepouts::actions(
+        &facts.reference_keepout_overlaps,
+    ));
     actions.extend(crate::class_view::designer_widths_action(
         &facts.designer_widths,
     ));
+    actions.extend(
+        facts
+            .designer_pours
+            .as_ref()
+            .and_then(crate::designer_pours::action),
+    );
     actions.extend(designer_via_spans_action(&facts.designer_via_spans));
     actions.extend(skeleton_budget_action(facts));
-    actions.extend(facts.decoupling.as_ref().and_then(|decoupling| {
-        decoupling_action(
-            decoupling,
-            facts.decoupling_near,
-            &facts.decoupling_constrained,
-        )
-    }));
+    actions.extend(
+        facts
+            .decoupling
+            .as_ref()
+            .and_then(|decoupling| decoupling_action(decoupling, decoupling_near_suggestions)),
+    );
     if !unknown.is_empty() {
         actions.push(format!(
             "the reference board has {} at KiCad's cap of {KICAD_FINDING_CAP} findings: only the findings at the same place are subtracted (preexisting_unknown)",
@@ -3018,38 +3994,36 @@ fn next_actions(
     if status != KiCadRunStatus::Complete {
         actions.extend(facts.skipped.iter().cloned());
     }
-    if let Some(native) = facts
-        .native
-        .as_ref()
-        .filter(|native| native.schematic_parity > 0)
-    {
-        observations.push(if native.schematic_parity_pins_only {
-            format!(
-                "the {} schematic parity findings are each a symbol pin the footprint has no pad for (net_conflict \"No pad found for pin\"), a no-connect pin on KiCad's unconnected-(...) net when import-kicad-netlist listed it in unmatched_pins",
-                native.schematic_parity
-            )
-        } else {
-            format!(
-                "schematic parity findings ({}; counted, not judged): see {}",
-                counts(&native.schematic_parity_types),
-                facts.outputs.get("drc").map_or("drc.json", String::as_str)
-            )
-        });
-    }
     (actions, observations)
 }
 
 /// The tag that starts a next action which is the input's own observation
 /// (`input_tagged`): nothing this run did or can change, said after every
-/// action of the run. It starts with "nothing to do", as every line of a
-/// complete run's next_actions does (docs/agents.md; the walkthrough
-/// holds a complete layout to it).
+/// action of the run. An observation that already requests a footprint
+/// correction has its own review tag.
 pub const INPUT_TAG: &str = "nothing to do (the input's): ";
+
+const INPUT_FOOTPRINT_REVIEW_TAG: &str = "review the input footprint: ";
+const INPUT_HELD_REVIEW_TAG: &str = "review held placement: ";
 
 /// A next action that is the input's own observation, tagged
 /// (`INPUT_TAG`).
 fn input_tagged(observation: String) -> String {
-    format!("{INPUT_TAG}{observation}")
+    if observation.starts_with(INPUT_FOOTPRINT_REVIEW_TAG) {
+        observation
+    } else if observation.starts_with("fixed parts ")
+        || observation.contains(" pairs of fixed parts overlap (")
+        || observation.starts_with("footprint bounding boxes overlap for ")
+    {
+        let advice = if observation.ends_with(" overlap") {
+            ". Inspect the held poses and pad locations in KiCad."
+        } else {
+            ""
+        };
+        format!("{INPUT_HELD_REVIEW_TAG}{observation}{advice}")
+    } else {
+        format!("{INPUT_TAG}{observation}")
+    }
 }
 
 /// `actions` (the run's own, in their order) followed by the input's own
@@ -3090,6 +4064,8 @@ enum ObservationKind {
     /// `overlap_warning` and the placer's bare "fixed parts A and B
     /// overlap": fixed parts on top of each other.
     Overlap,
+    /// Coarse footprint rectangles overlap, with incomplete contour evidence.
+    BoundingBoxes,
 }
 
 /// An observation's kind and what the folded line names of it: the part
@@ -3103,13 +4079,16 @@ fn observation_entry(observation: &str) -> Option<(ObservationKind, String, usiz
         let what = after
             .strip_prefix(" (")
             .and_then(|tail| tail.find("):").map(|close| &tail[..close]));
+        if what == Some(HELD_BOUNDING_BOXES) {
+            return Some((ObservationKind::BoundingBoxes, pair.to_string(), 0));
+        }
         return Some((
             ObservationKind::Overlap,
             match what {
                 Some(what) => format!("{pair} ({what})"),
                 None => pair.to_string(),
             },
-            0,
+            usize::from(what.is_some_and(|kind| kind.contains("pads on "))),
         ));
     }
     let rest = observation.strip_prefix("fixed part ")?;
@@ -3201,17 +4180,22 @@ pub(crate) fn fold_observations(observations: &[String]) -> Vec<String> {
                 all.iter().map(|entry| entry.2).sum::<usize>(),
                 named(*kind)
             ),
+            ObservationKind::BoundingBoxes => format!(
+                "footprint bounding boxes overlap for {} pairs of fixed parts ({}). Exact footprint overlap is unverified. Inspect the held poses and contours in KiCad. See input_observations for the individual pairs.",
+                all.len(),
+                named(*kind)
+            ),
             ObservationKind::Overlap => {
-                // Only pads on each other cost a connection
-                // (`overlap_warning`).
-                let pads = all.iter().filter(|entry| entry.1.contains("pads")).count();
-                let pads = match pads {
-                    0 => "; no pair's pads lie on each other, so it costs no connection (parts under a socket or module on purpose); where it is a mistake give one of a pair its own place".to_string(),
-                    count if count == all.len() => " and their pads cannot both be connected; give one of each pair its own place".to_string(),
-                    count => format!("; {count} of the pairs have pads on each other, which cannot both be connected: give one of each such pair its own place"),
+                let pads: usize = all.iter().map(|entry| entry.2).sum();
+                let evidence = if pads == 0 {
+                    String::new()
+                } else if pads == 1 {
+                    " The placement model found copper pad overlap in one pair.".into()
+                } else {
+                    format!(" The placement model found copper pad overlap in {pads} pairs.")
                 };
                 format!(
-                    "{} pairs of fixed parts overlap ({}): the placer keeps both of each pair where the input has them{pads} (place, or free it from fixed and fixed_patterns) (input_observations has each)",
+                    "{} pairs of fixed parts overlap ({}). The placer keeps their poses.{evidence} Inspect the held poses and pad locations in KiCad. A body overlap can be intentional if the assembly permits it. See input_observations for the individual pairs.",
                     all.len(),
                     named(*kind)
                 )
@@ -3306,13 +4290,19 @@ fn hot_spot_parts_action(note: &KiCadHotSpotNote, command: &str) -> String {
         .parts
         .iter()
         .map(|part| {
+            let mut reference = part.reference.clone();
+            if let Some(occurrence) = &part.occurrence {
+                if let Some([x, y, angle]) = occurrence.at {
+                    reference.push_str(&format!(" at ({x:.2}, {y:.2}) mm, {angle:.1}°"));
+                }
+                if let Some(uuid) = &occurrence.uuid {
+                    reference.push_str(&format!(", footprint UUID {uuid}"));
+                }
+            }
             if part.distance_mm < 0.05 {
-                format!("{} ({}, over it)", part.reference, part.side)
+                format!("{reference} ({}, over it)", part.side)
             } else {
-                format!(
-                    "{} ({}, {:.1} mm)",
-                    part.reference, part.side, part.distance_mm
-                )
+                format!("{reference} ({}, {:.1} mm)", part.side, part.distance_mm)
             }
         })
         .collect();
@@ -3323,7 +4313,9 @@ fn hot_spot_parts_action(note: &KiCadHotSpotNote, command: &str) -> String {
     if parts.is_empty() {
         return format!("{spot}: no part's body or pad lies on its layer");
     }
-    let lever = if command.starts_with("route") {
+    let lever = if note.parts.iter().any(|part| part.occurrence.is_some()) {
+        "identify any repeated part by its position and footprint UUID before making an edit. To constrain a specific occurrence's pose in a layout run, put its reference and UUID in the place entry"
+    } else if command.starts_with("route") {
         "route mode keeps every part: move or turn them in the input, or lay the board out (layout-kicad-board) with constraints for them"
     } else {
         "move or turn one of them (place with x, y and angle), hold them apart (apart, constraints.md), or keep a box around the point free of bodies (keepout); a part held by fixed or a constraint moves only when that is loosened"
@@ -3478,6 +4470,20 @@ fn thermal_action_text(facts: &KiCadRunFacts) -> String {
 /// region would cut another net's pads off (the trial's board A,
 /// 2026-10-26: keep_whole under its ICs on F.Cu opened 22 connections).
 fn pour_action(pour: &crate::board_router::KiCadPourQuality) -> String {
+    if pour.bounded_regions.is_some() {
+        let advice = if pour.keep_whole_parts.is_empty() {
+            "Review the requested rectangles and the tracks inside them in `pours[].bounded_regions`.".to_owned()
+        } else {
+            let constraint = serde_json::json!({"keep_whole":[{"parts": pour.keep_whole_parts}]});
+            format!(
+                "The proposed regions under {} fit in the requested zone and avoid other-net pads on {}. To test them, merge `{constraint}` into that layer's bounded `add_pours` entry. Put {} in its own entry if the request covers several layers.",
+                pour.keep_whole_parts.join(", "),
+                pour.layer,
+                pour.layer,
+            )
+        };
+        return format!("{}. {advice}", pour.line());
+    }
     let advice = if pour.keep_whole_parts.is_empty() {
         format!(
             "a keep_whole region under any part of six pads or more would cover other nets' pads on {} and leave them unreachable there, so keep_whole under parts does not fit this layer (a box clear of other nets' pads may)",
@@ -3508,8 +4514,46 @@ fn pour_action(pour: &crate::board_router::KiCadPourQuality) -> String {
 /// F.Cu` and `Circle of SW20 on Edge.Cuts` give `SW13` and `SW20`).
 fn described_part(description: &str) -> Option<&str> {
     let (_, rest) = description.rsplit_once(" of ")?;
-    let (reference, _) = rest.split_once(" on ")?;
+    let reference = rest
+        .split_once(" on ")
+        .map_or(rest, |(reference, _)| reference);
     (!reference.is_empty() && !reference.contains(' ')).then_some(reference)
+}
+
+/// Mask bridges where KiCad explicitly identifies both an unassigned
+/// routed item and an unassigned pad. An ordinary pad or an unconnected
+/// schematic net alone does not establish that the routing has no net.
+pub fn unassigned_mask_action<'a>(
+    findings: impl IntoIterator<Item = &'a DrcFinding>,
+) -> Option<String> {
+    let mut parts = BTreeMap::new();
+    for finding in findings {
+        if finding.kind != "solder_mask_bridge" || finding.item_descriptions.len() != 2 {
+            continue;
+        }
+        let items = &finding.item_descriptions;
+        let routed = items.iter().any(|item| {
+            ["Track [<no net>]", "Arc [<no net>]", "Via [<no net>]"]
+                .iter()
+                .any(|prefix| item.starts_with(prefix))
+        });
+        let pad = items.iter().find(|item| {
+            (item.starts_with("Pad ")
+                || item.starts_with("PTH pad ")
+                || item.starts_with("SMD pad "))
+                && item.contains("[<no net>]")
+        });
+        if routed && let Some(part) = pad.and_then(|item| described_part(item)) {
+            *parts.entry(part.to_string()).or_insert(0) += 1;
+        }
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "KiCad's solder-mask bridge reports pair unassigned routed copper with unassigned pads on {}. Check the highlighted tracks or vias against the schematic pin assignments. On a copy, correct any wrong net assignments or remove unintended copper, then refill and rerun DRC and schematic parity.",
+        top_counts(&parts, 4)
+    ))
 }
 
 /// For copper edge clearance findings whose edge is a footprint's own
@@ -3769,6 +4813,29 @@ fn pairs_summary(pairs: Option<&crate::KiCadDiffPairs>, why: &BTreeMap<String, u
     text
 }
 
+fn pair_endpoint_actions(
+    pairs: Option<&crate::KiCadDiffPairs>,
+    findings: &[&DrcFinding],
+) -> Vec<String> {
+    let named: BTreeSet<_> = findings.iter().flat_map(|finding| &finding.nets).collect();
+    pairs
+        .into_iter()
+        .flat_map(|pairs| &pairs.pairs)
+        .filter_map(|pair| {
+            let end = pair.unmatched_end.as_ref()?;
+            if ![&pair.positive, &pair.negative].iter().any(|name| named.contains(name)) {
+                return None;
+            }
+            let [a, b] = &end.pad_labels;
+            Some(format!(
+                "Pads {a} and {b} at the unmatched end are {:.3} mm apart. The ordinary pair planner accepts up to {:.3} mm between these pad centres. If the pads are on movable series parts, keep them side by side on their required face with a row or `pair_rows` and compare the reroute under the same rules",
+                end.separation_mm, end.ordinary_span_mm,
+            ))
+        })
+        .take(4)
+        .collect()
+}
+
 /// A layout whose first route was all that ran (`first_route_only`) and
 /// left pairs not wholly coupled: one line, with the lever. Where the
 /// budget was spent (`first_route_spent`) more of it gives the moves and
@@ -3802,6 +4869,28 @@ fn first_route_pairs_action(facts: &KiCadRunFacts) -> Option<String> {
     ))
 }
 
+fn fallback_pair_length_action(facts: &KiCadRunFacts) -> Option<String> {
+    let pair = facts
+        .diff_pairs
+        .as_ref()?
+        .fallback_lengths
+        .iter()
+        .find(|pair| {
+            pair.planar_difference_mm >= 0.0005
+                && !facts.lengths.iter().any(|entry| {
+                    entry.constraint == "skew"
+                        && [&pair.positive, &pair.negative].iter().any(|member| {
+                            entry.net == member.net
+                                || member.net.strip_prefix('/') == Some(entry.net.as_str())
+                        })
+                })
+        })?;
+    Some(format!(
+        "The separately routed pair {} and {} has {:.3} mm difference in planar track length. See diff_pairs.fallback_lengths for pad pairs and measured lengths. To enforce a timing limit, author a .kicad_dru skew rule for the two named nets and use the limit from your electrical brief.",
+        pair.positive.net, pair.negative.net, pair.planar_difference_mm,
+    ))
+}
+
 /// One finding type's next action: what KiCad found (the rule, the nets
 /// or the items of the type's findings) and the setting or step that
 /// addresses it, where there is one.
@@ -3818,6 +4907,40 @@ enum KeptParts<'a> {
     Some(usize, &'a str),
     /// Route mode, which keeps every part: none is the run's to move.
     RouteMode,
+}
+
+/// A physical item common to a group of clearance errors involving
+/// different counterparts. KiCad can list the common item on either side.
+fn shared_clearance_item<'a>(findings: &[&'a DrcFinding]) -> Option<&'a str> {
+    let first = findings.first()?;
+    if first.items.len() != first.item_descriptions.len() {
+        return None;
+    }
+    for (item, label) in first.items.iter().zip(&first.item_descriptions) {
+        let Some(id) = item.uuid.as_deref() else {
+            continue;
+        };
+        let counterparts: Option<BTreeSet<&str>> = findings
+            .iter()
+            .map(|finding| {
+                let [a, b] = finding.items.as_slice() else {
+                    return None;
+                };
+                let (a, b) = (a.uuid.as_deref()?, b.uuid.as_deref()?);
+                if a == id {
+                    Some(b)
+                } else if b == id {
+                    Some(a)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if counterparts.is_some_and(|items| items.len() > 1) {
+            return Some(label);
+        }
+    }
+    None
 }
 
 fn finding_action(
@@ -3848,6 +4971,9 @@ fn finding_action(
     let mut nets: BTreeMap<String, usize> = BTreeMap::new();
     for finding in findings {
         let mut names = finding.nets.clone();
+        if matches!(kind, "clearance" | "hole_clearance" | "shorting_items") {
+            names.sort_unstable();
+        }
         names.dedup();
         if !names.is_empty() {
             *nets.entry(names.join(" and ")).or_default() += 1;
@@ -3859,6 +4985,12 @@ fn finding_action(
     }
     if !nets.is_empty() {
         what.push(format!("nets {}", top_counts(&nets, 4)));
+        if kind == "clearance"
+            && findings.len() == count
+            && let Some(item) = shared_clearance_item(findings)
+        {
+            what.push(format!("all {count} involve {item}"));
+        }
     } else if let Some(finding) = findings.first() {
         let items: Vec<&str> = finding
             .item_descriptions
@@ -3884,7 +5016,7 @@ fn finding_action(
             "an item lies in a rule area (a keepout): move the keepout or the part, or let the rule area allow it"
         }
         "solder_mask_bridge" => {
-            "copper of two nets under one mask opening (KiCad names the opening and the first copper it found there, not the other net's item): the router keeps its tracks and vias the project's solder_mask_to_copper_clearance plus the opening's expansion from an opening of another net, and out of one over two nets; the solder_mask_bridge severity (Board Setup) decides whether it counts"
+            "copper of two nets under one mask opening. KiCad lists the opening and one exposed copper item. The router keeps its tracks and vias clear of other nets' openings using the project's solder_mask_to_copper_clearance and mask expansion"
         }
         "courtyards_overlap" => {
             "placer.tight_bodies false keeps bodies to their courtyards; or give the parts room"
@@ -3895,8 +5027,11 @@ fn finding_action(
         "connection_width" | "track_width" => {
             "the project's min_connection and the classes' widths (Board Setup) set the rule"
         }
-        "diff_pair_gap_out_of_range" | "diff_pair_uncoupled_length_too_long" => {
-            "the pair's two tracks run apart where no coupled run of the pair was routed"
+        "diff_pair_gap_out_of_range" => {
+            "check the spacing between the reported tracks against the project's differential-pair gap rule"
+        }
+        "diff_pair_uncoupled_length_too_long" => {
+            "KiCad measured more uncoupled track than the rule allows. Inspect where the two tracks separate, including pad escapes and layer changes"
         }
         _ => "see drc.json",
     };
@@ -3937,14 +5072,6 @@ fn finding_action(
             format!(
                 "the edge is a part's own Edge.Cuts (a switch's or connector's hole or slot that its footprint brings) with another part's copper at it ({}): the parts lie too close or on each other, which no edge constraint or clearance setting changes; give them room (a looser row or relative, the outline), keep them apart (apart), or place them where they belong",
                 part_cutout_pairs(findings).join(", ")
-            )
-        }
-        (None, _)
-            if kind == "solder_mask_bridge" && !footprint_mask_graphics(findings).is_empty() =>
-        {
-            format!(
-                "{step}; but no route keeps a zone's fill out: KiCad fills a zone of another net under a footprint's mask graphic ({}), so with the footprint's pads that is a bridge whatever is routed (MokyaLora's J6, a U.FL's B.Mask rectangle over its GND pads, placed on the VSYS zone of B.Cu: the bridge stayed with every track under it removed and went with the zone); move the part off the zone of the other net, keep that zone's fill out of the opening (a rule area without pours, or the zone's outline), or allow solder mask bridges in the footprint's properties where the opening is meant to expose both",
-                footprint_mask_graphics(findings).join(", ")
             )
         }
         (None, _) => step.to_string(),
@@ -3997,23 +5124,153 @@ fn board_items_only(findings: &[&DrcFinding]) -> Vec<String> {
     items
 }
 
-/// The footprints' mask graphics among the findings' items, as KiCad names
-/// them ("Rectangle of J6 on B.Mask"): a footprint's graphic, not a pad
-/// or the board's own graphic, on a mask layer.
-fn footprint_mask_graphics(findings: &[&DrcFinding]) -> Vec<String> {
-    let mut graphics: Vec<String> = findings
-        .iter()
-        .flat_map(|finding| finding.item_descriptions.iter())
-        .filter(|description| {
-            !description.starts_with("Pad ")
-                && (description.ends_with(" on F.Mask") || description.ends_with(" on B.Mask"))
-                && description.contains(" of ")
-        })
-        .cloned()
+/// A footprint mask graphic can expose other copper on its own face. A
+/// zone is actionable when KiCad names it there, or when a foreign-net
+/// zone outline contains the graphic's marker on that face.
+fn mask_graphic_action(findings: &[&DrcFinding], board: Option<&crate::Expr>) -> Option<String> {
+    use crate::kicad_nets::{NetNames, node_net};
+    use crate::kicad_sexpr::{Expr, expression_coordinate, form_atom};
+
+    let mut graphics = BTreeSet::new();
+    let mut reported_openings = BTreeSet::new();
+    let mut affected_layers = BTreeSet::new();
+    let mut implicated_zones = BTreeSet::new();
+    let mut nearby_zones = BTreeSet::new();
+    let mut routed_copper = false;
+    let names = board.map(NetNames::of);
+    let zones: Vec<_> = board
+        .into_iter()
+        .flat_map(Expr::children)
+        .chain(
+            board
+                .into_iter()
+                .flat_map(Expr::children)
+                .filter(|item| item.head() == Some("footprint"))
+                .flat_map(Expr::children),
+        )
+        .filter(|item| item.head() == Some("zone") && item.child("keepout").is_none())
         .collect();
-    graphics.sort();
-    graphics.dedup();
-    graphics
+    let on_layer = |zone: &Expr, layer: &str| {
+        let names_layer = |name| name == layer || matches!(name, "*.Cu" | "F&B.Cu");
+        form_atom(zone, "layer", 1).is_some_and(names_layer)
+            || zone.child("layers").is_some_and(|layers| {
+                layers
+                    .children()
+                    .iter()
+                    .skip(1)
+                    .filter_map(Expr::atom)
+                    .any(names_layer)
+            })
+    };
+    for finding in findings {
+        for (index, graphic) in finding.item_descriptions.iter().enumerate() {
+            if graphic.starts_with("Pad ") || !graphic.contains(" of ") {
+                continue;
+            }
+            let layer = if graphic.ends_with(" on F.Mask") {
+                "F.Cu"
+            } else if graphic.ends_with(" on B.Mask") {
+                "B.Cu"
+            } else {
+                continue;
+            };
+            graphics.insert(graphic.as_str());
+            affected_layers.insert(layer);
+            if let Some(reference) = described_part(graphic)
+                && let Some(uuid) = finding
+                    .items
+                    .get(index)
+                    .and_then(|item| item.uuid.as_deref())
+            {
+                reported_openings.insert((reference, layer, uuid));
+            }
+            for item in &finding.item_descriptions {
+                routed_copper |= item.starts_with("Track ")
+                    || item.starts_with("Via ")
+                    || (item.starts_with("Arc ") && item.contains(", length "));
+                if item.starts_with("Zone ")
+                    && item
+                        .rsplit_once(" on ")
+                        .is_some_and(|(_, suffix)| suffix.split(',').next() == Some(layer))
+                {
+                    implicated_zones.insert(item.as_str());
+                }
+            }
+            let Some(point) = finding.items.get(index).and_then(DrcItem::located) else {
+                continue;
+            };
+            for zone in zones.iter().copied().filter(|zone| on_layer(zone, layer)) {
+                let Some(net) = form_atom(zone, "net_name", 1)
+                    .or_else(|| node_net(zone))
+                    .filter(|net| !net.is_empty())
+                else {
+                    continue;
+                };
+                let Some(names) = &names else { continue };
+                if finding.nets.is_empty()
+                    || finding
+                        .nets
+                        .iter()
+                        .all(|other| names.normalize(other) == names.normalize(net))
+                {
+                    continue;
+                }
+                let Some(points) = zone
+                    .child("polygon")
+                    .and_then(|polygon| polygon.child("pts"))
+                else {
+                    continue;
+                };
+                let polygon: Vec<_> = points
+                    .children()
+                    .iter()
+                    .filter(|point| point.head() == Some("xy"))
+                    .filter_map(|vertex| {
+                        Some([
+                            expression_coordinate(vertex, 1, "zone x").ok()?,
+                            expression_coordinate(vertex, 2, "zone y").ok()?,
+                        ])
+                    })
+                    .collect();
+                if polygon.len() >= 3 && crate::geometry::point_in_polygon(point, &polygon) {
+                    nearby_zones.insert(format!("{net} on {layer} at {graphic}"));
+                }
+            }
+        }
+    }
+    if graphics.is_empty() {
+        return None;
+    }
+    let openings = graphics.into_iter().collect::<Vec<_>>().join(", ");
+    let mut action = format!(
+        "Inspect the footprint mask openings ({openings}) and the exposed pads and copper on those faces."
+    );
+    if let (Some(board), Some(names)) = (board, names.as_ref())
+        && let Some(detail) = mask_opening::shared_pad_openings(board, names, &reported_openings)
+    {
+        action.push(' ');
+        action.push_str(&detail);
+    }
+    if !implicated_zones.is_empty() {
+        let zones = implicated_zones.into_iter().collect::<Vec<_>>().join(", ");
+        action.push_str(&format!(" KiCad names zone copper on the affected face ({zones}). Check the refill with the implicated zone kept clear of the aperture."));
+    } else if !nearby_zones.is_empty() {
+        let zones = nearby_zones.into_iter().collect::<Vec<_>>().join(", ");
+        action.push_str(&format!(" A zone outline covers a mask marker ({zones}). Check whether its refilled copper participates before changing the zone or placement."));
+    } else if board.is_some()
+        && zones
+            .iter()
+            .all(|zone| affected_layers.iter().all(|layer| !on_layer(zone, layer)))
+    {
+        let faces = affected_layers.into_iter().collect::<Vec<_>>().join(", ");
+        action.push_str(&format!(
+            " The board has no copper zones on the affected layers ({faces})."
+        ));
+    }
+    if routed_copper {
+        action.push_str(" Check the named track or via against the mask opening and reroute it if the opening exposes its copper unexpectedly.");
+    }
+    Some(action)
 }
 
 /// The electrical findings that count between parts kept where the input
@@ -4136,7 +5393,7 @@ fn footprint_of(item: &str) -> Option<&str> {
 /// The next action for a project with rules the router does not keep.
 fn unmodelled_rules_action(rules: &[String]) -> String {
     format!(
-        "the project has rules the router does not keep, which KiCad checks: their findings are for the designer to resolve by hand or by moving parts (KiCad names the rule in each finding's description in drc.json, \"rule 'NAME' ...\"; a rule that only allows less than the router keeps costs nothing): {}",
+        "the project has rules the router does not keep during search. Check drc.json for each named rule. If KiCad reports a violation, inspect the listed nets and items before editing the route. {}",
         rules.join("; ")
     )
 }
@@ -4331,7 +5588,10 @@ fn frames_and_tabs_note(sub: &crate::sub_boards::KiCadSubBoardsReport) -> Option
 /// check: the front 121 % full, the back empty, eight `near` entries missed
 /// by up to 8.4 mm, and the action said only "relax them or give the parts
 /// room" (the designer's board has 27 parts on the back).
-fn one_side_crowded_note(room: &crate::placement_room::KiCadRoom) -> Option<String> {
+fn one_side_crowded_note(
+    room: &crate::placement_room::KiCadRoom,
+    authored: bool,
+) -> Option<String> {
     let target = room.target_utilization;
     let sides = ["front", "back"];
     let full = (0..2).find(|side| room.utilization[*side] > target)?;
@@ -4339,8 +5599,8 @@ fn one_side_crowded_note(room: &crate::placement_room::KiCadRoom) -> Option<Stri
     if room.utilization[other] >= target / 2.0 || room.usable_mm2[other] <= 0.0 {
         return None;
     }
-    Some(format!(
-        "the {} side is {:.0} % full and the {} {:.0} % (room.utilization; the target {:.0} %): put the parts the design allows there on the {} (\"{}\": [...] in constraints.json) or give the board the room (room.smallest_outline_mm {:.1} x {:.1} mm; now {:.1} x {:.1})",
+    let mut note = format!(
+        "the {} side is {:.0} % full and the {} {:.0} % (room.utilization; the target {:.0} %): put the parts the design allows there on the {} (\"{}\": [...] in constraints.json)",
         sides[full],
         room.utilization[full] * 100.0,
         sides[other],
@@ -4348,11 +5608,25 @@ fn one_side_crowded_note(room: &crate::placement_room::KiCadRoom) -> Option<Stri
         target * 100.0,
         sides[other],
         sides[other],
-        room.smallest_outline_mm[0],
-        room.smallest_outline_mm[1],
-        room.outline_mm[0],
-        room.outline_mm[1],
-    ))
+    );
+    let enlarges_outline = room
+        .smallest_outline_mm
+        .iter()
+        .zip(room.outline_mm)
+        .all(|(&candidate, current)| candidate >= current)
+        && room
+            .smallest_outline_mm
+            .iter()
+            .zip(room.outline_mm)
+            .any(|(&candidate, current)| candidate - current >= 0.1);
+    if !authored && enlarges_outline {
+        note.push_str(&format!(
+            " or give the board the room (room.smallest_outline_mm {:.1} x {:.1} mm; now {:.1} x {:.1})",
+            room.smallest_outline_mm[0], room.smallest_outline_mm[1],
+            room.outline_mm[0], room.outline_mm[1],
+        ));
+    }
+    Some(note)
 }
 
 pub fn room_action(room: &crate::placement_room::KiCadRoom, size: [f64; 2]) -> String {
@@ -4409,20 +5683,6 @@ fn room_action_beside(
             format!(": {}", why.join("; "))
         }
     )
-}
-
-/// The parity findings that are only the schematic's no-connect pins
-/// (KiCad's `unconnected-(...)` nets): pins the footprint has no pad for,
-/// harmless; `None` when the report holds others too or none.
-pub fn no_connect_parity_only(report: &Value) -> Option<usize> {
-    let findings = report["schematic_parity"].as_array()?;
-    let harmless = |finding: &Value| {
-        finding["type"].as_str() == Some("net_conflict")
-            && finding["description"]
-                .as_str()
-                .is_some_and(|text| text.contains("No pad found for pin"))
-    };
-    (!findings.is_empty() && findings.iter().all(harmless)).then_some(findings.len())
 }
 
 /// The verdict of a finished run.
@@ -4511,18 +5771,72 @@ pub(crate) fn judge_at(
         kinds
     };
     let footprint_findings = by_kind(&footprint);
+    let own_clearances = findings
+        .iter()
+        .filter(|finding| finding.kind == "clearance" && footprint_own_unreferenced(finding))
+        .collect::<Vec<_>>();
+    let clearance_review = footprint_clearance::Review::assess(
+        &own_clearances,
+        facts.outputs.get("board").map(Path::new),
+        facts.source_project.as_deref(),
+    );
     let input_findings = by_kind(&input);
-    let (status, reason) = decide(facts, &strict.new);
-    let (actions, mut observations) = next_actions(
+    let padstacks =
+        invalid_padstack::Review::assess(&own, facts.outputs.get("board").map(Path::new));
+    let mut other_blockers = strict.new.clone();
+    if let Some(count) = other_blockers.get_mut(invalid_padstack::KIND) {
+        *count = count.saturating_sub(padstacks.total);
+        if *count == 0 {
+            other_blockers.remove(invalid_padstack::KIND);
+        }
+    }
+    let (status, reason) = decide_with_padstacks(facts, &other_blockers, padstacks.total);
+    let retry_guidance = retry::assess(facts, status, &strict.new, &own);
+    let held_pad_shorts = findings
+        .iter()
+        .any(|finding| finding.kind == "shorting_items")
+        .then(|| held_geometry::HeldGeometry::load(facts))
+        .flatten()
+        .map_or_else(Vec::new, |geometry| geometry.shorts(&findings));
+    let decoupling_near_suggestions = decoupling_suggestions(facts);
+    let (mut actions, mut observations) = next_actions(
         facts,
         rate,
         status,
-        &strict.new,
+        &other_blockers,
         &own,
         &strict.unknown,
         &footprint,
+        &clearance_review,
         &input,
+        retry_guidance.as_ref(),
+        &decoupling_near_suggestions,
     );
+    if let Some(short) = held_pad_shorts.first()
+        && let Some([a, b]) = short.samples.first()
+    {
+        let [first, second] = &short.references;
+        let pad = |item: &KiCadHeldPad| {
+            format!(
+                "{}:{} [{}]",
+                item.reference,
+                item.number,
+                item.net.as_deref().unwrap_or("")
+            )
+        };
+        let pose_source = if facts.command == "route-kicad-board" {
+            "input board"
+        } else {
+            "mechanical brief or input board locks"
+        };
+        actions.insert(0, format!(
+            "KiCad reports {} different-net pad shorts between held footprints {first} and {second}, including {} and {}. Inspect those pads and correct the source footprint or revise a held pose in the {pose_source} before rerunning. See held_pad_shorts for verified pairs.",
+            short.shorting_items, pad(a), pad(b)
+        ));
+    }
+    if let Some(action) = padstacks.action() {
+        actions.insert(0, action);
+    }
     // With a reference its findings do not count here, but the release
     // judges the board on its own: say which of them it refuses (an
     // electrical finding not within one footprint). framework_mobo_lefthalf
@@ -4576,16 +5890,39 @@ pub(crate) fn judge_at(
             .routable_connections
             .saturating_sub(facts.routed_connections),
         unconnected_terminals: facts.unconnected_terminals,
+        saved_copper: facts.saved_copper,
+        input_connectivity: facts.input_connectivity.clone(),
         kicad_checked: facts.native.is_some(),
         kicad_unconnected_items: facts.native.as_ref().map(|native| native.unconnected),
+        open_pad_concentration: facts.open_pad_concentration.clone(),
+        bga_second_ring_open_pads: Vec::new(),
+        generated_pad_via_retries: Vec::new(),
+        generated_dangling_retry: None,
+        generated_pad_via_recovery: None,
+        body_near_grid_retry: None,
+        unchanged_hatch_width_repair: None,
         next_actions: actions,
+        retry_guidance,
+        alternate_placement_seed: None,
+        via_cost_retry: None,
+        via_in_pad_retries: facts
+            .via_in_pad_retries
+            .as_ref()
+            .filter(|groups| !groups.is_empty())
+            .cloned(),
+        fixed_route_comparison: None,
         input_observations: observations,
         footprint_findings,
+        footprint_clearances: clearance_review.pairs,
+        invalid_padstacks: padstacks.examples,
         input_findings,
-        clean_without_subtraction: facts
-            .native
-            .as_ref()
-            .is_some_and(|native| native.unconnected == 0 && native.errors.is_empty()),
+        clean_without_subtraction: facts.native.as_ref().is_some_and(|native| {
+            native.unconnected == 0
+                && native.errors.is_empty()
+                && native.missing_schematic_footprints.is_empty()
+                && parity::missing_live_pads(native).next().is_none()
+                && native.schematic_net_mismatches.is_empty()
+        }),
         new_findings_strict: strict.new,
         new_findings,
         preexisting_findings: strict.preexisting,
@@ -4594,6 +5931,10 @@ pub(crate) fn judge_at(
         cosmetic_findings: facts.native.as_ref().map_or(0, |native| native.cosmetic),
         silkscreen: facts.silkscreen.clone(),
         warnings: facts.native.as_ref().map_or(0, |native| native.warnings),
+        schematic_parity_checked: facts
+            .native
+            .as_ref()
+            .is_some_and(|native| native.schematic_parity_checked),
         schematic_parity_issues: facts
             .native
             .as_ref()
@@ -4603,10 +5944,36 @@ pub(crate) fn judge_at(
             .as_ref()
             .map(|native| native.schematic_parity_types.clone())
             .unwrap_or_default(),
+        missing_schematic_footprints: facts
+            .native
+            .as_ref()
+            .map(|native| native.missing_schematic_footprints.clone())
+            .unwrap_or_default(),
+        missing_schematic_pads: facts
+            .native
+            .as_ref()
+            .map(|native| native.missing_schematic_pads.clone())
+            .unwrap_or_default(),
+        schematic_net_mismatches: facts
+            .native
+            .as_ref()
+            .map(|native| native.schematic_net_mismatches.clone())
+            .unwrap_or_default(),
+        footprint_filter_mismatches: facts
+            .native
+            .as_ref()
+            .map(|native| native.footprint_filter_mismatches.clone())
+            .unwrap_or_default(),
         internal_violations: facts.internal_violations,
         starved_thermals: facts.starved_thermals,
         constraints_missed: facts.constraints_missed.clone(),
         unplaced: facts.unplaced.clone(),
+        rear_placement_recovery: facts
+            .rear_placement_recovery
+            .clone()
+            .filter(|_| !facts.unplaced.is_empty() && facts.boards_mixed().is_none()),
+        rear_routing_candidates: facts.rear_mounting_advice().cloned(),
+        automatic_rear_retry: facts.automatic_rear_retry.clone(),
         cut: facts.cut.clone(),
         work_seconds: facts.work_seconds,
         kicad_check_work_seconds: facts.kicad_check_work_seconds,
@@ -4629,19 +5996,34 @@ pub(crate) fn judge_at(
         wall_stretch: rate.wall_stretch(!facts.command.starts_with("route")),
         outputs: facts.outputs.clone(),
         skipped: facts.skipped.clone(),
-        // No outline to try while a panel's parts' boards are unknown.
+        // Keep the room estimate without suggesting a replacement outline
+        // for supplied Edge.Cuts or unresolved panel membership.
         room: facts.room.clone().map(|mut room| {
-            if facts.boards_mixed().is_some() {
+            if facts.boards_mixed().is_some() || facts.outline_from_input {
                 room.suggested_outline_mm = None;
             }
             room
         }),
+        outline_from_input: facts.outline_from_input,
         repairs: facts.repairs.clone(),
+        route_reuse: facts.route_reuse.clone(),
+        fill_publication: facts.fill_publication.clone(),
+        plane_escape: facts.plane_escape.clone(),
+        terminal_launch_retry: facts.terminal_launch_retry.clone(),
+        terminal_launch_advice: facts.terminal_launch_advice.clone(),
+        prepared_row_escape_advice: facts.prepared_row_escape_advice.clone(),
+        local_open_repair: facts.local_open_repair.clone(),
+        decoupling_near_suggestions,
+        zone_island_recovery: facts.zone_island_recovery.clone(),
+        held_pad_shorts,
         diff_pairs: facts.diff_pairs.clone(),
         lengths: facts.lengths.clone(),
         narrowed_classes: facts.narrowed.clone(),
         class_layers: facts.class_layers.clone(),
+        class_track_widths: facts.class_track_widths.clone(),
         designer_widths: facts.designer_widths.clone(),
+        designer_pours: facts.designer_pours.clone(),
+        reference_keepout_overlaps: facts.reference_keepout_overlaps.clone(),
         pin_lines: facts.pin_lines.clone(),
         environment: result_environment(),
         pours: facts.pours.clone(),
@@ -4726,34 +6108,125 @@ pub fn route_facts(
     directory: &Path,
 ) -> Result<KiCadRunFacts, String> {
     let mut facts = KiCadRunFacts::new(command);
-    if result.native.is_some() {
+    facts.saved_copper = result.saved_copper;
+    facts.input_connectivity = result.input_connectivity.clone();
+    let report = if let Some(native) = &result.native {
         let report = directory.join("drc.json");
-        facts.native = Some(load_drc_tally(&report).map_err(|error| {
+        let report = load_drc_report(&report).map_err(|error| {
             format!(
                 "KiCad checked the board but its report is missing or unreadable ({error}); no verdict without it"
             )
-        })?);
-    }
+        })?;
+        let mut tally = tally_drc(&report);
+        tally.schematic_parity_checked =
+            native.schematic_parity_checked && report["schematic_parity"].is_array();
+        parity::note_schematic_pins(
+            &mut tally,
+            &directory.join(format!("{}.kicad_sch", result.board_id)),
+        );
+        facts.native = Some(tally);
+        Some(report)
+    } else {
+        None
+    };
     facts.repairs = Some(KiCadRepairs::of(result));
+    facts.route_reuse = result
+        .route_reuse
+        .as_ref()
+        .map(KiCadRouteReuseOutcome::from_report);
+    if let Some(reuse) = facts
+        .route_reuse
+        .as_mut()
+        .filter(|reuse| reuse.status == "accepted")
+    {
+        reuse.pending_routed_connections = Some(result.routed_connections);
+        reuse.pending_routable_connections = Some(result.routable_connections);
+        if facts
+            .native
+            .as_ref()
+            .is_some_and(|native| native.unconnected == 0 && native.schematic_parity == 0)
+        {
+            reuse.saved_routable_nets = crate::inspect_kicad_routable_connections(
+                &directory.join(format!("{}.kicad_pcb", result.board_id)),
+            )
+            .ok()
+            .map(|nets| nets.len());
+        }
+    }
     facts.corridors = Some(crate::KiCadCorridors::now());
     facts.diff_pair_why = diff_pair_why(result.diff_pairs.as_ref());
-    facts.diff_pairs = result.diff_pairs.clone().map(|mut pairs| {
-        pairs.pairs.clear();
-        pairs
-    });
+    facts.diff_pairs = result.diff_pairs.clone();
     facts.lengths = result.lengths.clone();
     facts.narrowed = result.rules.narrowed.clone();
     facts.pin_lines = result.pin_lines.clone();
     if !result.rules.blind_vias {
         facts.designer_via_spans = result.rules.project.via_spans_designer.clone();
     }
-    // The layers each class went on, from the board written.
-    if let Some(board) =
-        fs::read_to_string(directory.join(format!("{}.kicad_pcb", result.board_id)))
-            .ok()
-            .and_then(|text| crate::parse(&text).ok())
+    // A requested router class is written to the output project during routing.
+    let board_path = directory.join(format!("{}.kicad_pcb", result.board_id));
+    if let Some(board) = fs::read_to_string(&board_path)
+        .ok()
+        .and_then(|text| crate::parse(&text).ok())
     {
-        facts.class_layers = crate::class_view::class_layers(&result.rules.project, &board);
+        let project = board_path.with_extension("kicad_pro");
+        if let Some(report) = &report
+            && let Some(native) = &mut facts.native
+        {
+            native.footprint_filter_mismatches = parity::footprint_filter_matches(report, &board);
+            facts.via_in_pad_retries = Some(via_in_pad::grouped_retries(
+                &board,
+                report,
+                result.vias_in_pads.as_ref(),
+            ));
+        }
+        let project_exists = project.is_file();
+        let has_native_opens = facts
+            .native
+            .as_ref()
+            .is_some_and(|native| native.unconnected > 0);
+        let project_config = (project_exists || has_native_opens)
+            .then(|| crate::resolve_project_rules(&project, &board_path).ok())
+            .flatten();
+        let rules = project_config
+            .as_ref()
+            .filter(|_| project_exists)
+            .and_then(|config| config.project_rules.as_ref())
+            .unwrap_or(&result.rules.project);
+        facts.class_layers = crate::class_view::class_layers(rules, &board);
+        facts.class_track_widths =
+            crate::class_view::class_track_widths(rules, &board, facts.native.as_ref());
+        if report
+            .as_ref()
+            .and_then(|report| report["unconnected_items"].as_array())
+            .is_some_and(Vec::is_empty)
+            && let Some(pairs) = facts.diff_pairs.as_mut().filter(|pairs| pairs.on)
+        {
+            crate::board_router::measure_fallback_lengths(pairs, &board);
+        }
+        if let Some(pairs) = facts.diff_pairs.as_mut()
+            && pairs.pairs.iter().any(|pair| pair.unmatched_end.is_some())
+            && let Ok(names) = crate::kicad_nets::unambiguous_pad_net_names(&board)
+        {
+            for pair in &mut pairs.pairs {
+                for name in [&mut pair.positive, &mut pair.negative] {
+                    if let Some(raw) = names.get(name).and_then(|atom| atom.atom()) {
+                        *name = crate::outline_pieces::unescaped(raw);
+                    }
+                }
+            }
+        }
+        if let Some(config) = &project_config
+            && let Some(report) = &report
+        {
+            facts.open_pad_concentration =
+                crate::run_diagnosis::measure_open_pad_concentration(board, config, report);
+        }
+        facts.saved_class_rules = project_config
+            .filter(|_| project_exists)
+            .and_then(|config| config.project_rules);
+    }
+    if let Some(pairs) = &mut facts.diff_pairs {
+        pairs.pairs.retain(|pair| pair.unmatched_end.is_some());
     }
     facts.vias_in_pads = result.vias_in_pads.clone();
     facts.open_nets = result
@@ -4766,8 +6239,14 @@ pub fn route_facts(
     facts.routed_connections = result.routed_connections;
     facts.unconnected_terminals = result.unconnected_terminals;
     facts.internal_violations = result.internal_violations.len();
+    facts.pin_swapped = result.pin_swaps.is_some();
     facts.starved_thermals = result.diagnostics.starved_thermals.len();
     facts.dead_pads = result.diagnostics.dead_pads.len();
+    if let Some(report) = &report
+        && facts.dead_pads > 0
+    {
+        facts.native_blocked_pads = blocked_open_pads(report, &result.diagnostics.dead_pads);
+    }
     facts.hot_spots = result.diagnostics.hot_spots.len();
     // The hot spot to name and the parts nearest it, only where
     // connections are open (the board written parsed once more).
@@ -4780,7 +6259,11 @@ pub fn route_facts(
         .native
         .as_ref()
         .map_or(result.unconnected_terminals, |native| native.unconnected);
-    if open_count > 0 && !result.diagnostics.hot_spots.is_empty() {
+    let zone_open = facts
+        .native
+        .as_ref()
+        .is_some_and(|native| native.zone_island_open);
+    if open_count > 0 && (!result.diagnostics.hot_spots.is_empty() || zone_open) {
         let open: BTreeSet<String> = open
             .into_iter()
             .chain(facts.open_nets.iter().cloned())
@@ -4788,16 +6271,18 @@ pub fn route_facts(
         let board = fs::read_to_string(directory.join(format!("{}.kicad_pcb", result.board_id)))
             .ok()
             .and_then(|text| crate::parse(&text).ok());
+        if zone_open && let (Some(report), Some(board)) = (&report, &board) {
+            facts.zone_island_recovery =
+                crate::zone_island::retry(report, board, directory, &result.board_id);
+        }
         facts.hot_spot = hot_spot_note(&result.diagnostics.hot_spots, &open, board.as_ref());
         if let (Some(note), Some(board)) = (facts.hot_spot.as_ref(), board.as_ref()) {
             facts.hot_spot_fine_rows = fine_rows(note, board);
         }
         if let Some(note) = facts.hot_spot.as_mut()
-            && let Some(report) = fs::read_to_string(directory.join("drc.json"))
-                .ok()
-                .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            && let Some(report) = &report
         {
-            note.open_link = open_link_of(&report, &note.open_nets, board.as_ref());
+            note.open_link = open_link_of(report, &note.open_nets, board.as_ref());
         }
     }
     facts.starved_pads = result
@@ -4817,16 +6302,10 @@ pub fn route_facts(
     facts.input_warnings = result.warnings.clone();
     facts.pours = result.pour_quality.clone();
     if !result.rules.project.overrides.is_empty() {
-        let drc = facts
-            .native
-            .is_some()
-            .then(|| fs::read_to_string(directory.join("drc.json")).ok())
-            .flatten()
-            .and_then(|text| serde_json::from_str::<Value>(&text).ok());
         facts.rule_overrides = crate::run_diagnosis::override_outcomes(
             &result.rules.project.overrides,
             &directory.join(format!("{}.kicad_pcb", result.board_id)),
-            drc.as_ref(),
+            report.as_ref(),
         );
     }
     Ok(facts)
@@ -4850,12 +6329,278 @@ mod tests {
             .collect()
     }
 
+    #[test]
+    fn blocked_pad_advice_requires_a_native_open_on_the_same_pad_and_net() {
+        let report = serde_json::json!({"unconnected_items":[{"items":[
+            {"description":"Pad 1 [GND] of C90 on F.Cu"},
+            {"description":"Track [GND] on F.Cu, length 0.5657 mm"}
+        ]}]});
+        let dead = |pad: &str, net: &str| crate::board_router::KiCadDeadPad {
+            pad: pad.into(),
+            net: net.into(),
+            at: [128.905, 99.54],
+            near: Vec::new(),
+            wall: "F.Cu: rule area at the best entry point".into(),
+        };
+        let matches = blocked_open_pads(
+            &report,
+            &[
+                dead("C90.2", "GND"),
+                dead("C90.1", "/GND"),
+                dead("C90.1", "GND"),
+            ],
+        );
+        assert_eq!(
+            matches,
+            ["C90.1 [GND]: F.Cu: rule area at the best entry point"]
+        );
+    }
+
     fn routed(native: DrcTally) -> KiCadRunFacts {
         let mut facts = KiCadRunFacts::new("route-kicad-board");
         facts.routable_connections = 54;
         facts.routed_connections = 54;
         facts.native = Some(native);
         facts
+    }
+
+    #[test]
+    fn observed_fallback_length_uses_exact_rule_names_and_keeps_authored_limits_separate() {
+        use crate::board_router::{KiCadFallbackConductor, KiCadFallbackPairLength};
+
+        let mut facts = routed(DrcTally::default());
+        facts.diff_pairs = Some(crate::KiCadDiffPairs {
+            fallback_lengths: vec![KiCadFallbackPairLength {
+                positive: KiCadFallbackConductor {
+                    net: "/camera/D2_P".into(),
+                    pads: ["J2:12".into(), "U1:135".into()],
+                    planar_track_length_mm: 22.908,
+                },
+                negative: KiCadFallbackConductor {
+                    net: "/camera/D2_N".into(),
+                    pads: ["J2:11".into(), "U1:133".into()],
+                    planar_track_length_mm: 23.168,
+                },
+                planar_difference_mm: 0.260,
+            }],
+            ..crate::KiCadDiffPairs::default()
+        });
+        let action = fallback_pair_length_action(&facts).unwrap();
+        assert!(action.contains("/camera/D2_P and /camera/D2_N"));
+        assert!(action.contains("0.260 mm difference in planar track length"));
+        assert!(action.contains("limit from your electrical brief"));
+        assert!(judge(&facts).next_actions.contains(&action));
+
+        facts.lengths.push(crate::KiCadNetLength {
+            net: "camera/D2_P".into(),
+            constraint: "skew".into(),
+            within: true,
+            ..crate::KiCadNetLength::default()
+        });
+        assert!(fallback_pair_length_action(&facts).is_none());
+        assert_eq!(facts.diff_pairs.unwrap().fallback_lengths.len(), 1);
+    }
+
+    #[test]
+    fn route_reuse_verdict_counts_only_copper_and_poses_on_the_returned_board() {
+        let mut result = crate::KiCadBoardRouterResult::default();
+        let make_verdict = |result: &crate::KiCadBoardRouterResult, poses| {
+            let mut facts = route_facts("layout-kicad-board", result, Path::new("")).unwrap();
+            if let Some(reuse) = &mut facts.route_reuse {
+                reuse.note_layout_placement(poses);
+            }
+            serde_json::to_value(judge(&facts)).unwrap()
+        };
+        assert!(make_verdict(&result, 0).get("route_reuse").is_none());
+
+        result.route_reuse = Some(crate::KiCadRouteReuse {
+            status: "accepted".into(),
+            reason: None,
+            matched_nets: vec!["GND".into(), "SIGNAL".into()],
+            extended_nets: Vec::new(),
+            renamed_nets: Vec::new(),
+            renamed_references: BTreeMap::from([("C4".into(), "C7".into())]),
+            partial_nets: BTreeMap::from([(
+                "SIGNAL".into(),
+                crate::KiCadRouteReusePartialNet {
+                    pruned_terminal: "C3:1".into(),
+                    retained_terminals: 2,
+                    pending_terminals: 0,
+                    retained_segments: 2,
+                    pruned_segments: 1,
+                    spliced_segments: 1,
+                },
+            )]),
+            skipped_nets: BTreeMap::new(),
+            keepout_skipped_nets: vec!["STP_RX".into()],
+            baseline_schematic_parity_by_type: BTreeMap::new(),
+            path: "prior.kicad_pcb".into(),
+            sha256: "prior board hash".into(),
+            segments: 3,
+            arcs: 1,
+            vias: 2,
+            trial_work_seconds: 1.0,
+            remaining_budget_seconds: 29.0,
+            native_checks: 2,
+            native_check_wall_seconds: 0.4,
+            shared_final_drc: false,
+            new_findings: BTreeMap::new(),
+            new_finding_examples: Vec::new(),
+        });
+        assert_eq!(
+            make_verdict(&result, 4)["route_reuse"],
+            json!({
+                "status": "accepted",
+                "retained_nets": 2, "retained_segments": 3,
+                "retained_arcs": 1, "retained_vias": 2, "restored_poses": 4,
+                "pending_routed_connections": 0, "pending_routable_connections": 0,
+                "keepout_skipped_nets": ["STP_RX"],
+                "renamed_references": {"C4": "C7"},
+                "partial_nets": {"SIGNAL": {
+                    "pruned_terminal": "C3:1", "retained_terminals": 2, "pending_terminals": 0,
+                    "retained_segments": 2, "pruned_segments": 1, "spliced_segments": 1
+                }}
+            })
+        );
+        let route = route_facts("route-kicad-board", &result, Path::new("")).unwrap();
+        assert!(
+            serde_json::to_value(judge(&route)).unwrap()["route_reuse"]
+                .get("restored_poses")
+                .is_none()
+        );
+
+        let report = result.route_reuse.as_mut().unwrap();
+        report.status = "fallback".into();
+        report.reason = Some("the reuse trial adds native findings".into());
+        report.new_findings.insert("items_not_allowed".into(), 1);
+        report
+            .new_finding_examples
+            .push(crate::KiCadRouteReuseFinding {
+                kind: "items_not_allowed".into(),
+                severity: "warning".into(),
+                excluded: false,
+                description: "Items not allowed (rule 'BACK track width restriction')".into(),
+                rule: Some("BACK track width restriction".into()),
+                items: vec![crate::KiCadRouteReuseFindingItem {
+                    description: "Track [BACK] on F.Cu, length 0.5958 mm".into(),
+                    net: Some("BACK".into()),
+                    anchor_mm: Some([92.655, 109.025]),
+                    uuid: None,
+                }],
+            });
+        let verdict = make_verdict(&result, 4);
+        assert_eq!(verdict["new_findings_strict"], json!({}));
+        assert_eq!(
+            verdict["route_reuse"],
+            json!({
+                "status": "fallback", "reason": "the reuse trial adds native findings",
+                "retained_nets": 0, "retained_segments": 0,
+                "retained_arcs": 0, "retained_vias": 0, "restored_poses": 0,
+                "keepout_skipped_nets": ["STP_RX"],
+                "new_findings": {"items_not_allowed": 1},
+                "new_finding_examples": [{
+                    "type": "items_not_allowed",
+                    "severity": "warning",
+                    "description": "Items not allowed (rule 'BACK track width restriction')",
+                    "rule": "BACK track width restriction",
+                    "items": [{
+                        "description": "Track [BACK] on F.Cu, length 0.5958 mm",
+                        "net": "BACK", "anchor_mm": [92.655, 109.025]
+                    }]
+                }]
+            })
+        );
+        let report = result.route_reuse.as_mut().unwrap();
+        report.status = "skipped".into();
+        report.baseline_schematic_parity_by_type = map(&[("net_conflict", 2)]);
+        assert_eq!(
+            make_verdict(&result, 4)["route_reuse"]["baseline_schematic_parity_by_type"],
+            json!({"net_conflict": 2})
+        );
+    }
+
+    #[test]
+    fn accepted_reuse_verdict_leads_with_saved_board_native_coverage() {
+        let mut facts = routed(DrcTally::default());
+        facts.route_reuse = Some(KiCadRouteReuseOutcome {
+            status: "accepted".into(),
+            retained_nets: 18,
+            saved_routable_nets: Some(18),
+            ..KiCadRouteReuseOutcome::default()
+        });
+        for (pending, detail) in [
+            (0, "No pending connections needed routing"),
+            (2, "Routed 2/2 pending connections"),
+        ] {
+            // An extended retained net can contribute pending work too.
+            facts.routable_connections = pending;
+            facts.routed_connections = pending;
+            let verdict = judge(&facts);
+            assert_eq!(verdict.status, KiCadRunStatus::Complete);
+            assert_eq!(verdict.open_connections, 0);
+            assert_eq!(
+                verdict.reason,
+                format!(
+                    "complete: KiCad finds no open item (18 routable nets) and no new DRC error. Retained prior copper on 18 nets. {detail}"
+                )
+            );
+        }
+        facts.native.as_mut().unwrap().unconnected = 1;
+        assert!(
+            judge(&facts)
+                .reason
+                .contains("1 unconnected items in KiCad")
+        );
+        facts.native.as_mut().unwrap().unconnected = 0;
+        facts.fill_publication = Some(crate::FillPublication::skipped("deferred"));
+        assert!(judge(&facts).reason.contains("after refilling zones"));
+        facts.route_reuse.as_mut().unwrap().status = "fallback".into();
+        let reason = judge(&facts).reason;
+        assert!(reason.starts_with("complete: 2/2 connections"));
+        assert!(!reason.contains("Retained"));
+    }
+
+    #[test]
+    fn native_complete_verdict_identifies_a_disagreeing_router_count() {
+        let mut facts = routed(DrcTally::default());
+        facts.routable_connections = 262;
+        facts.routed_connections = 261;
+        let verdict = judge(&facts);
+        assert_eq!(verdict.status, KiCadRunStatus::Complete);
+        assert!(verdict.reason.contains("router model: 261/262 connections"));
+        assert_eq!(verdict.open_connections, 1);
+        assert_eq!(verdict.kicad_unconnected_items, Some(0));
+    }
+
+    #[test]
+    fn a_budget_skipped_neck_repair_suggests_working_on_a_copy_if_native_width_errors_remain() {
+        let mut facts = routed(DrcTally {
+            errors: map(&[("connection_width", 8)]),
+            ..DrcTally::default()
+        });
+        facts.command = "layout-kicad-board".into();
+        facts.outputs = BTreeMap::from([
+            ("project".into(), "layout/result".into()),
+            ("board".into(), "layout/result/USB Keypad.kicad_pcb".into()),
+        ]);
+        assert!(neck_budget_action(&facts).is_none());
+
+        facts.repairs = Some(KiCadRepairs {
+            neck_budget_checks_available: Some(0),
+            ..KiCadRepairs::default()
+        });
+        let verdict = judge(&facts);
+        assert!(verdict.next_actions.contains(&String::from(
+            "KiCad reports 8 connection_width errors and the work budget skipped neck repair (0 KiCad checks affordable). Copy the result project at `layout/result` and run `pcb-maker repair-kicad-necks <copied-project-dir> 'USB Keypad' auto` on the copy. The repair edits that directory in place. If the layout used a router config, pass that file in place of `auto`."
+        )));
+
+        facts.native = Some(DrcTally {
+            errors: map(&[("track_width", 8)]),
+            ..DrcTally::default()
+        });
+        assert!(neck_budget_action(&facts).is_none());
+        facts.native = None;
+        assert!(neck_budget_action(&facts).is_none());
     }
 
     #[test]
@@ -5118,6 +6863,36 @@ mod tests {
                 .next_actions
                 .iter()
                 .any(|line| line.starts_with("classes went on layers"))
+        );
+    }
+
+    #[test]
+    fn isolated_fill_advice_names_only_the_reported_unassigned_layers() {
+        let warning = |item: &str, excluded: bool| {
+            json!({
+                "type": "isolated_copper", "severity": "warning", "excluded": excluded,
+                "items": [{"description": item}]
+            })
+        };
+        let mut report = json!({"violations": [
+            warning("Zone [GND] on F.Cu, priority 0", false),
+            warning("Zone [<no net>] on B.Cu, priority 1", true),
+            warning("Track [<no net>] on In1.Cu", false),
+        ]});
+        assert!(tally_drc(&report).unassigned_fill_action().is_none());
+        let isolated = warning("Zone [<no net>] on Power Layer 2, priority 0", false);
+        report["violations"]
+            .as_array_mut()
+            .unwrap()
+            .extend([isolated.clone(), isolated]);
+        let native = tally_drc(&report);
+        assert!(native.errors.is_empty());
+        assert_eq!(native.unassigned_fill_layers.len(), 1);
+        assert!(
+            judge(&routed(native))
+                .next_actions
+                .iter()
+                .any(|action| action.contains("Power Layer 2") && action.contains("--no-refill"))
         );
     }
 
@@ -5458,6 +7233,70 @@ mod tests {
     }
 
     #[test]
+    fn verdict_reports_bounded_footprint_clearances_without_changing_classification() {
+        let clearance = |pin: usize, actual| {
+            json!({"type": "clearance", "severity": "error",
+                "description": format!("Clearance violation (board minimum clearance 90 µm; actual {actual})"),
+                "items": [{"description": format!("Pad {pin} [/SIGNAL] of U10 on B.Cu"),
+                          "uuid": format!("signal-{pin}"), "pos": {"x": pin, "y": 1}},
+                          {"description": "Pad 9 [GND] of U10 on B.Cu",
+                          "uuid": "ground", "pos": {"x": 0, "y": 1}}]
+            })
+        };
+        let findings = vec![
+            clearance(1, "3 mils"),
+            clearance(2, "76.3 µm"),
+            clearance(3, "76.4 µm"),
+            clearance(4, "76.5 µm"),
+            clearance(5, "76.6 µm"),
+            clearance(6, "unknown"),
+        ];
+        let mut facts = routed(tally_drc(&report(findings.clone())));
+        let verdict = judge(&facts);
+        assert_eq!(verdict.status, KiCadRunStatus::Complete);
+        assert_eq!(verdict.footprint_findings, map(&[("clearance", 6)]));
+        assert!(!verdict.clean_without_subtraction);
+        let value = serde_json::to_value(&verdict).unwrap();
+        let pairs = value["footprint_clearances"].as_array().unwrap();
+        assert_eq!(pairs.len(), 4);
+        let pair = &pairs[0];
+        assert_eq!(pair["reference"], "U10");
+        assert_eq!(pair["pads"][0]["number"], "1");
+        assert_eq!(pair["pads"][0]["net"], "/SIGNAL");
+        assert_eq!(pair["pads"][1]["net"], "GND");
+        assert_eq!(pair["pads"][1]["uuid"], "ground");
+        assert!((pair["shortfall_mm"].as_f64().unwrap() - 0.0138).abs() < 1e-12);
+        let next = verdict.next_actions.join("\n");
+        assert!(next.contains("1 more pad pairs in drc.json"));
+        assert!(next.contains("For 1 of these findings"));
+        assert!(!next.contains("own clearance"));
+
+        facts.reference = reference(findings);
+        let referenced = judge(&facts);
+        assert_eq!(referenced.status, verdict.status);
+        assert_eq!(
+            referenced.footprint_clearances,
+            verdict.footprint_clearances
+        );
+        assert!(referenced.footprint_findings.is_empty());
+        assert_eq!(referenced.preexisting_findings, map(&[("clearance", 6)]));
+        assert!(
+            referenced
+                .next_actions
+                .iter()
+                .any(|note| note.contains("U10:1 (/SIGNAL)")),
+            "{:?}",
+            referenced.next_actions
+        );
+
+        let mut unknown = clearance(1, "unknown");
+        unknown["items"][0]["description"] = "Pad 1 [<no net>] of U10 on B.Cu".into();
+        let value =
+            serde_json::to_value(judge(&routed(tally_drc(&report(vec![unknown]))))).unwrap();
+        assert!(value.get("footprint_clearances").is_none());
+    }
+
+    #[test]
     fn a_footprints_malformed_courtyard_does_not_fail_a_layout_without_a_reference() {
         // Trial 6's laptop power: its ESP32-S2-MINI-1's courtyard is no
         // closed shape, on the designer's board too; the layout without a
@@ -5488,6 +7327,116 @@ mod tests {
             "{:?}",
             verdict.next_actions
         );
+    }
+
+    #[test]
+    fn a_zero_annulus_on_a_plated_pad_prompts_footprint_review() {
+        let ring = |owner: &str, actual| {
+            drc_finding(&json!({
+                "type": "annular_width",
+                "description": format!("Annular width (board setup constraints min annular width 0.1300 mm; actual {actual} mm)"),
+                "items": [{"description": format!("PTH pad [<no net>] of {owner}"),
+                           "pos": {"x": 150.45, "y": 74.20}}]
+            }))
+        };
+        let mechanical = ring("Card1", 0.0);
+        let same_footprint = ring("Card1", 0.1);
+        let positive = ring("U3", 0.1);
+        let advice = footprint_findings_note(
+            &[&mechanical, &same_footprint, &positive],
+            "board.kicad_dru",
+        )
+        .unwrap();
+        assert_eq!(
+            with_input_observations(Vec::new(), &[advice.clone(), "ordinary finding".into()]),
+            [advice.clone(), format!("{INPUT_TAG}ordinary finding")]
+        );
+        assert!(advice.starts_with(INPUT_FOOTPRINT_REVIEW_TAG), "{advice}");
+        assert!(advice.contains("zero annular width on plated through holes in Card1 (1 PTH pad at (150.45, 74.20) mm)"), "{advice}");
+        assert!(
+            advice.contains("intended to be nonplated, use an NPTH feature"),
+            "{advice}"
+        );
+        assert!(
+            advice.contains("meet the project's minimum annular width"),
+            "{advice}"
+        );
+        assert!(advice.contains("U3 own annular_width"), "{advice}");
+        assert!(
+            !advice.contains("Card1 own annular_width") && !advice.contains("(min 0mm)"),
+            "{advice}"
+        );
+    }
+
+    #[test]
+    fn invalid_custom_pad_geometry_is_explained_and_stays_blocking() {
+        let board = std::env::temp_dir().join(format!(
+            "pcb-maker-invalid-custom-pad-{}.kicad_pcb",
+            std::process::id()
+        ));
+        fs::write(
+            &board,
+            r#"(kicad_pcb
+                (footprint "local:package"
+                    (property "Reference" "U6")
+                    (pad "9" smd custom (uuid "confirmed-pad") (net "/FB{slash}VSET"))
+                    (pad "8" smd rect (uuid "rectangular-pad") (net "/FB{slash}VSET"))))"#,
+        )
+        .unwrap();
+        let finding = |uuid: &str, pad: &str, description: &str| {
+            json!({
+                "type": "padstack_invalid", "severity": "error", "description": description,
+                "items": [{"description": format!("Pad {pad} [/FB/VSET] of U6 on F.Cu"), "uuid": uuid}]
+            })
+        };
+        let description =
+            "Padstack is not valid (custom pad shape must resolve to a single polygon)";
+        let assess = |findings| {
+            let mut facts = routed(tally_drc(&report(findings)));
+            facts
+                .outputs
+                .insert("board".into(), board.display().to_string());
+            judge(&facts)
+        };
+        let one = assess(vec![finding("confirmed-pad", "9", description)]);
+        let serialized = serde_json::to_value(&one).unwrap();
+        assert_eq!(one.status, KiCadRunStatus::Incomplete);
+        assert_eq!(one.new_findings_strict, map(&[("padstack_invalid", 1)]));
+        assert!(
+            one.reason.contains("1 custom pad geometry error"),
+            "{}",
+            one.reason
+        );
+        assert!(one.next_actions[0].contains("U6:9 [/FB/VSET] in `local:package`"));
+        assert_eq!(serialized["invalid_padstacks"][0]["layer"], "F.Cu");
+        assert_eq!(serialized["invalid_padstacks"][0]["uuid"], "confirmed-pad");
+
+        let mixed = assess(vec![
+            finding("confirmed-pad", "9", description),
+            finding("rectangular-pad", "8", description),
+            finding("confirmed-pad", "3", description),
+            finding("missing-pad", "7", description),
+            finding("confirmed-pad", "9", "Other invalid padstack geometry"),
+        ]);
+        assert_eq!(mixed.status, KiCadRunStatus::Incomplete);
+        assert_eq!(mixed.invalid_padstacks.len(), 1);
+        assert_eq!(mixed.new_findings_strict, map(&[("padstack_invalid", 5)]));
+        assert!(
+            mixed.reason.contains("new DRC errors: padstack_invalid 4"),
+            "{}",
+            mixed.reason
+        );
+        let ambiguous = fs::read_to_string(&board)
+            .unwrap()
+            .replace("rectangular-pad", "confirmed-pad");
+        fs::write(&board, ambiguous).unwrap();
+        let ambiguous = assess(vec![finding("confirmed-pad", "9", description)]);
+        assert!(ambiguous.invalid_padstacks.is_empty());
+        assert_eq!(
+            ambiguous.new_findings_strict,
+            map(&[("padstack_invalid", 1)])
+        );
+        fs::remove_file(board).unwrap();
     }
 
     #[test]
@@ -5699,6 +7648,131 @@ mod tests {
             .outputs
             .insert("board".into(), "out/result/board.kicad_pcb".into());
         facts
+    }
+
+    fn fixed_pad_blocker() -> Value {
+        input_finding(
+            "hole_clearance",
+            &[
+                ("Pad 1 [GND] of J1 on F.Cu", "j1"),
+                ("NPTH pad of J2", "j2"),
+            ],
+        )
+    }
+
+    #[test]
+    fn a_route_blocked_only_by_fixed_input_pads_leads_with_geometry() {
+        let mut report = report(vec![fixed_pad_blocker()]);
+        report["schematic_parity"] = json!([
+            {"type": "net_conflict", "description": "No pad found for pin 5 in symbol J2."},
+            {"type": "footprint_symbol_field_mismatch", "description": "Footprint value differs"},
+        ]);
+        let mut facts = routed(tally_drc(&report));
+        facts.input = Some(kept_input());
+        let verdict = judge(&facts);
+        assert_eq!(verdict.status, KiCadRunStatus::Incomplete);
+        assert_eq!(verdict.schematic_parity_issues, 2);
+        assert_eq!(verdict.new_findings_strict, map(&[("hole_clearance", 1)]));
+        assert!(verdict.next_actions[0].starts_with("Correct the input pad or hole geometry"));
+        assert!(
+            verdict.next_actions[1..]
+                .iter()
+                .any(|action| action.starts_with("review the schematic parity"))
+        );
+        assert_eq!(
+            serde_json::to_value(verdict).unwrap()["retry_guidance"],
+            json!({
+                "kind": "fixed_input_pads",
+                "same_placement_and_rules_can_resolve": false,
+                "blocking_findings": {"hole_clearance": 1},
+                "footprints": ["J1", "J2"],
+                "examples": [{
+                    "type": "hole_clearance",
+                    "description": "hole_clearance",
+                    "items": [
+                        {"footprint": "J1", "description": "Pad 1 [GND] of J1 on F.Cu", "anchor_mm": [0.0, 0.0]},
+                        {"footprint": "J2", "description": "NPTH pad of J2", "anchor_mm": [1.0, 0.0]},
+                    ]
+                }],
+            })
+        );
+    }
+
+    #[test]
+    fn other_blockers_or_missing_evidence_prevent_fixed_pad_retry_guidance() {
+        let pad_blocker = fixed_pad_blocker();
+        let mut facts = routed(tally_drc(&report(vec![pad_blocker.clone()])));
+        assert!(judge(&facts).retry_guidance.is_none());
+        facts.input = Some(kept_input());
+        assert!(judge(&facts).retry_guidance.is_some());
+        let base = facts;
+        let native = base.native.as_ref().unwrap();
+        for changed in [
+            KiCadRunFacts {
+                command: "layout-kicad-board".into(),
+                ..base.clone()
+            },
+            KiCadRunFacts {
+                native: Some(DrcTally {
+                    unconnected: 1,
+                    ..native.clone()
+                }),
+                ..base.clone()
+            },
+            KiCadRunFacts {
+                native: Some(DrcTally {
+                    missing_schematic_pads: vec![KiCadMissingSchematicPad {
+                        reference: Some("J2".into()),
+                        pin: "3".into(),
+                        net: Some("SIGNAL".into()),
+                        schematic_netlist: None,
+                    }],
+                    ..native.clone()
+                }),
+                ..base.clone()
+            },
+            KiCadRunFacts {
+                native: Some(DrcTally {
+                    errors: map(&[("hole_clearance", KICAD_FINDING_CAP)]),
+                    ..native.clone()
+                }),
+                ..base.clone()
+            },
+            KiCadRunFacts {
+                native: Some(DrcTally {
+                    errors: map(&[("hole_clearance", 2)]),
+                    ..native.clone()
+                }),
+                ..base.clone()
+            },
+            KiCadRunFacts {
+                pin_swapped: true,
+                ..base.clone()
+            },
+            KiCadRunFacts {
+                cut: vec!["wall".into()],
+                ..base.clone()
+            },
+        ] {
+            let verdict = serde_json::to_value(judge(&changed)).unwrap();
+            assert!(verdict.get("retry_guidance").is_none(), "{verdict}");
+        }
+
+        for item in [
+            ("Track [SIGNAL] on F.Cu, length 1 mm", "track"),
+            ("Footprint J2", "fj2"),
+            ("PTH pad 1 [SIGNAL] of R1", "r1"),
+        ] {
+            let mixed = input_finding(
+                "hole_clearance",
+                &[("Pad 1 [GND] of J1 on F.Cu", "j1"), item],
+            );
+            let facts = KiCadRunFacts {
+                native: Some(tally_drc(&report(vec![pad_blocker.clone(), mixed]))),
+                ..base.clone()
+            };
+            assert!(judge(&facts).retry_guidance.is_none(), "{item:?}");
+        }
     }
 
     #[test]
@@ -6678,8 +8752,80 @@ mod tests {
                 &[&finding],
                 KeptParts::Unknown
             )
-            .contains("no coupled run of the pair was routed")
+            .contains("spacing between the reported tracks")
         );
+    }
+
+    #[test]
+    fn native_uncoupled_length_can_fail_on_a_routed_pair() {
+        let kind = "diff_pair_uncoupled_length_too_long";
+        let report = json!({"violations": [{"type": kind, "severity": "error",
+            "items": [{"description": "Track [RX_N] on B.Cu"}, {"description": "Track [RX_P] on F.Cu"}]
+        }]});
+        let mut facts = routed(tally_drc(&report));
+        let mut pairs = crate::KiCadDiffPairs {
+            on: true,
+            ..Default::default()
+        };
+        pairs.skews.resize(2, Default::default());
+        for (link, base) in pairs.skews.iter_mut().zip(["RX", "TX"]) {
+            link.positive = format!("{base}_P");
+            link.negative = format!("{base}_N");
+        }
+        facts.diff_pairs = Some(pairs);
+        let actions = judge(&facts).next_actions;
+        let action = actions
+            .iter()
+            .find(|action| action.starts_with(kind))
+            .unwrap();
+        assert!(
+            action.contains("routed coupled link (RX_P and RX_N)"),
+            "{action}"
+        );
+        assert!(!action.contains("TX_P"), "{action}");
+    }
+
+    #[test]
+    fn a_native_pair_finding_names_only_its_measured_unmatched_end() {
+        let kind = "diff_pair_uncoupled_length_too_long";
+        let report = json!({"violations": [{
+            "type": kind,
+            "severity": "error",
+            "items": [{"description": "Track [/SHEET/RX_N] on In4.Cu"}]
+        }]});
+        let mut facts = routed(tally_drc(&report));
+        let pair = |prefix: &str, labels: [&str; 2]| crate::KiCadDiffPair {
+            positive: format!("{prefix}_P"),
+            negative: format!("{prefix}_N"),
+            unmatched_end: Some(crate::board_router::KiCadPairEndpointSpacing {
+                pad_labels: labels.map(str::to_owned),
+                separation_mm: 3.42,
+                ordinary_span_mm: 3.0,
+            }),
+            ..Default::default()
+        };
+        facts.diff_pairs = Some(crate::KiCadDiffPairs {
+            on: true,
+            pairs: vec![
+                pair("/SHEET/RX", ["R23.2", "R24.2"]),
+                pair("SHEET/RX", ["C1.1", "C2.1"]),
+            ],
+            ..Default::default()
+        });
+        let actions = judge(&facts).next_actions;
+        let action = actions
+            .iter()
+            .find(|action| action.starts_with(kind))
+            .unwrap();
+        assert!(
+            action.contains("R23.2 and R24.2") && action.contains("3.420 mm apart"),
+            "{action}"
+        );
+        assert!(
+            action.contains("3.000 mm") && action.contains("pair_rows"),
+            "{action}"
+        );
+        assert!(!action.contains("C1.1"), "{action}");
     }
 
     #[test]
@@ -6845,6 +8991,43 @@ mod tests {
             "{:?}",
             verdict.next_actions
         );
+        facts.strict_pad_near_misses = 1;
+        let verdict = judge(&facts);
+        assert!(
+            verdict
+                .next_actions
+                .iter()
+                .any(|action| action.contains("held poses"))
+        );
+        assert!(verdict.next_actions.iter().all(|action| !action.contains("relax them")
+            && !action.contains("refine_pad_near")));
+        facts.refinable_pad_near_misses = vec!["C1:1 to U1:3".into()];
+        let verdict = judge(&facts);
+        assert!(
+            verdict
+                .next_actions
+                .iter()
+                .any(|action| action.contains("C1:1 to U1:3")
+                    && action.contains("placer.tuning.refine_pad_near"))
+        );
+        facts.unplaced = vec!["U6".into()];
+        assert!(
+            judge(&facts)
+                .next_actions
+                .iter()
+                .all(|action| !action.contains("refine_pad_near"))
+        );
+        facts.command = "place-kicad-board".into();
+        facts.routes = false;
+        facts.unplaced.clear();
+        let verdict = judge(&facts);
+        assert_eq!(verdict.exit_code, EXIT_INCOMPLETE);
+        assert!(
+            verdict
+                .next_actions
+                .iter()
+                .any(|action| action.contains("tuning.refine_pad_near in the placer options"))
+        );
         let mut facts = KiCadRunFacts::new("place-kicad-board");
         facts.routes = false;
         assert_eq!(judge(&facts).exit_code, EXIT_COMPLETE);
@@ -6853,6 +9036,9 @@ mod tests {
         let verdict = judge(&facts);
         assert_eq!(verdict.exit_code, EXIT_INCOMPLETE);
         assert!(verdict.next_actions[0].contains("92 %"));
+        facts.placement_actions = vec!["Card1's body blocks U1's region.".into()];
+        let verdict = judge(&facts);
+        assert_eq!(verdict.next_actions[0], "Card1's body blocks U1's region.");
     }
 
     #[test]
@@ -6888,7 +9074,30 @@ mod tests {
         facts.room = Some(room([1.047, 0.4]));
         let verdict = judge(&facts);
         assert!(verdict.next_actions.iter().any(|action| action
-            == "constraints missed (board-placer.json's constraints[] has violation_mm for each): relax them or give the parts room"));
+            == "constraints missed (board-placer.json's constraints[] records distances and violations): relax them or give the parts room"));
+        let mut smaller = room([0.891, 0.2]);
+        smaller.smallest_outline_mm = [31.5, 109.5];
+        facts.room = Some(smaller);
+        let action = judge(&facts).next_actions.remove(0);
+        assert!(!action.contains("room.smallest_outline_mm"), "{action}");
+
+        facts.outline_from_input = true;
+        facts.room = Some(room([1.208, 0.0]));
+        let verdict = judge(&facts);
+        assert!(verdict.outline_from_input);
+        assert!(
+            verdict
+                .next_actions
+                .iter()
+                .all(|action| !action.contains("room.smallest_outline_mm"))
+        );
+        facts.body_near_pin_misses = 1;
+        let actions = judge(&facts).next_actions.join("\n");
+        assert!(
+            actions.contains("named body at its target pin"),
+            "{actions}"
+        );
+        assert!(!actions.contains("give the board the room"), "{actions}");
     }
 
     #[test]
@@ -6909,51 +9118,48 @@ mod tests {
             capacitors_within_3mm: Some(share),
             worst_capacitors: vec![vec![], vec!["C4".into(), "C9".into()], vec!["C5".into()]],
         };
-        // The trial's rp2350-dual-usb: complete, with one action.
         facts.decoupling = Some(decoupling(0.071));
         let verdict = judge(&facts);
         assert_eq!(verdict.exit_code, EXIT_COMPLETE);
         assert_eq!(verdict.next_actions.len(), 1, "{:?}", verdict.next_actions);
         let action = &verdict.next_actions[0];
+        assert!(action.contains("median distance of 6.9 mm"));
+        assert!(action.contains("U4:5 at 29.8 mm, U2:39 at 14.3 mm"));
+        assert!(!action.contains("pin_of"));
+        assert!(verdict.decoupling_near_suggestions.is_empty());
+
+        facts.decoupling_targets = vec![
+            crate::quality::KiCadDecouplingTarget {
+                part: "C4".into(),
+                pin_of: "U2:39".into(),
+                max_mm: 1.5,
+                distance_mm: 12.5,
+            },
+            crate::quality::KiCadDecouplingTarget {
+                part: "C9".into(),
+                pin_of: "U4:5".into(),
+                max_mm: 3.0,
+                distance_mm: 8.0,
+            },
+        ];
+        let report = judge(&facts);
+        let action = &report.next_actions[0];
         assert!(
-            action.starts_with("decoupling: 7 % of the decoupling capacitors")
-                && action.contains("a median 6.9 mm")
-                && action.contains("U4:5 29.8 mm, U2:39 14.3 mm")
-                && action.contains("{\"part\": \"C4\", \"pin_of\": \"U4:5\", \"max_mm\": 1.5}")
-                && !action.contains("U2:46")
-                && action.contains("decoupling_near"),
+            action.contains("The placed-board template pairs C4 with U2:39"),
             "{action}"
         );
-        // A near constraint holds C4: C9 is still free for U4:5.
-        facts.decoupling_constrained = BTreeSet::from(["C4".to_string()]);
-        let action = judge(&facts).next_actions[0].clone();
-        assert!(
-            action.contains("\"part\": \"C9\", \"pin_of\": \"U4:5\""),
-            "{action}"
-        );
-        // decoupling_near on: not offered again.
-        facts.decoupling_near = true;
-        let action = judge(&facts).next_actions[0].clone();
-        assert!(
-            !action.contains("turn on the placer's decoupling_near"),
-            "{action}"
-        );
-        // The schematic trial: every capacitor of those rails held at
-        // another pin. No pin to give one, no decoupling_near: said so.
-        facts.decoupling_constrained = ["C4", "C5", "C9"]
-            .iter()
-            .map(|part| part.to_string())
-            .collect();
-        facts.decoupling_near = false;
-        let action = judge(&facts).next_actions[0].clone();
-        assert!(
-            !action.contains("pin_of")
-                && !action.contains("turn on the placer's decoupling_near")
-                && action.contains("(U4:5 29.8 mm, U2:39 14.3 mm) have no capacitor of their own"),
-            "{action}"
-        );
-        facts.decoupling_constrained.clear();
-        // As a designer places them: nothing to say.
+        assert!(action.contains(r#""pin_of":"U2:39""#), "{action}");
+        assert_eq!(report.decoupling_near_suggestions.len(), 2);
+
+        // The user already assigned C4 to a different pin. Keep their intent.
+        facts.decoupling_constrained.insert("C4".into());
+        let report = judge(&facts);
+        assert!(report.next_actions[0].contains("The placed-board template pairs C9 with U4:5"));
+        assert_eq!(report.decoupling_near_suggestions.len(), 1);
+        facts.fixed_parts.insert("C9".into());
+        let report = judge(&facts);
+        assert!(report.decoupling_near_suggestions.is_empty());
+        assert!(!report.next_actions[0].contains("pin_of"));
         facts.decoupling = Some(decoupling(0.857));
         assert!(judge(&facts).next_actions.is_empty());
     }
@@ -6972,6 +9178,7 @@ mod tests {
             area_mm2: 2591.0,
             islands_removed: 4,
             cut_mm: 1453.0,
+            bounded_regions: None,
             keep_whole_parts: vec!["U1".into()],
         };
         // Whole: in the verdict, no action.
@@ -7010,6 +9217,15 @@ mod tests {
             action.contains("does not fit this layer") && !action.contains("\"parts\""),
             "{action}"
         );
+        let mut scoped = pour(8, 120.0);
+        scoped.bounded_regions = Some(crate::board_router::KiCadBoundedTrackLength {
+            other_straight_track_mm: 4.0,
+            regions: Vec::new(),
+        });
+        assert!(pour_action(&scoped).contains("that layer's bounded `add_pours` entry"));
+        scoped.keep_whole_parts.clear();
+        assert!(pour_action(&scoped).contains("Review the requested rectangles"));
+        assert!(!pour_action(&scoped).contains("keep_whole"));
         // Few pieces, but the largest holds less than half the copper.
         facts.pours = vec![pour(4, 200.0)];
         assert_eq!(judge(&facts).next_actions.len(), 1);
@@ -7039,6 +9255,22 @@ mod tests {
                 .iter()
                 .any(|action| action.contains("\"refine_budget_seconds\": 367"))
         );
+    }
+
+    #[test]
+    fn repeated_clearances_name_the_common_object_in_either_item_order() {
+        let pad = serde_json::json!({"uuid":"pad", "description":"PTH pad P1 [eth2_ct] of J11"});
+        let track = |id| serde_json::json!({"uuid":id,"description":"Track [eth2_3_P] on GND"});
+        let make = |items| drc_finding(&serde_json::json!({"type":"clearance","items":items}));
+        let a = make(vec![pad.clone(), track("a")]);
+        let b = make(vec![track("b"), pad]);
+        let action = finding_action("clearance", 2, &[&a, &b], KeptParts::RouteMode);
+        assert!(action.contains("nets eth2_3_P and eth2_ct (2)"), "{action}");
+        assert!(
+            action.contains("all 2 involve PTH pad P1 [eth2_ct] of J11"),
+            "{action}"
+        );
+        assert_eq!(shared_clearance_item(&[&a, &a]), None);
     }
 
     #[test]
@@ -7076,7 +9308,7 @@ mod tests {
             "{actions}"
         );
         assert!(
-            actions.contains("clearance 2 (netclass 'Default' clearance 0.2000 mm; actual 0.1500 mm; nets GND and /SDA (2)): route mode keeps every part where the input has it, so none is the route's to move: a finding with a track or via of this route is the router's (check whether the rule is one the router does not keep: rules.unmodelled and rules.custom_rules in board-router.json)"),
+            actions.contains("clearance 2 (netclass 'Default' clearance 0.2000 mm; actual 0.1500 mm; nets /SDA and GND (2)): route mode keeps every part where the input has it, so none is the route's to move: a finding with a track or via of this route is the router's (check whether the rule is one the router does not keep: rules.unmodelled and rules.custom_rules in board-router.json)"),
             "{actions}"
         );
         // The router counted no starved pad: the type's own action says
@@ -7172,7 +9404,24 @@ mod tests {
     }
 
     #[test]
-    fn a_bridge_at_a_footprints_mask_graphic_names_the_zone_fill_under_it() {
+    fn unassigned_routed_copper_needs_both_items_of_the_mask_bridge() {
+        let bridge = |routed: &str, pad: &str| DrcFinding {
+            kind: "solder_mask_bridge".into(),
+            item_descriptions: vec![routed.into(), pad.into()],
+            ..Default::default()
+        };
+        let unassigned = bridge("Track [<no net>] on F.Cu", "PTH pad 3 [<no net>] of U2");
+        let named_track = bridge("Track [GND] on F.Cu", "PTH pad 3 [<no net>] of U2");
+        let named_pad = bridge("Track [<no net>] on F.Cu", "Pad 1 [+5V] of J1 on F.Cu");
+        let other = bridge("Zone [<no net>] on F.Cu", "PTH pad 3 [<no net>] of U2");
+        assert!(unassigned_mask_action([&named_track, &named_pad, &other]).is_none());
+        let action = unassigned_mask_action([&unassigned, &named_pad]).unwrap();
+        assert!(action.contains("U2 (1)"));
+        assert!(!action.contains("J1"));
+    }
+
+    #[test]
+    fn a_mask_graphic_action_uses_only_zones_on_its_own_face() {
         // MokyaLora (the trial's layout): KiCad names J6's rectangle and
         // the first copper it found under it, a GND track; the other net
         // is the VSYS zone's fill, which no route keeps out.
@@ -7184,17 +9433,52 @@ mod tests {
                 "Rectangle of J6 on B.Mask".into(),
                 "Track [GND] on B.Cu, length 0.5381 mm".into(),
             ],
-            ..DrcFinding::default()
+            items: vec![DrcItem {
+                at: Some([4.0, 4.0]),
+                ..Default::default()
+            }],
         };
-        let action = finding_action("solder_mask_bridge", 1, &[&finding], KeptParts::Unknown);
+        let zone = |layers, x| {
+            crate::parse(&format!(
+                r#"(kicad_pcb (zone (net "VSYS") {layers}
+            (polygon (pts (xy {x} 0) (xy 30 0) (xy 30 10) (xy {x} 10)))))"#
+            ))
+            .unwrap()
+        };
+        let inner = zone(r#"(layers "In1.Cu" "In2.Cu")"#, 0);
+        let action = mask_graphic_action(&[&finding], Some(&inner)).unwrap();
         assert!(
-            action.contains("no route keeps a zone's fill out")
-                && action.contains("(Rectangle of J6 on B.Mask)")
-                && action.contains("move the part off the zone"),
+            action.contains("no copper zones on the affected layers (B.Cu)")
+                && action.contains("Check the named track or via")
+                && !action.contains("refill"),
             "{action}"
         );
-        assert!(!action.contains("the router keeps them"), "{action}");
-        // A pad's opening over a track: the router's rule, no zone note.
+        let same_face = zone(r#"(layer "B.Cu")"#, 0);
+        let action = mask_graphic_action(&[&finding], Some(&same_face)).unwrap();
+        assert!(action.contains(
+            "zone outline covers a mask marker (VSYS on B.Cu at Rectangle of J6 on B.Mask)"
+        ));
+        assert!(action.contains("Check whether its refilled copper participates"));
+        let other_end = zone(r#"(layer "B.Cu")"#, 20);
+        assert!(
+            !mask_graphic_action(&[&finding], Some(&other_end))
+                .unwrap()
+                .contains("refill")
+        );
+
+        let named = DrcFinding {
+            item_descriptions: vec![
+                "Rectangle of J6 on B.Mask".into(),
+                "Zone [VSYS] on B.Cu, priority 0".into(),
+            ],
+            ..finding.clone()
+        };
+        assert!(
+            mask_graphic_action(&[&named], None)
+                .unwrap()
+                .contains("KiCad names zone copper on the affected face")
+        );
+        // A pad's opening over a track keeps the ordinary router guidance.
         let pad = DrcFinding {
             item_descriptions: vec![
                 "Pad 2 [VBUS] of J1 on F.Cu".into(),
@@ -7204,10 +9488,64 @@ mod tests {
         };
         let action = finding_action("solder_mask_bridge", 1, &[&pad], KeptParts::Unknown);
         assert!(
-            action.contains("the router keeps its tracks and vias"),
+            action.contains("The router keeps its tracks and vias"),
             "{action}"
         );
-        assert!(!action.contains("zone's fill out"), "{action}");
+        assert!(mask_graphic_action(&[&pad], Some(&same_face)).is_none());
+    }
+
+    #[test]
+    fn a_mask_graphic_action_names_only_distinct_nets_proved_inside_the_reported_opening() {
+        let finding = DrcFinding {
+            kind: "solder_mask_bridge".into(),
+            item_descriptions: vec![
+                "Polygon of J4 on B.Mask".into(),
+                "Track [D12] on B.Cu, length 0.7 mm".into(),
+            ],
+            items: vec![DrcItem {
+                uuid: Some("opening".into()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let source = r#"(kicad_pcb
+            (footprint "Test:Part" (layer "B.Cu") (at 14 18 37) (property "Reference" "J4")
+              (fp_poly (pts (xy -2 -1) (xy 2 -1) (xy 2 1) (xy -2 1))
+                (layer "B.Mask") (width 0) (fill solid) (uuid "opening"))
+              (pad "1" smd roundrect (at -0.7 0) (size 0.5 0.7) (layers "B.Cu") (net 10 "D12"))
+              (pad "2" smd rect (at 0.7 0) (size 0.5 0.7) (layers "B.Cu" "B.Mask") (net 11 "MISO"))
+              (pad "WIRE" smd rect (at 0 0) (size 0.2 0.2) (layers "B.Cu"))))"#;
+        let inspect = |board: &str| {
+            mask_graphic_action(&[&finding], Some(&crate::parse(board).unwrap())).unwrap()
+        };
+        let action = inspect(source);
+        assert!(
+            action.contains("J4 on B.Mask (pad 1 [D12], pad 2 [MISO])"),
+            "{action}"
+        );
+        assert!(
+            action.contains("schematic and assembly instructions"),
+            "{action}"
+        );
+        assert!(action.contains("Check the named track or via"), "{action}");
+        assert!(!action.contains("WIRE"), "{action}");
+        for (old, new) in [
+            ("(at 0.7 0)", "(at 3 0)"),
+            (r#"(layers "B.Cu" "B.Mask")"#, r#"(layers "F.Cu" "F.Mask")"#),
+            (r#"(net 11 "MISO")"#, r#"(net 10 "D12")"#),
+            (r#"(uuid "opening")"#, r#"(uuid "other")"#),
+            ("(fill solid)", "(fill none)"),
+        ] {
+            let action = inspect(&source.replace(old, new));
+            assert!(
+                !action.contains("already exposes its own pads"),
+                "{old}: {action}"
+            );
+            assert!(
+                action.contains("Check the named track or via"),
+                "{old}: {action}"
+            );
+        }
     }
 
     #[test]
@@ -7293,31 +9631,245 @@ mod tests {
     }
 
     #[test]
-    fn parity_findings_are_counted_by_type_and_no_connect_pins_need_nothing() {
+    fn parity_findings_without_named_nets_get_review_advice() {
         let pin =
             json!({"type": "net_conflict", "description": "No pad found for pin 31 in symbol U1."});
         let report = json!({"violations": [], "unconnected_items": [], "schematic_parity": [pin.clone(), pin.clone()]});
         let tally = tally_drc(&report);
         assert_eq!(tally.schematic_parity_types, map(&[("net_conflict", 2)]));
-        assert!(tally.schematic_parity_pins_only);
+        assert_eq!(tally.missing_schematic_pads.len(), 2);
         let verdict = judge(&routed(tally));
+        assert_eq!(verdict.status, KiCadRunStatus::Complete);
         assert_eq!(
             verdict.schematic_parity_by_type,
             map(&[("net_conflict", 2)])
         );
         assert!(verdict.next_actions.iter().any(|action| {
-            action.starts_with("nothing to do (the input's): the 2 schematic parity findings are each a symbol pin")
+            action.starts_with("review the footprint and schematic pin mapping for U1:31")
         }));
-        // A footprint missing is something to look at.
-        let report = json!({"schematic_parity": [pin, {"type": "missing_footprint", "description": "Missing footprint R3"}]});
+        let report = json!({"schematic_parity": [pin, {
+            "type": "extra_footprint",
+            "description": "Extra footprint",
+            "items": [{"description": "Footprint H1"}]
+        }]});
         let tally = tally_drc(&report);
-        assert!(!tally.schematic_parity_pins_only);
         let verdict = judge(&routed(tally));
+        assert_eq!(verdict.status, KiCadRunStatus::Complete);
+        assert!(verdict.missing_schematic_footprints.is_empty());
         assert!(verdict.next_actions.iter().any(|action| {
             action.starts_with(
-                "nothing to do (the input's): schematic parity findings (missing_footprint 1, net_conflict 1",
+                "review the schematic parity findings (extra_footprint 1, net_conflict 1",
             )
         }));
+    }
+
+    #[test]
+    fn missing_required_schematic_footprints_block_routing_even_at_warning_severity() {
+        let absent = json!({
+            "type": "missing_footprint",
+            "severity": "warning",
+            "description": "Missing footprint C7(C_OLED)1 (0.1uF)",
+            "items": [],
+        });
+        let report = json!({"schematic_parity": [absent.clone()]});
+        let verdict = judge(&routed(tally_drc(&report)));
+        assert_eq!(verdict.status, KiCadRunStatus::Incomplete);
+        assert_eq!(verdict.exit_code, 1);
+        assert!(!verdict.clean_without_subtraction);
+        assert!(
+            verdict
+                .reason
+                .contains("1 schematic component is missing its PCB footprint")
+        );
+        assert_eq!(
+            serde_json::to_value(&verdict.missing_schematic_footprints).unwrap(),
+            json!([{
+                "reference": "C7(C_OLED)1",
+                "value": "0.1uF",
+                "description": "Missing footprint C7(C_OLED)1 (0.1uF)",
+            }]),
+        );
+        assert!(verdict.next_actions.iter().any(|action| {
+            action.starts_with("restore the missing PCB footprint for C7(C_OLED)1")
+                && action.contains("Exclude from board")
+        }));
+
+        let report = json!({"schematic_parity": [absent, {
+            "type": "missing_footprint",
+            "description": "Unrecognized native diagnostic wording",
+            "items": [],
+        }]});
+        let verdict = judge(&routed(tally_drc(&report)));
+        assert_eq!(verdict.status, KiCadRunStatus::Incomplete);
+        assert!(
+            verdict
+                .reason
+                .contains("2 schematic components are missing their PCB footprints")
+        );
+        assert_eq!(verdict.missing_schematic_footprints[1].reference, None);
+    }
+
+    #[test]
+    fn missing_pads_on_named_schematic_nets_block_a_complete_router_result() {
+        let report = json!({"schematic_parity": [
+            {"type": "net_conflict", "description": "No pad found for pin 3 (VCC) in schematic",
+             "items": [{"description": "Footprint U1"}]},
+            {"type": "net_conflict", "description": "No pad found for pin B2 (/logic/SIG) in schematic",
+             "items": [{"description": "Footprint J2"}]},
+            {"type": "net_conflict", "description": "No pad found for pin 4 (unconnected-(U1-NC-Pad4)) in schematic",
+             "items": [{"description": "Footprint U1"}]},
+        ]});
+        let facts = routed(tally_drc(&report));
+        let verdict = judge(&facts);
+        assert_eq!(verdict.status, KiCadRunStatus::Incomplete);
+        assert_eq!(verdict.exit_code, 1);
+        assert!(!verdict.clean_without_subtraction);
+        assert_eq!(verdict.missing_schematic_pads.len(), 3);
+        assert!(
+            verdict
+                .reason
+                .contains("2 schematic pins on named nets have no PCB pad")
+        );
+        assert!(verdict.next_actions.iter().any(|action| {
+            action.contains("U1:3 (VCC)") && action.contains("J2:B2 (/logic/SIG)")
+        }));
+        assert!(verdict.next_actions.iter().any(|action| {
+            action.starts_with("review the footprint and schematic pin mapping for U1:4")
+        }));
+    }
+
+    #[test]
+    fn a_wrong_pad_net_blocks_routing_and_groups_its_physical_lands() {
+        let finding = |label| {
+            json!({
+                "type": "net_conflict",
+                "description": "Pad net (GND) doesn't match net given by schematic (SELECT_KEY)",
+                "items": [{"description": label}],
+            })
+        };
+        let report = json!({"schematic_parity": [
+            finding("Pad 3 [GND] of U1 on F.Cu"),
+            finding("PTH pad 3 [GND] of U1"),
+        ]});
+        let verdict = judge(&routed(tally_drc(&report)));
+        assert_eq!(verdict.status, KiCadRunStatus::Incomplete);
+        assert_eq!(verdict.schematic_parity_issues, 2);
+        assert_eq!(verdict.schematic_net_mismatches.len(), 1);
+        assert_eq!(verdict.schematic_net_mismatches[0].physical_pads, 2);
+        assert!(verdict.next_actions.iter().any(|action| {
+            action.contains("U1:3 (PCB GND, schematic SELECT_KEY, 2 physical pads)")
+        }));
+
+        let report = json!({"schematic_parity": [{
+            "type": "net_conflict",
+            "description": "Pad missing net given by schematic (/logic/SIG)",
+            "items": [{"description": "PTH pad B2 [<no net>] of P1"}],
+        }]});
+        let verdict = judge(&routed(tally_drc(&report)));
+        assert_eq!(verdict.status, KiCadRunStatus::Incomplete);
+        assert_eq!(verdict.schematic_net_mismatches[0].pcb_net, None);
+        assert!(
+            verdict
+                .reason
+                .contains("1 PCB pad number has a different net")
+        );
+        assert!(verdict.next_actions.iter().any(|action| {
+            action.contains("P1:B2 (PCB unassigned, schematic /logic/SIG, 1 physical pad)")
+        }));
+    }
+
+    #[test]
+    fn overcrowding_advice_respects_the_supplied_outline_and_rear_permission() {
+        let mut facts = KiCadRunFacts::new("layout-kicad-board");
+        facts.unplaced = vec!["C1".into(), "U1".into()];
+        facts.outline_from_input = true;
+        facts.room = Some(crate::placement_room::KiCadRoom {
+            suggested_outline_mm: Some([50.0, 60.0]),
+            ..Default::default()
+        });
+        facts.rear_placement_recovery = Some(crate::KiCadRearPlacementRecovery {
+            allow_back_additions: vec!["C1".into()],
+            affected_movable: 2,
+            rear_headroom_mm2: 100.0,
+        });
+        let verdict = judge(&facts);
+        assert_eq!(verdict.status, KiCadRunStatus::Incomplete);
+        assert!(verdict.outline_from_input);
+        assert!(verdict.room.unwrap().suggested_outline_mm.is_none());
+        let actions = verdict.next_actions.join("\n");
+        assert!(
+            actions.contains("If the assembly permits rear mounting")
+                && actions.contains("placer.allow_back")
+                && actions.contains("C1")
+                && actions.contains("supplied Edge.Cuts")
+                && !actions.contains("try an outline"),
+            "{actions}"
+        );
+        facts.rear_placement_recovery = None;
+        let verdict = serde_json::to_value(judge(&facts)).unwrap();
+        assert!(verdict.get("rear_placement_recovery").is_none());
+        assert!(!verdict["next_actions"].to_string().contains("allow_back"));
+    }
+
+    #[test]
+    fn rear_assembly_advice_requires_a_legal_layout_with_native_opens() {
+        let mut facts = open_layout();
+        facts.native = Some(DrcTally {
+            unconnected: 2,
+            ..Default::default()
+        });
+        facts.rear_routing_candidates = Some(crate::KiCadRearRoutingCandidates {
+            allow_back_additions: vec!["C1".into(), "R3".into()],
+            front_body_area_mm2: 14.0,
+            rear_headroom_mm2: 120.0,
+        });
+        let verdict = judge(&facts);
+        assert_eq!(
+            verdict
+                .rear_routing_candidates
+                .unwrap()
+                .allow_back_additions,
+            ["C1", "R3"]
+        );
+        assert!(verdict.next_actions.iter().any(|action| {
+            action.contains("If the assembly permits rear mounting")
+                && action.contains("placer.allow_back")
+        }));
+        facts.native.as_mut().unwrap().unconnected = 0;
+        assert!(judge(&facts).rear_routing_candidates.is_none());
+        facts.native.as_mut().unwrap().unconnected = 2;
+        facts.constraints_missed.push("held interface pose".into());
+        assert!(judge(&facts).rear_routing_candidates.is_none());
+    }
+
+    #[test]
+    fn an_automatic_rear_retry_names_the_exact_front_edit_on_placement_failure() {
+        use crate::KiCadAutoRearRetryStatus::{Accepted, Skipped};
+
+        let mut facts = KiCadRunFacts::new("layout-kicad-board");
+        facts.unplaced = vec!["U1".into(), "U11".into()];
+        facts.automatic_rear_retry = Some(crate::KiCadAutoRearRetry {
+            front_part: "U11".into(),
+            status: Skipped,
+            reason: Some("insufficient_remaining_work".into()),
+            work_seconds: 0.0,
+        });
+        let verdict = judge(&facts);
+        assert!(verdict.next_actions[0].contains(r#"{"front":["U11"]}"#));
+        assert_eq!(
+            serde_json::to_value(&verdict).unwrap()["automatic_rear_retry"]["status"],
+            "skipped"
+        );
+        facts.unplaced.clear();
+        facts.automatic_rear_retry.as_mut().unwrap().status = Accepted;
+        let verdict = judge(&facts);
+        assert!(
+            !verdict
+                .next_actions
+                .iter()
+                .any(|action| action.contains("U11"))
+        );
+        assert_eq!(verdict.automatic_rear_retry.unwrap().status, Accepted);
     }
 
     #[test]
@@ -7404,7 +9956,7 @@ mod tests {
         );
         assert_eq!(
             actions[2],
-            "nothing to do (the input's): 3 pairs of fixed parts overlap (C8 and U2 (courtyards), C16 and U2 (pads on F.Cu), M1 and U2): the placer keeps both of each pair where the input has them; 1 of the pairs have pads on each other, which cannot both be connected: give one of each such pair its own place (place, or free it from fixed and fixed_patterns) (input_observations has each)"
+            "review held placement: 3 pairs of fixed parts overlap (C8 and U2 (courtyards), C16 and U2 (pads on F.Cu), M1 and U2). The placer keeps their poses. The placement model found copper pad overlap in one pair. Inspect the held poses and pad locations in KiCad. A body overlap can be intentional if the assembly permits it. See input_observations for the individual pairs."
         );
         assert_eq!(verdict.input_observations.len(), 10);
         assert!(verdict.input_observations[6].starts_with("fixed part SW7 lies on 2 "));
@@ -7421,10 +9973,21 @@ mod tests {
             "courtyards",
         )];
         assert_eq!(fold_observations(&one), one);
+        assert!(one[0].contains("assembly's permitted overlaps"), "{one:?}");
+        let mut uncertain = one.clone();
+        uncertain.extend(["C10", "C11"].map(|part| {
+            crate::placement_constraints::overlap_warning(part, "U2", HELD_BOUNDING_BOXES)
+        }));
+        let actions = with_input_observations(Vec::new(), &uncertain);
+        assert_eq!(actions.len(), 2, "{actions:?}");
         assert!(
-            one[0].contains("their pads are apart, so it costs no connection"),
-            "{one:?}"
+            actions[0]
+                .starts_with("review held placement: fixed parts C17 and U1 overlap (courtyards)")
         );
+        assert!(actions[1].starts_with(
+            "review held placement: footprint bounding boxes overlap for 2 pairs of fixed parts"
+        ));
+        assert!(actions[1].contains("Exact footprint overlap is unverified."));
         // A panel's copies repeat their pairs: each named once, counted.
         let copies: Vec<String> = (0..9)
             .map(|_| crate::placement_constraints::overlap_warning("C2", "U1", "courtyards"))
@@ -7437,12 +10000,11 @@ mod tests {
         let folded = fold_observations(&copies);
         assert!(
             folded[0].starts_with(
-                "10 pairs of fixed parts overlap (C2 and U1 (courtyards) 9 times, C3 and U1 (courtyards)):"
+                "10 pairs of fixed parts overlap (C2 and U1 (courtyards) 9 times, C3 and U1 (courtyards))."
             ),
             "{folded:?}"
         );
-        // Courtyards alone (jetson-nano-baseboard's parts under its
-        // SO-DIMM socket, trial 5): no connection lost.
+        // Courtyards alone may be an intentional assembly overlap.
         let courtyards: Vec<String> = ["C10", "C11"]
             .iter()
             .map(|part| crate::placement_constraints::overlap_warning(part, "J15", "courtyards"))
@@ -7450,8 +10012,8 @@ mod tests {
         let folded = fold_observations(&courtyards);
         assert_eq!(folded.len(), 1);
         assert!(
-            folded[0].contains("no pair's pads lie on each other, so it costs no connection")
-                && !folded[0].contains("cannot both be connected"),
+            folded[0].contains("A body overlap can be intentional")
+                && !folded[0].contains("copper pad overlap"),
             "{folded:?}"
         );
     }
@@ -7504,7 +10066,7 @@ mod tests {
         let marks =
             position("nothing to do (the input's): fixed part J3 lies on 2 of the board's texts");
         let overlap =
-            position("nothing to do (the input's): fixed parts C17 and U1 overlap (courtyards)");
+            position("review held placement: fixed parts C17 and U1 overlap (courtyards)");
         let footprint =
             position("nothing to do (the input's): 1 DRC findings lie within one footprint each");
         assert!(
@@ -7518,7 +10080,8 @@ mod tests {
         assert!(
             actions[first_input..]
                 .iter()
-                .all(|action| action.starts_with(INPUT_TAG)),
+                .all(|action| action.starts_with(INPUT_TAG)
+                    || action.starts_with(INPUT_HELD_REVIEW_TAG)),
             "{actions:#?}"
         );
         assert!(input_observation(
@@ -7528,9 +10091,8 @@ mod tests {
             )
         ));
         assert!(!input_observation(&actions[0]));
-        // A complete run: its list says only that there is nothing left
-        // (the walkthrough's keyboard: the controller's no-connect pins),
-        // the input's observations included.
+        // A complete route still asks for review of a pin whose parity
+        // finding gives no net. Proven input observations remain last.
         let report = json!({
             "violations": [
                 {"type": "annular_width", "severity": "error", "description": "Annular width",
@@ -7549,13 +10111,12 @@ mod tests {
         assert_eq!(verdict.status, KiCadRunStatus::Complete);
         assert_eq!(verdict.next_actions.len(), 4, "{:#?}", verdict.next_actions);
         assert!(
-            verdict
-                .next_actions
-                .iter()
-                .all(|action| action.starts_with("nothing to do")),
-            "{:#?}",
-            verdict.next_actions
+            verdict.next_actions[0]
+                .starts_with("review the footprint and schematic pin mapping for U1:31")
         );
+        assert!(verdict.next_actions[1..].iter().all(
+            |action| action.starts_with(INPUT_TAG) || action.starts_with(INPUT_HELD_REVIEW_TAG)
+        ));
     }
 
     /// A layout with three open connections (trial 4's Quanta75 run 1).
@@ -7823,6 +10384,37 @@ mod tests {
     }
 
     #[test]
+    fn an_open_link_between_repeated_references_identifies_exact_pads_without_near() {
+        let board = crate::parse(
+            r#"(kicad_pcb
+            (footprint "Connector" (uuid "copy-2") (at 15 20)
+                (property "Reference" "J1")
+                (pad "7" smd rect (at 0 0) (uuid "pad-2")))
+            (footprint "Connector" (uuid "copy-1") (at 10 20)
+                (property "Reference" "J1")
+                (pad "7" smd rect (at 0 0) (uuid "pad-1"))))"#,
+        )
+        .unwrap();
+        let report = json!({"unconnected_items":[{"items": [
+            {"description": "Pad 7 [DATA] of J1 on F.Cu", "uuid": "pad-1", "pos": {"x":10,"y":20}},
+            {"description": "Pad 7 [DATA] of J1 on F.Cu", "uuid": "pad-2", "pos": {"x":15,"y":20}}
+        ]}]});
+        let link = open_link_of(&report, &["DATA".into()], Some(&board)).unwrap();
+        assert_eq!(
+            link.occurrences[0].footprint_uuid.as_deref(),
+            Some("copy-1")
+        );
+        assert_eq!(
+            link.occurrences[1].footprint_uuid.as_deref(),
+            Some("copy-2")
+        );
+        let text = open_link_text(&link, "layout-kicad-board", &BTreeSet::new());
+        assert!(text.contains("J1:7 at (10.00, 20.00) mm, pad UUID pad-1, footprint UUID copy-1"));
+        assert!(text.contains("J1:7 at (15.00, 20.00) mm, pad UUID pad-2, footprint UUID copy-2"));
+        assert!(!text.contains("\"minimize\""));
+    }
+
+    #[test]
     fn the_hot_spots_open_link_names_its_far_end_with_a_near_to_paste() {
         // Trial 5's jetson: hot spot 0 at J1 named J1, D11, D4, R37 and
         // R2; the open link's other end, R8, lay 10.4 mm from J1:11, and
@@ -7876,6 +10468,7 @@ mod tests {
                 reference: "J1".into(),
                 side: "front".into(),
                 distance_mm: 0.0,
+                occurrence: None,
             }],
             open_link: Some(link),
         });
@@ -7889,13 +10482,26 @@ mod tests {
         // R8, the smaller part, comes to J1's pin.
         let text = action(&facts);
         assert!(
-            text.ends_with("; its open link on Display/TMDS_D0_C_N runs from J1:11 to R8:2, 10.6 mm apart (KiCad's unconnected item): bring R8 to J1:11 with a near constraint (constraints.json's near: {\"part\": \"R8\", \"pin_of\": \"J1:11\", \"max_mm\": 2})"),
+            text.contains(
+                "its open link on Display/TMDS_D0_C_N runs from J1:11 to R8:2, 10.6 mm apart"
+            ),
             "{text}"
+        );
+        let entry = text
+            .split_once("add ")
+            .unwrap()
+            .1
+            .split_once(" to constraints.json")
+            .unwrap()
+            .0;
+        assert_eq!(
+            serde_json::from_str::<Value>(entry).unwrap(),
+            json!({"part": "R8", "pad": "2", "pin_of": "J1:11", "minimize": true})
         );
         // With R8 fixed, J1 comes to it; with both fixed, neither.
         facts.fixed_parts = ["R8".to_string()].into();
         assert!(
-            action(&facts).contains("bring J1 to R8:2 with a near constraint"),
+            action(&facts).contains("bring J1:11 closer to R8:2"),
             "{}",
             action(&facts)
         );
@@ -7912,7 +10518,7 @@ mod tests {
         facts.fixed_parts.clear();
         assert!(
             action(&facts)
-                .contains("route mode keeps every part; bring R8 nearer J1:11 in the input"),
+                .contains("Route mode keeps every part. Bring R8:2 closer to J1:11 in the input"),
             "{}",
             action(&facts)
         );

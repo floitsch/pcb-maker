@@ -213,7 +213,25 @@ pub const MAX_NESTING: usize = 1000;
 /// there when they are not finite (`finite_number`): a word such as `inf` is a
 /// KiCad 5 name or a tstamp as often as a number.
 pub fn parse(source: &str) -> Result<Expr, String> {
-    let mut parser = Parser { source, offset: 0 };
+    parse_internal(source, None)
+}
+
+/// Parses a file and records the source byte range of each atom in tree order.
+pub fn parse_with_atom_spans(source: &str) -> Result<(Expr, Vec<std::ops::Range<usize>>), String> {
+    let mut spans = Vec::new();
+    let expression = parse_internal(source, Some(&mut spans))?;
+    Ok((expression, spans))
+}
+
+fn parse_internal(
+    source: &str,
+    spans: Option<&mut Vec<std::ops::Range<usize>>>,
+) -> Result<Expr, String> {
+    let mut parser = Parser {
+        source,
+        offset: 0,
+        spans,
+    };
     let expression = parser.expression().map_err(crate::exit::input_error)?;
     parser.whitespace();
     if parser.offset != source.len() {
@@ -246,6 +264,7 @@ struct Open {
 struct Parser<'a> {
     source: &'a str,
     offset: usize,
+    spans: Option<&'a mut Vec<std::ops::Range<usize>>>,
 }
 
 impl Parser<'_> {
@@ -350,7 +369,7 @@ impl Parser<'_> {
             let mut escaped = false;
             while let Some(character) = self.bump() {
                 if character == '"' && !escaped {
-                    return Ok(Expr::Atom(self.source[start..self.offset].to_string()));
+                    return Ok(self.atom_from(start));
                 }
                 escaped = character == '\\' && !escaped;
                 if character != '\\' {
@@ -368,8 +387,16 @@ impl Parser<'_> {
         if self.offset == start {
             Err(format!("expected atom at byte {}", self.offset))
         } else {
-            Ok(Expr::Atom(self.source[start..self.offset].to_string()))
+            Ok(self.atom_from(start))
         }
+    }
+
+    fn atom_from(&mut self, start: usize) -> Expr {
+        let range = start..self.offset;
+        if let Some(spans) = &mut self.spans {
+            spans.push(range.clone());
+        }
+        Expr::Atom(self.source[range].to_string())
     }
 
     fn whitespace(&mut self) {

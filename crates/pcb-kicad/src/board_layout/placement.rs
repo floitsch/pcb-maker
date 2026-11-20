@@ -70,11 +70,12 @@ pub(super) fn place(ctx: &LayoutContext, ledger: &mut WorkLedger) -> Result<Plac
     if pre_ranking {
         placer_config.tuning.placement_seeds = race_placement_seeds(config, &placer_config);
     }
-    let placement = place_kicad_board(
+    let placement = crate::board_placer::place_kicad_board_with_rear_retry(
         ctx.source_directory,
         ctx.board_id,
         &ctx.placed_directory,
         &placer_config,
+        Some(ledger.left(ctx.work_deadline) - ctx.check_seconds),
     )?;
     ledger.work += placement.work_seconds;
     ledger.pool_excess += (placement.pool_work_seconds - placement.work_seconds).max(0.0);
@@ -82,6 +83,9 @@ pub(super) fn place(ctx: &LayoutContext, ledger: &mut WorkLedger) -> Result<Plac
     // The marks that belong to a movable part were taken from the input;
     // the placed board's lowerings keep them so.
     placer_config.attached_marks = Some(placement.attached_mark_pairs.clone());
+    // The selected seed already used these rows. Recomputing the pitch
+    // with the post-placement body relaxation can place them differently.
+    placer_config.placed_pair_rows = Some(placement.placed_pair_rows.clone());
     if ctx.wall_passed() {
         core::router::note_wall_cut(
             "placement",
@@ -169,6 +173,12 @@ pub(super) fn prepare_placed_board(
     let source = fs::read_to_string(placed_board)
         .map_err(|error| format!("failed to read {}: {error}", placed_board.display()))?;
     let mut pcb = crate::canonical_order::parse_board(&source)?;
+    // The standalone placer expanded additions on its own copy of the
+    // settings. Keep their authored poses in every layout readback and
+    // candidate lowering as well.
+    if let Some(KiCadConstraintsSource::Inline(constraints)) = &mut placer_config.constraints {
+        crate::placement_constraints::expand_additions(constraints, &pcb)?;
+    }
     // Requested pours (a ground plane) join the placed board.
     let planned = planned_pours(&pcb, router_config)?;
     if !planned.is_empty() {
@@ -246,7 +256,11 @@ pub(super) fn first_relaxation(placement: &KiCadBoardPlacerResult) -> placer::Re
 }
 
 /// `pcb` with its footprints at `poses` (in the board's footprint order).
-pub(super) fn posed(pcb: &Expr, poses: &[placer::Pose]) -> Result<Expr, String> {
+pub(super) fn posed(
+    pcb: &Expr,
+    poses: &[placer::Pose],
+    pours: &[crate::board_router::KiCadPourRequest],
+) -> Result<Expr, String> {
     let mut candidate = pcb.clone();
     {
         let mut footprints = footprint_items(&mut candidate)?;
@@ -254,6 +268,7 @@ pub(super) fn posed(pcb: &Expr, poses: &[placer::Pose]) -> Result<Expr, String> 
             write_footprint_pose(footprint, *pose)?;
         }
     }
+    crate::board_router::refresh_pour_regions(&mut candidate, pours)?;
     Ok(candidate)
 }
 
@@ -268,6 +283,74 @@ pub(super) fn write_placement_without_copper(
     if let Expr::List(items) = &mut placed_pcb {
         items.retain(|item| !matches!(item.head(), Some("segment" | "arc" | "via")));
     }
-    fs::write(placed_board, format!("{}\n", encode(&placed_pcb)))
-        .map_err(|error| format!("failed to write {}: {error}", placed_board.display()))
+    write_atomically(
+        placed_board,
+        format!("{}\n", encode(&placed_pcb)).as_bytes(),
+    )
+}
+
+#[cfg(test)]
+mod readback_tests {
+    use super::*;
+
+    #[test]
+    fn board_only_addition_keeps_its_authored_hold_after_placement_readback() {
+        let root = temporary_next_to(&std::env::temp_dir().join("layout-addition-hold"));
+        let source = root.join("source");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(
+            source.join("board.kicad_pcb"),
+            r#"(kicad_pcb (version 20260206) (generator "pcb-maker")
+          (general (thickness 1.6)) (paper "A4")
+          (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+          (gr_rect (start 0 0) (end 20 20) (stroke (width 0.05) (type default)) (layer "Edge.Cuts"))
+          (footprint "fixture" (layer "F.Cu") (at 4 4) (attr board_only)
+            (property "Reference" "H1")
+            (pad "1" smd circle (at 0 0) (size 1 1) (layers "F.Cu") (net "LINK")))
+          (footprint "fixture" (layer "F.Cu") (at 12 12)
+            (property "Reference" "C1")
+            (pad "1" smd circle (at 0 0) (size 1 1) (layers "F.Cu") (net "LINK"))))"#,
+        )
+        .unwrap();
+        fs::write(source.join("board.kicad_pro"), "{}\n").unwrap();
+        let config = KiCadBoardLayoutConfig {
+            total_seconds: 50.0,
+            placer: KiCadBoardPlacerConfig {
+                constraints: Some(KiCadConstraintsSource::Inline(serde_json::from_value(
+                    serde_json::json!({"version": 1, "move_all": true, "add": [
+                        {"part": "H1", "from_board": true, "x": 4., "y": 4., "origin": "absolute"}
+                    ]}),
+                ).unwrap())),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let rules = KiCadBoardRouterConfig::default();
+        let output = root.join("layout");
+        let (ctx, mut ledger) =
+            super::super::setup::prepare(&source, "board", &output, &config, &rules).unwrap();
+        let Placed {
+            placement,
+            mut placer_config,
+            ..
+        } = place(&ctx, &mut ledger).unwrap();
+        let held = placement
+            .footprints
+            .iter()
+            .find(|row| row.reference == "H1")
+            .unwrap();
+        assert!(held.fixed);
+        let PlacedBoard { pcb, problem, .. } =
+            prepare_placed_board(&ctx, &placement, &mut placer_config).unwrap();
+        let index = problem
+            .references
+            .iter()
+            .position(|part| part == "H1")
+            .unwrap();
+        assert!(problem.problem.components[index].fixed);
+        assert_eq!(problem.problem.poses[index].position, [4.0, 4.0]);
+        let refreshed = lower_placement(&pcb, &placer_config).unwrap();
+        assert!(refreshed.problem.components[index].fixed);
+        fs::remove_dir_all(root).unwrap();
+    }
 }

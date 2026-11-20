@@ -3,7 +3,10 @@
 //! Where the footprints are: the footprint library tables and folders, and
 //! the libraries the project gets for footprints taken from a board.
 
+use super::legacy_libraries::LegacyLibraries;
 use super::*;
+use crate::board_footprints::same_library_model;
+use std::io::{ErrorKind, Write};
 
 /// Expands `${VAR}` and `$(VAR)`: the project directory, KiCad's footprint
 /// directory under any version's name, else the environment.
@@ -175,6 +178,27 @@ pub(super) fn user_footprint_tables(variable: &dyn Fn(&str) -> Option<String>) -
 pub(super) struct LibraryNotes {
     pub(super) relocated: Vec<String>,
     pub(super) absent: BTreeMap<String, String>,
+    pub(super) legacy: LegacyLibraries,
+    table_uses_kicad: BTreeMap<String, bool>,
+    output: Option<PathBuf>,
+}
+
+impl LibraryNotes {
+    pub fn supports_native_additions(&self, nickname: &str, path: &Path) -> bool {
+        self.table_uses_kicad
+            .get(nickname)
+            .copied()
+            .unwrap_or_else(|| {
+                path.extension()
+                    .is_some_and(|extension| extension == "pretty")
+            })
+    }
+
+    pub fn is_staged_model(&self, path: &Path) -> bool {
+        self.output
+            .as_ref()
+            .is_some_and(|output| fs::canonicalize(path).is_ok_and(|path| path.starts_with(output)))
+    }
 }
 
 /// A table's folder that is not where the table says, such as a path on the
@@ -227,7 +251,10 @@ pub(super) fn footprint_library_search(
     project: &Path,
     output: Option<&Path>,
 ) -> (BTreeMap<String, PathBuf>, LibraryNotes) {
-    let mut notes = LibraryNotes::default();
+    let mut notes = LibraryNotes {
+        output: output.and_then(|path| fs::canonicalize(path).ok()),
+        ..LibraryNotes::default()
+    };
     let variable = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
     let candidates = stock_footprint_directories(&variable);
     let system = candidates
@@ -236,7 +263,11 @@ pub(super) fn footprint_library_search(
         .or(candidates.first())
         .map(|directory| directory.display().to_string())
         .unwrap_or_default();
-    let mut tables = vec![project.join("fp-lib-table")];
+    if let Some(output) = output {
+        notes.legacy = LegacyLibraries::read(project, output, &system);
+    }
+    let project_table = project.join("fp-lib-table");
+    let mut tables = vec![project_table.clone()];
     tables.extend(user_footprint_tables(&variable));
     let mut libraries = BTreeMap::new();
     for table in tables {
@@ -256,8 +287,30 @@ pub(super) fn footprint_library_search(
                 continue;
             };
             let path = PathBuf::from(expand(uri, project, &system));
+            if form_atom(lib, "type", 1) == Some("Legacy") {
+                if table != project_table
+                    && !libraries.contains_key(name)
+                    && !notes.legacy.staged.contains_key(name)
+                {
+                    notes.legacy.protected.insert(name.to_string());
+                    notes.legacy.replacements.remove(name);
+                }
+                if !path.is_file() {
+                    notes
+                        .absent
+                        .entry(name.to_string())
+                        .or_insert_with(|| path.display().to_string());
+                }
+                continue;
+            }
+            let uses_kicad = || form_atom(lib, "type", 1) == Some("KiCad");
             if path.is_dir() {
-                libraries.entry(name.to_string()).or_insert(path);
+                libraries.entry(name.to_string()).or_insert_with(|| {
+                    notes
+                        .table_uses_kicad
+                        .insert(name.to_string(), uses_kicad());
+                    path
+                });
             } else if !libraries.contains_key(name) {
                 match relocated_library(&path, project) {
                     Some(found) => {
@@ -267,6 +320,9 @@ pub(super) fn footprint_library_search(
                             found.display()
                         ));
                         notes.absent.remove(name);
+                        notes
+                            .table_uses_kicad
+                            .insert(name.to_string(), uses_kicad());
                         libraries.insert(name.to_string(), found);
                     }
                     None => {
@@ -344,6 +400,11 @@ pub(super) fn footprint_library_search(
             }
         }
     }
+    for (name, path) in &notes.legacy.staged {
+        libraries.insert(name.clone(), path.clone());
+        notes.table_uses_kicad.insert(name.clone(), true);
+    }
+    libraries.retain(|name, _| !notes.legacy.protected.contains(name));
     notes.absent.retain(|name, _| !libraries.contains_key(name));
     (libraries, notes)
 }
@@ -433,18 +494,17 @@ pub(super) fn substitution_reason(asked: &str, found: &str) -> &'static str {
     }
 }
 
-/// Writes the footprints taken from the board into libraries of the
-/// project (`<out>/<library>.pretty`) and names those libraries in the
-/// project's `fp-lib-table`, so that the project finds every footprint its
-/// schematic names. An entry of that name the libraries could not resolve
-/// (a designer's own folder) is replaced.
+/// Publish donor models in the project. A recovered model under an existing
+/// nickname joins the staged library or a copy of that library's full model
+/// inventory, so KiCad can still resolve the other names under the nickname.
 pub(super) fn write_local_libraries(
     output: &Path,
     footprints: &BTreeMap<String, Expr>,
     libraries: &BTreeMap<String, PathBuf>,
+    notes: &LibraryNotes,
     board: Option<&Path>,
 ) -> Result<(), String> {
-    let mut nicknames = BTreeSet::new();
+    let mut additions = BTreeMap::<&str, Vec<(&str, &Expr)>>::new();
     for (id, footprint) in footprints {
         let Some((nickname, name)) = id.split_once(':') else {
             continue;
@@ -461,67 +521,225 @@ pub(super) fn write_local_libraries(
                 )
             )));
         }
-        nicknames.insert(nickname.to_string());
-        let folder = output.join(format!("{nickname}.pretty"));
-        fs::create_dir_all(&folder)
-            .map_err(|error| format!("failed to create {}: {error}", folder.display()))?;
-        let mut file = footprint.clone();
-        if let Expr::List(items) = &mut file {
-            items[1] = Expr::Atom(requote(name));
-            items.retain(|item| {
-                !matches!(
-                    item.head(),
-                    Some("version" | "generator" | "generator_version")
-                )
-            });
-            items.splice(
-                2..2,
-                [
-                    parse("(version 20260206)")?,
-                    parse("(generator \"pcb-maker\")")?,
-                ],
-            );
-        }
-        let path = folder.join(format!("{name}.kicad_mod"));
-        fs::write(&path, format!("{}\n", encode(&file)))
-            .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+        additions
+            .entry(nickname)
+            .or_default()
+            .push((name, footprint));
     }
+    let output = fs::canonicalize(output).map_err(|error| error.to_string())?;
     let table = output.join("fp-lib-table");
-    let mut parsed = fs::read_to_string(&table)
-        .ok()
-        .and_then(|text| parse(&text).ok())
-        .filter(|parsed| parsed.head() == Some("fp_lib_table"))
-        .unwrap_or_else(|| {
-            Expr::List(vec![
-                Expr::Atom("fp_lib_table".into()),
-                Expr::List(vec![Expr::Atom("version".into()), Expr::Atom("7".into())]),
-            ])
-        });
-    let source = board
+    if fs::symlink_metadata(&table).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        return Err(crate::exit::input_error(format!(
+            "cannot write donor footprints while preserving {}: import into a separate output project with its own footprint table",
+            table.display()
+        )));
+    }
+    let original = read_optional_table(&table)?;
+    let mut parsed = parse(original.as_deref().unwrap_or("(fp_lib_table (version 7))"))?;
+    if parsed.head() != Some("fp_lib_table") {
+        return Err(crate::exit::input_error(format!(
+            "{} is not a footprint library table",
+            table.display()
+        )));
+    }
+    let donor = board
         .and_then(|board| board.file_name())
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
-    if let Expr::List(items) = &mut parsed {
-        for nickname in &nicknames {
-            // A library of that name that exists here keeps its entry (the
-            // footprints went to `from_board` then).
-            if nickname != FROM_BOARD_LIBRARY && libraries.contains_key(nickname) {
-                continue;
-            }
-            items.retain(|item| {
-                !(item.head() == Some("lib")
-                    && form_atom(item, "name", 1) == Some(nickname.as_str()))
+    let Expr::List(items) = &mut parsed else {
+        unreachable!()
+    };
+    let mut changed = false;
+    for (nickname, models) in additions {
+        let is_entry = |item: &Expr| {
+            item.head() == Some("lib") && form_atom(item, "name", 1) == Some(nickname)
+        };
+        let mut entries = items.iter_mut().filter(|item| is_entry(item));
+        let existing = entries.next();
+        let replace_legacy = board.is_some()
+            && notes
+                .legacy
+                .replacements
+                .get(nickname)
+                .is_some_and(|legacy| legacy.still_missing(nickname, existing.as_deref()));
+        if entries.next().is_some()
+            || existing.as_ref().is_some_and(|entry| {
+                form_atom(entry, "type", 1) != Some("KiCad") && !replace_legacy
+            })
+            || notes.legacy.replacements.contains_key(nickname) && !replace_legacy
+        {
+            return Err(crate::exit::input_error(format!(
+                "cannot safely extend library {nickname:?}: {} must name one KiCad library with that nickname",
+                table.display()
+            )));
+        }
+        let source = libraries.get(nickname).map(PathBuf::as_path);
+        let staged = existing
+            .as_ref()
+            .filter(|_| !replace_legacy)
+            .and_then(|entry| form_atom(entry, "uri", 1))
+            .and_then(|uri| {
+                uri.strip_prefix("${KIPRJMOD}/")
+                    .or_else(|| uri.strip_prefix("$(KIPRJMOD)/"))
+            })
+            .and_then(|uri| staged_library(&output.join(uri), &output));
+        let folder = staged
+            .as_ref()
+            .cloned()
+            .or_else(|| {
+                source
+                    .filter(|_| !replace_legacy)
+                    .and_then(|source| staged_library(source, &output))
+            })
+            .map_or_else(|| new_local_library(&output, nickname), Ok)?;
+        if let Some(source) = source {
+            copy_missing_models(source, &folder)?;
+        }
+        for (name, model) in models {
+            write_donor_model(&folder, name, model)?;
+        }
+        if staged.is_some() {
+            continue;
+        }
+        changed = true;
+        let relative = folder.strip_prefix(&output).expect("output library folder");
+        let relative: Vec<_> = relative.iter().map(|part| part.to_string_lossy()).collect();
+        let uri = quote(&format!("${{KIPRJMOD}}/{}", relative.join("/")));
+        let uri = parse(&format!("(uri {uri})"))?;
+        if let Some(Expr::List(entry)) = existing {
+            entry.retain(|item| {
+                item.head() != Some("uri") && !(replace_legacy && item.head() == Some("type"))
             });
-            items.push(parse(&format!(
-                "(lib (name {}) (type \"KiCad\") (uri {}) (options \"\") (descr {}))",
+            if replace_legacy {
+                entry.push(parse(r#"(type "KiCad")"#)?);
+            }
+            entry.push(uri);
+        } else {
+            let mut entry = parse(&format!(
+                "(lib (name {}) (type \"KiCad\") (options \"\") (descr {}))",
                 requote(nickname),
-                requote(&format!("${{KIPRJMOD}}/{nickname}.pretty")),
-                quote(&format!("footprints from the board {source}"))
-            ))?);
+                quote(&format!("footprints from the board {donor}"))
+            ))?;
+            if let Expr::List(parts) = &mut entry {
+                parts.push(uri);
+            }
+            items.push(entry);
         }
     }
-    fs::write(&table, format!("{}\n", encode(&parsed)))
-        .map_err(|error| format!("failed to write {}: {error}", table.display()))
+    if !changed {
+        return Ok(());
+    }
+    if read_optional_table(&table)? != original {
+        return Err(crate::exit::input_error(format!(
+            "{} changed during import; keep its current entries and retry",
+            table.display()
+        )));
+    }
+    write_atomically(&table, format!("{}\n", encode(&parsed)).as_bytes())
+}
+
+pub(super) fn read_optional_table(path: &Path) -> Result<Option<String>, String> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("failed to read {}: {error}", path.display())),
+    }
+}
+
+pub(super) fn staged_library(path: &Path, output: &Path) -> Option<PathBuf> {
+    let path = fs::canonicalize(path).ok()?;
+    (path != output && path.starts_with(output) && path.is_dir()).then_some(path)
+}
+
+pub(super) fn new_local_library(output: &Path, nickname: &str) -> Result<PathBuf, String> {
+    for index in 1.. {
+        let stem = if index == 1 {
+            nickname.into()
+        } else {
+            format!("{nickname}-{index}")
+        };
+        let path = output.join(format!("{stem}.pretty"));
+        match fs::create_dir(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => (),
+            Err(error) => return Err(format!("failed to create {}: {error}", path.display())),
+        }
+    }
+    unreachable!()
+}
+
+fn copy_missing_models(source: &Path, folder: &Path) -> Result<(), String> {
+    if fs::canonicalize(source).is_ok_and(|path| path == folder) {
+        return Ok(());
+    }
+    for entry in fs::read_dir(source).map_err(|error| format!("{}: {error}", source.display()))? {
+        let entry = entry.map_err(|error| format!("{}: {error}", source.display()))?;
+        let path = entry.path();
+        if !path.extension().is_some_and(|ext| ext == "kicad_mod") || !path.is_file() {
+            continue;
+        }
+        let contents = fs::read(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+        let target = folder.join(entry.file_name());
+        write_new_model(&target, &contents, |existing| existing == contents)?;
+    }
+    Ok(())
+}
+
+fn write_donor_model(folder: &Path, name: &str, footprint: &Expr) -> Result<(), String> {
+    let mut file = footprint.clone();
+    if let Expr::List(items) = &mut file {
+        items[1] = Expr::Atom(requote(name));
+        items.retain(|item| {
+            !matches!(
+                item.head(),
+                Some("version" | "generator" | "generator_version")
+            )
+        });
+        items.splice(
+            2..2,
+            [
+                parse("(version 20260206)")?,
+                parse("(generator \"pcb-maker\")")?,
+            ],
+        );
+    }
+    let path = folder.join(format!("{name}.kicad_mod"));
+    write_new_model(
+        &path,
+        format!("{}\n", encode(&file)).as_bytes(),
+        |existing| {
+            std::str::from_utf8(existing)
+                .ok()
+                .and_then(|text| parse(text).ok())
+                .is_some_and(|model| same_library_model(&model, &file))
+        },
+    )
+}
+
+pub(super) fn write_new_model(
+    path: &Path,
+    contents: &[u8],
+    matches: impl FnOnce(&[u8]) -> bool,
+) -> Result<(), String> {
+    let mut file = match fs::File::options().write(true).create_new(true).open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+            if fs::read(path).is_ok_and(|existing| matches(&existing)) {
+                return Ok(());
+            }
+            return Err(crate::exit::input_error(format!(
+                "a different model already exists at {}",
+                path.display()
+            )));
+        }
+        Err(error) => return Err(format!("failed to create {}: {error}", path.display())),
+    };
+    if let Err(error) = file.write_all(contents) {
+        drop(file);
+        let _ = fs::remove_file(path);
+        return Err(format!("failed to write {}: {error}", path.display()));
+    }
+    Ok(())
 }
 
 /// Add-on libraries a schematic may name that KiCad does not ship, with
@@ -530,3 +748,65 @@ pub(super) const ADD_ON_LIBRARIES: [(&str, &str); 1] = [(
     "Espressif",
     "Espressif's library: KiCad's Plugin and Content Manager, \"Espressif KiCad Library\" (installed as PCM_Espressif), or github.com/espressif/kicad-libraries",
 )];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_missing_model_reuses_the_staged_library_or_copies_its_full_inventory() {
+        let root = temporary_next_to(&std::env::temp_dir().join("footprint-library-overlay"));
+        let source = root.join("input/Stock.pretty");
+        fs::create_dir_all(&source).unwrap();
+        let existing = r#"(footprint "Current" (layer "F.Cu"))"#;
+        fs::write(source.join("Current.kicad_mod"), existing).unwrap();
+        let libraries = BTreeMap::from([("Stock".into(), source.clone())]);
+        let models = BTreeMap::from([(
+            "Stock:Historic".into(),
+            parse(r#"(footprint "Historic" (layer "F.Cu"))"#).unwrap(),
+        )]);
+        for (case, relative) in [
+            ("external", "Stock.pretty"),
+            ("project", "libs/Stock.pretty"),
+        ] {
+            let output = root.join(case);
+            let staged = output.join(relative);
+            let uri = if case == "project" {
+                fs::create_dir_all(&staged).unwrap();
+                fs::write(staged.join("Current.kicad_mod"), existing).unwrap();
+                format!("${{KIPRJMOD}}/{relative}")
+            } else {
+                fs::create_dir_all(&output).unwrap();
+                source.display().to_string()
+            };
+            let table = output.join("fp-lib-table");
+            fs::write(
+                &table,
+                format!(
+                    r#"(fp_lib_table (version 7)
+                (lib (name "Stock") (type "KiCad") (uri "{uri}") (options "") (descr "existing")))"#
+                ),
+            )
+            .unwrap();
+            write_local_libraries(&output, &models, &libraries, &LibraryNotes::default(), None)
+                .unwrap();
+            write_local_libraries(&output, &models, &libraries, &LibraryNotes::default(), None)
+                .unwrap();
+            let table = fs::read_to_string(table).unwrap();
+            assert!(table.contains(&format!("${{KIPRJMOD}}/{relative}")));
+            assert!(table.contains("(descr \"existing\")"));
+            assert_eq!(table.matches("(name \"Stock\")").count(), 1);
+            assert_eq!(
+                fs::read_to_string(staged.join("Current.kicad_mod")).unwrap(),
+                existing
+            );
+            assert!(staged.join("Historic.kicad_mod").is_file());
+        }
+        assert!(!source.join("Historic.kicad_mod").exists());
+        assert_eq!(
+            fs::read_to_string(source.join("Current.kicad_mod")).unwrap(),
+            existing
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+}

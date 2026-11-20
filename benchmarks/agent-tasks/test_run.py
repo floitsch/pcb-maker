@@ -10,6 +10,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import compare  # noqa: E402
@@ -20,6 +21,187 @@ import run  # noqa: E402
 os.environ.setdefault("PCB_MAKER_LEDGER", str(Path(tempfile.gettempdir()) / "pcb-maker-test-ledger.json"))
 
 HERE = Path(__file__).resolve().parent
+
+
+class SchematicAcceptance(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.work = Path(temporary.name)
+        self.layout = self.work / "layout"
+        self.result = self.layout / "result"
+        self.result.mkdir(parents=True)
+        (self.result / "board.kicad_pcb").write_text("(kicad_pcb)")
+        (self.result / "board.kicad_sch").write_text("(kicad_sch)")
+
+    def write_checks(self, parity=(), saved_proof=True):
+        drc = {
+            "kicad_version": "10.0.8", "source": "board.kicad_pcb",
+            "included_severities": ["error", "warning", "exclusion"], "ignored_checks": [],
+            "schematic_parity": list(parity), "unconnected_items": [], "violations": [],
+        }
+        reports = {
+            self.result / "drc.json": drc,
+            self.result / "erc.json": {
+                "kicad_version": "10.0.8", "source": "board.kicad_sch", "sheets": [{}],
+            },
+            self.result / "verification.json": {
+                "board_id": "board", "schematic_parity_issues": len(parity),
+            },
+            self.layout / "verdict.json": {
+                "status": "complete", "exit_code": 0, "constraints_missed": [],
+                "kicad_checked": True, "schematic_parity_issues": len(parity),
+            },
+        }
+        if saved_proof:
+            reports[self.layout / "verdict.json"]["fill_publication"] = {
+                "status": "saved", "saved_board_sha256": run.file_sha256(self.result / "board.kicad_pcb"),
+                "saved_as_stored": {"opens": 0, "schematic_parity": len(parity), "errors": 0},
+            }
+            reports[self.result / "drc-saved-fill.json"] = drc
+        for path, report in reports.items():
+            path.write_text(json.dumps(report))
+
+    def row(self, **changes):
+        return {"mode": "schematic", "pass": True, "pass_strict": True, "parity": 0,
+                "exit": 0, "verdict": "complete", "missed": [],
+                "native": {"unconnected": 0}, "new_findings_strict": {}, **changes}
+
+    def annotate(self, row):
+        return run.record_schematic_acceptance(row, self.work, "board")
+
+    def test_verified_parity_is_a_separate_gate_from_legacy_scores(self):
+        self.write_checks()
+        clean = self.annotate(self.row())
+        self.assertIs(clean["pass_schematic"], True)
+        strict_failure = self.annotate(self.row(pass_strict=False, new_findings_strict={"clearance": 1}))
+        self.assertIs(strict_failure["pass_schematic"], False)
+        self.assertIs(strict_failure["parity_checked"], True)
+        self.assertIs(self.annotate(self.row(pass_strict=False))["pass_schematic"], False)
+
+        self.write_checks([{"type": "net_conflict"}])
+        conflict = self.annotate(self.row(parity=1))
+        self.assertIs(conflict["pass_schematic"], False)
+        self.assertIs(conflict["parity_checked"], True)
+        self.assertTrue(conflict["pass"] and conflict["pass_strict"])
+        self.assertIsNone(self.annotate(self.row(parity=0))["pass_schematic"])
+        self.assertEqual(run.schematic_acceptance_summary([clean, strict_failure, conflict]), {
+            "rows": 3, "passed": 1, "failed": 2, "unknown": 0, "parity_unverified": 0,
+            "stored_copper_unverified": 0,
+        })
+
+    def test_missing_receipts_and_unverified_old_zero_are_unknown(self):
+        historical = self.annotate(self.row())
+        self.assertIsNone(historical["pass_schematic"])
+        self.assertIs(historical["parity_checked"], False)
+        self.assertIs(historical["pass_strict"], True)
+        self.write_checks()
+        (self.result / "drc.json").unlink()
+        external = self.work / "drc"
+        external.mkdir()
+        (external / "drc.json").write_text('{"schematic_parity":[]}')
+        self.assertIsNone(self.annotate(self.row())["pass_schematic"])
+        bad_import = self.annotate(self.row(pass_strict=False, native=None))
+        self.assertIs(bad_import["pass_schematic"], False)
+        self.assertEqual(run.schematic_acceptance_summary([historical, bad_import]), {
+            "rows": 2, "passed": 0, "failed": 1, "unknown": 1, "parity_unverified": 2,
+            "stored_copper_unverified": 2,
+        })
+
+    def test_native_saved_copper_is_authoritative_over_modelled_route_count(self):
+        self.write_checks()
+        row = self.annotate(self.row(routed="261/262"))
+        self.assertIs(row["pass_schematic"], True)
+        self.assertEqual(row["stored_copper"]["source"], "verified_fill_publication")
+        (self.result / "board.kicad_pcb").write_text("(kicad_pcb (version 20260306))")
+        self.assertIsNone(self.annotate(self.row(routed="261/262"))["pass_schematic"])
+
+    def test_refilled_zero_opens_cannot_score_an_unchecked_or_open_saved_board(self):
+        self.write_checks(saved_proof=False)
+        legacy = self.annotate(self.row(routed="261/262"))
+        self.assertIsNone(legacy["pass_schematic"])
+        self.assertIs(legacy["parity_checked"], True)
+        self.assertIsNone(legacy["stored_copper"])
+        drc = json.loads((self.result / "drc.json").read_text())
+
+        def check_as_stored(command, **_):
+            self.assertNotIn("--refill-zones", command)
+            self.assertNotIn("--save-board", command)
+            self.assertIn("--all-track-errors", command)
+            self.assertIn("--schematic-parity", command)
+            self.assertEqual(Path(command[-1]), (self.result / "board.kicad_pcb").resolve())
+            Path(command[command.index("--output") + 1]).write_text(json.dumps(drc))
+            return subprocess.CompletedProcess(command, 0)
+
+        with patch.object(run.harness_common, "run_group", side_effect=check_as_stored):
+            for opens, expected in ((160, False), (0, True)):
+                drc["unconnected_items"] = [{"type": "unconnected_items"}] * opens
+                row = run.record_schematic_acceptance(self.row(routed="261/262"), self.work, "board",
+                                                       check_stored=True)
+                self.assertIs(row["pass_schematic"], expected)
+                self.assertIs(row["pass_strict"], True)
+                self.assertEqual(row["stored_copper"]["unconnected"], opens)
+            drc["ignored_checks"] = [{"key": "unconnected_items"}]
+            row = run.record_schematic_acceptance(self.row(), self.work, "board", check_stored=True)
+            self.assertIsNone(row["stored_copper"])
+            self.assertIsNone(row["pass_schematic"])
+
+    def test_board_only_and_mismatched_reports_cannot_prove_parity(self):
+        for path, changes in [
+            (self.result / "erc.json", {"kicad_version": "none: board-only project, no schematic", "sheets": []}),
+            (self.result / "drc.json", {"source": "other.kicad_pcb"}),
+            (self.result / "drc.json", {"included_severities": ["error"]}),
+            (self.result / "drc.json", {"schematic_parity": None}),
+            (self.result / "verification.json", {"schematic_parity_issues": 1}),
+            (self.layout / "verdict.json", {"kicad_checked": False}),
+        ]:
+            with self.subTest(path=path.name, changes=changes):
+                self.write_checks()
+                path.write_text(json.dumps({**json.loads(path.read_text()), **changes}))
+                row = self.annotate(self.row())
+                self.assertIs(row["parity_checked"], False)
+                self.assertIsNone(row["pass_schematic"])
+        layout = self.annotate(self.row(mode="layout"))
+        self.assertNotIn("pass_schematic", layout)
+
+    def test_completed_verdict_exit_and_all_authored_constraints_are_required(self):
+        self.write_checks()
+        self.assertIs(self.annotate(self.row(exit=None))["pass_schematic"], None)
+        for changes in [
+            {"exit": 1},
+            {"verdict": "incomplete"},
+            {"missed": [["near", "C1", "U1"]], "unexpected_misses": []},
+        ]:
+            with self.subTest(changes=changes):
+                row = self.annotate(self.row(**changes))
+                self.assertIs(row["pass_schematic"], False)
+                self.assertIs(row["parity_checked"], True)
+                self.assertIs(row["pass_strict"], True)
+        receipt = self.layout / "verdict.json"
+        original = json.loads(receipt.read_text())
+        for changes in [
+            {"exit_code": 1},
+            {"status": "incomplete"},
+            {"constraints_missed": ["C1 pad to U1"]},
+        ]:
+            with self.subTest(changes=changes):
+                receipt.write_text(json.dumps({**original, **changes}))
+                row = self.annotate(self.row())
+                self.assertIs(row["pass_schematic"], False)
+                self.assertIs(row["parity_checked"], True)
+
+    def test_native_only_rejudge_can_score_without_acceptance_evidence(self):
+        import rejudge
+
+        copper = self.work / "drc"
+        copper.mkdir()
+        (copper / "drc.json").write_text('{"violations":[],"unconnected_items":[]}')
+        row = self.row(pass_schematic=True, parity_checked=True)
+        judged = rejudge.judge(row, row, self.work, "archive")
+        self.assertIs(judged["pass"], True)
+        self.assertIs(judged["pass_strict"], True)
+        self.assertIs(judged["parity_checked"], False)
+        self.assertIsNone(judged["pass_schematic"])
 
 
 class Parallelism(unittest.TestCase):
@@ -555,6 +737,27 @@ class Provenance(unittest.TestCase):
             self.assertEqual(run.wall_stretch_max({"PCB_WALL_STRETCH_MAX": text}), run.WALL_STRETCH_MAX, text)
 
 
+class LayoutConstraints(unittest.TestCase):
+    def test_pad_near_uses_strict_evidence_and_older_rows_keep_their_pass(self):
+        with tempfile.TemporaryDirectory() as folder:
+            work = Path(folder)
+            layout = work / "layout"
+            (layout / "result").mkdir(parents=True)
+            (layout / "result/drc.json").write_text('{"violations":[],"unconnected_items":[]}')
+            status = {"kind": "near", "part": "C2", "other": "U2", "satisfied": True, "violation_mm": 0}
+            result = {"routed": {"routed_connections": 1, "routable_connections": 1, "vias": 0, "length_mm": 1},
+                      "constraints": [status]}
+            report = layout / "board-layout.json"
+            report.write_text(json.dumps(result))
+            self.assertTrue(run.layout_result({}, {}, work, 0, "", {}, 0)["pass"])
+            status["pad_near"] = {"satisfied": False}
+            report.write_text(json.dumps(result))
+            row = run.layout_result({}, {}, work, 1, "", {}, 0)
+            self.assertFalse(row["pass"])
+            self.assertFalse(row["pass_strict"])
+            self.assertEqual(row["unexpected_misses"], [("near", "C2", "U2")])
+
+
 class FinalLadder(unittest.TestCase):
     """The layout's final ladder's work."""
 
@@ -793,6 +996,7 @@ class MemoryLedger(unittest.TestCase):
         self.children.append(child)
         return child
 
+    @patch.object(run.harness_common, "memory_available_bytes", lambda: 8 * 1024**3)
     def test_waits_while_the_reservations_fill_the_machine_and_goes_when_one_ends(self):
         other = self.sleeper()
         self.ledger.reserve(3000, "another run", pid=other.pid)
@@ -1530,6 +1734,7 @@ class MemoryLedger(unittest.TestCase):
         finally:
             os.environ["PCB_MAKER_LEDGER_TOTAL_MB"] = saved
 
+    @patch.object(run.harness_common, "memory_available_bytes", lambda: 8 * 1024**3)
     def test_waiting_entries_carry_what_the_drain_reads_and_newer_requests_wait(self):
         other = self.sleeper()
         self.ledger.reserve(3000, "another run", pid=other.pid)
@@ -1935,9 +2140,10 @@ class DesignerViasInPads(unittest.TestCase):
                                   "diameter_mm": size[0], "drill_mm": size[1], "filled": False}
         self.calls = 0
 
-        def score(binary, directory, board_id, timeout=None):
+        def score(binary, directory, board_id, timeout=None, *, stored=False):
             if board_id == "probe":
                 return {"manufacturing": {"vias_in_pads": 0, "filled_vias_in_pads": 0}}
+            self.assertTrue(stored)
             self.calls += 1
             return {"manufacturing": {"vias_in_pads": 3, "filled_vias_in_pads": 0, "vias_in_pads_at": [
                 site("B2", (0.35, 0.25)), site("C2", (0.4, 0.25)), site("M5", (0.35, 0.25))]}}
@@ -1980,8 +2186,8 @@ class DesignerViasInPads(unittest.TestCase):
                 "diameter_mm": 0.6, "drill_mm": 0.3, "filled": False}
         small = self.score
 
-        def score(binary, directory, board_id, timeout=None):
-            report = run.quality.score.__wrapped__(binary, directory, board_id, timeout)
+        def score(binary, directory, board_id, timeout=None, *, stored=False):
+            report = run.quality.score.__wrapped__(binary, directory, board_id, timeout, stored=stored)
             if binary == "new":
                 report["manufacturing"]["vias_in_large_pads"] = 0 if board_id == "probe" else 1
                 if board_id != "probe":
@@ -2026,6 +2232,7 @@ class ScoreTimeout(unittest.TestCase):
         # Answers the probe of an empty board, hangs on any other board.
         self.binary = self.root / "pcb-maker"
         self.binary.write_text("#!/bin/sh\n"
+                               "if [ \"$2\" = --help ]; then exit 3; fi\n"
                                "if [ \"$3\" = probe ]; then\n"
                                "  echo '{\"manufacturing\": {\"vias_in_pads\": 0, \"filled_vias_in_pads\": 0}}'\n"
                                "  exit 0\n"

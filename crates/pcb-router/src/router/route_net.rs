@@ -487,38 +487,36 @@ impl Router {
             // +6 % vias. A cap instead (at most 3 or 5 tiles) left
             // SNSP-CPU-01 unconverged: some nets need the wide detour.
             let margin = (1 + reroutes / 6).min(10);
-            for margin in [margin, margin + 3] {
-                let mut arrays = std::mem::take(&mut scratch.planner);
-                let corridor = self.plan_corridor(
-                    &mut arrays,
-                    net,
-                    net_state,
-                    &tree.nodes,
-                    targets,
-                    hard,
-                    margin,
-                    scratch.own_active.then_some(scratch.own_claimed.as_slice()),
-                );
-                scratch.planner = arrays;
-                let Some(corridor) = corridor else {
-                    break;
-                };
-                scratch.corridor = Some(corridor);
-                planned = self.counted_search(
-                    SearchKind::Corridor,
-                    scratch,
-                    net,
-                    net_state,
-                    &tree.nodes,
-                    targets,
-                    points,
-                    present,
-                    hard,
-                    full,
-                );
-                scratch.corridor = None;
-                if planned.is_some() {
-                    break;
+            let reached = self.plan_tile_path(
+                &mut scratch.planner,
+                net,
+                net_state,
+                &tree.nodes,
+                targets,
+                hard,
+                scratch.own_active.then_some(scratch.own_claimed.as_slice()),
+            );
+            if let Some(reached) = reached {
+                // The lattice search changes neither the tile costs nor
+                // the planner's tree. A wider corridor uses the same path.
+                for margin in [margin, margin + 3] {
+                    scratch.corridor = Some(self.grow_corridor(&scratch.planner, reached, margin));
+                    planned = self.counted_search(
+                        SearchKind::Corridor,
+                        scratch,
+                        net,
+                        net_state,
+                        &tree.nodes,
+                        targets,
+                        points,
+                        present,
+                        hard,
+                        full,
+                    );
+                    scratch.corridor = None;
+                    if planned.is_some() {
+                        break;
+                    }
                 }
             }
         }

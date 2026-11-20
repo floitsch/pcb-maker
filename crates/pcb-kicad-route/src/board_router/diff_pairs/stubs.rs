@@ -95,7 +95,7 @@ pub(super) fn stub_joined(
     route: &core::NetRoute,
     net: core::NetId,
     (pad, avoid): (Point, Point),
-    lead: (Point, Point),
+    (layer, lead): (usize, (Point, Point)),
     reach: f64,
 ) -> bool {
     let own: Vec<&core::Obstacle> = board
@@ -152,6 +152,7 @@ pub(super) fn stub_joined(
     };
     let at_end = |item: usize| {
         item < count
+            && segments[item].layer == layer
             && [segments[item].start, segments[item].end]
                 .into_iter()
                 .any(|end| {
@@ -211,10 +212,14 @@ pub(super) fn join_stub_ends(
     result: &mut core::RoutingResult,
     pairs: &[Pair],
     plan_link: &LinkPlan,
+    layers: [[Option<usize>; 2]; 2],
 ) {
     let pair = &pairs[plan_link.pair];
     for end in (0..2).filter(|&end| !plan_link.fixed[end]) {
         for (polarity, net) in [(0, pair.positive), (1, pair.negative)] {
+            let Some(landing_layer) = layers[end][polarity] else {
+                continue;
+            };
             let (at, lead_end) = plan_link.stub_end(end, polarity, pair.width);
             let route = &mut result.routes[net as usize];
             let reach = (pair.width
@@ -227,6 +232,7 @@ pub(super) fn join_stub_ends(
             let ends: Vec<(f64, Point, usize, f64)> = route
                 .segments
                 .iter()
+                .filter(|segment| segment.layer == landing_layer)
                 .flat_map(|segment| {
                     [segment.start, segment.end].map(|point| (point, segment.layer, segment.width))
                 })
@@ -261,6 +267,7 @@ pub(super) fn straighten_stubs(
     result: &mut core::RoutingResult,
     pairs: &[Pair],
     plan_link: &LinkPlan,
+    layers: [[Option<usize>; 2]; 2],
 ) {
     let pair = &pairs[plan_link.pair];
     for end in (0..2).filter(|&end| !plan_link.fixed[end]) {
@@ -271,7 +278,8 @@ pub(super) fn straighten_stubs(
                 pad,
                 plan_link.stub_end(end, polarity, pair.width),
                 pair.width,
-            ) else {
+            )
+            .filter(|(layer, _)| layers[end][polarity] == Some(*layer)) else {
                 continue;
             };
             let route = &result.routes[net as usize];

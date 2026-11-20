@@ -196,17 +196,22 @@ pub(crate) fn cmd_strip_kicad_copper(mut arguments: Arguments) -> Result<(), Str
 
 /// `import-kicad-netlist`: builds a board project from a schematic or netlist.
 pub(crate) fn cmd_import_kicad_netlist(mut arguments: Arguments) -> Result<(), String> {
-    let usage = "usage: pcb-maker import-kicad-netlist <schematic.kicad_sch|netlist.net> <out-dir> <board-id> [--layers N] [--footprints-from <board.kicad_pcb>] [--near-decoupling]";
+    let usage = "usage: pcb-maker import-kicad-netlist <schematic.kicad_sch|netlist.net> <out-dir> <board-id> [--layers N] [--mechanical-from <board.kicad_pcb>] [--mechanical-footprint UUID[=NET]] [--footprints-from <board.kicad_pcb>] [--stackup-from <board.kicad_pcb>] [--near-decoupling] [--keep-footprint-clearances]";
     let input = arguments.next().ok_or_else(|| usage.to_string())?;
     let output = arguments.next().ok_or_else(|| usage.to_string())?;
     let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
     pcb_kicad::check_board_id(&board_id)?;
     let mut layers = None;
     let mut footprints_from = None;
+    let mut stackup_from = None;
+    let mut mechanical_from = None;
+    let mut mechanical_footprints = Vec::new();
     let mut near_decoupling = false;
+    let mut keep_footprint_clearances = false;
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--near-decoupling" => near_decoupling = true,
+            "--keep-footprint-clearances" => keep_footprint_clearances = true,
             "--layers" => {
                 layers = Some(
                     arguments
@@ -221,16 +226,35 @@ pub(crate) fn cmd_import_kicad_netlist(mut arguments: Arguments) -> Result<(), S
                     arguments.next().ok_or_else(|| usage.to_string())?,
                 ));
             }
+            "--stackup-from" => {
+                stackup_from = Some(std::path::PathBuf::from(
+                    arguments.next().ok_or_else(|| usage.to_string())?,
+                ));
+            }
+            "--mechanical-from" => {
+                mechanical_from = Some(std::path::PathBuf::from(
+                    arguments.next().ok_or_else(|| usage.to_string())?,
+                ));
+            }
+            "--mechanical-footprint" => {
+                mechanical_footprints.push(arguments.next().ok_or_else(|| usage.to_string())?);
+            }
             _ => return Err(usage.into()),
         }
     }
-    let report = pcb_kicad_import::import_kicad_netlist_options(
+    let report = pcb_kicad_import::import_kicad_netlist_with_options(
         Path::new(&input),
         Path::new(&output),
         &board_id,
-        layers,
-        footprints_from.as_deref(),
-        near_decoupling,
+        pcb_kicad_import::KiCadNetlistImportOptions {
+            layers,
+            footprints_from: footprints_from.as_deref(),
+            stackup_from: stackup_from.as_deref(),
+            mechanical_from: mechanical_from.as_deref(),
+            mechanical_footprints: &mechanical_footprints,
+            near_decoupling,
+            keep_footprint_clearances,
+        },
     )?;
     println!(
         "{}",
@@ -238,6 +262,11 @@ pub(crate) fn cmd_import_kicad_netlist(mut arguments: Arguments) -> Result<(), S
     );
     if !report.missing.is_empty() {
         return Err(agent_cli::IMPORT_INCOMPLETE.into());
+    }
+    if report.mechanical_from.is_some_and(|mechanical| {
+        !mechanical.conflicting_locks.is_empty() || !mechanical.excluded_board_objects.is_empty()
+    }) {
+        return Err(agent_cli::IMPORT_MECHANICAL_INCOMPLETE.into());
     }
     Ok(())
 }
@@ -260,22 +289,78 @@ pub(crate) fn cmd_export_kicad_fab(mut arguments: Arguments) -> Result<(), Strin
     Ok(())
 }
 
-/// `score-kicad-board`: scores a placed board.
-pub(crate) fn cmd_score_kicad_board(mut arguments: Arguments) -> Result<(), String> {
-    let usage = "usage: pcb-maker score-kicad-board <project-dir> <board-id>";
-    let directory = arguments.next().ok_or_else(|| usage.to_string())?;
-    let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
-    pcb_kicad::check_board_id(&board_id)?;
-    if arguments.next().is_some() {
-        return Err(usage.into());
+pub(crate) struct BoardScoreArguments<'a> {
+    pub directory: &'a str,
+    pub board_id: &'a str,
+    pub reference: Option<&'a str>,
+    pub stored: bool,
+}
+
+pub(crate) fn board_score_arguments(
+    arguments: &[String],
+) -> Result<BoardScoreArguments<'_>, String> {
+    let usage = || {
+        "usage: pcb-maker score-kicad-board <project-dir> <board-id> [--stored] [--reference <dir>]"
+            .to_string()
+    };
+    let [directory, board_id, options @ ..] = arguments else {
+        return Err(usage());
+    };
+    let mut options = options.iter();
+    let (mut reference, mut stored) = (None, false);
+    while let Some(flag) = options.next() {
+        match flag.as_str() {
+            "--stored" if !stored => stored = true,
+            "--reference" if reference.is_none() => {
+                let path = options
+                    .next()
+                    .filter(|value| !value.starts_with("--"))
+                    .ok_or_else(usage)?;
+                reference = Some(path.as_str());
+            }
+            _ => return Err(usage()),
+        }
     }
-    let report = pcb_kicad::score_kicad_board(Path::new(&directory), &board_id)?;
+    Ok(BoardScoreArguments {
+        directory,
+        board_id,
+        reference,
+        stored,
+    })
+}
+
+/// `score-kicad-board`: scores a placed board.
+pub(crate) fn cmd_score_kicad_board(arguments: Arguments) -> Result<(), String> {
+    let arguments: Vec<_> = arguments.collect();
+    let BoardScoreArguments {
+        directory,
+        board_id,
+        reference,
+        stored,
+    } = board_score_arguments(&arguments)?;
+    pcb_kicad::check_board_id(board_id)?;
+    let report = pcb_kicad::score_kicad_board(Path::new(directory), board_id)?;
     let mut json = serde_json::to_value(&report).map_err(|error| error.to_string())?;
-    // The pours' pieces by the router's pour model (the verdict's
-    // `pours`), with the project's rules.
-    let config = board_router_config(None, &directory, &board_id)?;
-    let pours = pcb_kicad::measure_pours(Path::new(&directory), &board_id, &config)?;
-    json["pours"] = serde_json::to_value(&pours).map_err(|error| error.to_string())?;
+    let board_name = format!("{board_id}.kicad_pcb");
+    let written = Path::new(directory).join(&board_name);
+    if stored {
+        let fills = pcb_kicad::inspect_kicad_stored_zone_fills(&written)?;
+        json["stored_zone_fills"] =
+            serde_json::to_value(&fills).map_err(|error| error.to_string())?;
+    } else {
+        // The pours' pieces by the router's model, with the project's rules.
+        let config = board_router_config(None, directory, board_id)?;
+        let pours = pcb_kicad::measure_pours(Path::new(directory), board_id, &config)?;
+        json["pours"] = serde_json::to_value(&pours).map_err(|error| error.to_string())?;
+    }
+    if let Some(reference) = reference {
+        let comparison = pcb_kicad::compare_kicad_designer_pours(
+            &Path::new(reference).join(&board_name),
+            &written,
+        )?;
+        json["designer_pours"] =
+            serde_json::to_value(comparison).map_err(|error| error.to_string())?;
+    }
     println!(
         "{}",
         serde_json::to_string_pretty(&json).map_err(|error| error.to_string())?
@@ -372,15 +457,27 @@ pub(crate) fn cmd_swap_kicad_pins(mut arguments: Arguments) -> Result<(), String
 
 /// `repair-kicad-necks`: widens connection-width necks of a routed board.
 pub(crate) fn cmd_repair_kicad_necks(mut arguments: Arguments) -> Result<(), String> {
-    let usage = "usage: pcb-maker repair-kicad-necks <routed-directory> <board-id> [config.json|auto] (changes the directory in place)";
+    let usage = "usage: pcb-maker repair-kicad-necks <routed-directory> <board-id> [config.json|auto | --widen-supplemental <new-output>]";
     let directory = arguments.next().ok_or_else(|| usage.to_string())?;
     let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
     pcb_kicad::check_board_id(&board_id)?;
-    let config = board_router_config(arguments.next().as_deref(), &directory, &board_id)?;
-    let repair = pcb_kicad::repair_kicad_necks(Path::new(&directory), &board_id, &config)?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&repair).map_err(|error| error.to_string())?
-    );
+    let option = arguments.next();
+    let report = if option.as_deref() == Some("--widen-supplemental") {
+        let output = arguments.next().ok_or(usage)?;
+        if arguments.next().is_some() {
+            return Err(usage.into());
+        }
+        let repair = pcb_kicad::widen_kicad_neck_tracks(
+            Path::new(&directory),
+            &board_id,
+            Path::new(&output),
+        )?;
+        serde_json::to_string_pretty(&repair)
+    } else {
+        let config = board_router_config(option.as_deref(), &directory, &board_id)?;
+        let repair = pcb_kicad::repair_kicad_necks(Path::new(&directory), &board_id, &config)?;
+        serde_json::to_string_pretty(&repair)
+    };
+    println!("{}", report.map_err(|error| error.to_string())?);
     Ok(())
 }

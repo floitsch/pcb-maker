@@ -32,7 +32,7 @@ pub fn reference_index(references: &[String]) -> HashMap<String, usize> {
         .collect()
 }
 
-fn component_of(label: &str, index: &HashMap<String, usize>) -> Option<usize> {
+pub(super) fn component_of(label: &str, index: &HashMap<String, usize>) -> Option<usize> {
     label
         .match_indices('.')
         .map(|(at, _)| &label[..at])
@@ -148,6 +148,8 @@ pub(super) fn lowered_at(
             write_footprint_pose(footprint, *pose).ok()?;
         }
     }
+    pcb_kicad_route::board_router::refresh_pour_regions(&mut candidate, &router_config.add_pours)
+        .ok()?;
     match lower(&candidate, router_config, connect) {
         Ok(lowered) => Some(lowered.board),
         Err(error) => {

@@ -42,6 +42,7 @@ fn problem() -> (core::Problem, Vec<String>, PadNames) {
         tight_hollow: Vec::new(),
         hole_rings: Vec::new(),
         copper_graphics: Vec::new(),
+        unassigned_copper_graphics: Vec::new(),
         courtless: Vec::new(),
         slots: Vec::new(),
     };
@@ -90,6 +91,7 @@ fn apply(json: &str) -> Result<(core::Problem, Vec<String>), String> {
         &[None, None, None],
         &constraints,
         10.0,
+        &[],
     )?;
     Ok((problem, warnings))
 }
@@ -112,6 +114,7 @@ fn move_all_sends_mounting_holes_nobody_placed_to_the_corners() {
             &[None, None, None],
             &constraints,
             10.0,
+            &[],
         )
         .unwrap();
         problem
@@ -130,6 +133,44 @@ fn move_all_sends_mounting_holes_nobody_placed_to_the_corners() {
     assert_eq!(
         problem.constraints.edges,
         vec![(0, Edge::Bottom, 1.0 + 1.0e-3)]
+    );
+}
+
+#[test]
+fn an_inferred_hole_corner_gives_way_to_a_held_part() {
+    let run = |entry: &str| {
+        let (mut problem, references, pads) = problem();
+        problem.components[0].far_side = vec![[-1.0, -1.0, 1.0, 1.0]];
+        problem.components[1].body_size = [6.0, 6.0];
+        let brief = serde_json::from_str(entry).unwrap();
+        apply_constraints(
+            &mut problem,
+            &references,
+            &pads,
+            &[Vec::new(), Vec::new(), Vec::new()],
+            &[None, None, None],
+            &[None, None, None],
+            &[false, false, false],
+            &[None, None, None],
+            &brief,
+            10.0,
+            &[],
+        )
+        .unwrap();
+        problem
+    };
+    let held = run(
+        r#"{"version":1,"move_all":true,"place":[{"part":"C1","x":3,"y":3,"origin":"absolute"}]}"#,
+    );
+    assert_eq!(held.constraints.edges, vec![(0, Edge::Top, 1.001)]);
+    assert_eq!(held.poses[1].position, [3.0, 3.0]);
+    assert!(held.components[1].fixed);
+    let authored = run(r#"{"version":1,"move_all":true,
+        "place":[{"part":"C1","x":3,"y":3,"origin":"absolute"}],
+        "edge":[{"part":"J1","edge":"top"},{"part":"J1","edge":"left"}]}"#);
+    assert_eq!(
+        authored.constraints.edges,
+        vec![(0, Edge::Top, 1.001), (0, Edge::Left, 1.001)]
     );
 }
 
@@ -157,6 +198,7 @@ fn a_repeated_reference_names_its_parts_in_turn() {
         &[None, None, None],
         &constraints,
         10.0,
+        &[],
     )
     .unwrap();
     let edges: Vec<(usize, Edge)> = problem
@@ -204,6 +246,7 @@ fn a_repeated_reference_entry_with_a_uuid_names_that_footprint() {
         &uuids,
         &constraints,
         10.0,
+        &[],
     )
     .unwrap();
     let edges: Vec<(usize, Edge)> = problem
@@ -244,6 +287,7 @@ fn a_repeated_reference_entry_with_a_uuid_names_that_footprint() {
         &uuids,
         &unknown,
         10.0,
+        &[],
     )
     .unwrap_err();
     assert!(error.contains("uuid \"aaaa\""), "{error}");
@@ -597,6 +641,52 @@ fn apart_keeps_every_named_part_from_every_other() {
 }
 
 #[test]
+fn a_footprint_cannot_have_two_different_exact_poses() {
+    let position = apply(
+        r#"{"version": 1, "place": [
+            {"part": "C1", "x": 5, "y": 6},
+            {"part": "C1", "x": 9, "y": 6, "origin": "absolute"}
+        ]}"#,
+    )
+    .unwrap_err();
+    assert!(
+        position.contains("conflicting place entries for C1"),
+        "{position}"
+    );
+    assert!(position.contains("(5.000000, 6.000000)"), "{position}");
+    assert!(position.contains("(9.000000, 6.000000)"), "{position}");
+    let angle = apply(
+        r#"{"version": 1, "place": [
+            {"part": "C1", "x": 5, "y": 6, "angle": 90},
+            {"part": "C1", "x": 5, "y": 6, "angle": 180}
+        ]}"#,
+    )
+    .unwrap_err();
+    assert!(angle.contains("90.000000 degrees"), "{angle}");
+    assert!(angle.contains("180.000000 degrees"), "{angle}");
+}
+
+#[test]
+fn equivalent_exact_place_entries_can_supply_an_omitted_angle() {
+    let (problem, _) = apply(
+        r#"{"version": 1, "place": [
+            {"part": "C1", "x": 5, "y": 6},
+            {"part": "C1", "x": 5, "y": 6, "angle": 90, "origin": "absolute"},
+            {"part": "C1", "x": 5, "y": 6, "angle": 450}
+        ]}"#,
+    )
+    .unwrap();
+    assert_eq!(problem.poses[1].angle, 90.0);
+    let report = constraint_report(&problem, &problem.poses, &references());
+    let places: Vec<_> = report
+        .iter()
+        .filter(|status| status.kind == "place")
+        .collect();
+    assert_eq!(places.len(), 1, "{report:?}");
+    assert!(places[0].satisfied, "{report:?}");
+}
+
+#[test]
 fn place_takes_words_and_exact_poses() {
     let (problem, _) = apply(
         r#"{"version": 1, "device_front": "left",
@@ -701,6 +791,7 @@ fn a_near_on_a_panels_copy_anchors_in_the_parts_own_copy() {
         &[None, None, None],
         &constraints,
         10.0,
+        &[],
     )
     .unwrap();
     assert_eq!(
@@ -895,6 +986,7 @@ fn constraints_kept_by_construction_are_reported() {
         &[None, None, None],
         &constraints,
         10.0,
+        &[],
     )
     .unwrap();
     let kept = |poses: &[core::Pose]| -> Vec<(String, String, bool)> {
@@ -944,6 +1036,7 @@ fn constraints_kept_by_construction_are_reported() {
         &[None, None, None],
         &constraints,
         10.0,
+        &[],
     )
     .unwrap();
     let statuses: Vec<(String, bool)> = constraint_report(&socket, &socket.poses, &references)
@@ -1029,6 +1122,7 @@ fn a_turned_row_keeps_its_members() {
         &[None, None, None],
         &constraints,
         10.0,
+        &[],
     )
     .unwrap();
     assert_eq!(problem.poses[2].position, [7.0, 10.0]);
@@ -1087,6 +1181,7 @@ fn a_row_turned_a_quarter_keeps_its_members() {
         &[None, None, None],
         &constraints,
         10.0,
+        &[],
     )
     .unwrap();
     // The row's body in its first part's frame: the two 2 x 1 mm parts
@@ -1130,6 +1225,7 @@ fn near_may_name_a_row_member_as_its_anchor() {
         &[None, None, None, None],
         &constraints,
         10.0,
+        &[],
     )
     .unwrap();
     assert_eq!(
@@ -1332,9 +1428,8 @@ fn one_notion_of_a_held_part_covers_every_case() {
         held_names(&held_parts(&pcb, &row_config).unwrap()),
         ["F1", "P1", "C1", "X1", "L1", "E1", "J1"]
     );
-    // move_all: every part is placed but locked ones and those
-    // constraints.json fixes or places (docs/constraints.md); the
-    // placer's own `fixed` list and the defaults go too.
+    // move_all releases inferred holds. Explicit placer holds, native
+    // locks and the brief's fixed poses still govern the placement.
     let mut all = constraints;
     all.move_all = true;
     let config = KiCadBoardPlacerConfig {
@@ -1343,7 +1438,7 @@ fn one_notion_of_a_held_part_covers_every_case() {
     };
     assert_eq!(
         held_names(&held_parts(&pcb, &config).unwrap()),
-        ["C1", "X1", "L1"]
+        ["F1", "P1", "C1", "X1", "L1"]
     );
 }
 
@@ -1444,6 +1539,33 @@ fn a_keepout_over_a_fixed_part_allows_footprints_and_warns() {
     let by_constraints = held_parts(&pcb, &by_constraints).unwrap();
     let warnings = apply_keepouts(&mut pcb, &over, &by_constraints).unwrap();
     assert!(warnings[0].contains("(J2)"), "{warnings:?}");
+}
+
+#[test]
+fn a_project_constraints_file_is_reported_only_when_unselected() {
+    let directory =
+        std::env::temp_dir().join(format!("pcb-maker-unselected-{}", std::process::id()));
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("b.kicad_pcb"), "(kicad_pcb)").unwrap();
+    fs::write(
+        directory.join("constraints.json"),
+        r#"{"version": 1, "move_all": true}"#,
+    )
+    .unwrap();
+    let mut config = KiCadBoardPlacerConfig::default();
+    let warnings = placement_input_warnings(&directory, "b", &config).unwrap();
+    assert!(
+        warnings
+            .iter()
+            .any(|message| message.contains("placer.constraints"))
+    );
+    config.constraints = Some(KiCadConstraintsSource::File("constraints.json".into()));
+    assert!(
+        placement_input_warnings(&directory, "b", &config)
+            .unwrap()
+            .is_empty()
+    );
+    fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]
@@ -1556,6 +1678,65 @@ fn fixed_parts_at_one_spot_are_warned_of() {
 }
 
 #[test]
+fn held_courtyard_recess_clears_box_warning_at_written_pose() {
+    let board = |pad_x: f64| {
+        parse(&format!(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+                (gr_rect (start 0 0) (end 60 40) (layer "Edge.Cuts"))
+                (footprint "concave" (layer "F.Cu") (at 40 25) (property "Reference" "C1")
+                    (fp_poly (pts (xy 0 0) (xy 6 0) (xy 6 3) (xy 4 3) (xy 4 6) (xy 0 6)) (layer "F.CrtYd"))
+                    (pad "1" smd circle (at {pad_x} 4.5) (size 0.5 0.5) (layers "F.Cu") (net "A")))
+                (footprint "square" (layer "F.Cu") (at 50 25) (property "Reference" "C2")
+                    (fp_rect (start -0.4 -0.4) (end 0.4 0.4) (layer "F.CrtYd"))
+                    (pad "1" smd circle (at 0 0) (size 0.5 0.5) (layers "F.Cu") (net "B"))))"#,
+        ))
+        .unwrap()
+    };
+    for (x, pad_x, expected) in [
+        (22.5, 0.5, None),
+        (20.5, 0.5, Some("courtyards")),
+        (22.5, 5.0, Some("pads on F.Cu")),
+    ] {
+        let mut pcb = board(pad_x);
+        let constraints = serde_json::from_str(&format!(
+            r#"{{"version": 1, "place": [{{"part":"C1","x":18,"y":18,"angle":90}},{{"part":"C2","x":{x},"y":13}}]}}"#,
+        )).unwrap();
+        let config = KiCadBoardPlacerConfig {
+            constraints: Some(KiCadConstraintsSource::Inline(constraints)),
+            ..Default::default()
+        };
+        let lowered = crate::board_placer::lower_placement(&pcb, &config).unwrap();
+        let warned = lowered
+            .constraint_warnings
+            .iter()
+            .any(|warning| warning.starts_with("fixed parts C1 and C2 overlap"));
+        assert_eq!(
+            warned,
+            expected.is_some(),
+            "{x} {pad_x}: {:?}",
+            lowered.constraint_warnings
+        );
+
+        let Expr::List(items) = &mut pcb else {
+            unreachable!()
+        };
+        for (footprint, pose) in items
+            .iter_mut()
+            .filter(|node| node.head() == Some("footprint"))
+            .zip(lowered.problem.poses)
+        {
+            crate::footprint_bodies::write_footprint_pose(footprint, pose).unwrap();
+        }
+        let pairs =
+            held_parts_overlapping(&pcb, &super::held::HeldParts(vec![true, true])).unwrap();
+        match expected {
+            Some(reason) => assert!(pairs[0].2.contains(reason), "{pairs:?}"),
+            None => assert!(pairs.is_empty(), "{pairs:?}"),
+        }
+    }
+}
+
+#[test]
 fn fixed_pads_whose_boxes_meet_but_not_their_copper_are_not_warned_of() {
     // framework_mobo_lefthalf: R31's 0603 pad under J1's oval
     // through-hole pad, 0.087 mm apart by KiCad, their boxes 0.2 mm
@@ -1623,6 +1804,7 @@ fn apply_to(
         &[None, None, None],
         &constraints,
         10.0,
+        &[],
     )?;
     Ok(problem)
 }

@@ -15,6 +15,58 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[path = "zone_width.rs"]
+mod zone_width;
+pub use zone_width::{
+    ZoneWidthLocalization, ZoneWidthLocation, localize_zone_widths,
+    localize_zone_widths_from_checked_fill,
+};
+
+/// DRC findings excluded from routed-board scoring and verdicts.
+pub fn is_cosmetic_drc(kind: &str) -> bool {
+    [
+        "silk_",
+        "text_",
+        "lib_footprint",
+        "footprint_type_mismatch",
+        "missing_courtyard",
+        "isolated_copper",
+        "nonmirrored_text",
+    ]
+    .iter()
+    .any(|prefix| kind.starts_with(prefix))
+}
+
+/// Electrical and other design errors in a complete all-severity report.
+/// Open connections and schematic parity have their own counts.
+pub fn count_scoped_drc_errors(report: &Value) -> Option<usize> {
+    if !report["included_severities"]
+        .as_array()
+        .is_some_and(|severities| severities.iter().any(|severity| severity == "error"))
+        || !report["unconnected_items"].is_array()
+    {
+        return None;
+    }
+    report["violations"]
+        .as_array()?
+        .iter()
+        .try_fold(0, |count, finding| {
+            let severity = finding["severity"].as_str()?;
+            let kind = finding["type"].as_str()?;
+            if !matches!(severity, "error" | "warning" | "exclusion") || kind.is_empty() {
+                return None;
+            }
+            Some(
+                count
+                    + usize::from(
+                        severity == "error"
+                            && finding["excluded"].as_bool() != Some(true)
+                            && !is_cosmetic_drc(kind),
+                    ),
+            )
+        })
+}
+
 /// Whether a validated DRC finding is tracked as library metadata rather than
 /// a board design violation. Keep this policy shared by absolute verification
 /// and source/result admission; other warnings and mismatch errors still count.
@@ -205,12 +257,95 @@ pub(super) fn validate_report(
     validate().map_err(|error| format!("invalid {kind:?} report for {}: {error}", input.display()))
 }
 
+pub fn validate_drc_report(report: &Value, input: &Path) -> Result<(), String> {
+    validate_report(report, ReportKind::Drc, input)
+}
+
 pub fn remove_if_present(path: &Path) -> Result<(), String> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(format!("failed to invalidate {}: {error}", path.display())),
     }
+}
+
+/// Removes reports and previews for the prior board from a staged project
+/// copy. Placement constraints, configuration and libraries are inputs.
+pub fn remove_stale_board_run_reports(directory: &Path) -> Result<(), String> {
+    for name in [
+        "drc.json",
+        "erc.json",
+        "verification.json",
+        "verdict.json",
+        "board-router.json",
+        "board-placer.json",
+        "board-layout.json",
+        "preview.json",
+        "preview.svg",
+        "preview-labels.json",
+        "placement.html",
+        "native-check-drc.json",
+        "drc-stored-input.json",
+        "drc-protected-planes.json",
+        "drc-rejected-protected-planes.json",
+        "drc-original-before-trial.json",
+        "drc-original-library-sample.json",
+        "drc-refilled-as-published.json",
+        "drc-width-source-replay.json",
+        "drc-width-source-replay-rotated.json",
+        "reference-drc.json",
+        "necks.json",
+        "supplemental-neck-repair.json",
+        "drc-before-supplemental-necks.json",
+        "drc-supplemental-neck-trial.json",
+        "hatched-neck-repair.json",
+        "drc-before-hatched-necks.json",
+        "drc-hatched-necks-trial.json",
+        "drc-hatched-neck-bridges.json",
+        "dangling-repair.json",
+        "drc-before-dangling-repair.json",
+        "drc-dangling-repair-trial.json",
+        "drc-before-dangling-stored.json",
+        "drc-before-dangling-refilled.json",
+        "drc-dangling-trial-stored.json",
+        "drc-dangling-trial-refilled.json",
+        "silkscreen-repair.json",
+        "zone-island-repair.json",
+        "open-repair.json",
+        "drc-before-open-repair.json",
+        "relocated-open-repair.json",
+        "drc-before-relocation-stored.json",
+        "drc-before-relocation-refilled.json",
+        "drc-relocation-trial-stored.json",
+        "drc-relocation-trial-refilled.json",
+        "fill-handoff.json",
+        "drc-saved-fill.json",
+        "drc-before-fill.json",
+        "drc-as_saved.json",
+        "drc-as_saved.log",
+        "drc-refilled.json",
+        "drc-refilled.log",
+    ] {
+        remove_if_present(&directory.join(name))?;
+    }
+    for entry in fs::read_dir(directory).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if entry.file_name().to_str().is_some_and(|name| {
+            let numeric =
+                |part: &str| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit());
+            let Some(stem) = name.strip_suffix(".json") else {
+                return false;
+            };
+            stem.strip_prefix("drc-open-trial-").is_some_and(numeric)
+                || stem
+                    .strip_prefix("drc-open-width-source-")
+                    .and_then(|rest| rest.split_once('-'))
+                    .is_some_and(|(trial, replay)| numeric(trial) && numeric(replay))
+        }) {
+            remove_if_present(&entry.path())?;
+        }
+    }
+    Ok(())
 }
 
 struct ReportDirectory(PathBuf);
@@ -341,6 +476,36 @@ pub fn run_kicad_report(arguments: &[&str], output: &Path, input: &Path) -> Resu
     result
 }
 
+/// Exports the current schematic through KiCad into private scratch space.
+/// There can also be a .net beside the schematic from a previous revision.
+pub fn export_schematic_netlist(input: &Path) -> Result<crate::Expr, String> {
+    let scratch = ReportDirectory::new(&std::env::temp_dir())?;
+    let output = scratch.0.join("schematic.net");
+    let mut command = Command::new(kicad_cli());
+    command
+        .args([
+            "sch",
+            "export",
+            "netlist",
+            "--format",
+            "kicadsexpr",
+            "--output",
+        ])
+        .arg(&output)
+        .arg(input);
+    let started = std::time::Instant::now();
+    let result = run_bounded(&mut command, &scratch.0);
+    note_kicad(started);
+    let (status, transcript) = result?;
+    if !status.success() {
+        return Err(format!(
+            "kicad-cli netlist export failed with {status}: {transcript}"
+        ));
+    }
+    let text = fs::read_to_string(output).map_err(|error| error.to_string())?;
+    crate::parse(&text)
+}
+
 fn run_kicad_report_untimed(arguments: &[&str], output: &Path, input: &Path) -> Result<(), String> {
     let program = kicad_cli();
     let program = program.as_os_str();
@@ -401,6 +566,457 @@ fn run_report_command(
     run_report_command_cached(program, arguments, output, input, None, None)
 }
 
+/// Fresh, raw DRC for a staged fill handoff. The save pass lets KiCad
+/// write the board. The stored pass reads the file as is, including for
+/// panels, without repair, refill, cached reports or finding excuses.
+pub fn run_fill_handoff_drc(
+    board: &Path,
+    output: &Path,
+    parity: bool,
+    save_refill: bool,
+) -> Result<Value, String> {
+    run_exact_drc(board, output, parity, save_refill, save_refill)
+}
+
+pub(crate) fn ordinary_drc_arguments(
+    parity: bool,
+    refill: bool,
+    save_board: bool,
+) -> Vec<&'static str> {
+    let mut arguments = vec!["pcb", "drc", "--format", "json", "--severity-all"];
+    if parity {
+        arguments.push("--schematic-parity");
+    }
+    if refill {
+        arguments.push("--refill-zones");
+    }
+    if save_board {
+        arguments.push("--save-board");
+    }
+    arguments.push("--output");
+    arguments
+}
+
+/// The ordinary layout DRC, saving its fill in the caller's private copy.
+pub(crate) fn run_layout_refill_drc(board: &Path, output: &Path) -> Result<Value, String> {
+    run_fresh_handoff_report(board, output, &ordinary_drc_arguments(true, true, true))
+}
+
+/// Resample a capped library report on the original project. Only the
+/// enumeration order of its footprint forms changes in this private copy.
+pub fn resample_footprint_warnings(
+    board: &Path,
+    output: &Path,
+    expired: impl Fn() -> bool,
+) -> Result<Value, String> {
+    use pcb_kicad_file::kicad_sexpr::{Expr, encode, parse};
+    if expired() {
+        return Err("deadline reached before resampling the source footprint warnings".into());
+    }
+    let scratch = ReportDirectory::new(output.parent().ok_or("missing report directory")?)?;
+    let project = scratch.0.join("project");
+    pcb_kicad_file::fs_util::copy_directory_tree(
+        board.parent().ok_or("missing project directory")?,
+        &project,
+    )?;
+    let staged = project.join(board.file_name().ok_or("missing PCB name")?);
+    let mut original = parse(&fs::read_to_string(&staged).map_err(|e| e.to_string())?)?;
+    let Expr::List(items) = &mut original else {
+        return Err("missing PCB forms".into());
+    };
+    let slots: Vec<_> = items
+        .iter()
+        .enumerate()
+        .filter_map(|(i, item)| (item.head() == Some("footprint")).then_some(i))
+        .collect();
+    for i in 0..slots.len() / 2 {
+        items.swap(slots[i], slots[slots.len() - 1 - i]);
+    }
+    fs::write(&staged, encode(&original)).map_err(|e| e.to_string())?;
+    check_kept_route_input(
+        &staged,
+        output,
+        staged.with_extension("kicad_sch").is_file(),
+        true,
+        expired,
+    )
+}
+
+/// Independent all-track DRC for routing with reused copper. Zone refill,
+/// where needed, is in memory and the board under test is not saved.
+pub fn run_route_reuse_drc(board: &Path, output: &Path, refill: bool) -> Result<Value, String> {
+    run_exact_drc(board, output, true, refill, false)
+}
+
+/// Reads an unchanged private project under the same native rule policy as
+/// an all-track DRC. An optional preflight can stop at its own time limit.
+pub fn check_kept_route_input(
+    board: &Path,
+    output: &Path,
+    parity: bool,
+    refill: bool,
+    expired: impl Fn() -> bool,
+) -> Result<Value, String> {
+    check_scoped_drc(board, output, parity, refill, false, expired)
+}
+
+/// Refill a private candidate under the native check's wall guard.
+pub fn save_kept_route_fill(
+    board: &Path,
+    output: &Path,
+    parity: bool,
+    expired: impl Fn() -> bool,
+) -> Result<Value, String> {
+    check_scoped_drc(board, output, parity, true, true, expired)
+}
+
+/// Read KiCad's refilled geometry from a private copy, including transient
+/// teardrops. The original board and its manufacturing rules stay intact.
+pub fn read_refilled_board(
+    board: &Path,
+    expired: impl Fn() -> bool,
+) -> Result<pcb_kicad_file::kicad_sexpr::Expr, String> {
+    let scratch = ReportDirectory::new(&std::env::temp_dir())?;
+    let name = board.file_name().ok_or("missing PCB filename")?;
+    let saved = scratch.0.join(name);
+    fs::copy(board, &saved).map_err(|error| error.to_string())?;
+    for extension in ["kicad_pro", "kicad_dru"] {
+        let source = board.with_extension(extension);
+        if source.is_file() {
+            fs::copy(source, saved.with_extension(extension)).map_err(|error| error.to_string())?;
+        }
+    }
+    save_kept_route_fill(&saved, &scratch.0.join("drc.json"), false, expired)?;
+    let text = fs::read_to_string(&saved).map_err(|error| error.to_string())?;
+    pcb_kicad_file::canonical_order::parse_board(&text)
+}
+
+fn check_scoped_drc(
+    board: &Path,
+    output: &Path,
+    parity: bool,
+    refill: bool,
+    save_board: bool,
+    expired: impl Fn() -> bool,
+) -> Result<Value, String> {
+    check_guarded_drc(
+        board,
+        output,
+        parity,
+        exact_drc_arguments(parity, refill, save_board),
+        expired,
+    )
+}
+
+fn check_zone_width_witness(
+    board: &Path,
+    output: &Path,
+    expired: impl Fn() -> bool,
+) -> Result<Value, String> {
+    let mut arguments = exact_drc_arguments(false, false, false);
+    // The temporary tracks are used solely to tag connection widths.
+    // Exhaustive track clearance occurrences do not enter that proof.
+    arguments.retain(|argument| *argument != "--all-track-errors");
+    check_guarded_drc(board, output, false, arguments, expired)
+}
+
+fn check_guarded_drc(
+    board: &Path,
+    output: &Path,
+    parity: bool,
+    arguments: Vec<&str>,
+    expired: impl Fn() -> bool,
+) -> Result<Value, String> {
+    let parent = output.parent().ok_or("a DRC report needs a directory")?;
+    let scratch = ReportDirectory::new(parent)?;
+    let fresh = scratch.0.join("drc.json");
+    let mut command = Command::new(kicad_cli());
+    command.args(arguments).arg(&fresh).arg(board);
+    crate::kicad_config::configure_drc(&mut command, &kicad_cli(), board);
+    let (status, log) =
+        crate::ledger::kicad_check(|| run_bounded_unreserved(&mut command, &scratch.0, expired))?;
+    if !status.success() {
+        return Err(format!("KiCad input DRC failed with {status}: {log}"));
+    }
+    let report = read_kicad_report(&fresh)?;
+    let severities = report["included_severities"]
+        .as_array()
+        .ok_or("KiCad input DRC did not report its checked severities")?;
+    if ["error", "warning", "exclusion"]
+        .iter()
+        .any(|wanted| !severities.iter().any(|known| known == *wanted))
+    {
+        return Err("KiCad input DRC did not cover all severities".into());
+    }
+    if parity {
+        required_array(&report, "schematic_parity")?;
+    }
+    fs::rename(&fresh, output).map_err(|error| error.to_string())?;
+    Ok(report)
+}
+
+/// An optional, read-only native electrical census. The caller supplies
+/// the version of the DRC which it supplements and the same private PCB
+/// path used for that DRC, with its project and rules next to it.
+pub fn connectivity_partition(
+    board: &Path,
+    version: &str,
+    refill: bool,
+    wall_passed: impl Fn() -> bool,
+) -> Result<Vec<(String, Vec<String>)>, String> {
+    let parent = board
+        .parent()
+        .ok_or("connectivity PCB needs a project directory")?;
+    let scratch = ReportDirectory::new(parent)?;
+    let result = scratch.0.join("partition.json");
+    let mut command = Command::new("python3");
+    command
+        .args(["-I", "-c", include_str!("connectivity_partition.py")])
+        .arg(board)
+        .arg(&result)
+        .args([if refill { "refill" } else { "stored" }, version]);
+    crate::kicad_config::configure_drc(&mut command, &kicad_cli(), board);
+    let (status, log) = crate::ledger::kicad_check(|| {
+        run_bounded_unreserved(&mut command, &scratch.0, wall_passed)
+    })
+    .map_err(|error| format!("optional KiCad Python connectivity check unavailable: {error}"))?;
+    if !status.success() {
+        return Err(format!(
+            "optional KiCad Python connectivity check failed: {}",
+            log.lines().last().unwrap_or("no native result")
+        ));
+    }
+    serde_json::from_slice(&fs::read(&result).map_err(|error| error.to_string())?)
+        .map_err(|error| format!("invalid native connectivity result: {error}"))
+}
+
+/// Prove contacts between footprint copper graphics and pads on a private
+/// copy of the exact saved board. This probe does not refill or edit copper.
+pub fn footprint_artwork_bridges(
+    board: &Path,
+    version: &str,
+    witnesses: &Value,
+) -> Result<(Value, String), String> {
+    native_board_probe(
+        board,
+        version,
+        witnesses,
+        include_str!("footprint_artwork_bridges.py"),
+        "artwork",
+    )
+}
+
+/// Screen candidate same-face placement moves around a short two-layer link.
+pub fn placement_escape_probe(
+    board: &Path,
+    version: &str,
+    request: &Value,
+) -> Result<(Value, String), String> {
+    native_board_probe(
+        board,
+        version,
+        request,
+        include_str!("placement_escape.py"),
+        "placement escape",
+    )
+}
+
+/// Measure explicit pad pairs or resolve authored near entries on saved copper.
+pub fn routed_path_probe(
+    board: &Path,
+    version: &str,
+    request: &Value,
+) -> Result<(Value, String), String> {
+    bounded_native_board_probe(
+        board,
+        version,
+        request,
+        concat!(
+            include_str!("routed_supply_paths.py"),
+            "\n",
+            include_str!("routed_path_probe.py"),
+        ),
+        "routed pad path",
+        true,
+        || false,
+    )
+}
+
+/// Screen short bridge or fill patches around chords found by the native
+/// width locator. Its proposals still need an exact refill and reopen DRC.
+pub fn hatch_neck_geometry(
+    board: &Path,
+    version: &str,
+    request: &Value,
+    expired: impl Fn() -> bool,
+) -> Result<(Value, String), String> {
+    bounded_native_board_probe(
+        board,
+        version,
+        request,
+        include_str!("hatch_neck_geometry.py"),
+        "hatch neck geometry",
+        true,
+        expired,
+    )
+}
+
+fn native_board_probe(
+    board: &Path,
+    version: &str,
+    input_data: &Value,
+    script: &str,
+    name: &str,
+) -> Result<(Value, String), String> {
+    bounded_native_board_probe(board, version, input_data, script, name, false, || false)
+}
+
+fn bounded_native_board_probe(
+    board: &Path,
+    version: &str,
+    input_data: &Value,
+    script: &str,
+    name: &str,
+    copy_rules: bool,
+    expired: impl Fn() -> bool,
+) -> Result<(Value, String), String> {
+    use std::time::{Duration, Instant};
+
+    const MAX_BOARD_BYTES: u64 = 32 * 1024 * 1024;
+    if fs::metadata(board)
+        .map_err(|error| error.to_string())?
+        .len()
+        > MAX_BOARD_BYTES
+    {
+        return Err(format!(
+            "the PCB exceeds the native {name} probe's board size limit"
+        ));
+    }
+    let started = Instant::now();
+    let scratch = ReportDirectory::new(&std::env::temp_dir())?;
+    let original = crate::fs_util::file_sha256(board)?;
+    let input = scratch
+        .0
+        .join(board.file_name().ok_or("missing PCB filename")?);
+    fs::copy(board, &input).map_err(|error| error.to_string())?;
+    if copy_rules {
+        for extension in ["kicad_pro", "kicad_dru"] {
+            let source = board.with_extension(extension);
+            if source.is_file() {
+                fs::copy(source, input.with_extension(extension))
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+    }
+    if crate::fs_util::file_sha256(&input)? != original {
+        return Err(format!("the PCB changed before the native {name} probe"));
+    }
+    let request = scratch.0.join("request.json");
+    let result = scratch.0.join("result.json");
+    fs::write(
+        &request,
+        serde_json::to_vec(input_data).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let mut command = Command::new("python3");
+    command
+        .args(["-I", "-c", script])
+        .arg(&input)
+        .arg(&request)
+        .arg(&result)
+        .arg(version);
+    let (status, log) = crate::ledger::kicad_check(|| {
+        run_bounded_unreserved(&mut command, &scratch.0, || {
+            expired() || started.elapsed() >= Duration::from_secs(8)
+        })
+    })
+    .map_err(|error| format!("native KiCad {name} probe unavailable: {error}"))?;
+    if !status.success() {
+        return Err(format!(
+            "native KiCad {name} probe failed: {}",
+            log.lines().last().unwrap_or("no native result")
+        ));
+    }
+    if crate::fs_util::file_sha256(board)? != original {
+        return Err(format!("the PCB changed during the native {name} probe"));
+    }
+    let value = serde_json::from_slice(&fs::read(result).map_err(|error| error.to_string())?)
+        .map_err(|error| format!("invalid native {name} probe result: {error}"))?;
+    Ok((value, original))
+}
+
+pub(crate) fn exact_drc_arguments(
+    parity: bool,
+    refill: bool,
+    save_board: bool,
+) -> Vec<&'static str> {
+    let mut args = vec![
+        "pcb",
+        "drc",
+        "--format",
+        "json",
+        "--severity-all",
+        "--all-track-errors",
+    ];
+    if parity {
+        args.push("--schematic-parity");
+    }
+    if refill {
+        args.push("--refill-zones");
+    }
+    if save_board {
+        args.push("--save-board");
+    }
+    args.push("--output");
+    args
+}
+
+pub(crate) fn route_reuse_drc_input_key(board: &Path, refill: bool) -> Result<String, String> {
+    let program = kicad_cli();
+    let config = crate::kicad_config::drc_config_home(&program, board)
+        .ok_or("route reuse DRC is using the user's library configuration")?;
+    let arguments = exact_drc_arguments(true, refill, false);
+    let context = crate::drc_cache::KeyContext::current(&program, &arguments, Some(&config))?;
+    crate::drc_cache::key(&context, board)
+}
+
+fn run_exact_drc(
+    board: &Path,
+    output: &Path,
+    parity: bool,
+    refill: bool,
+    save_board: bool,
+) -> Result<Value, String> {
+    run_fresh_handoff_report(
+        board,
+        output,
+        &exact_drc_arguments(parity, refill, save_board),
+    )
+}
+
+fn run_fresh_handoff_report(
+    board: &Path,
+    output: &Path,
+    arguments: &[&str],
+) -> Result<Value, String> {
+    let started = std::time::Instant::now();
+    let program = kicad_cli();
+    let program = program.as_os_str();
+    let config = crate::kicad_config::drc_config_home(program, board);
+    let checked = run_report_command_with_policy(
+        program,
+        arguments,
+        output,
+        board,
+        None,
+        config.as_deref(),
+        true,
+    );
+    note_kicad(started);
+    checked?;
+    read_kicad_report(output)
+}
+
 /// Runs a native report, a DRC through the cache in `cache` (see
 /// `drc_cache`): a hit is validated and published exactly as a fresh
 /// report is. `config_home`, when given, is kicad-cli's `KICAD_CONFIG_HOME`
@@ -412,6 +1028,18 @@ fn run_report_command_cached(
     input: &Path,
     cache: Option<&Path>,
     config_home: Option<&Path>,
+) -> Result<(), String> {
+    run_report_command_with_policy(program, arguments, output, input, cache, config_home, false)
+}
+
+fn run_report_command_with_policy(
+    program: &OsStr,
+    arguments: &[&str],
+    output: &Path,
+    input: &Path,
+    cache: Option<&Path>,
+    config_home: Option<&Path>,
+    confirm_handoff: bool,
 ) -> Result<(), String> {
     let kind = match arguments.get(..2) {
         Some(["sch", "erc"]) => ReportKind::Erc,
@@ -473,13 +1101,42 @@ fn run_report_command_cached(
     if let Some(home) = config_home {
         command.env("KICAD_CONFIG_HOME", home);
     }
+    if confirm_handoff {
+        command.env("LC_ALL", "C");
+    }
     let report = with_one_rerun(|| {
         remove_if_present(&fresh)?;
         let (status, transcript) = run_bounded(&mut command, &temporary.0)?;
         if !status.success() {
             return Err(format!("kicad-cli failed with {status}: {transcript}"));
         }
-        Ok(read_kicad_report(&fresh))
+        let report = read_kicad_report(&fresh);
+        if confirm_handoff {
+            if arguments.contains(&"--save-board")
+                && !transcript.lines().any(|line| line.trim() == "Saved board")
+            {
+                return Err("kicad-cli did not confirm saving the refilled board".into());
+            }
+            if arguments.contains(&"--schematic-parity")
+                && let Ok(value) = &report
+            {
+                let parity = required_array(value, "schematic_parity")?;
+                let printed = transcript.lines().find_map(|line| {
+                    line.trim()
+                        .strip_prefix("Found ")?
+                        .strip_suffix(" schematic parity issues")?
+                        .parse::<usize>()
+                        .ok()
+                });
+                if printed != Some(parity.len()) {
+                    return Err(
+                        "kicad-cli did not confirm the schematic parity findings in its report"
+                            .into(),
+                    );
+                }
+            }
+        }
+        Ok(report)
     })?;
     validate_report(&report, kind, input)?;
     if let Some(cache) = &cache {
@@ -666,12 +1323,13 @@ fn run_bounded(
 ) -> Result<(std::process::ExitStatus, String), String> {
     // kicad-cli's 2.2 GB, inside the process's reservation in the memory
     // ledger while it runs.
-    crate::ledger::kicad_check(|| run_bounded_unreserved(command, scratch))
+    crate::ledger::kicad_check(|| run_bounded_unreserved(command, scratch, || false))
 }
 
 fn run_bounded_unreserved(
     command: &mut Command,
     scratch: &Path,
+    wall_passed: impl Fn() -> bool,
 ) -> Result<(std::process::ExitStatus, String), String> {
     let log = scratch.join("kicad-cli.log");
     let file = fs::File::create(&log)
@@ -698,6 +1356,11 @@ fn run_bounded_unreserved(
         if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
             break status;
         }
+        if wall_passed() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("layout wall guard expired during native connectivity proof".into());
+        }
         if started.elapsed() > timeout {
             let _ = child.kill();
             let _ = child.wait();
@@ -715,6 +1378,33 @@ fn run_bounded_unreserved(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn stale_run_reports_are_removed_without_removing_project_inputs() {
+        let directory = ReportDirectory::new(&std::env::temp_dir()).unwrap();
+        let derived = [
+            "board-layout.json",
+            "preview.svg",
+            "native-check-drc.json",
+            "erc.json",
+            "zone-island-repair.json",
+            "drc-before-open-repair.json",
+            "drc-open-trial-12.json",
+        ];
+        let preserved = [
+            "constraints.json",
+            "layout.json",
+            "drc-open-trial-notes.json",
+        ];
+        for name in derived.into_iter().chain(preserved) {
+            fs::write(directory.0.join(name), name).unwrap();
+        }
+        remove_stale_board_run_reports(&directory.0).unwrap();
+        assert!(derived.iter().all(|name| !directory.0.join(name).exists()));
+        for name in preserved {
+            assert_eq!(fs::read_to_string(directory.0.join(name)).unwrap(), name);
+        }
+    }
 
     fn report(kind: ReportKind) -> Value {
         let mut report = json!({
@@ -754,7 +1444,7 @@ mod tests {
             "description": "Footprint differs from library", "items": []
         }]);
         let assess = |drc: &Value| {
-            crate::verification::assess_verification_reports("board", &erc, drc).unwrap()
+            crate::verification::assess_verification_reports("board", &erc, drc, true).unwrap()
         };
         let result = assess(&drc);
         assert!(result.complete);
@@ -832,13 +1522,40 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_native_parity_array_does_not_prove_that_check_ran() {
+        let erc = report(ReportKind::Erc);
+        let drc = report(ReportKind::Drc);
+        let assess = |requested| {
+            crate::verification::assess_verification_reports("board", &erc, &drc, requested)
+                .unwrap()
+        };
+        let checked = assess(true);
+        assert!(checked.schematic_parity_checked);
+        let board_only = assess(false);
+        assert!(!board_only.schematic_parity_checked);
+        assert_eq!(
+            checked.schematic_parity_issues,
+            board_only.schematic_parity_issues
+        );
+        assert_eq!(checked.complete, board_only.complete);
+        let mut legacy = serde_json::to_value(checked).unwrap();
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("schematic_parity_checked");
+        let legacy: crate::verification::VerificationReport =
+            serde_json::from_value(legacy).unwrap();
+        assert!(!legacy.schematic_parity_checked);
+    }
+
+    #[test]
     fn valid_reports_with_findings_are_incomplete_and_malformed_reports_invalidate_old_verdicts() {
         let directory = ReportDirectory::new(&std::env::temp_dir()).unwrap();
         let verdict = directory.0.join("verification.json");
         let erc = report(ReportKind::Erc);
         let mut drc = report(ReportKind::Drc);
         let assess = |drc: &Value| {
-            crate::verification::write_verification_report(&directory.0, "board", &erc, drc)
+            crate::verification::write_verification_report(&directory.0, "board", &erc, drc, true)
         };
         assert!(assess(&drc).unwrap().complete);
         drc["violations"] = json!([finding()]);

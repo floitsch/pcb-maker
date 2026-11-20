@@ -323,18 +323,18 @@ def freeroute(cold, board_id, work, config, timeout, java_heap=None, slot=None, 
         return row
     result = work / "result"
     shutil.copytree(cold, result)
+    # Any input-side report describes different copper.
+    (result / "drc.json").unlink(missing_ok=True)
     result_board = result / f"{board_id}.kicad_pcb"
     code, _, cpu = python(
-        f"import pcbnew; b = pcbnew.LoadBoard({str(result_board)!r}); assert pcbnew.ImportSpecctraSES(b, {str(session)!r}); "
-        f"pcbnew.SaveBoard({str(result_board)!r}, b); "
-        # Index access: under Python 3.14 the SWIG containers cannot be iterated.
-        f"ts = b.Tracks(); tracks = [ts[i] for i in range(ts.size())]; vias = sum(1 for t in tracks if t.GetClass() == 'PCB_VIA'); "
-        f"length = sum(t.GetLength() for t in tracks if t.GetClass() != 'PCB_VIA') / 1e6; "
-        f"print('STATS', vias, round(length, 1))",
+        f"import sys; sys.path.insert(0, {str(Path(__file__).resolve().parent)!r}); "
+        f"from freerouting_session import import_session; "
+        f"print('STATS', *import_session({str(result_board)!r}, {str(session)!r}, {str(dsn)!r}))",
         work / "import.log")
     pipeline_cpu += cpu
     if code != 0:
         row["status"] = "import failed"
+        row["error"] = (work / "import.log").read_text()[-600:].strip()
         row["pipeline_cpu_seconds"] = round(pipeline_cpu, 1)
         return row
     stats = re.search(r"STATS (\d+) ([\d.]+)", (work / "import.log").read_text())

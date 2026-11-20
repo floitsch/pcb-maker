@@ -85,6 +85,23 @@ does not fit memory is an input error. The board is read in canonical order
   sizes, annulus, edge (`edge_clearance_mm`), hole clearance
   (`hole_clearance_mm`), hole to hole, and a `disallow
   track` that surely holds. Rules below error severity are not lowered.
+- An all-layer clearance condition made of
+  `A.memberOfFootprint('J1')` or `B.memberOfFootprint('J1')` calls joined
+  by OR supplies a minimum clearance at the identified pads, including
+  pads without a net. Reference matching is case-sensitive and supports
+  KiCad's wildcard patterns. A later all-layer rule that definitely covers
+  a footprint takes precedence. Stronger local and net-class clearances
+  still apply for approximate matches. A rule naming only literal references
+  can replace the net-class clearance between a fixed pad and routed copper
+  when every later clearance rule is known to be inapplicable to that pair
+  of objects. The project minimum, explicit pad overrides and explicit
+  router class settings still apply. Zone-fill clearances and spacing
+  between routed items use their existing rules.
+- A net-pair clearance with matching negated footprint conditions on
+  both item sides exempts the identified fixed pads. Tracks and vias of
+  the same nets still keep the pair clearance. A later all-layer
+  footprint clearance can take precedence at its pads. More general
+  footprint conditions remain visible in the custom-rule report.
   Every rule is reported in `rules.custom_rules` with a status.
 - The minimum connection width floors class widths, the narrow-signal
   width and the neck width at error or warning severity
@@ -127,10 +144,11 @@ their net, and the pads a piece of them joins merge into one terminal
 ### Hole clearance
 
 Other nets' tracks and vias keep `hole_clearance` from every via drill and
-plated pad drill, which binds where rings are thin; where the project rates
-hole to hole an error, a via also keeps it from its own net's pad holes.
-The stamp radii (`router/build.rs`) take the larger of copper and hole
-rule.
+plated pad drill, which binds where rings are thin. The router reads
+positive kept-via drill diameters from the PCB and checks their physical
+layer span. A track can still join its own via. Where the project rates
+hole to hole an error,
+a new via also keeps the drill spacing from its own net's holes.
 
 ### Vias in pads
 
@@ -152,6 +170,11 @@ the via takes the designer's size in that footprint, else the largest that
 keeps every clearance, and is written capped and filled. Reported in
 `vias_in_pads`. The designer's vias are read as the designer's statement
 about the fab: MIDAS-MK1.1 went 5 to 0 unconnected and nothing else moved.
+
+The enclosure flood indexes the edges of a pad polygon with at least 256
+vertices. Each raster cell still uses the same track and via distance
+comparisons. The index limits those queries to nearby edges and is built
+locally for the pad being stamped.
 
 ### Nets split by sub-board
 
@@ -419,10 +442,36 @@ the pour's brush fits; `router/pour_analysis/` names the main piece.
 Other nets pay `plane_cut_cost` on a pour, scaled by the layer's coverage
 relative to the least covered layer. An *exclusive* rung (`exclusive_planes`) keeps one
 inner plane (two from six layers) free of other nets' tracks. `add_pours` adds
-zones (`pour_plan.rs`; entries name `net` and `layers`); `plane: true` keeps every net's tracks off the
-layer, `keep_whole` keeps other nets out of named parts or boxes. After the
+zones (`pour_plan.rs`; entries name `net` and `layers`). Set
+`thermal_bridge_width_mm` per generated pour to set its thermal relief
+spoke width. The default is 0.30 mm and the minimum is the generated
+zone's minimum width of 0.25 mm.
+`plane: true` keeps every net's tracks off the layer and `keep_whole`
+keeps other nets out of named parts or boxes. After the
 repairs, `stitch_pours` (`router/stitch.rs`) joins island pieces holding
 pads to the main piece by vias.
+
+Set `region` on an `add_pours` entry to bound the generated zone to named
+pad centres on the current placement. For example, this adds a zone on
+In2.Cu around three pads of `rail` with a 2 mm margin.
+
+```json
+{
+  "add_pours": [{
+    "net": "rail",
+    "layers": ["In2.Cu"],
+    "region": {"pads": ["J1:1", "J1:2", "U1:5"], "margin_mm": 2}
+  }]
+}
+```
+
+Pads must belong to uniquely named footprints and to the requested net.
+Where one logical pad number names several physical pads, the box includes
+each centre. The router recomputes its generated outline when an anchor
+moves. Bounded pours use `plane: false`. Distinct anchor sets can add
+separate regions on the same net and layer, alongside existing authored
+zones. The native checks after fill still verify that the copper connects
+the terminals.
 
 ### Thermal spokes as KiCad counts them
 
@@ -484,6 +533,18 @@ KiCad. `pcb-maker repair-kicad-necks` runs it alone. The router itself
 routes at the neck width within `neck_reach` (1.5 mm) of a net's narrow
 pads; `neck_width_mm` defaults to the project's minimum track width.
 
+For a connection-width warning at a circular SMD pad and a nearly
+tangent same-net via, the repair can try one short radial track. It
+requires an existing track path between the two centres. Fresh KiCad
+checks must show the warning gone and all other findings unchanged in
+both stored and refilled modes. If stored ratsnest witnesses change,
+native connectivity must still show exactly the same components with
+the added track attached to the existing branch. The check budget covers
+these runs. See `necks.json.round_contact` for the native item UUIDs,
+measured width and track. The repair needs complete native reports.
+Use `PCB_MAKER_KICAD_USER_LIBS=1` when the project's installed footprint
+libraries are needed for complete checks.
+
 ### Plane skeleton
 
 `plane_skeleton` routes each pour net first as a fixed tree on its main
@@ -543,11 +604,20 @@ what did not run.
 No fixed split of the budget suits every large multilayer board: one needs
 600 s of negotiation in its first rung, another the last rungs. On a board
 of at least three rungs, four layers and 120 connections (`tuning.probe_ladder`,
-on; no `tuning.negotiation_seconds` given), every rung is probed for `probe_seconds` (75 s of search; in route
-mode all probes together at most half the budget). The fewest unfinished
-nets lead, ties to the earlier rung; probes run side by side as memory
-allows but are judged in order. The leader is continued (`resume`) with a
-third of what is left, 60 to 900 s of negotiation.
+on, with no `tuning.negotiation_seconds` supplied), the ladder probes its
+rungs for `probe_seconds` (75 s of search). Standalone routing limits the
+requested search per probe to target half of `ladder_budget_seconds` across
+the probes. It runs one probe first because the router can spend more than
+the requested search to finish its first negotiation pass. It uses that
+measurement and the work already charged to decide how many more probes
+can fit. It builds static maps only for the admitted probes and reports
+when another probe is estimated to exceed the remaining work. A single
+compulsory pass can still take the run over budget.
+
+The fewest unfinished nets lead, with ties going to the earlier rung.
+Admitted probes run side by side as memory and the available work allow.
+The leader resumes negotiation from its existing state with the remaining
+budget.
 
 ### The leader first
 
@@ -669,12 +739,32 @@ with `diff_pair_gap` or `diff_pair_uncoupled` surely holds for a pair
 and gap never turn them on: KiCad checks the class gap only as a minimum and
 most projects carry its defaults. Always on cost the expansion tier 556 to
 576 unconnected; on the seven rule boards pairs took errors from 601 to 186,
-mostly from the rule width and allowed layers. Without pairs nothing changes.
+mostly from the rule width and allowed layers. A custom track-width rule on
+`inDiffPair()` applies to ordinary routing even when coupling is off. Each
+layer uses its winning track-width rule, subject to the board setup minimum
+and any independent connection-width floor.
 
 A pair is two nets KiCad's name rule pairs (`_P`/`_N`, `+`/`-`, `P`/`N`).
 Its width and gap per layer come from the custom rule, else the class's
 pair values, else the net's width and clearance; it uses only the layers
 sharing its first layer's width and gap (`with_pairs`).
+
+When two ordinary nets happen to follow KiCad's pair naming convention,
+list their exact pad net names together in the router JSON. This applies
+to direct routing, layout routing and inferred placement rows.
+
+```json
+{
+  "diff_pairs": true,
+  "diff_pair_exclusions": [["/Ethernet/V+", "/Ethernet/V-"]]
+}
+```
+
+Each entry must identify both existing complementary nets. The router
+omits their coupled links, and the placer skips inferred rows through
+the excluded pair. `diff_pairs.excluded_pairs` lists the exact names
+and any authored electrical rules resolved for them. KiCad still checks
+the routing against those rules.
 
 ### Pair points and links
 
@@ -693,9 +783,12 @@ repair routes them first, even on a hopeless attempt, because a link left
 open costs its pair a whole fallback.
 
 **A pair point across a pin.** P and N of one part with another net's pin
-between them make a pin point, used only for a pair with no other link and
-refused when the pin could not leave past the stubs (`walled_pin`); without
-that check MSign went 73 to 107 unconnected.
+between them make a pin point. The planner tries these when a pair has no
+other link, or when the same two nets occupy opposing pad rows on one
+part and leave an unused endpoint. This lets a flow-through protection
+array carry paired links on both sides. A pin point still needs space
+for the intervening pad to leave past the stubs (`walled_pin`). Without
+that check MSign went from 73 to 107 unconnected items.
 
 ### Polarity
 
@@ -712,6 +805,100 @@ carries the stubs: one whose stubs the router routed walled in a pad
 (ch32v003's D+). With that rule and the crossing room, jetson's designer
 placement went 21 to 27 coupled links.
 
+**A paired layer change at surface pads.** A pair with an authored
+uncoupled-length limit can use one through via per conductor near the
+surface pads and run together on the opposite outer layer to two plated
+through-hole pads. The planner checks both exits against the pad, hole and
+copper geometry. The run inherits both conductors' scoped clearance rules,
+including their layer, item and pad exceptions. When the run has no room
+for skew tuning, the tuner also tries the generated pad approaches.
+
+The RetroCastX `eth2_1_P/N` replays used the same fixed placement, project
+rules, seed, work rate and two routing threads. KiCad 10.0.8 checked every
+track after refill.
+
+| Replay | Prior binary | Paired transition |
+| --- | --- | --- |
+| Retained board with only `eth2_1_P/N` copper removed | Trial closed both opens with 45.9469 mm uncoupled against 10 mm allowed | Both opens closed with zero electrical DRC findings. Added 60 segments and two 0.45/0.25 mm through vias on the pair. All 2,590 retained copper objects and both rules files matched the input. |
+| Fresh board, 90 modeled seconds requested | `eth2_1_P/N` had 45.5926 mm uncoupled against 10 mm allowed. The board had 8 clearance, 8 uncoupled-length and 3 skew errors, with zero opens. | `eth2_1_P/N` passed after refill and after reopening the saved fills. The router measured 53.672 mm coupled, 8.384 mm uncoupled and 0.100 mm skew. The rest of the fresh board still had 1 power open, 9 clearance, 5 uncoupled-length and 1 skew error. Modeled work was 105.924 → 103.888 s. |
+| OCuLink M.2 holdout | 9 coupled pairs, 21 vias, 20.170 modeled s | Byte-identical routed PCB. KiCad's stored and refilled reports matched the corresponding baseline reports, including a shared copper-edge finding. |
+
+For a two-terminal pair with a surface pair point and an authored
+uncoupled-length limit, the two remaining plated pads of one footprint
+can yield a second pair point beyond the usual 3 mm span. These pads use
+a jointly checked approach. If the paired transition to the opposite
+outer layer cannot find a plated approach and both ends share an outer
+layer, the router tries a fixed surface launch and short paired bent
+stubs at the plated end on their common layer. A crossover's search
+terminal must also clear that crossover's tracks and holes. The partner
+pad keeps its pad clearance, while paired tracks and vias can use the
+pair gap.
+
+The fresh RetroCastX replays below used `--strip`, a 90 s modeled setting
+and the same fixed placement and rules. KiCad's independent refill and
+reopen each reported the electrical errors shown. KiCad can cite
+different representative tracks for the same net-wide measurement.
+
+| Fresh routing case | Coupled pairs | Opens | Clearance | Uncoupled | Skew | Excessive vias | Router vias |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Opposite-layer launch with plated endpoints and scoped tuning | 8 | 0 | 0 | 3 | 4 | 2 | 202 |
+| Same settings with a shared-layer plated approach available | 8 | 0 | 0 | 1 | 2 | 0 | 198 |
+| Shared-layer approach and a wider skew-placement search on fixed approaches | 8 | 0 | 0 | 1 | 1 | 0 | 198 |
+| Fixed planar escape with the plated mate-pad gap | 8 | 0 | 0 | 0 | 1 | 0 | 183 |
+| Fixed planar escape and a tune sized for the uncoupled limit | 8 | 0 | 0 | 0 | 0 | 0 | 183 |
+| Earlier settings with `tuning.via_cost` of 0.5 | 3 | 0 | 0 | 5 | 2 | 0 | 296 |
+
+The shared-layer approach cleared six errors on `eth2_3` and `eth2_4`.
+The wider meander search reduced `eth1_4` skew from 3.3975 to 0.1000 mm.
+`eth1_3` still measured 14.5893 mm uncoupled and 12.2072 mm skew against
+limits of 10 and 0.5 mm. The independent saved/refilled and reopened
+KiCad checks both found the two remaining errors and no opens. Routing
+the shared-layer case from the designer board with all 2,626 copper
+items stripped reproduced the result of stripping the 2,590 items from
+the retained replay input. The saved retained replay opened with zero
+errors, adding 62 copper items on `eth2_1` while preserving the original
+2,590 items. The M.2 holdout remained byte-identical with both changes.
+
+At the `eth1_3` connector, the designer's short approach passes the
+mate's plated pad at 0.3100 mm. Renaming that conductor alone with its
+class unchanged made KiCad apply the ordinary 0.4000 mm clearance at
+that pad. Where the first launch choices would leave an independently
+routed escape, the planner now tries a fixed paired approach with the
+mate's gap for track-to-plated-pad copper. It searches the original
+surface layer first, tests both legs together, and includes short doglegs
+to match their lengths. The scoped layer, item and local pad clearances
+still apply. A replay with only `eth1_3` removed from the preceding fresh
+board passed KiCad after refill and reopen, adding 26 tracks without
+changing any of the 3,672 retained copper objects. The fully fresh
+planar replay also cleared `eth1_3`, with one remaining skew finding on
+`eth2_4` where its route changed. The unchanged M.2 holdout had nine
+coupled pairs and matched all PCB and rule-file bytes.
+
+Skew tuning uses the kept pair's mate-track clearance when checking
+anchors on an already coupled run. KiCad also counts the lost coupling
+where a meander replaces part of that run. The tuner uses the replaced
+span plus the added length to screen candidates against the authored
+uncoupled-length allowance, while still trying the pad approaches.
+On `eth2_4` the broad tune used 7.2 mm of run and produced 15.6572 mm of
+native uncoupled length against the 10 mm limit. The accepted tune used a
+0.4 mm span, added 4.1455 mm, and left 0.1000 mm of model skew. The full
+fresh result passed KiCad with 196 of 196 connections, eight coupled
+pairs, 191 vias on disk and zero internal or native errors. An independent
+refill and a subsequent reopen both reported zero unconnected items and
+zero severity-error findings. The binary used 95.780 modeled seconds
+and left both authored rule files byte-identical.
+
+The crossover-only fresh trial and the earlier 0.5-via-cost trial had
+equal selected attempt counts (four internal violations, zero opens,
+zero starved thermals, tracks mode). Ranking by vias would put 198
+ahead of 296, with eight and seven native electrical errors respectively.
+The native summary's broader design finding counts were 14 and 16.
+The attempt ledger's `native_candidate_errors` uses KiCad severity
+`error` after excluding cosmetic and pre-existing findings in the route
+verdict's scope. At the same open and starved counts it ranks before
+pours, vias and copper length. A tying router count can warrant a native
+check where an error count can improve within the existing budget.
+
 ### Stubs and copper
 
 `finish_pairs` (in `write_attempt`) turns each routed link into copper: the
@@ -721,13 +908,49 @@ jogs straightened), each checked by `verify`. A link is kept only when both
 stubs reach its run (`stub_joined`); missing stubs of a kept link are routed
 afterwards (`repair_stubs`). Failed links lose their stubs and the fallback
 (`route_fallback`) routes the pair's nets as ordinary nets within 5 % of the
-ladder's budget.
+ladder's budget. Ordinary launches and fallback routes keep the authored
+pair track-width bounds on each layer, including when they neck down.
+The copper check tracks the exact segment and via on each side of a
+clearance finding so a conflict with a coupled via can reject the link
+regardless of the nets' order.
+The final model check uses the gap for tracks of identified mates with a
+kept link, including where one track is represented as fixed copper.
+Explicit scoped clearances and local track floors, pad clearances, and
+via and hole rules still hold. In the fresh RetroCastX replay KiCad
+accepted four 0.375 mm track separations on `eth1_3` that the old model
+compared to a 0.400 mm floor. Renaming one conductor in a copy so that it
+had no matching mate produced all four native clearance findings at those
+tracks, with the geometry and class unchanged. The matched replay with
+the corrected model emitted the same PCB bytes and reduced its internal
+violation count from four to zero. KiCad's two remaining `eth1_3`
+measurements were unchanged.
+On the OCuLink port's 0.1712 mm outer-layer rule, matched route runs with
+a 30-second setting removed all 22 KiCad width errors with coupling enabled
+and all 199 with coupling disabled. The coupled run still kept six of nine
+links. The saved board still had unconnected items when KiCad refilled it.
+
+Stub checks use the emitted pair copper's landing layer. Replacing a
+launch can leave a short piece of its old path attached by edge overlap.
+Before skew tuning, the router removes a generated tip at the cut when
+the replacement keeps the same copper connectivity. The report counts
+these in `obsolete_launch_tips_removed`. A retained pair with one link
+can also shed a redundant generated path on a two-terminal net. The
+bounded cleanup keeps the coupled copper and checks that both
+pads and all remaining copper stay connected. It skips nets with authored
+copper, pours or non-through vias. On a partly coupled pair, a generated
+fallback leaf can also go when its centreline is inside a longer
+parallel generated track and the removal preserves the copper components.
+`parallel_branches_removed` gives the count in the differential-pair report.
 
 **Skew and length.** After the fallback `match_skew` meanders the shorter
 net of each kept pair, measured with vias at stackup height
 (`copper_heights`), to the rule's `skew` (else the pair's gap), or both
 nets to a `length` minimum, written as a KiCad tuning pattern, which
 KiCad's gap check skips (`PCB_ROUTER_DIFF_PAIRS_SKEW=0` turns it off).
+The ordinary and paired length tuners check each generated pattern
+against the project's resolved layer, item and pad clearance rules. On the fresh
+RetroCastX comparison this removed nine KiCad clearance findings between
+one `eth2_3_P` tuning pattern and the plated `eth2_ct` pad at J11.1.
 
 **Return vias.** Beside each via of a kept link goes a via of the reference
 net (`diff_pair_return_net`, else `GND`, else the poured `*GND` net with
@@ -778,6 +1001,27 @@ A net short of its minimum after meandering lacks room for bumps.
 other tracks kept further off (`reroute_shorts`), kept if all connect and
 the total miss falls; the placer's partner is `length_minima` (off).
 
+### Skew on separately routed pair members
+
+When a coupled link falls back to ordinary routing, the two nets can
+still be length-tuned to a skew rule from the project. Use the exact
+board net names and the limit from the electrical brief. The example
+sets a 0.25 mm limit.
+
+```scheme
+(version 1)
+(rule "TX pair skew"
+  (condition "A.NetName == '/TX_P' || A.NetName == '/TX_N'")
+  (constraint skew (max 0.25mm)))
+```
+
+For a native-checked board with zero opens and an unbranched straight-track
+centreline chain between two pads on each member,
+`verdict.diff_pairs.fallback_lengths` records both pad pairs and planar track
+lengths. Layer transitions through vias can qualify. The measurement excludes
+via length and propagation delay. The authored rule and its result appear
+separately under `verdict.lengths`.
+
 ### Skew groups' layers
 
 A rule limited to some layers (`length_rule_layers`: `designer` by default,
@@ -786,6 +1030,25 @@ A rule limited to some layers (`length_rule_layers`: `designer` by default,
 or the rule's layers. A step off them costs `layer_preference_cost` (10)
 times more, a soft disallow. Without designer tracks nothing is admitted.
 Cost 10 took Sisu's skew findings from 7 to 3.
+
+## Prepared planar launches for a pad row
+
+`prepared_row_escape_pads` asks for short planar launches on two to four
+consecutive surface pads of the same row. The planner sizes the launches
+together using the actual track-to-track and track-to-pad rules, the
+width floor on the pad layer and space for neighboring exits. The router
+uses the free tips as terminals. On a fresh layout it evaluates the
+selected placement and preserves the copper-free placement artifact.
+The saved-board copper totals include the emitted launch tracks.
+
+On ClearBell with the schematic and its original 0.30 mm clearance
+between audio tracks, the planner gave the two 0.50 mm-pitch audio pads
+1.0 mm of 0.20 mm-wide launch on F.Cu. At the same 30-second route
+budget the authored-pose board went from two opens to zero. The plain
+route still had both at a 60-second budget. On a generated placement
+the prepared launches closed both audio opens, leaving the separate
+ground open. Both native check modes retained zero hard DRC errors and
+zero schematic parity findings. The setting is opt-in.
 
 ## Prepared fan-outs for BGAs
 
@@ -804,6 +1067,19 @@ open on the designer placement, and no other tier board moved. The placer
 keeps the far side free under the vias (the placer's `tuning.via_in_pad_far_side`).
 `PCB_ROUTER_BGA_FANOUT_WHY` prints the plans; `PCB_ROUTER_NET_WORK=<file>`
 writes search work per net.
+
+On a grid array with one surface track channel between adjacent balls,
+`"bga_fanout_second_ring": true` also prepares escapes for second-ring
+balls whose external terminals are all off the ball's layer. It keeps the
+ordinary inner launches first, uses the same project via and clearance
+rules, and leaves differential pairs and length-constrained nets to the
+ordinary plan. Compare the returned KiCad evidence on the same placement.
+When an ordinary run reports a native open that matches the footprint and
+layer conditions, its verdict lists the applicable `bga_second_ring_open_pads`.
+At a matched 84-second routing budget on the generated Glasgow placement,
+this setting planned seven extra launches and reduced native opens from
+70 to 60 with the same four inherited errors and zero schematic parity
+findings. The designer-pose control stayed byte-identical.
 
 ## Blind, buried and micro vias
 
@@ -829,6 +1105,16 @@ independent of the lattice. `write_attempt` writes the copper with the vias
 in pads, used fan-outs, pair copper and length patterns. KiCad's DRC is the
 gate: its unconnected items count in every open figure.
 `skip_native_verification` skips it (machines without kicad-cli).
+
+A branch that reaches an offset padstack contact can end on that contact.
+At a BGA dog-bone, the via supplies that copper on the layers away from
+the ball.
+
+When routing over kept copper, the writer emits only the uncovered length
+of a new straight segment where an existing segment has the exact same
+centreline, width, layer and native net. The kept segment stays intact,
+including at a tee. Length-tuned and coupled nets keep their emitted
+segments for KiCad's tuning groups.
 
 ## The router inside a layout
 
@@ -947,6 +1233,12 @@ code is in git history.
   misses, guiding the search): tier 616 against 588 unconnected; misses are
   too rare to learn from. The tile-graph plan as the negotiation's guide
   (`global_routing`): no gain over the tile corridors; removed 2026-11-10.
+- First-pass A* corridors from a prior board's trace centerlines (2026-11-19):
+  the July C4 edit took 42,948,037 expansions cold and 42,967,064 guided.
+  The `interf_u` net rename went from 103,032,899 to 145,194,570 expansions
+  and added 12 vias and 292 mm of trace. Both pairs reached zero native opens
+  and zero new strict errors. Verified copper retention checks and keeps
+  eligible tracks and vias before routing the remaining opens.
 - Fixed escape stubs for fine-pitch rows before the negotiation
   (`escape_stub_mm`): no gain; removed 2026-11-10.
 - Bus bundles (`bus_bundles`: buses of four or more nets routed first,

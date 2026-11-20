@@ -98,11 +98,18 @@ pub(super) fn polish_routes(
     board: &core::Board,
     polished: bool,
     many_open: bool,
+    has_pours: bool,
 ) {
     let config = ctx.config;
     let router = &mut routing.router;
     // What is left before the layout's nominal end, in work.
-    let polish_left = ledger.left(ctx.work_deadline);
+    let reserve = if score(&routing.result, board).0 == 0 {
+        ctx.native_finish_reserve(has_pours)
+    } else {
+        0.0
+    };
+    let work_left = ledger.left(ctx.work_deadline);
+    let polish_left = work_left - reserve;
     // A board a move trial already polished polishes again when more than
     // half the layout's budget is left: the trial's via reduction had only
     // its own strict budget (CyberKeeb2040: a round reverted at 60 s, the
@@ -115,11 +122,12 @@ pub(super) fn polish_routes(
             config.total_seconds
         );
     }
-    ctx.arm(router, ledger.clock());
+    ctx.arm(router, ledger.clock() + reserve);
     if !((!polished || polish_again)
         && !many_open
         && !router.past_deadline()
-        && polish_left >= 240.0
+        && work_left >= 240.0
+        && polish_left >= 120.0
         && ctx.stop.allows(LayoutStep::Polish))
     {
         return;
@@ -137,11 +145,13 @@ pub(super) fn polish_routes(
         // counted against it.
         polish.run_work = Some((
             config.total_seconds,
-            (config.total_seconds - ledger.work).max(0.0) + own,
+            (config.total_seconds - ledger.work - reserve).max(0.0) + own,
         ));
         polish.cleanup_seconds = polish.cleanup_seconds.min((polish_left - 120.0) / 4.0);
+        polish.require_via_reduction_budget = reserve > 0.0;
     }
     let polished_result = router.polish();
+    router.config_mut().require_via_reduction_budget = false;
     ledger.work += router.expansions().saturating_sub(expansions_before) as f64
         / core::router::expansions_per_second();
     // A polish the deadline cut short can leave more open than it

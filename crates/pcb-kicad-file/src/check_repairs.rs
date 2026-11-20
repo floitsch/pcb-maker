@@ -311,21 +311,32 @@ pub fn repair_file(path: &Path) -> Result<Vec<String>, String> {
     let text = fs::read_to_string(path)
         .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
     let mut board = parse(&text)?;
-    let mut said = Vec::new();
-    let null_edges = drop_null_edges(&mut board);
-    if null_edges > 0 {
-        said.push(format!(
-            "{null_edges} Edge.Cuts lines of no length removed (KiCad finds no outline with them and fills the zones to the board's box)"
-        ));
-    }
-    if let Some(separated) = separate(&mut board) {
-        said.push(separated.describe());
-    }
+    let said = repair_board(&mut board);
     if !said.is_empty() {
         fs::write(path, encode(&board) + "\n")
             .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
     }
     Ok(said)
+}
+
+/// Check an owned board for the repairs performed before native refill,
+/// without writing it back.
+pub fn needs_repair(mut board: Expr) -> bool {
+    !repair_board(&mut board).is_empty()
+}
+
+fn repair_board(board: &mut Expr) -> Vec<String> {
+    let mut said = Vec::new();
+    let null_edges = drop_null_edges(board);
+    if null_edges > 0 {
+        said.push(format!(
+            "{null_edges} Edge.Cuts lines of no length removed (KiCad finds no outline with them and fills the zones to the board's box)"
+        ));
+    }
+    if let Some(separated) = separate(board) {
+        said.push(separated.describe());
+    }
+    said
 }
 
 #[cfg(test)]

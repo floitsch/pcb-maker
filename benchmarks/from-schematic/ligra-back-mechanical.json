@@ -1,0 +1,130 @@
+{
+  "version": 1,
+  "move_all": true,
+  "front": [
+    "J1",
+    "J2",
+    "J3",
+    "J4",
+    "J5",
+    "P1",
+    "SW2"
+  ],
+  "back": [
+    "D5",
+    "J10",
+    "J11",
+    "J12",
+    "J6",
+    "J7",
+    "J8",
+    "J9"
+  ],
+  "place": [
+    {
+      "part": "D5",
+      "x": 249.428,
+      "y": -93.98,
+      "angle": 180.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J1",
+      "x": 161.109127,
+      "y": -138.690873,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J10",
+      "x": 180.765,
+      "y": -59.75,
+      "angle": 90.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J11",
+      "x": 179.165,
+      "y": -52.7,
+      "angle": 180.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J12",
+      "x": 213.57,
+      "y": -63.03,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J2",
+      "x": 238.890873,
+      "y": -60.909127,
+      "angle": -45.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J3",
+      "x": 238.890873,
+      "y": -138.690873,
+      "angle": -45.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J4",
+      "x": 161.109127,
+      "y": -60.909127,
+      "angle": -45.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J5",
+      "x": 200.6975,
+      "y": -59.842501,
+      "angle": 180.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J6",
+      "x": 200.66,
+      "y": -54.0325,
+      "angle": 180.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J7",
+      "x": 237.935001,
+      "y": -112.7325,
+      "angle": -90.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J8",
+      "x": 161.0,
+      "y": -91.92,
+      "angle": 180.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J9",
+      "x": 238.4925,
+      "y": -90.4825,
+      "angle": -90.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "P1",
+      "x": 249.428,
+      "y": -110.744,
+      "angle": 90.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "SW2",
+      "x": 200.0,
+      "y": -140.0,
+      "angle": 90.0,
+      "origin": "absolute"
+    }
+  ]
+}

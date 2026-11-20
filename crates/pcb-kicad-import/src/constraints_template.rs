@@ -183,63 +183,8 @@ fn prefix(reference: &str) -> &str {
     reference.trim_end_matches(|c: char| c.is_ascii_digit() || c == '_')
 }
 
-/// Where the project's schematics (every `.kicad_sch` beside the board)
-/// draw each symbol: per reference, the sheet instance it is on (file and
-/// instance path) and its position there.
-fn schematic_positions(directory: &Path) -> BTreeMap<String, (String, [f64; 2])> {
-    let mut positions = BTreeMap::new();
-    let Ok(entries) = fs::read_dir(directory) else {
-        return positions;
-    };
-    let mut files: Vec<PathBuf> = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "kicad_sch")
-        })
-        .collect();
-    files.sort();
-    for file in files {
-        let Some(schematic) = fs::read_to_string(&file)
-            .ok()
-            .and_then(|text| parse(&text).ok())
-        else {
-            continue;
-        };
-        let sheet = file
-            .file_name()
-            .map_or(String::new(), |name| name.to_string_lossy().to_string());
-        for symbol in schematic
-            .children()
-            .iter()
-            .filter(|item| item.head() == Some("symbol"))
-        {
-            let Ok(at) = form_xy(symbol, "at") else {
-                continue;
-            };
-            let instances = symbol
-                .child("instances")
-                .map(Expr::children)
-                .unwrap_or_default();
-            for path in instances
-                .iter()
-                .filter(|project| project.head() == Some("project"))
-                .flat_map(|project| project.children())
-                .filter(|path| path.head() == Some("path"))
-            {
-                if let (Some(instance), Some(reference)) = (
-                    path.children().get(1).and_then(Expr::atom),
-                    form_atom(path, "reference", 1),
-                ) {
-                    positions
-                        .entry(reference.to_string())
-                        .or_insert((format!("{sheet}{instance}"), at));
-                }
-            }
-        }
-    }
-    positions
+fn component_for_pin(pin: &str) -> &str {
+    pin.split_once(':').map_or(pin, |(component, _)| component)
 }
 
 /// Each capacitor's supply pin by the schematic (`positions`): first the IC
@@ -256,19 +201,18 @@ fn schematic_assignment(
     supplies: &BTreeMap<String, Vec<(String, [f64; 2])>>,
     positions: &BTreeMap<String, (String, [f64; 2])>,
 ) -> BTreeMap<String, String> {
-    let ic_of = |pin: &str| pin.split_once(':').map_or(pin, |(ic, _)| ic).to_string();
     let mut assigned = BTreeMap::new();
     let rails: BTreeSet<&String> = capacitors.iter().map(|(_, net)| net).collect();
     for rail in rails {
         let pins = &supplies[rail];
-        // The rail's ICs with their supply pins, in board order.
-        let mut ics: Vec<(String, Vec<String>)> = Vec::new();
+        let mut ics = BTreeMap::<String, Vec<String>>::new();
         for (pin, _) in pins {
-            let ic = ic_of(pin);
-            match ics.iter_mut().find(|(known, _)| *known == ic) {
-                Some((_, list)) => list.push(pin.clone()),
-                None => ics.push((ic, vec![pin.clone()])),
-            }
+            ics.entry(component_for_pin(pin).to_owned())
+                .or_default()
+                .push(pin.clone());
+        }
+        for pins in ics.values_mut() {
+            pins.sort_unstable();
         }
         let distance = |capacitor: &str, ic: &str| {
             let (sheet, at) = positions.get(capacitor)?;
@@ -279,9 +223,9 @@ fn schematic_assignment(
         let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for (capacitor, _) in capacitors.iter().filter(|(_, net)| net == rail) {
             if let Some((ic, _)) = ics
-                .iter()
-                .filter_map(|(ic, _)| distance(capacitor, ic).map(|d| (ic, d)))
-                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .keys()
+                .filter_map(|ic| distance(capacitor, ic).map(|d| (ic, d)))
+                .min_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(b.0)))
             {
                 groups
                     .entry(ic.clone())
@@ -291,11 +235,7 @@ fn schematic_assignment(
         }
         // Pass 2: an IC drawn without a capacitor takes another's extra.
         loop {
-            let pin_count = |ic: &str| {
-                ics.iter()
-                    .find(|(known, _)| known == ic)
-                    .map_or(0, |(_, pins)| pins.len())
-            };
+            let pin_count = |ic: &str| ics.get(ic).map_or(0, Vec::len);
             let extra = groups
                 .iter()
                 .filter(|(ic, group)| group.len() > pin_count(ic))
@@ -304,16 +244,16 @@ fn schematic_assignment(
                         distance(capacitor, ic).map(|d| (ic, capacitor, d))
                     })
                 })
-                .max_by(|a, b| a.2.total_cmp(&b.2))
+                .max_by(|a, b| a.2.total_cmp(&b.2).then_with(|| b.1.cmp(a.1)))
                 .map(|(ic, capacitor, _)| (ic.clone(), capacitor.clone()));
             let Some((from, capacitor)) = extra else {
                 break;
             };
             let Some(to) = ics
-                .iter()
-                .filter(|(ic, _)| groups.get(ic).is_none_or(Vec::is_empty))
-                .filter_map(|(ic, _)| distance(&capacitor, ic).map(|d| (ic, d)))
-                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .keys()
+                .filter(|ic| groups.get(ic.as_str()).is_none_or(Vec::is_empty))
+                .filter_map(|ic| distance(&capacitor, ic).map(|d| (ic, d)))
+                .min_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(b.0)))
                 .map(|(ic, _)| ic.clone())
             else {
                 break;
@@ -324,15 +264,13 @@ fn schematic_assignment(
                 .retain(|known| *known != capacitor);
             groups.entry(to).or_default().push(capacitor);
         }
-        // At each IC, its pins in turn, the capacitors in board order.
+        // At each IC, pair caps and pins in reference and pad name order.
         for (ic, ic_pins) in &ics {
             let Some(group) = groups.get(ic) else {
                 continue;
             };
             let mut ordered: Vec<&String> = group.iter().collect();
-            ordered.sort_by_key(|capacitor| {
-                capacitors.iter().position(|(known, _)| known == *capacitor)
-            });
+            ordered.sort_unstable();
             for (turn, capacitor) in ordered.into_iter().enumerate() {
                 assigned.insert(capacitor.clone(), ic_pins[turn % ic_pins.len()].clone());
             }
@@ -409,13 +347,31 @@ fn rf_module(name: &str) -> bool {
 /// texts that say "Antenna" or "Keepout" on a drawing layer (`false`:
 /// trial 6's laptop power, whose ESP32-S2-MINI-1 marks its antenna and
 /// keepout area in text only).
-fn antenna_direction(footprint: &Expr, part: &Part) -> Result<Option<([f64; 2], bool)>, String> {
-    if !rf_module(&part.name) || part.pads.is_empty() {
+fn antenna_direction(footprint: &Expr, at: [f64; 3]) -> Result<Option<([f64; 2], bool)>, String> {
+    if !footprint
+        .children()
+        .get(1)
+        .and_then(Expr::atom)
+        .is_some_and(rf_module)
+    {
         return Ok(None);
     }
-    let count = part.pads.len() as f64;
-    let pads = part.pads.iter().fold([0.0, 0.0], |sum, pad| {
-        [sum[0] + pad.2[0] / count, sum[1] + pad.2[1] / count]
+    let positions: Vec<_> = footprint
+        .children()
+        .iter()
+        .filter(|part| part.head() == Some("pad"))
+        .filter_map(|pad| form_xy(pad, "at").ok())
+        .collect();
+    if positions.is_empty() {
+        return Ok(None);
+    }
+    let count = positions.len() as f64;
+    let pads = positions.iter().fold([0.0, 0.0], |sum, position| {
+        let offset = crate::geometry::rotate_vector(*position, -at[2]);
+        [
+            sum[0] + (at[0] + offset[0]) / count,
+            sum[1] + (at[1] + offset[1]) / count,
+        ]
     });
     let mut zone: Option<[f64; 4]> = None;
     for points in footprint
@@ -470,8 +426,8 @@ fn antenna_direction(footprint: &Expr, part: &Part) -> Result<Option<([f64; 2], 
                 })
                 .filter_map(|text| form_xy(text, "at").ok())
                 .map(|local| {
-                    let offset = crate::geometry::rotate_vector(local, -part.at[2]);
-                    [part.at[0] + offset[0], part.at[1] + offset[1]]
+                    let offset = crate::geometry::rotate_vector(local, -at[2]);
+                    [at[0] + offset[0], at[1] + offset[1]]
                 })
                 .collect();
             if marks.is_empty() {
@@ -488,6 +444,45 @@ fn antenna_direction(footprint: &Expr, part: &Part) -> Result<Option<([f64; 2], 
     };
     let direction = [target[0] - pads[0], target[1] - pads[1]];
     Ok((direction[0].hypot(direction[1]) >= 0.5).then_some((direction, from_zone)))
+}
+
+fn antenna_overhang_edge(part: &str, facing: Option<&str>) -> serde_json::Value {
+    serde_json::json!({
+        "part": part,
+        "edge": facing.unwrap_or("any"),
+        "flush": true,
+        "overhang": facing.map_or_else(|| serde_json::json!({}), |edge| serde_json::json!({"edge": edge})),
+    })
+}
+
+/// The template's antenna-overhang entry for exact unseated footprint
+/// instances. The failed placement has no edge to prefer.
+pub fn unplaced_antenna_edges(
+    board: &Path,
+    selected: &BTreeMap<&str, &str>,
+) -> Result<BTreeMap<String, serde_json::Value>, String> {
+    let pcb = parse(&fs::read_to_string(board).map_err(|error| error.to_string())?)?;
+    let mut entries = BTreeMap::new();
+    for footprint in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+    {
+        let Some(reference) = footprint_reference(footprint) else {
+            continue;
+        };
+        let Some(&id) = selected.get(reference.as_str()) else {
+            continue;
+        };
+        if footprint_uuid(footprint).as_deref() == Some(id)
+            && !footprint_locked(footprint)
+            && antenna_direction(footprint, form_at(footprint)?)?.is_some_and(|(_, zone)| zone)
+        {
+            let edge = antenna_overhang_edge(&reference, None);
+            entries.insert(reference, edge);
+        }
+    }
+    Ok(entries)
 }
 
 /// The point of an `(xy x y)` form.
@@ -571,6 +566,118 @@ fn length_rule_comments(
                 on.iter().copied().collect::<Vec<_>>().join(", ")
             )
         })
+        .collect()
+}
+
+type SupplyPins = BTreeMap<String, Vec<(String, [f64; 2])>>;
+type DecouplingCapacitors<'a> = Vec<(&'a Part, String, [f64; 2])>;
+
+fn decoupling_parts(parts: &[Part]) -> (SupplyPins, DecouplingCapacitors<'_>) {
+    // Decoupling capacitors: the supply pins of the ICs by rail.
+    let mut supplies: BTreeMap<String, Vec<(String, [f64; 2])>> = BTreeMap::new();
+    for part in parts
+        .iter()
+        .filter(|part| matches!(prefix(&part.reference), "U" | "IC") && part.pads.len() >= 3)
+    {
+        let mut seen = BTreeSet::new();
+        for (pad, net, center, supply) in &part.pads {
+            let Some(net) = net else {
+                continue;
+            };
+            if ground(net) || !*supply || !seen.insert(pad.clone()) {
+                continue;
+            }
+            supplies
+                .entry(net.clone())
+                .or_default()
+                .push((format!("{}:{pad}", part.reference), *center));
+        }
+    }
+    // The decoupling capacitors: (part, its supply pad's net, centre).
+    let mut capacitors: Vec<(&Part, String, [f64; 2])> = Vec::new();
+    for part in parts
+        .iter()
+        .filter(|part| prefix(&part.reference) == "C" && part.pads.len() == 2)
+    {
+        let (Some(a), Some(b)) = (&part.pads[0].1, &part.pads[1].1) else {
+            continue;
+        };
+        let supply = match (ground(a), ground(b)) {
+            (false, true) => &part.pads[0],
+            (true, false) => &part.pads[1],
+            _ => continue,
+        };
+        let net = supply.1.clone().expect("a supply pad has a net");
+        if supplies.contains_key(&net) {
+            capacitors.push((part, net, supply.2));
+        }
+    }
+    (supplies, capacitors)
+}
+
+fn default_decoupling_distance(part: &Part) -> f64 {
+    if capacitance(&part.value).is_some_and(|farads| farads >= 4.7e-6) {
+        3.0
+    } else {
+        1.5
+    }
+}
+
+fn closest_supply_pin(
+    pins: &[(String, [f64; 2])],
+    center: [f64; 2],
+) -> Option<&(String, [f64; 2])> {
+    pins.iter().min_by(|(a, x), (b, y)| {
+        crate::geometry::distance_squared(*x, center)
+            .total_cmp(&crate::geometry::distance_squared(*y, center))
+            .then_with(|| a.cmp(b))
+    })
+}
+
+/// Measure proximity where the schematic-based IC assignment agrees with
+/// the selected board's template. Its exact pad comes from that template.
+pub fn schematic_decoupling_targets(
+    selected: &Path,
+    board_id: &str,
+) -> Result<Vec<crate::quality::KiCadDecouplingTarget>, String> {
+    let positions = crate::netlist_import::schematic_positions(selected, board_id);
+    if positions.is_empty() {
+        return Ok(Vec::new());
+    }
+    let file = selected.join(format!("{board_id}.kicad_pcb"));
+    let data = fs::read_to_string(file).map_err(|error| error.to_string())?;
+    let parts = parts_of(&parse(&data)?)?;
+    let has_placement = placed(&parts);
+    let (supplies, capacitors) = decoupling_parts(&parts);
+    let assignment = schematic_assignment(&decoupling_nets(&capacitors), &supplies, &positions);
+    Ok(capacitors
+        .into_iter()
+        .filter_map(|(part, net, center)| {
+            let assigned = assignment.get(&part.reference)?;
+            let pins = &supplies[&net];
+            let (pin, at) = if has_placement {
+                let selected = closest_supply_pin(pins, center)?;
+                if component_for_pin(&selected.0) != component_for_pin(assigned) {
+                    return None;
+                }
+                selected
+            } else {
+                pins.iter().find(|(name, _)| name == assigned)?
+            };
+            Some(crate::quality::KiCadDecouplingTarget {
+                part: part.reference.clone(),
+                pin_of: pin.clone(),
+                max_mm: default_decoupling_distance(part),
+                distance_mm: box_to_point(part.body?, *at),
+            })
+        })
+        .collect())
+}
+
+fn decoupling_nets(capacitors: &DecouplingCapacitors<'_>) -> Vec<(String, String)> {
+    capacitors
+        .iter()
+        .map(|(part, net, _)| (part.reference.clone(), net.clone()))
         .collect()
 }
 
@@ -684,21 +791,16 @@ pub fn constraints_template(directory: &Path, board_id: &str) -> Result<serde_js
     // RF modules: the antenna at an edge, the side the footprint's keepout
     // (else its "Antenna" text) tells.
     for (part, footprint) in parts.iter().zip(&footprints) {
-        let Some((direction, from_zone)) = antenna_direction(footprint, part)? else {
+        let Some((direction, from_zone)) = antenna_direction(footprint, part.at)? else {
             continue;
         };
         let facing = edge_of(direction);
         let turns = turns_to_edges(direction, part.at[2]);
         if from_zone {
-            let edge = if has_placement { facing } else { "any" };
-            let overhang = if has_placement {
-                serde_json::json!({"edge": facing})
-            } else {
-                serde_json::json!({})
-            };
-            edges.push(serde_json::json!({
-                "part": part.reference, "edge": edge, "flush": true, "overhang": overhang,
-            }));
+            edges.push(antenna_overhang_edge(
+                &part.reference,
+                has_placement.then_some(facing),
+            ));
             comment.push(format!(
                 "edge: {} ({}) is an RF module whose footprint draws its antenna keepout (at {} degrees here it faces the {facing} edge): overhang puts the keepout beyond the edge and the module flush inside it, as the module makers' layout guides ask. To keep the keepout on the board instead, drop overhang and give a rotation that turns the antenna end to the edge: {turns}.",
                 part.reference, part.name, part.at[2]
@@ -722,57 +824,16 @@ pub fn constraints_template(directory: &Path, board_id: &str) -> Result<serde_js
             other_connectors.join(", ")
         ));
     }
-    // Decoupling capacitors: the supply pins of the ICs by rail.
-    let mut supplies: BTreeMap<String, Vec<(String, [f64; 2])>> = BTreeMap::new();
-    for part in parts
-        .iter()
-        .filter(|part| matches!(prefix(&part.reference), "U" | "IC") && part.pads.len() >= 3)
-    {
-        let mut seen = BTreeSet::new();
-        for (pad, net, center, supply) in &part.pads {
-            let Some(net) = net else {
-                continue;
-            };
-            if ground(net) || !*supply || !seen.insert(pad.clone()) {
-                continue;
-            }
-            supplies
-                .entry(net.clone())
-                .or_default()
-                .push((format!("{}:{pad}", part.reference), *center));
-        }
-    }
-    // The decoupling capacitors: (part, its supply pad's net, centre).
-    let mut capacitors: Vec<(&Part, String, [f64; 2])> = Vec::new();
-    for part in parts
-        .iter()
-        .filter(|part| prefix(&part.reference) == "C" && part.pads.len() == 2)
-    {
-        let (Some(a), Some(b)) = (&part.pads[0].1, &part.pads[1].1) else {
-            continue;
-        };
-        let supply = match (ground(a), ground(b)) {
-            (false, true) => &part.pads[0],
-            (true, false) => &part.pads[1],
-            _ => continue,
-        };
-        let net = supply.1.clone().expect("a supply pad has a net");
-        if supplies.contains_key(&net) {
-            capacitors.push((part, net, supply.2));
-        }
-    }
+    let (supplies, capacitors) = decoupling_parts(&parts);
     // Without a placement, the schematic says which IC a capacitor is
     // drawn at.
     let assigned = if has_placement {
         BTreeMap::new()
     } else {
         schematic_assignment(
-            &capacitors
-                .iter()
-                .map(|(part, net, _)| (part.reference.clone(), net.clone()))
-                .collect::<Vec<_>>(),
+            &decoupling_nets(&capacitors),
             &supplies,
-            &schematic_positions(directory),
+            &crate::netlist_import::schematic_positions(directory, board_id),
         )
     };
     let mut near = Vec::new();
@@ -781,12 +842,7 @@ pub fn constraints_template(directory: &Path, board_id: &str) -> Result<serde_js
     for (part, net, center) in &capacitors {
         let pins = &supplies[net];
         let pin = if has_placement {
-            pins.iter()
-                .min_by(|x, y| {
-                    crate::geometry::distance_squared(x.1, *center)
-                        .total_cmp(&crate::geometry::distance_squared(y.1, *center))
-                })
-                .map(|(pin, _)| pin.clone())
+            closest_supply_pin(pins, *center).map(|(pin, _)| pin.clone())
         } else if let Some(pin) = assigned.get(&part.reference) {
             Some(pin.clone())
         } else {
@@ -799,8 +855,7 @@ pub fn constraints_template(directory: &Path, board_id: &str) -> Result<serde_js
         let Some(pin) = pin else {
             continue;
         };
-        let bulk = capacitance(&part.value).is_some_and(|farads| farads >= 4.7e-6);
-        let default = if bulk { 3.0 } else { 1.5 };
+        let default = default_decoupling_distance(part);
         // On a placed board, at least the designer's own distance (the
         // capacitor's courtyard box to the pin; the placer measures from
         // its body, which holds that box), rounded up to 0.5 mm:
@@ -1139,7 +1194,7 @@ mod tests {
         .unwrap();
         let symbol = |reference: &str, x: f64, y: f64| {
             format!(
-                r#"(symbol (lib_id "x") (at {x} {y} 0) (instances (project "t" (path "/root" (reference "{reference}") (unit 1)))))"#
+                r#"(symbol (lib_id "x") (at {x} {y} 0) (instances (project "t" (path "/root/supplies" (reference "{reference}") (unit 1)))))"#
             )
         };
         let schematic = [
@@ -1150,9 +1205,15 @@ mod tests {
             symbol("C7", 104.1, 332.7),
             symbol("C8", 115.6, 332.7),
         ];
+        let root_schematic = r#"(kicad_sch (version 20231120) (uuid root)
+            (sheet (uuid supplies) (property "Sheetfile" "nested/power.kicad_sch")))"#;
+        fs::create_dir(dir.join("nested")).unwrap();
+        fs::write(dir.join("t.kicad_sch"), root_schematic).unwrap();
+        let power = format!("(kicad_sch (version 20231120) {})", schematic.join(" "));
+        fs::write(dir.join("nested/power.kicad_sch"), &power).unwrap();
         fs::write(
-            dir.join("t.kicad_sch"),
-            format!("(kicad_sch (version 20231120) {})", schematic.join(" ")),
+            dir.join("unrelated.kicad_sch"),
+            format!("(kicad_sch {})", symbol("C4", 80., 250.)),
         )
         .unwrap();
         let template = constraints_template(&dir, "t").unwrap();
@@ -1169,8 +1230,56 @@ mod tests {
             .collect();
         // Never U3:3 (EN) or a driver's SLEEP input; C7 at U6, C8 at U5.
         assert_eq!(pins, vec![("C4", "U3:1"), ("C7", "U6:1"), ("C8", "U5:1")]);
+        let targets = schematic_decoupling_targets(&dir, "t").unwrap();
+        assert_eq!(
+            targets
+                .iter()
+                .map(|target| (target.part.as_str(), target.pin_of.as_str(), target.max_mm))
+                .collect::<Vec<_>>(),
+            [
+                ("C4", "U3:1", 1.5),
+                ("C7", "U6:1", 3.0),
+                ("C8", "U5:1", 3.0)
+            ],
+        );
+        let placed = dir.join("placed");
+        fs::create_dir_all(placed.join("nested")).unwrap();
+        fs::write(placed.join("t.kicad_sch"), root_schematic).unwrap();
+        fs::write(placed.join("nested/power.kicad_sch"), power).unwrap();
+        let spread = board
+            .iter()
+            .zip([21., 71., 72., 20., 70., 90.])
+            .map(|(part, x)| part.replacen("(at 0 0)", &format!("(at {x} 0)"), 1))
+            .collect::<Vec<_>>()
+            .join(" ");
+        fs::write(
+            placed.join("t.kicad_pcb"),
+            format!(r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal)) {spread})"#),
+        )
+        .unwrap();
+        let placed_template = constraints_template(&placed, "t").unwrap();
+        let targets = schematic_decoupling_targets(&placed, "t").unwrap();
+        assert_eq!(
+            targets
+                .iter()
+                .map(|target| target.part.as_str())
+                .collect::<Vec<_>>(),
+            ["C4", "C8"]
+        );
+        for target in targets {
+            assert!(
+                placed_template["near"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|entry| {
+                        entry["part"] == target.part && entry["pin_of"] == target.pin_of
+                    })
+            );
+        }
         // Without the schematic: the supply pins in turn, still no EN.
         fs::remove_file(dir.join("t.kicad_sch")).unwrap();
+        assert!(schematic_decoupling_targets(&dir, "t").unwrap().is_empty());
         let template = constraints_template(&dir, "t").unwrap();
         let pins: Vec<&str> = template["near"]
             .as_array()
@@ -1314,13 +1423,13 @@ mod tests {
         let text = format!(
             r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
             (gr_rect (start 0 0) (end 60 40) (layer "Edge.Cuts"))
-            (footprint "RF_Module:ESP32-S2-MINI-1" {u} (property "Reference" "U1")
+            (footprint "RF_Module:ESP32-S2-MINI-1" {u} (uuid "antenna-id") (property "Reference" "U1")
                 (fp_rect (start -7.7 -9.75) (end 7.7 10.25) (layer "F.CrtYd"))
                 (pad "1" smd rect (at -7 0) (size 0.8 0.8) (layers "F.Cu") (net 1 "+3V3"))
                 (pad "2" smd rect (at 7 0) (size 0.8 0.8) (layers "F.Cu") (net 2 "GND"))
                 (pad "3" smd rect (at 0 8) (size 0.8 0.8) (layers "F.Cu") (net 3 "TX"))
                 {marks})
-            (footprint "R_0402" {r} (property "Reference" "R1")
+            (footprint "R_0402" {r} (uuid "resistor-id") (property "Reference" "R1")
                 (pad "1" smd rect (at -0.5 0) (size 0.5 0.5) (layers "F.Cu") (net 3 "TX"))
                 (pad "2" smd rect (at 0.5 0) (size 0.5 0.5) (layers "F.Cu") (net 2 "GND"))))"#
         );
@@ -1358,8 +1467,24 @@ mod tests {
             template["edge"],
             serde_json::json!([{"part": "U1", "edge": "any", "flush": true, "overhang": {}}])
         );
+        let board = dir.join("t.kicad_pcb");
+        let selected = BTreeMap::from([("U1", "antenna-id"), ("R1", "resistor-id")]);
+        assert_eq!(
+            unplaced_antenna_edges(&board, &selected).unwrap(),
+            BTreeMap::from([("U1".into(), template["edge"][0].clone())])
+        );
+        assert!(
+            unplaced_antenna_edges(&board, &BTreeMap::from([("U1", "different-id")]))
+                .unwrap()
+                .is_empty()
+        );
         // An "Antenna" text without a keepout: a comment, no entry.
         rf_board(&dir, false, true);
+        assert!(
+            unplaced_antenna_edges(&board, &selected)
+                .unwrap()
+                .is_empty()
+        );
         let template = constraints_template(&dir, "t").unwrap();
         assert!(template.get("edge").is_none(), "{template}");
         let comments = template["comment"].to_string();

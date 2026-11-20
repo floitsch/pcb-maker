@@ -2,7 +2,7 @@
 
 //! Sub-boards of a panel, for the placer: which sub-board each part
 //! belongs to (`detect_for_placer`: from the parts that stay where they
-//! are, the reference board's places (`--reference`), and the nets no
+//! are, explicit regions, the reference board's places (`--reference`), and the nets no
 //! evidence splits), the keepouts that hold each part on its board, and
 //! `describe_sub_boards`. The outline's pieces, the router's net split and
 //! KiCad's check judged per sub-board are `outline_pieces`
@@ -11,6 +11,13 @@
 use super::*;
 use crate::kicad_sexpr::{Expr, form_at};
 use crate::outline_pieces::*;
+
+mod confirmed;
+mod sheet_ownership;
+pub(crate) use confirmed::Confirmed;
+pub use confirmed::KiCadSubBoardConstraint;
+pub use sheet_ownership::SheetOwnershipPreview;
+pub(crate) use sheet_ownership::preview as sheet_ownership_preview;
 
 /// The nets on several sub-boards by design: those the placement split
 /// (pins of parts whose board is known on two), and those with pads of
@@ -244,10 +251,14 @@ pub(crate) struct PlacerSubBoards {
     /// Per footprint (the problem's first components): its sub-board,
     /// None where nothing says which.
     pub part_piece: Vec<Option<usize>>,
+    /// Ownership explicitly requested in the placement brief.
+    pub confirmed_parts: BTreeSet<usize>,
     /// The problem's nets with pins on two sub-boards or more.
     pub split: Vec<usize>,
+    /// Nets skipped only as evidence for assigning unplaced parts.
+    pub ambiguous_sheet_nets: usize,
     /// What placed the parts on their sub-boards: `fixed parts`,
-    /// `reference board`, `placed input`, `nets`.
+    /// `regions`, `reference board`, `placed input`, `nets`.
     pub from: Vec<&'static str>,
     /// Groups of parts nets join that the evidence puts on two sub-boards
     /// (left without one).
@@ -348,17 +359,58 @@ fn body_box(component: &pcb_placer::Component, pose: pcb_placer::Pose) -> [f64; 
     ]
 }
 
+/// A user region identifies a piece if its center is on the piece, it fits
+/// within that piece's bounding box and it does not overlap another box.
+/// The tolerance lets the user copy the rounded boxes in the report.
+fn region_piece(pieces: &Pieces, region: [f64; 4]) -> Option<usize> {
+    let tolerance = 0.001;
+    if region[0] >= region[2] || region[1] >= region[3] {
+        return None;
+    }
+    let mut overlaps = pieces.boxes.iter().enumerate().filter(|(_, bounds)| {
+        let shared = clip_box(region, **bounds);
+        shared[2] - shared[0] > tolerance && shared[3] - shared[1] > tolerance
+    });
+    let (piece, bounds) = overlaps.next()?;
+    let center = [(region[0] + region[2]) / 2.0, (region[1] + region[3]) / 2.0];
+    (pieces.piece_at(center) == Some(piece)
+        && overlaps.next().is_none()
+        && bounds[0] <= region[0] + tolerance
+        && bounds[1] <= region[1] + tolerance
+        && bounds[2] >= region[2] - tolerance
+        && bounds[3] >= region[3] - tolerance)
+        .then_some(piece)
+}
+
+fn explicit_regions(problem: &pcb_placer::Problem, footprints: usize) -> BTreeMap<usize, [f64; 4]> {
+    let mut regions = BTreeMap::new();
+    for &(part, region) in &problem.constraints.regions {
+        if part < footprints
+            && !problem.components[part].fixed
+            && !problem.constraints.automatic_regions.contains(&part)
+            && !problem.components[part].pins.is_empty()
+        {
+            regions
+                .entry(part)
+                .and_modify(|intersection| *intersection = clip_box(*intersection, region))
+                .or_insert(region);
+        }
+    }
+    regions
+}
+
 /// Which sub-board each part belongs to (module comment), on a board whose
 /// outline has two pieces or more without its tabs (else None):
 ///
 /// 1. the parts that stay where they are (fixed, locked, the board's
 ///    marks among the footprints) lie on their piece;
-/// 2. with a reference board (`reference`), each footprint whose uuid it
+/// 2. an explicit region on a single piece assigns a movable part;
+/// 3. with a reference board (`reference`), each footprint whose uuid it
 ///    holds lies on the piece of its place there;
-/// 3. an input that looks placed (nine in ten movable parts on a piece,
+/// 4. an input that looks placed (nine in ten movable parts on a piece,
 ///    nine in ten at a place of their own: not a stack) gives each
 ///    movable part its piece;
-/// 4. a net with pins of such parts on two pieces is split; the others
+/// 5. a net with pins of such parts on two pieces is split; the others
 ///    join their parts, and a group so joined takes the piece of its
 ///    placed parts where they agree (none where they do not: a conflict).
 pub(crate) fn detect_for_placer(
@@ -366,11 +418,14 @@ pub(crate) fn detect_for_placer(
     problem: &pcb_placer::Problem,
     footprints: usize,
     reference: Option<&Expr>,
+    confirmed: Option<&Confirmed>,
 ) -> Result<Option<PlacerSubBoards>, String> {
-    let loops = outline::board_loops(pcb)?;
-    let Some(pieces) =
+    let Some(pieces) = (if let Some(confirmed) = confirmed {
+        Some(confirmed.pieces.clone())
+    } else {
+        let loops = outline::board_loops(pcb)?;
         Pieces::of_loops_cached(&loops.piece_loops, &loops.cutouts, &Cuts::of_board(pcb))
-    else {
+    }) else {
         return Ok(None);
     };
     let footprints = footprints.min(problem.components.len());
@@ -397,6 +452,29 @@ pub(crate) fn detect_for_placer(
                 from.insert("fixed parts");
             }
         }
+    }
+    let mut region_assignments = BTreeSet::new();
+    for (part, region) in explicit_regions(problem, footprints) {
+        if let Some(piece) = region_piece(&pieces, region) {
+            part_piece[part] = Some(piece);
+            region_assignments.insert(part);
+            from.insert("regions");
+        }
+    }
+    let mut confirmed_parts = BTreeSet::new();
+    if let Some(confirmed) = confirmed {
+        for (&part, &piece) in &confirmed.parts {
+            if part_piece[part].is_some_and(|prior| prior != piece) {
+                return Err(crate::exit::input_error(format!(
+                    "sub_board disagrees with a held pose or region for part {}",
+                    problem.components[part].name
+                )));
+            }
+            part_piece[part] = Some(piece);
+            confirmed_parts.insert(part);
+            region_assignments.insert(part);
+        }
+        from.insert("sub_board constraints");
     }
     if let Some(reference) = reference {
         designer_places = reference
@@ -481,6 +559,12 @@ pub(crate) fn detect_for_placer(
     }
     let split: Vec<usize> = (0..net_count).filter(|net| on[*net].len() >= 2).collect();
     let split_set: BTreeSet<usize> = split.iter().copied().collect();
+    let ambiguous = sheet_ownership::ambiguous_nets(
+        &footprint_items,
+        problem,
+        &part_piece,
+        &region_assignments,
+    );
     // The other nets join their parts.
     let mut parent: Vec<usize> = (0..footprints).collect();
     fn root(parent: &mut [usize], mut part: usize) -> usize {
@@ -493,7 +577,7 @@ pub(crate) fn detect_for_placer(
     let mut first_on_net: BTreeMap<usize, usize> = BTreeMap::new();
     for part in 0..footprints {
         for pin in &problem.components[part].pins {
-            if split_set.contains(&pin.net) {
+            if split_set.contains(&pin.net) || ambiguous.contains(&pin.net) {
                 continue;
             }
             match first_on_net.get(&pin.net) {
@@ -533,7 +617,14 @@ pub(crate) fn detect_for_placer(
     if by_nets {
         from.insert("nets");
     }
-    let order = ["fixed parts", "reference board", "placed input", "nets"];
+    let order = [
+        "fixed parts",
+        "regions",
+        "sub_board constraints",
+        "reference board",
+        "placed input",
+        "nets",
+    ];
     let connectors: Vec<bool> = footprint_items
         .iter()
         .take(footprints)
@@ -553,7 +644,9 @@ pub(crate) fn detect_for_placer(
     Ok(Some(PlacerSubBoards {
         pieces,
         part_piece,
+        confirmed_parts,
         split,
+        ambiguous_sheet_nets: ambiguous.difference(&split_set).count(),
         from: order
             .into_iter()
             .filter(|kind| from.contains(kind))
@@ -765,6 +858,7 @@ pub(crate) fn keep_off_frames(
             tight_hollow: Vec::new(),
             hole_rings: Vec::new(),
             copper_graphics: Vec::new(),
+            unassigned_copper_graphics: Vec::new(),
             courtless: Vec::new(),
             slots: Vec::new(),
         });
@@ -813,8 +907,9 @@ pub(crate) fn apply_to_placer(
     // their nets apart, each part's half told by the nets): a part on
     // the other half is no part of its circuit there (no track crosses
     // a row of mouse bites).
-    let hold = sub.count(problem) >= 2
-        && unassigned.len() as f64 <= MOST_UNASSIGNED_SHARE * movable as f64;
+    let hold = !sub.confirmed_parts.is_empty()
+        || (sub.count(problem) >= 2
+            && unassigned.len() as f64 <= MOST_UNASSIGNED_SHARE * movable as f64);
     if !hold && !sub.has_frames() {
         return applied;
     }
@@ -836,6 +931,13 @@ pub(crate) fn apply_to_placer(
         .iter()
         .map(|(part, _)| *part)
         .collect();
+    let explicitly_held: BTreeSet<usize> = explicit_regions(problem, sub.part_piece.len())
+        .into_iter()
+        .filter_map(|(part, region)| {
+            let piece = sub.part_piece[part]?;
+            (region_piece(&sub.pieces, region) == Some(piece)).then_some(part)
+        })
+        .collect();
     let started: BTreeSet<usize> = problem
         .constraints
         .starts
@@ -847,11 +949,22 @@ pub(crate) fn apply_to_placer(
         let Some(piece) = sub.part_piece[part] else {
             continue;
         };
-        if component.fixed || component.pins.is_empty() || held.contains(&part) {
+        if component.fixed || component.pins.is_empty() {
+            continue;
+        }
+        let confirmed = sub.confirmed_parts.contains(&part);
+        if held.contains(&part) && !confirmed {
+            applied.held += usize::from(explicitly_held.contains(&part));
             continue;
         }
         let region = sub.pieces.boxes[piece];
-        problem.constraints.regions.push((part, region));
+        // An explicit piece assignment enters the same sub-piece solver.
+        // Its post-placement check uses physical pin membership, so an
+        // approximate raster bounding box is only the local solve window.
+        if !confirmed {
+            problem.constraints.regions.push((part, region));
+            problem.constraints.automatic_regions.insert(part);
+        }
         if !started.contains(&part) {
             problem.constraints.starts.push((
                 part,
@@ -917,8 +1030,8 @@ pub(crate) fn apply_to_placer(
 pub struct KiCadSubBoardsReport {
     /// How many sub-boards hold parts.
     pub count: usize,
-    /// What told the parts' sub-boards: `fixed parts`, `reference board`,
-    /// `placed input`, `nets`.
+    /// What told the parts' sub-boards: `fixed parts`, `regions`,
+    /// `reference board`, `placed input`, `nets`.
     pub from: Vec<String>,
     /// Nets (by name) whose parts lie on two sub-boards or more: one net
     /// per sub-board to the placer and the router where no copper joins
@@ -936,6 +1049,10 @@ pub struct KiCadSubBoardsReport {
     /// a tenth of the movable parts without one), and the tabs (boxes)
     /// it kept parts off.
     pub held: bool,
+    /// Movable parts held on their assigned pieces, including by explicit
+    /// regions already supplied in the placement constraints.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub movable_held: usize,
     pub tabs: Vec<[f64; 4]>,
     /// What cut the outline into pieces: `narrow outline`, `mouse
     /// bites`, `V-cuts`.
@@ -985,6 +1102,10 @@ pub struct KiCadSubBoardsReport {
     pub movable: usize,
     #[serde(default)]
     pub parts_assigned: usize,
+    /// Batch suggestions based on fixed source-sheet witnesses. Filled
+    /// only by `--check-sub-boards` and never applied by this check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sheet_ownership: Option<SheetOwnershipPreview>,
 }
 
 fn is_zero(count: &usize) -> bool {
@@ -1057,6 +1178,7 @@ impl KiCadSubBoardsReport {
                 .collect(),
             conflicts: sub.conflicts,
             held: applied.held > 0,
+            movable_held: applied.held,
             tabs: sub.pieces.tabs.iter().map(round).collect(),
             cut_by: sub
                 .pieces
@@ -1078,6 +1200,7 @@ impl KiCadSubBoardsReport {
             copies: false,
             keepout_margin_mm: applied.margin_mm,
             sub_boards,
+            sheet_ownership: None,
         }
     }
 }
@@ -1109,6 +1232,7 @@ impl KiCadSubBoardsReport {
                 .collect(),
             conflicts: 0,
             held: false,
+            movable_held: 0,
             tabs: sub.pieces.tabs.iter().map(round).collect(),
             cut_by: sub
                 .pieces
@@ -1144,6 +1268,7 @@ impl KiCadSubBoardsReport {
             pieces: sub.pieces.count(),
             movable,
             parts_assigned: 0,
+            sheet_ownership: None,
         }
     }
 
@@ -1158,6 +1283,54 @@ impl KiCadSubBoardsReport {
             && !self.held
             && self.unassigned as f64
                 > crate::sub_boards::MOST_UNASSIGNED_SHARE * self.movable as f64
+    }
+
+    /// Whether the evidence identifies several boards but cannot hold
+    /// their parts in those boards.
+    pub fn boards_mixed(&self) -> bool {
+        self.count >= 2 && self.unassigned > 0 && !self.held && !self.copies
+    }
+
+    /// What to fix before searching placements, while assignments can
+    /// still change. Outline cuts may also belong to a single circuit.
+    pub fn assignment_action(&self) -> Option<String> {
+        if !self.boards_mixed() && !self.boards_unknown() {
+            return None;
+        }
+        let evidence = if self.boards_mixed() {
+            format!("{} pieces have assigned parts", self.count)
+        } else {
+            format!(
+                "the outline may be a panel of separate boards ({} pieces from {})",
+                self.pieces,
+                self.cut_by.join(", ")
+            )
+        };
+        let examples = if self.unassigned_parts.is_empty() || self.sheet_ownership.is_some() {
+            String::new()
+        } else {
+            format!(" ({})", self.unassigned_parts.join(", "))
+        };
+        let mut action = format!(
+            "sub-board assignments: {evidence} and {} of {} movable parts have no assigned piece{examples}. If these pieces are separate boards, pass the matching placed project with --reference <project-dir>, or add region constraints grouping the parts by piece.",
+            self.unassigned, self.movable
+        );
+        if let Some(preview) = &self.sheet_ownership {
+            if preview.suggested_sub_boards.is_empty() {
+                action.push_str(&format!(
+                    " Review sheet_ownership for grouped region suggestions covering {} parts and all outline piece boxes. A piece without assigned parts may hold an unwitnessed sheet. Confirm its role and map unresolved groups to pieces before running layout.",
+                    preview.suggested_parts
+                ));
+            } else {
+                action.push_str(&format!(
+                    " Review sheet_ownership.suggested_sub_boards and the fixed parts supporting each subtree. Copy each confirmed constraint into sub_board in the placement brief. The suggestions cover {} parts.",
+                    preview.suggested_parts
+                ));
+            }
+        } else {
+            action.push_str(" Use describe-kicad-board for piece boxes in absolute millimetres.");
+        }
+        Some(action)
     }
 }
 
@@ -1196,6 +1369,7 @@ fn make_inert(component: &mut pcb_placer::Component) {
     component.tight_hollow.clear();
     component.hole_rings.clear();
     component.copper_graphics.clear();
+    component.unassigned_copper_graphics.clear();
     component.copper_only = false;
     component.cutout_outline.clear();
     component.halo = 0.0;
@@ -1327,6 +1501,83 @@ fn region_problem(
     sub
 }
 
+/// Try a handful of unresolved assigned parts against the assembled panel.
+/// Keep all other poses and require the original relaxation and constraints.
+fn retry_small_panel_conflicts(
+    problem: &pcb_placer::Problem,
+    active: &BTreeSet<usize>,
+    config: &pcb_placer::Config,
+    placed: &mut pcb_placer::Placement,
+) {
+    const MAX_PARTS: usize = 4;
+    const MAX_WORK_SECONDS: f64 = 12.0;
+    if placed.unplaced.is_empty() || placed.unplaced.len() > MAX_PARTS {
+        return;
+    }
+    let affected: BTreeSet<usize> = placed
+        .unplaced
+        .iter()
+        .chain(&placed.illegal)
+        .copied()
+        .collect();
+    if affected.len() > MAX_PARTS || !affected.is_subset(active) {
+        return;
+    }
+    let mut relaxed = problem.clone();
+    placed.relaxation.apply(&mut relaxed);
+    let mut retry_problem = relaxed.clone();
+    retry_problem.poses.clone_from(&placed.poses);
+    for (part, component) in retry_problem.components.iter_mut().enumerate() {
+        component.fixed |= !affected.contains(&part);
+    }
+    let max_work = (MAX_WORK_SECONDS * pcb_placer::work_per_second()) as u64;
+    let allowance = config
+        .work_limit
+        .map_or(max_work, |limit| (limit / 50).min(max_work));
+    if allowance == 0 {
+        return;
+    }
+    let retry_config = pcb_placer::Config {
+        work_limit: Some(allowance),
+        start: None,
+        ..config.clone()
+    };
+    let pcb_placer::Placement {
+        poses, unplaced, ..
+    } = pcb_placer::place(&retry_problem, &retry_config);
+    if poses
+        .iter()
+        .zip(&placed.poses)
+        .enumerate()
+        .any(|(part, (after, before))| !affected.contains(&part) && after != before)
+    {
+        return;
+    }
+    let illegal = pcb_placer::legal::illegal_components(&relaxed, &poses);
+    let remaining: BTreeSet<_> = unplaced.iter().chain(&illegal).copied().collect();
+    if remaining.len() >= affected.len() || !remaining.is_subset(&affected) {
+        return;
+    }
+    let constraints = pcb_placer::constraints::report(&relaxed, &poses);
+    if placed.constraints.len() != constraints.len()
+        || placed
+            .constraints
+            .iter()
+            .zip(&constraints)
+            .any(|(before, after)| before.satisfied && !after.satisfied)
+    {
+        return;
+    }
+    placed.wirelength_final = problem.wirelength(&poses);
+    placed.poses = poses;
+    placed.unplaced = unplaced;
+    placed.illegal = illegal;
+    placed.constraints = constraints;
+    if placed.unplaced.is_empty() && placed.illegal.is_empty() {
+        placed.overfull = false;
+    }
+}
+
 /// One seed's placement of a panel whose parts the placement holds in
 /// their sub-boards (`PlacerApplied::held`): each sub-board with the
 /// ordinary placer in turn, alone in its region (the outline cut to it,
@@ -1430,13 +1681,7 @@ pub(crate) fn place_sub_boards(
     let illegal = pcb_placer::legal::illegal_components(&fin, &poses);
     let constraints = pcb_placer::constraints::report(&fin, &poses);
     let wirelength_final = problem.wirelength(&poses);
-    frames.push(pcb_placer::global::Frame {
-        iteration: global_iterations + 1,
-        overflow: global_overflow,
-        wirelength: wirelength_final,
-        poses: poses.clone(),
-    });
-    pcb_placer::Placement {
+    let mut placed = pcb_placer::Placement {
         frames,
         global_iterations,
         global_overflow,
@@ -1449,7 +1694,8 @@ pub(crate) fn place_sub_boards(
         constraints,
         relaxation,
         work: pcb_placer::work() - started,
-        stage_poses: vec![("sub-boards", held), ("final", poses.clone())],
+        sparse_legalization: None,
+        stage_poses: vec![("sub-boards", held)],
         global_histories: Vec::new(),
         overfull,
         level: 0,
@@ -1457,7 +1703,30 @@ pub(crate) fn place_sub_boards(
         walk: Vec::new(),
         poses,
         exits: None,
+    };
+    if !placed.unplaced.is_empty() {
+        let active = boards.values().flatten().copied().collect();
+        let failed = (placed.unplaced.len(), placed.illegal.len());
+        retry_small_panel_conflicts(problem, &active, config, &mut placed);
+        if failed != (placed.unplaced.len(), placed.illegal.len()) {
+            eprintln!(
+                "placer: panel placement retry: {} unplaced and {} illegal became {} unplaced and {} illegal",
+                failed.0,
+                failed.1,
+                placed.unplaced.len(),
+                placed.illegal.len()
+            );
+        }
     }
+    placed.frames.push(pcb_placer::global::Frame {
+        iteration: global_iterations + 1,
+        overflow: global_overflow,
+        wirelength: placed.wirelength_final,
+        poses: placed.poses.clone(),
+    });
+    placed.stage_poses.push(("final", placed.poses.clone()));
+    placed.work = pcb_placer::work() - started;
+    placed
 }
 
 #[cfg(test)]
@@ -1537,6 +1806,149 @@ mod tests {
     }
 
     #[test]
+    fn confirmed_sheet_regions_do_not_assign_an_unknown_sheet_via_shared_names() {
+        let part = |reference, file, net| {
+            format!(
+                r#"(footprint "R" (at 5 5) (property "Reference" "{reference}")
+                    (path "/{reference}") (sheetfile "{file}.kicad_sch")
+                    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "{net}")))"#
+            )
+        };
+        let footprints = [
+            part("R1", "first", "dup"),
+            part("R2", "first", "own_first"),
+            part("R3", "second", "own_second"),
+            part("R4", "second", "own_second"),
+            part("R5", "unknown", "dup"),
+        ]
+        .join("\n");
+        let pcb = two_pieces(1.5, 20.0, &footprints);
+        let config = crate::board_placer::KiCadBoardPlacerConfig::default();
+        let mut lowered = crate::board_placer::lower_placement(&pcb, &config).unwrap();
+        for component in &mut lowered.problem.components[..5] {
+            component.fixed = false;
+        }
+        let old = detect_for_placer(&pcb, &lowered.problem, 5, None, None)
+            .unwrap()
+            .unwrap();
+        let regions = &old.pieces.boxes;
+        lowered.problem.constraints.regions.extend([
+            (0, regions[0]),
+            (1, regions[0]),
+            (2, regions[1]),
+            (3, regions[1]),
+        ]);
+        let found = detect_for_placer(&pcb, &lowered.problem, 5, None, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            found.part_piece,
+            vec![Some(0), Some(0), Some(1), Some(1), None]
+        );
+        assert_eq!(found.ambiguous_sheet_nets, 1);
+        assert!(
+            found.split.is_empty(),
+            "the ambiguous net was only skipped for ownership"
+        );
+        // Giving the last group an explicit region reaches the per-piece
+        // placer even though it did not have to add any new regions.
+        lowered.problem.constraints.regions.push((4, regions[1]));
+        let complete = detect_for_placer(&pcb, &lowered.problem, 5, None, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(complete.part_piece[4], Some(1));
+        let applied = apply_to_placer(
+            &complete,
+            &mut lowered.problem,
+            &mut lowered.references,
+            &mut lowered.source_at,
+            &mut lowered.poured,
+        );
+        assert_eq!(applied.held, 5);
+    }
+
+    #[test]
+    fn exact_sub_board_entries_check_pin_ownership_and_never_claim_drawings() {
+        let pcb = two_pieces(
+            1.5,
+            20.0,
+            r#"(footprint "R" (at 5 5) (property "Reference" "R1")
+                   (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "VCC")))
+               (footprint "logo" (at 5 5) (property "Reference" "LOGO"))"#,
+        );
+        let config = crate::board_placer::KiCadBoardPlacerConfig::default();
+        let mut lowered = crate::board_placer::lower_placement(&pcb, &config).unwrap();
+        lowered.problem.components[0].fixed = false;
+        let entry = |reference: &str, point| KiCadSubBoardConstraint {
+            piece_at_mm: point,
+            parts: vec![reference.to_owned()],
+        };
+        let read = |entries: &[KiCadSubBoardConstraint]| {
+            Confirmed::read(&pcb, &lowered.problem, &lowered.references, entries)
+        };
+        let right = entry("R1", [5.0, 33.0]);
+        let confirmed = read(std::slice::from_ref(&right)).unwrap().unwrap();
+        let sub = detect_for_placer(&pcb, &lowered.problem, 2, None, Some(&confirmed))
+            .unwrap()
+            .unwrap();
+        assert_eq!(sub.part_piece[0], Some(1));
+        let mut moved = lowered.problem.poses.clone();
+        assert!(!confirmed.report(&lowered.problem, &moved, &lowered.references)[0].satisfied);
+        moved[0].position = [5.0, 33.0];
+        assert!(confirmed.report(&lowered.problem, &moved, &lowered.references)[0].satisfied);
+        assert!(read(&[entry("LOGO", [5.0, 33.0])]).is_err());
+        assert!(read(&[entry("R1", [10.0, 22.5])]).is_err());
+        assert!(read(&[right, entry("R1", [5.0, 5.0])]).is_err());
+    }
+
+    #[test]
+    fn a_small_piece_retry_keeps_legal_parts_and_the_piece_region() {
+        let parts = [4, 8, 12]
+            .into_iter()
+            .enumerate()
+            .map(|(index, x)| {
+                format!(
+                    r#"(footprint "R" (at {x} 7) (property "Reference" "R{index}")
+                    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "GND")))"#
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let pcb = two_pieces(1.5, 20.0, &parts);
+        let config = crate::board_placer::KiCadBoardPlacerConfig::default();
+        let mut lowered = crate::board_placer::lower_placement(&pcb, &config).unwrap();
+        let active = BTreeSet::from([0, 1, 2]);
+        for &part in &active {
+            lowered.problem.components[part].fixed = false;
+            lowered
+                .problem
+                .constraints
+                .regions
+                .push((part, [0.0, 0.0, 20.0, 20.0]));
+        }
+        let problem = region_problem(
+            &lowered.problem,
+            &lowered.problem.poses,
+            &active,
+            [0.0, 0.0, 20.0, 20.0],
+        );
+        let mut placed = pcb_placer::place(&problem, &pcb_placer::Config::new());
+        let kept = placed.poses[2];
+        placed.poses[1] = placed.poses[0];
+        placed.unplaced = vec![1];
+        placed.illegal = vec![0, 1];
+        retry_small_panel_conflicts(&problem, &active, &pcb_placer::Config::new(), &mut placed);
+        assert!(placed.unplaced.is_empty() && placed.illegal.is_empty());
+        assert_eq!(placed.poses[2], kept);
+        assert!(
+            placed
+                .constraints
+                .iter()
+                .all(|constraint| constraint.satisfied)
+        );
+    }
+
+    #[test]
     fn sub_boards_are_reported_from_the_outline_alone_with_no_part_on_any_piece() {
         // The panel's two boards with their four parts stacked off the
         // board (a netlist import), no reference: nothing tells which part
@@ -1561,7 +1973,7 @@ mod tests {
         for component in &mut lowered.problem.components[..4] {
             component.fixed = false;
         }
-        let sub = detect_for_placer(&pcb, &lowered.problem, 4, None)
+        let sub = detect_for_placer(&pcb, &lowered.problem, 4, None, None)
             .unwrap()
             .expect("pieces");
         assert_eq!(sub.count(&lowered.problem), 0);
@@ -1582,6 +1994,11 @@ mod tests {
         assert!(report.sub_boards.iter().all(|board| board.parts == 0));
         assert!(!report.held && report.kept_clear_mm2 == 0.0);
         assert!(report.boards_unknown());
+        let action = report.assignment_action().expect("assignment action");
+        assert!(action.contains("may be a panel of separate boards"));
+        assert!(action.contains("4 of 4 movable parts"));
+        assert!(action.contains("--reference"));
+        assert!(action.contains("region constraints"));
         // describe-kicad-board says the same of the board.
         let described = describe_pieces(&pcb).unwrap().expect("pieces");
         assert_eq!(
@@ -1596,7 +2013,7 @@ mod tests {
         // With a reference (the parts at their places): as before, two
         // sub-boards from it, every part on one, no lead action.
         let reference = board([[3.0, 5.0], [13.0, 5.0], [3.0, 35.0], [13.0, 35.0]]);
-        let sub = detect_for_placer(&pcb, &lowered.problem, 4, Some(&reference))
+        let sub = detect_for_placer(&pcb, &lowered.problem, 4, Some(&reference), None)
             .unwrap()
             .expect("pieces");
         assert_eq!(sub.count(&lowered.problem), 2);
@@ -1624,6 +2041,59 @@ mod tests {
         );
         assert_eq!(report.from, vec!["reference board"]);
         assert!(!report.boards_unknown());
+        assert!(report.assignment_action().is_none());
+
+        // Regions crossing both pieces are ambiguous, even when they
+        // contain the center of one piece. Regions restricted to a piece
+        // tell the part's board just as a matching reference does.
+        lowered.problem.constraints.regions = vec![(0, [2.0, 3.0, 16.0, 40.0])];
+        let ambiguous = detect_for_placer(&pcb, &lowered.problem, 4, None, None)
+            .unwrap()
+            .expect("pieces");
+        assert_eq!(
+            ambiguous.unassigned(&lowered.problem),
+            (4, vec![0, 1, 2, 3])
+        );
+        lowered.problem.constraints.regions.extend([
+            (0, [2.0, 3.0, 16.0, 15.0]),
+            (1, [2.0, 3.0, 16.0, 15.0]),
+            (2, [2.0, 28.0, 16.0, 40.0]),
+            (3, [2.0, 28.0, 16.0, 40.0]),
+        ]);
+        let assigned = detect_for_placer(&pcb, &lowered.problem, 4, None, None)
+            .unwrap()
+            .expect("pieces");
+        assert_eq!(assigned.unassigned(&lowered.problem), (4, vec![]));
+        assert_eq!(assigned.part_piece, sub.part_piece);
+        assert_eq!(assigned.from, vec!["regions"]);
+    }
+
+    #[test]
+    fn a_region_in_a_pieces_concavity_does_not_assign_a_part() {
+        let pieces = Pieces::of_loops(
+            &[vec![
+                [0.0, 0.0],
+                [20.0, 0.0],
+                [20.0, 2.0],
+                [25.0, 2.0],
+                [25.0, 0.0],
+                [45.0, 0.0],
+                [45.0, 20.0],
+                [25.0, 20.0],
+                [25.0, 3.5],
+                [20.0, 3.5],
+                [20.0, 5.0],
+                [5.0, 5.0],
+                [5.0, 20.0],
+                [0.0, 20.0],
+            ]],
+            &[],
+            &Cuts::default(),
+        )
+        .expect("two pieces");
+        assert_eq!(pieces.count(), 2);
+        assert_eq!(region_piece(&pieces, [1.0, 7.0, 4.0, 15.0]), Some(0));
+        assert_eq!(region_piece(&pieces, [10.0, 10.0, 12.0, 12.0]), None);
     }
 
     #[test]
@@ -1759,7 +2229,7 @@ mod tests {
         let config = crate::board_placer::KiCadBoardPlacerConfig::default();
         let mut lowered = crate::board_placer::lower_placement(&pcb, &config).unwrap();
         let footprints = 3;
-        let sub = detect_for_placer(&pcb, &lowered.problem, footprints, None)
+        let sub = detect_for_placer(&pcb, &lowered.problem, footprints, None, None)
             .unwrap()
             .expect("pieces");
         assert_eq!(sub.count(&lowered.problem), 1);
@@ -1840,7 +2310,7 @@ mod tests {
         let lowered_of = |reference: Option<&Expr>| {
             let mut lowered = crate::board_placer::lower_placement(&pcb, &config).unwrap();
             let footprints = 3;
-            let sub = detect_for_placer(&pcb, &lowered.problem, footprints, reference)
+            let sub = detect_for_placer(&pcb, &lowered.problem, footprints, reference, None)
                 .unwrap()
                 .expect("pieces");
             assert!(sub.has_frames());
@@ -2073,7 +2543,7 @@ mod tests {
         .unwrap();
         let config = crate::board_placer::KiCadBoardPlacerConfig::default();
         let mut lowered = crate::board_placer::lower_placement(&pcb, &config).unwrap();
-        let sub = detect_for_placer(&pcb, &lowered.problem, 4, None)
+        let sub = detect_for_placer(&pcb, &lowered.problem, 4, None, None)
             .unwrap()
             .expect("pieces");
         assert_eq!(sub.count(&lowered.problem), 2);
@@ -2252,7 +2722,7 @@ mod tests {
         let pcb = panel_with(true, "", "/S/SIG");
         let config = crate::board_placer::KiCadBoardPlacerConfig::default();
         let mut lowered = crate::board_placer::lower_placement(&pcb, &config).unwrap();
-        let sub = detect_for_placer(&pcb, &lowered.problem, 4, None)
+        let sub = detect_for_placer(&pcb, &lowered.problem, 4, None, None)
             .unwrap()
             .expect("pieces");
         assert_eq!(sub.count(&lowered.problem), 2);

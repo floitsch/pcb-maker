@@ -1685,11 +1685,7 @@ impl SpanModel {
         if board.via_spans.is_empty() || layers < 3 {
             return None;
         }
-        let all: LayerMask = if layers >= 32 {
-            LayerMask::MAX
-        } else {
-            (1 << layers) - 1
-        };
+        let all = board.all_layers();
         let mut pair_mask = vec![all; layers * layers];
         for a in 0..layers {
             for b in 0..layers {

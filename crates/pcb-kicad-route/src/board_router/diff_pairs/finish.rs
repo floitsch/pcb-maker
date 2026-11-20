@@ -31,7 +31,7 @@ pub(super) struct Finish<'a> {
 struct Kept<'a> {
     copper: PairCopper,
     runs: Vec<KeptRun>,
-    links: Vec<&'a LinkPlan>,
+    links: Vec<(&'a LinkPlan, [[Option<usize>; 2]; 2])>,
 }
 
 /// A routed board with its pairs' links as nets (`plan_pairs`) turned back
@@ -80,35 +80,79 @@ pub fn finish_pairs(
         &result.routes,
         &plan.pairs,
         &mut candidates,
+        config,
     );
+    // An alternate centreline may use a different landing layer.
+    for (position, (index, _, copper)) in candidates.coppers.iter().enumerate() {
+        if refused[position].is_none() {
+            candidates.lacking[position] = missing_stubs(
+                &finish.restored,
+                result,
+                &plan.pairs[*index],
+                candidates.links[position],
+                copper.stub_layers(),
+            );
+        }
+    }
     let repaired = finish.repair_lacking(result, &candidates, &mut refused);
     finish.report.stubs_routed += repaired.values().map(Vec::len).sum::<usize>();
     let kept = finish.keep_links(candidates, &refused);
-    let kept_nets: BTreeSet<core::NetId> = kept.links.iter().map(|link| link.net).collect();
+    let kept_nets: BTreeSet<core::NetId> = kept.links.iter().map(|(link, _)| link.net).collect();
     finish.remove_failed_stubs(result, &kept_nets);
     // A repaired stub's pad keeps one way to the run: its old route
     // elsewhere (to the link's other end, through other pads) goes where
     // the stub makes it a loop (`cut_old_connection`).
+    let trim_started = tests_so_far();
     for stubs in repaired.values() {
         for (net, pad, new) in stubs {
-            cut_old_connection(
+            if cut_old_connection(
                 &finish.restored,
                 &mut result.routes[*net as usize],
                 *net,
                 *pad,
                 new,
-            );
+            ) {
+                finish.report.obsolete_launch_tips_removed += 1;
+            }
         }
     }
+    finish.report.work_seconds += plan_work_since(trim_started);
     // The kept links' stubs straight where that holds (the router's run
     // parallel out of the pads, which KiCad takes for a coupled piece at
     // the pads' pitch).
-    for plan_link in &kept.links {
-        straighten_stubs(&finish.restored, result, &plan.pairs, plan_link);
-        join_stub_ends(result, &plan.pairs, plan_link);
+    for (plan_link, layers) in &kept.links {
+        straighten_stubs(&finish.restored, result, &plan.pairs, plan_link, *layers);
+        join_stub_ends(result, &plan.pairs, plan_link, *layers);
     }
     finish.close_given_up(result, &kept_nets);
     finish.fall_back(result, &kept_nets);
+    let prune_started = tests_so_far();
+    for (link, _) in &kept.links {
+        let pair = &plan.pairs[link.pair];
+        let mates = (
+            pair.positive.min(pair.negative),
+            pair.positive.max(pair.negative),
+        );
+        finish
+            .restored
+            .attachment
+            .verified_pair_track_gaps
+            .insert(mates, pair.gap);
+        if pair.links.len() != 1 || finish.open_pairs.contains(&link.pair) {
+            continue;
+        }
+        for net in [pair.positive, pair.negative] {
+            if prune_parallel_branch(
+                &finish.restored,
+                plan.obstacles,
+                &mut result.routes[net as usize],
+                net,
+            ) {
+                finish.report.parallel_branches_removed += 1;
+            }
+        }
+    }
+    finish.report.work_seconds += plan_work_since(prune_started);
     let Kept {
         copper: mut copper_out,
         runs: kept_runs,
@@ -272,7 +316,8 @@ impl<'a> Finish<'a> {
                 self.open_pairs.insert(index);
                 continue;
             }
-            kept.links.push(candidates.links[position]);
+            kept.links
+                .push((candidates.links[position], copper.stub_layers()));
             kept.runs.push((
                 index,
                 [kept.copper.items.len(), kept.copper.items.len() + 1],
@@ -451,12 +496,18 @@ impl<'a> Finish<'a> {
                 }
             }
         }
+        let started = tests_so_far();
         for &index in &self.open_pairs {
             let pair = &plan.pairs[index];
             for net in [pair.positive, pair.negative] {
-                prune_dangling(&self.restored, &mut result.routes[net as usize], net);
+                let route = &mut result.routes[net as usize];
+                prune_dangling(&self.restored, route, net);
+                if prune_fallback_overlap(&self.restored, plan.obstacles, route, net) {
+                    self.report.parallel_branches_removed += 1;
+                }
             }
         }
+        self.report.work_seconds += plan_work_since(started);
     }
 
     /// The skew: per pair with a kept link, the shorter net's meander
@@ -471,6 +522,11 @@ impl<'a> Finish<'a> {
         let plan = self.plan;
         for (index, entry) in self.entries.iter_mut().enumerate() {
             if skew_matching() && kept_runs.iter().any(|(owner, ..)| *owner == index) {
+                let tune_pad_approaches = plan.links.iter().any(|link| {
+                    link.pair == index
+                        && (link.scoped_clearance
+                            || (link.fixed == [true; 2] && plan.pairs[index].max_skew.is_some()))
+                });
                 match_skew(
                     &mut self.restored,
                     result,
@@ -480,6 +536,8 @@ impl<'a> Finish<'a> {
                     copper_out,
                     entry,
                     heights,
+                    tune_pad_approaches,
+                    self.config,
                 );
                 self.report.meanders += (entry.meander_mm > 0.0) as usize;
             }

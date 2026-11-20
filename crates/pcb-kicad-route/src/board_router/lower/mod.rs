@@ -267,6 +267,7 @@ impl Builder {
                 hole_to_hole: config.hole_to_hole_clearance_mm,
                 classes,
                 obstacles,
+                fixed_pad_route_clearance: config.fixed_pad_route_clearance.clone(),
                 nets,
                 planes,
                 solid_pads: {

@@ -28,6 +28,7 @@ pub(super) struct Group {
 /// between the two nets of one pair counts only below their gap (KiCad
 /// lets them come that close: the class's diff pair rule, or the gap is no
 /// less than the clearance).
+#[cfg(test)]
 pub(super) fn refused_groups(
     board: &core::Board,
     routed: &[core::NetRoute],
@@ -46,10 +47,41 @@ pub(super) fn refused_groups_at(
     groups: &[Group],
     width: f64,
 ) -> Vec<Option<String>> {
+    refused_groups_with_rules(board, routed, pairs, groups, width, None)
+}
+
+pub(super) fn refused_groups_with_rules(
+    board: &core::Board,
+    routed: &[core::NetRoute],
+    pairs: &[Pair],
+    groups: &[Group],
+    width: f64,
+    rules: Option<&core::rules::ClassRules>,
+) -> Vec<Option<String>> {
+    refused_groups_with_pair_gaps(board, routed, pairs, groups, width, rules, &BTreeMap::new())
+}
+
+pub(super) fn refused_groups_with_pair_gaps(
+    board: &core::Board,
+    routed: &[core::NetRoute],
+    pairs: &[Pair],
+    groups: &[Group],
+    width: f64,
+    rules: Option<&core::rules::ClassRules>,
+    plated_gaps: &BTreeMap<(core::NetId, core::NetId), f64>,
+) -> Vec<Option<String>> {
     if groups.is_empty() {
         return Vec::new();
     }
-    let mut routes = routes_near(board, routed, groups);
+    let reach = rules.map_or(CHECK_REACH, |rules| {
+        let copper = board
+            .classes
+            .iter()
+            .flat_map(|class| [class.trace_width, class.via_diameter])
+            .fold(width, f64::max);
+        CHECK_REACH.max(rules.resolved.largest() + copper)
+    });
+    let mut routes = routes_near(board, routed, groups, reach);
     let placed = GroupsPlaced::onto(&mut routes, pairs, groups, width);
     let partner: BTreeMap<core::NetId, (core::NetId, f64)> = pairs
         .iter()
@@ -61,7 +93,13 @@ pub(super) fn refused_groups_at(
         })
         .collect();
     let mut refused: Vec<Option<String>> = vec![None; groups.len()];
-    for violation in core::verify(board, &routes) {
+    for violation in core::verify::verify_with_pair_gaps(
+        board,
+        &routes,
+        rules,
+        &board.attachment.verified_pair_track_gaps,
+        plated_gaps,
+    ) {
         // Copper at exactly its clearance, but for rounding.
         if violation.actual + 1.0e-6 >= violation.required {
             continue;
@@ -71,38 +109,45 @@ pub(super) fn refused_groups_at(
                 .owner_of_segment
                 .get(&(violation.net, segment))
                 .copied(),
-            None => placed.via_owner(violation.net, violation.at),
+            None => violation
+                .via
+                .and_then(|index| placed.owner_of_via.get(&(violation.net, index)).copied()),
         };
         let other = violation
             .other_segment
-            .and_then(|key| placed.owner_of_segment.get(&key).copied());
+            .and_then(|key| placed.owner_of_segment.get(&key).copied())
+            .or_else(|| {
+                violation
+                    .other_via
+                    .and_then(|key| placed.owner_of_via.get(&key).copied())
+            });
         if own.is_none() && other.is_none() {
             // Between routes the router made: not the pairs'.
             continue;
         }
-        let other_net = violation.other_segment.map(|(net, _)| net).or_else(|| {
-            board
-                .nets
-                .iter()
-                .position(|net| violation.other == format!("via of {}", net.name))
-                .map(|net| net as core::NetId)
-        });
-        // A group's via the finding is at, on the other side.
-        let other_via = match (violation.other_segment, other_net) {
-            (None, Some(net)) => placed.via_owner(net, violation.at),
-            _ => None,
-        };
+        let other_net = violation
+            .other_segment
+            .or(violation.other_via)
+            .map(|(net, _)| net);
         if let (Some(other_net), Some(&(mate, gap))) = (other_net, partner.get(&violation.net))
             && other_net == mate
             && !violation.other.contains("hole")
-            && violation.actual + 1.0e-6 >= gap.min(violation.required)
+            && violation.actual + 1.0e-6
+                >= gap
+                    .min(violation.required)
+                    .max(scoped_peer_clearance(rules, &violation, other_net))
         {
             continue;
         }
+        let neighbour = if own.is_some() {
+            &violation.other
+        } else {
+            &board.nets[violation.net as usize].name
+        };
         let why = format!(
             "its copper is {:.3} mm from {} (needs {:.3})",
             violation.actual.max(0.0),
-            violation.other,
+            neighbour,
             violation.required
         );
         if debug() {
@@ -126,7 +171,7 @@ pub(super) fn refused_groups_at(
         // A finding between two groups refuses both, but where one of them
         // lies on the router's route and the other was moved off it
         // (`centrelines`), the moved one only.
-        let culprits: Vec<usize> = match (own, other.or(other_via)) {
+        let culprits: Vec<usize> = match (own, other) {
             (Some(a), Some(b)) if a != b && groups[a].moved != groups[b].moved => {
                 vec![if groups[a].moved { a } else { b }]
             }
@@ -139,12 +184,41 @@ pub(super) fn refused_groups_at(
     refused
 }
 
+fn scoped_peer_clearance(
+    rules: Option<&core::rules::ClassRules>,
+    violation: &core::Violation,
+    other: core::NetId,
+) -> f64 {
+    let Some(rules) = rules else { return 0.0 };
+    let a = rules.resolved.net_group[violation.net as usize];
+    let b = rules.resolved.net_group[other as usize];
+    let kind = |track| {
+        if track {
+            core::rules::TRACK
+        } else {
+            core::rules::VIA
+        }
+    };
+    let own = violation.segment.is_some();
+    let other = violation.other_segment.is_some();
+    if own || other {
+        rules
+            .resolved
+            .extra_on(a, kind(own), b, kind(other), violation.layer)
+    } else {
+        rules
+            .resolved
+            .extra_anywhere(a, core::rules::VIA, b, core::rules::VIA)
+    }
+}
+
 /// Per net of `board` its routes of `routed` near the groups' copper
-/// (within `CHECK_REACH` of its bounds).
+/// (within `reach` of its bounds).
 fn routes_near(
     board: &core::Board,
     routed: &[core::NetRoute],
     groups: &[Group],
+    reach: f64,
 ) -> Vec<core::NetRoute> {
     // The routes near the groups' copper.
     let mut bounds = core::geometry::Aabb {
@@ -172,7 +246,7 @@ fn routes_near(
             }
         }
     }
-    let bounds = bounds.inflated(CHECK_REACH);
+    let bounds = bounds.inflated(reach);
     let near = |a: Point, b: Point| {
         core::geometry::Aabb {
             minimum: [a[0].min(b[0]), a[1].min(b[1])],
@@ -200,11 +274,11 @@ fn routes_near(
 
 /// The groups' copper added to the routes of their nets
 /// (`GroupsPlaced::onto`): per routed segment of a group its group and its
-/// polarity and place in the group, per net the groups' vias.
+/// polarity and place in the group, and per routed via its group.
 struct GroupsPlaced {
     owner_of_segment: BTreeMap<(core::NetId, usize), usize>,
     place_of_segment: BTreeMap<(core::NetId, usize), (usize, usize)>,
-    vias_of: BTreeMap<core::NetId, Vec<(Point, usize)>>,
+    owner_of_via: BTreeMap<(core::NetId, usize), usize>,
 }
 
 impl GroupsPlaced {
@@ -214,7 +288,7 @@ impl GroupsPlaced {
         let mut owner_of_segment: BTreeMap<(core::NetId, usize), usize> = BTreeMap::new();
         // Per routed segment of a group: its polarity and place in the group.
         let mut place_of_segment: BTreeMap<(core::NetId, usize), (usize, usize)> = BTreeMap::new();
-        let mut vias_of: BTreeMap<core::NetId, Vec<(Point, usize)>> = BTreeMap::new();
+        let mut owner_of_via = BTreeMap::new();
         for (position, group) in groups.iter().enumerate() {
             let pair = &pairs[group.pair];
             for (polarity, net) in [(0, pair.positive), (1, pair.negative)] {
@@ -230,7 +304,7 @@ impl GroupsPlaced {
                     });
                 }
                 for &at in &group.vias[polarity] {
-                    vias_of.entry(net).or_default().push((at, position));
+                    owner_of_via.insert((net, route.vias.len()), position);
                     route.vias.push(core::Via {
                         at,
                         diameter: pair.via_diameter,
@@ -243,21 +317,8 @@ impl GroupsPlaced {
         GroupsPlaced {
             owner_of_segment,
             place_of_segment,
-            vias_of,
+            owner_of_via,
         }
-    }
-
-    /// A finding at a via names its net and where it is: the group of the
-    /// nearest of the groups' vias of the net, if one is that close.
-    fn via_owner(&self, net: core::NetId, at: Point) -> Option<usize> {
-        self.vias_of.get(&net).and_then(|vias| {
-            vias.iter()
-                .min_by(|a, b| {
-                    core::geometry::distance(a.0, at).total_cmp(&core::geometry::distance(b.0, at))
-                })
-                .filter(|(via, _)| core::geometry::distance(*via, at) < 1.0)
-                .map(|(_, position)| *position)
-        })
     }
 }
 
@@ -302,10 +363,10 @@ fn refusal_why(
             None => format!("{name}'s via"),
         }
     };
-    let other_owner = other;
-    let other_text = match violation.other_segment {
-        Some((net, segment)) => role(net, Some(segment), other_owner),
-        None => violation.other.clone(),
+    let other_text = match (violation.other_segment, violation.other_via) {
+        (Some((net, segment)), _) => role(net, Some(segment), other),
+        (_, Some((net, _))) if other.is_some() => role(net, None, other),
+        _ => violation.other.clone(),
     };
     let pair = own.or(other).map(|position| &pairs[groups[position].pair]);
     let partner_finding = pair.is_some_and(|pair| {

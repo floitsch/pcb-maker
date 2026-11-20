@@ -2,6 +2,7 @@
 
 //! The pairs' skew: a meander on the shorter net's coupled run.
 
+use super::check::refused_groups_with_rules;
 use super::*;
 use pcb_router as core;
 
@@ -30,6 +31,8 @@ pub(super) fn match_skew(
     copper_out: &mut PairCopper,
     entry: &mut KiCadDiffPair,
     heights: &[f64],
+    tune_pad_approaches: bool,
+    config: &KiCadBoardRouterConfig,
 ) {
     let pair = &pairs[index];
     let target = pair.max_skew.unwrap_or(pair.gap);
@@ -37,6 +40,16 @@ pub(super) fn match_skew(
     let nets = [pair.positive, pair.negative];
     let lengths = nets.map(|net| net_length(restored, result, net, copper_out, heights));
     let longer = lengths[0].max(lengths[1]);
+    let uncoupled_room = nets
+        .iter()
+        .filter_map(|&net| {
+            config
+                .diff_pair_rules
+                .get(&restored.nets[net as usize].name)
+        })
+        .filter_map(|rule| rule.max_uncoupled)
+        .fold(f64::INFINITY, f64::min)
+        - (longer - entry.coupled_mm).max(0.0);
     let mut goal = longer;
     if let Some((min, opt, _)) = pair.length
         && longer < min
@@ -51,6 +64,7 @@ pub(super) fn match_skew(
         pairs,
         index,
         kept_runs,
+        config,
     };
     for polarity in 0..2 {
         let need = goal - lengths[polarity];
@@ -60,8 +74,49 @@ pub(super) fn match_skew(
             continue;
         }
         let shape = MeanderShape::of(need, cap, spacing, pair);
-        let tracks = skew.meander_tracks(copper_out, polarity, &shape);
-        skew.place_meander(restored, copper_out, entry, polarity, (&shape, tracks));
+        if need + shape.span <= uncoupled_room
+            && skew.place_meander(
+                restored,
+                copper_out,
+                entry,
+                polarity,
+                (
+                    &shape,
+                    skew.meander_tracks(copper_out, polarity, &shape, TuneTracks::Run),
+                ),
+                false,
+            )
+        {
+            continue;
+        }
+        if tune_pad_approaches && skewed && !short {
+            // The run can be boxed in where the pads' approach still has
+            // room to tune. Keep most of the tolerance for differences in
+            // KiCad's measurement of the generated track ends.
+            let spacing = (w + pair.gap).max(2.0 * w);
+            for scale in [1.0, 0.75, 0.5, 2.0, 4.0] {
+                let added = need - 0.2 * target;
+                let shape = MeanderShape::of(added, cap * scale, spacing, pair);
+                // A meander in the coupled run spends its replaced
+                // span as well as the extra copper against the limit.
+                let tracks = if added + shape.span <= uncoupled_room {
+                    TuneTracks::All
+                } else {
+                    TuneTracks::Approaches
+                };
+                let tracks = skew.meander_tracks(copper_out, polarity, &shape, tracks);
+                if skew.place_meander(
+                    restored,
+                    copper_out,
+                    entry,
+                    polarity,
+                    (&shape, tracks),
+                    true,
+                ) {
+                    break;
+                }
+            }
+        }
     }
 }
 
@@ -153,6 +208,13 @@ struct Skew<'a> {
     pairs: &'a [Pair],
     index: usize,
     kept_runs: &'a [KeptRun],
+    config: &'a KiCadBoardRouterConfig,
+}
+
+enum TuneTracks {
+    Run,
+    Approaches,
+    All,
 }
 
 impl Skew<'_> {
@@ -164,14 +226,21 @@ impl Skew<'_> {
         copper_out: &PairCopper,
         polarity: usize,
         shape: &MeanderShape,
+        tracks_in: TuneTracks,
     ) -> Vec<(usize, usize, f64)> {
         let mut tracks: Vec<(usize, usize, f64)> = Vec::new();
         for (_, items, runs, _) in self.kept_runs.iter().filter(|run| run.0 == self.index) {
             let item = &copper_out.items[items[polarity]];
-            for position in runs[polarity].clone() {
-                let Some(&(_, a, b)) = item.4.get(position) else {
-                    continue;
-                };
+            for (position, &(_, a, b)) in
+                item.4
+                    .iter()
+                    .enumerate()
+                    .filter(|(position, _)| match tracks_in {
+                        TuneTracks::Run => runs[polarity].contains(position),
+                        TuneTracks::Approaches => !runs[polarity].contains(position),
+                        TuneTracks::All => true,
+                    })
+            {
                 let length = core::geometry::distance(a, b);
                 if length >= shape.span + 2.0 * shape.margin {
                     tracks.push((items[polarity], position, length));
@@ -194,7 +263,8 @@ impl Skew<'_> {
         entry: &mut KiCadDiffPair,
         polarity: usize,
         (shape, tracks): (&MeanderShape, Vec<(usize, usize, f64)>),
-    ) {
+        scan: bool,
+    ) -> bool {
         let pair = &self.pairs[self.index];
         let sign_of = |item: usize| {
             self.kept_runs
@@ -204,10 +274,33 @@ impl Skew<'_> {
         };
         let (count, height, spacing) = (shape.count, shape.height, shape.spacing);
         let (span, margin) = (shape.span, shape.margin);
+        if tracks.is_empty() {
+            return false;
+        }
+        let split = self
+            .config
+            .net_rules
+            .as_deref()
+            .filter(|rules| !rules.is_empty())
+            .map(|rules| core::rules::ClassRules::split(restored, rules));
         for (item, position, length) in tracks {
             let (layer, a, b) = copper_out.items[item].4[position];
-            let outward = scale(left(unit(sub(b, a))), sign_of(item));
-            for from in [margin, (length - span) / 2.0, length - margin - span] {
+            let nominal = scale(left(unit(sub(b, a))), sign_of(item));
+            let last = length - margin - span;
+            let fine_steps = if scan {
+                (((last - margin) / 0.2).floor() as usize).min(128)
+            } else {
+                0
+            };
+            let starts = [margin, (length - span) / 2.0, last]
+                .into_iter()
+                .chain((1..=fine_steps).map(|n| margin + n as f64 * 0.2));
+            for (from, outward) in starts.flat_map(|from| {
+                [nominal, scale(nominal, -1.0)]
+                    .into_iter()
+                    .take(if scan { 2 } else { 1 })
+                    .map(move |outward| (from, outward))
+            }) {
                 let points = bumps((a, b), outward, from, count, height, spacing);
                 let mut group = Group {
                     pair: self.index,
@@ -220,7 +313,18 @@ impl Skew<'_> {
                     .windows(2)
                     .map(|pair_of_points| (layer, pair_of_points[0], pair_of_points[1]))
                     .collect();
-                let refused = refused_groups(restored, &self.result.routes, self.pairs, &[group]);
+                let (checked, rules) = match &split {
+                    Some((board, rules)) => (board, Some(rules)),
+                    None => (&*restored, None),
+                };
+                let refused = refused_groups_with_rules(
+                    checked,
+                    &self.result.routes,
+                    self.pairs,
+                    &[group],
+                    0.0,
+                    rules,
+                );
                 if refused[0].is_some() {
                     continue;
                 }
@@ -249,9 +353,10 @@ impl Skew<'_> {
                     added,
                 });
                 entry.meander_mm += added;
-                return;
+                return true;
             }
         }
+        false
     }
 }
 

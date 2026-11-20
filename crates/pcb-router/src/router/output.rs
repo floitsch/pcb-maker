@@ -90,6 +90,26 @@ impl Router {
                     // The pad stub at the node's width, or the neck if the
                     // full width does not fit.
                     let layer = node.layer as usize;
+                    let own = &description.terminals[terminal as usize];
+                    // A stack can replace the primary pad with an offset
+                    // contact on this layer, as on a prepared BGA dog-bone.
+                    // The branch already lands on copper there. A stub to
+                    // the primary pad's anchor would end on bare laminate.
+                    if self.board.obstacles[own.pad].layers & (1 << layer) == 0
+                        && self.board.merged_pads.iter().any(|stack| {
+                            if !stack.padstack
+                                || stack.net != net
+                                || stack.host != terminal as usize
+                                || stack.layers & (1 << layer) == 0
+                            {
+                                return false;
+                            }
+                            let contact = &self.board.obstacles[stack.pad].shape;
+                            well_inside(contact, center) && !contact.contains(anchor)
+                        })
+                    {
+                        return;
+                    }
                     let mut widths = vec![self.width_at(net, node.cell, layer)];
                     let neck_width = self.neck_width_on(self.board.nets[net as usize].class, layer);
                     if neck_width < widths[0] {

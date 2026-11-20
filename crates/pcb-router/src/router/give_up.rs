@@ -586,6 +586,7 @@ mod tests {
             });
         }
         let mut board = Board {
+            fixed_pad_route_clearance: Default::default(),
             layer_count: 1,
             outline: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]],
             edge_clearance: 0.1,

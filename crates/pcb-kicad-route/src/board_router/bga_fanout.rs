@@ -127,19 +127,65 @@ pub(crate) struct PartPlan {
     pub pitch: f64,
     pub rows: usize,
     pub columns: usize,
-    /// Rings 0 to this less one leave on the surface.
+    /// Rings 0 to this less one normally leave on the surface.
     pub surface_rings: usize,
     /// Balls of a net in the rings that take a via.
     pub inner: usize,
     pub planned: usize,
-    /// Inner balls that hold a via already (in the pad, or the board's).
+    /// Additional second-ring launches planned for off-layer terminals.
+    pub second_ring_planned: usize,
+    /// Balls that hold a via already (in the pad, or the board's).
     pub kept: usize,
-    /// Inner balls whose net's own via fits a diagonal gap: the search's.
+    /// Balls whose net's own via fits a diagonal gap: the search's.
     pub searched: usize,
-    /// Inner balls no gap and size fits, by label.
+    /// Balls no gap and size fits, by label.
     pub refused: Vec<String>,
     /// Planned vias by size.
     pub sizes: BTreeMap<String, usize>,
+}
+
+fn second_ring_targets_off_layer(
+    net: &core::Net,
+    layer: core::LayerMask,
+    array_pads: &[usize],
+    protected: &BTreeSet<&str>,
+) -> bool {
+    if protected.contains(net.name.as_str()) {
+        return false;
+    }
+    let external = net
+        .terminals
+        .iter()
+        .filter(|terminal| !array_pads.contains(&terminal.pad))
+        .map(|terminal| terminal.layers);
+    off_layer_targets(external, layer)
+}
+
+fn off_layer_targets(
+    mut targets: impl Iterator<Item = core::LayerMask>,
+    layer: core::LayerMask,
+) -> bool {
+    let leaves_layer = |target| target != 0 && target & layer == 0;
+    targets.next().is_some_and(leaves_layer) && targets.all(leaves_layer)
+}
+
+fn second_ring_protected<'a>(
+    config: &'a KiCadBoardRouterConfig,
+    nets: impl Iterator<Item = &'a str>,
+) -> BTreeSet<&'a str> {
+    let names: BTreeSet<_> = nets.collect();
+    let mut protected: BTreeSet<_> = config.diff_pair_rules.keys().map(String::as_str).collect();
+    protected.extend(
+        config
+            .length_rules
+            .iter()
+            .flat_map(|rule| rule.nets.iter().map(|member| member.net.as_str())),
+    );
+    protected.extend(names.iter().copied().filter(|name| {
+        project_rules::diff_pair_of(name)
+            .is_some_and(|(other, _, _)| names.contains(other.as_str()))
+    }));
+    protected
 }
 
 /// The plan: the dog-bones, the parts' summaries, the work (distance
@@ -577,6 +623,11 @@ pub(crate) fn plan(
     let neck = config
         .neck_width_mm
         .map(|neck| neck.max(config.width_floor()));
+    let protected = if config.bga_fanout_second_ring {
+        second_ring_protected(config, nets.iter().map(|net| net.name.as_str()))
+    } else {
+        BTreeSet::new()
+    };
     let mut plan = FanoutPlan::default();
     for part in parts {
         let pads: Vec<usize> = part
@@ -664,6 +715,18 @@ pub(crate) fn plan(
             .filter(|&position| grid.rings[position] >= surface_rings)
             .collect();
         order.sort_by_key(|&position| (grid.rings[position], position));
+        if surface_rings == 2 && config.bga_fanout_second_ring {
+            // Preserve ordinary inner launches. The extra candidates use
+            // the sites and clearance tests left after those launches.
+            order.extend((0..pads.len()).filter(|&position| {
+                if grid.rings[position] != 1 {
+                    return false;
+                }
+                let pad = &obstacles[pads[position]];
+                let Some(net) = pad.net else { return false };
+                second_ring_targets_off_layer(&nets[net as usize], pad.layers, &pads, &protected)
+            }));
+        }
         let first = plan.fanouts.len();
         for position in order {
             let index = pads[position];
@@ -671,7 +734,8 @@ pub(crate) fn plan(
             let Some(net) = obstacle.net else {
                 continue;
             };
-            summary.inner += 1;
+            let second_ring = grid.rings[position] < surface_rings;
+            summary.inner += usize::from(!second_ring);
             if holding.contains(&index) {
                 summary.kept += 1;
                 continue;
@@ -803,6 +867,7 @@ pub(crate) fn plan(
                         .entry(format!("{}/{}", fanout.diameter, fanout.drill))
                         .or_default() += 1;
                     summary.planned += 1;
+                    summary.second_ring_planned += usize::from(second_ring);
                     plan.fanouts.push(fanout);
                 }
                 None => summary.refused.push(label),
@@ -926,6 +991,109 @@ fn board_arrays<'a>(
         });
     }
     arrays
+}
+
+/// KiCad open endpoints that match the additional second-ring option.
+/// The footprint geometry and topology qualify the pad. The actual route
+/// still has to find space for every via and meet the native rules.
+pub fn bga_second_ring_open_pads(
+    directory: &Path,
+    board_id: &str,
+    config: &KiCadBoardRouterConfig,
+) -> Vec<String> {
+    if config.bga_fanout_second_ring || !bga_fanout_on(config) {
+        return Vec::new();
+    }
+    let Ok(native) = read_json(&directory.join("drc.json")) else {
+        return Vec::new();
+    };
+    let open_ids: BTreeSet<_> = native["unconnected_items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|open| open["items"].as_array().into_iter().flatten())
+        .filter_map(|item| item["uuid"].as_str())
+        .map(str::to_ascii_lowercase)
+        .collect();
+    if open_ids.is_empty() {
+        return Vec::new();
+    }
+    let Ok(pcb) = fs::read_to_string(directory.join(format!("{board_id}.kicad_pcb")))
+        .map_err(|error| error.to_string())
+        .and_then(|source| parse(&source))
+    else {
+        return Vec::new();
+    };
+    let mut endpoints = BTreeSet::new();
+    for (index, footprint) in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+        .enumerate()
+    {
+        let pads: Vec<_> = footprint
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("pad"))
+            .collect();
+        if pads.len() < MIN_PADS {
+            continue;
+        }
+        for pad in pads {
+            if form_atom(pad, "uuid", 1)
+                .or_else(|| form_atom(pad, "tstamp", 1))
+                .is_some_and(|id| open_ids.contains(&id.to_ascii_lowercase()))
+                && let Some(number) = pad.children().get(1).and_then(Expr::atom)
+            {
+                endpoints.insert((index, number));
+            }
+        }
+    }
+    if endpoints.is_empty() {
+        return Vec::new();
+    }
+    let Ok((footprints, pads)) = via_in_pad::board_pads(&pcb, config) else {
+        return Vec::new();
+    };
+    let protected = second_ring_protected(config, pads.iter().filter_map(|pad| pad.net.as_deref()));
+    let mut candidates = BTreeSet::new();
+    for array in board_arrays(footprints.len(), &pads, config)
+        .into_iter()
+        .filter(|array| array.tracks == 1)
+    {
+        for (index, pad) in array.own.iter().enumerate() {
+            if array.grid.rings[index] != 1
+                || !endpoints.contains(&(array.footprint, pad.number.as_str()))
+            {
+                continue;
+            }
+            let Some(net) = pad.net.as_deref().filter(|net| !protected.contains(net)) else {
+                continue;
+            };
+            let Some(rules) = via_in_pad::rules_of(config, Some(net)) else {
+                continue;
+            };
+            let targets = pads
+                .iter()
+                .filter(|other| {
+                    other.footprint != array.footprint && other.net.as_deref() == Some(net)
+                })
+                .map(|other| other.layers);
+            if off_layer_targets(targets, pad.layers)
+                && !search_via_fits(
+                    array.grid.pitch,
+                    array.half,
+                    rules.via_size_mm,
+                    rules.via_drill_mm,
+                    rules.clearance_mm,
+                    config,
+                )
+            {
+                candidates.insert(format!("{}:{}", footprints[array.footprint].0, pad.number));
+            }
+        }
+    }
+    candidates.into_iter().collect()
 }
 
 /// The balls of the board's grid arrays that take a dog-bone, judged by
@@ -1098,7 +1266,7 @@ pub(crate) fn report(plan: &FanoutPlan) {
     }
     static SEEN: std::sync::Mutex<BTreeSet<String>> = std::sync::Mutex::new(BTreeSet::new());
     for part in &plan.parts {
-        let line = format!(
+        let mut line = format!(
             "bga fan-out {}: pitch {:.3} mm, {} x {}, surface rings {}, inner balls {}, planned {} {:?}, kept {}, the search's (its via fits a gap) {}, refused {} {:?}",
             part.reference,
             part.pitch,
@@ -1113,6 +1281,12 @@ pub(crate) fn report(plan: &FanoutPlan) {
             part.refused.len(),
             part.refused
         );
+        if part.second_ring_planned > 0 {
+            line.push_str(&format!(
+                ", second-ring launches {}",
+                part.second_ring_planned
+            ));
+        }
         if SEEN.lock().is_ok_and(|mut seen| seen.insert(line.clone())) {
             eprintln!("{line}");
         }
@@ -1358,6 +1532,57 @@ mod tests {
             }),
             ..KiCadBoardRouterConfig::default()
         }
+    }
+
+    #[test]
+    fn second_ring_escapes_keep_inner_launches_and_require_off_layer_targets() {
+        let (parts, obstacles, mut nets, no_via) = array(10, 0.8, 0.35);
+        for net in &mut nets[11..=15] {
+            net.terminals[1].layers = 8;
+        }
+        let surface = core::Terminal {
+            layers: 1,
+            ..nets[12].terminals[1].clone()
+        };
+        nets[12].terminals.push(surface);
+        nets[14].name = "LANE_P".into();
+        nets[15].name = "LANE_N".into();
+        let limited = nets[13].name.clone();
+        let mut config = config();
+        config.length_rules = vec![KiCadLengthRule {
+            nets: vec![KiCadLengthMember {
+                net: limited,
+                layers: vec!["F.Cu".into()],
+                vias: true,
+            }],
+            ..Default::default()
+        }];
+        let run = |config: &KiCadBoardRouterConfig| {
+            super::plan(
+                &parts,
+                &obstacles,
+                &nets,
+                &[class()],
+                &no_via,
+                &BTreeSet::new(),
+                (&[], &[]),
+                config,
+            )
+        };
+        let ordinary = run(&config);
+        assert_eq!(ordinary.parts[0].inner, 36);
+        assert_eq!(ordinary.fanouts.len(), 36);
+        config.bga_fanout_second_ring = true;
+        let planned = run(&config);
+        assert_eq!(planned.fanouts[..36], ordinary.fanouts);
+        let [extra] = &planned.fanouts[36..] else {
+            panic!("expected one off-layer escape")
+        };
+        assert_eq!(
+            (extra.pad, extra.ring, extra.diameter, extra.drill),
+            (11, 1, 0.4, 0.2)
+        );
+        assert_eq!(planned.parts[0].second_ring_planned, 1);
     }
 
     #[test]

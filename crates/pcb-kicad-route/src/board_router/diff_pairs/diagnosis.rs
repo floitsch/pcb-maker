@@ -292,7 +292,7 @@ pub(super) fn stub_why(
     end: usize,
     polarity: usize,
     net: core::NetId,
-    (width, reach): (f64, f64),
+    (width, reach, layer): (f64, f64, usize),
 ) -> Option<String> {
     let route = &result.routes[net as usize];
     let pad = plan_link.pads[end][polarity];
@@ -303,7 +303,7 @@ pub(super) fn stub_why(
         route,
         net,
         (pad, plan_link.pads[1 - end][polarity]),
-        lead,
+        (layer, lead),
         reach,
     ) {
         return None;

@@ -5,7 +5,16 @@
 //! marks a part owns, and the warnings about fixed parts.
 
 use super::*;
+use crate::placement_constraints::{HeldOverlapGeometry, held_body_overlap, overlap_warning};
 use pcb_placer as core;
+
+fn fixed_by_config(config: &KiCadBoardPlacerConfig, reference: &str) -> bool {
+    config.fixed.iter().any(|fixed| fixed == reference)
+        || config
+            .fixed_patterns
+            .iter()
+            .any(|pattern| glob_matches(pattern, reference))
+}
 
 /// Fixes the footprints the rules hold: those `fixed` names or a
 /// `fixed_patterns` glob matches, and (unless `free` names them) the
@@ -41,11 +50,7 @@ pub(super) fn fix_default_parts(
                 ));
         let default_fixed =
             builder.locked[index] || problem.components[index].pins.is_empty() || on_edge;
-        problem.components[index].fixed = config.fixed.contains(reference)
-            || config
-                .fixed_patterns
-                .iter()
-                .any(|pattern| glob_matches(pattern, reference))
+        problem.components[index].fixed = fixed_by_config(config, reference)
             || (default_fixed && !config.free.contains(reference));
     }
 }
@@ -58,37 +63,21 @@ pub(super) fn apply_user_constraints(
 ) -> Result<(Vec<PairRow>, Vec<String>), String> {
     let config = context.config;
     let user_constraints = context.user_constraints;
+    if let Some(constraints) = user_constraints {
+        crate::placement_constraints::validate_near_pads(context.pcb, constraints)?;
+    }
     let footprint_count = builder.footprints.count();
     let footprints = &builder.footprints;
-    // A differential pair's two series parts as a row of two
-    // (`pair_rows`): added to the user's rows, where any pair has them.
-    let pair_rows = if config.pair_rows_on() {
-        implicit_pair_rows(
-            &builder.problem,
-            &builder.references[..footprint_count],
-            &footprints.library_names,
-            &footprints.pad_nets,
-            user_constraints,
-            &config.pair_geometry,
-        )
-    } else {
-        Vec::new()
-    };
-    let with_pairs = (!pair_rows.is_empty()).then(|| {
-        let mut constraints = user_constraints.cloned().unwrap_or_else(|| {
-            crate::placement_constraints::KiCadPlacementConstraints {
-                version: 1,
-                ..Default::default()
-            }
-        });
-        constraints
-            .row
-            .extend(pair_rows.iter().map(|pair_row| pair_row.row.clone()));
-        constraints
-    });
-    let apply = |problem: &mut core::Problem, constraints| {
-        apply_constraints(
-            problem,
+    let configured_fixed: Vec<_> = builder.references[..footprint_count]
+        .iter()
+        .enumerate()
+        .filter_map(|(index, reference)| fixed_by_config(config, reference).then_some(index))
+        .collect();
+    // A cold netlist can have every part parked just off the outline.
+    // Check pair-row eligibility after the user's mobility rules release it.
+    let warnings = match &config.constraints {
+        Some(KiCadConstraintsSource::Inline(constraints)) => apply_constraints(
+            &mut builder.problem,
             &builder.references,
             &footprints.pad_offsets,
             &footprints.pad_boxes,
@@ -98,21 +87,69 @@ pub(super) fn apply_user_constraints(
             &footprints.uuids,
             constraints,
             config.constraint_weight,
-        )
-    };
-    let warnings = match (&config.constraints, &with_pairs) {
-        (_, Some(constraints)) => apply(&mut builder.problem, constraints)?,
-        (Some(KiCadConstraintsSource::Inline(constraints)), None) => {
-            apply(&mut builder.problem, constraints)?
-        }
-        (None, None) => Vec::new(),
-        (Some(KiCadConstraintsSource::File(path)), None) => {
+            &configured_fixed,
+        )?,
+        None => Vec::new(),
+        Some(KiCadConstraintsSource::File(path)) => {
             return Err(format!(
                 "constraints file {} was not resolved",
                 path.display()
             ));
         }
     };
+    // A differential pair's two series parts as a row of two
+    // (`pair_rows`): only acts on otherwise free footprints.
+    let pair_rows = if let Some(rows) = &config.placed_pair_rows {
+        rows.clone()
+    } else if config.pair_rows_on() {
+        let explicitly_held = builder.references[..footprint_count]
+            .iter()
+            .zip(&builder.locked)
+            .enumerate()
+            .map(|(index, (reference, locked))| {
+                *locked
+                    || configured_fixed.binary_search(&index).is_ok()
+                    || user_constraints.is_some_and(|constraints| {
+                        constraints
+                            .module_nonoverlap
+                            .iter()
+                            .any(|group| group.parts.contains(reference))
+                    })
+            })
+            .collect::<Vec<_>>();
+        implicit_pair_rows(
+            &builder.problem,
+            &builder.references[..footprint_count],
+            (&footprints.library_names, &footprints.pad_nets),
+            &explicitly_held,
+            user_constraints,
+            &config.pair_geometry,
+            config.router_rules.as_deref(),
+        )
+    } else {
+        Vec::new()
+    };
+    if !pair_rows.is_empty() {
+        builder.problem.constraints.relation_weight = config.constraint_weight;
+        crate::placement_constraints::apply_inferred_pair_rows(
+            &mut builder.problem,
+            &builder.references,
+            &footprints.pad_boxes,
+            &pair_rows
+                .iter()
+                .map(|pair| pair.row.clone())
+                .collect::<Vec<_>>(),
+            user_constraints,
+        )?;
+    }
+    if let Some(constraints) = user_constraints {
+        crate::placement_constraints::apply_module_envelopes(
+            context.pcb,
+            &mut builder.problem,
+            &builder.references[..footprint_count],
+            &constraints.module_nonoverlap,
+        )?;
+    }
     Ok((pair_rows, warnings))
 }
 
@@ -159,13 +196,18 @@ pub(super) fn carry_slots(builder: &mut ProblemBuilder, owned_cutouts: &[(usize,
 
 /// The warnings for fixed parts with pins whose bodies overlap on a side
 /// (neither hollow).
-pub(super) fn fixed_overlap_warnings(builder: &ProblemBuilder) -> Vec<String> {
+pub(super) fn fixed_overlap_warnings(
+    context: &LowerContext,
+    builder: &ProblemBuilder,
+) -> Vec<String> {
     // Fixed parts on top of each other place and route without a word,
     // and the board comes back with opens: say so (fence issue E). Checked
     // after the constraints, which fix and free parts (move_all frees a
     // stack fresh from a netlist that the default rules had fixed).
     let problem = &builder.problem;
     let references = &builder.references;
+    let footprints: Vec<_> = context.footprints().collect();
+    let mut geometry = BTreeMap::new();
     let mut warnings = Vec::new();
     let fixed: Vec<usize> = (0..builder.footprints.count())
         .filter(|index| {
@@ -188,10 +230,20 @@ pub(super) fn fixed_overlap_warnings(builder: &ProblemBuilder) -> Vec<String> {
                 (center_a[axis] - center_b[axis]).abs() < half_a[axis] + half_b[axis] - 0.05
             });
             if overlap {
-                warnings.push(format!(
-                    "fixed parts {} and {} overlap",
-                    references[*first], references[*second]
-                ));
+                for (index, pose) in [(*first, pa), (*second, pb)] {
+                    geometry
+                        .entry(index)
+                        .or_insert_with(|| HeldOverlapGeometry::at_pose(footprints[index], pose));
+                }
+                if let Some(reason) =
+                    held_body_overlap(geometry[first].as_ref(), geometry[second].as_ref())
+                {
+                    warnings.push(overlap_warning(
+                        &references[*first],
+                        &references[*second],
+                        reason,
+                    ));
+                }
             }
         }
     }

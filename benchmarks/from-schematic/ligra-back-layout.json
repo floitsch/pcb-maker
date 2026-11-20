@@ -1,0 +1,7 @@
+{
+  "placer": {
+    "constraints": "constraints.json"
+  },
+  "total_seconds": 220,
+  "polish_seconds": 12
+}

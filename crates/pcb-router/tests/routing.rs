@@ -25,6 +25,7 @@ impl Builder {
     fn new(width: f64, height: f64, layers: usize) -> Self {
         Self {
             board: Board {
+                fixed_pad_route_clearance: Default::default(),
                 layer_count: layers,
                 outline: vec![[0.0, 0.0], [width, 0.0], [width, height], [0.0, height]],
                 edge_clearance: 0.2,

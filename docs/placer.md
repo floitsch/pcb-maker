@@ -132,6 +132,9 @@ change the board before it is lowered.
   both sides (a hot-swap socket) with that courtyard too. The **tight
   body** (fabrication outline and pads) is used only where the project
   lets courtyards overlap.
+  A plated drill whose annulus is too small to cover the board's
+  hole-to-copper clearance keeps the additional space clear on both
+  sides. Slotted drills use their length, diameter and angle.
 - **Angles.** A movable part may take any quarter turn (`tuning.keep_rotation`
   false) unless a `rotation` constraint restricts it. Only `front` and
   `back` constraints change a part's side.
@@ -140,8 +143,9 @@ change the board before it is lowered.
   reaches within `tuning.edge_keep_mm` (3 mm) of a rule area that forbids
   footprints (an antenna module at its keepout), or it is a through-hole
   part with at least four pins (a connector, a header) within
-  `tuning.edge_keep_mm` of the outline. `fixed` and `fixed_patterns` add parts,
-  `free` releases them. The placer, the keepout constraints and the free
+  `tuning.edge_keep_mm` of the outline. `fixed` and `fixed_patterns` add
+  explicit holds that apply with `move_all`. `free` releases default
+  holds. The placer, the keepout constraints and the free
   dimension share one decision (`placement_constraints::held_parts`).
 - **Halos.** Each part keeps `ceil(pins / pins_per_halo_track)` tracks of
   `tuning.track_pitch_mm` free around its body (8 pins a track, 0.65 mm), at most
@@ -276,6 +280,14 @@ its pair's source and destination (`facing::face`). On the measured boards
 the pairs without two parts side by side fell from 14 to 3, but the pairs
 coupled barely changed and the connections moved both ways.
 
+Pair rows use mobility after the brief takes effect, including
+`move_all` for footprints parked outside the outline after import.
+The parts may have an explicitly required common face. Locks, explicit
+holds and other authored placement relations keep parts out of inferred
+rows. The layout carries the placed row definitions
+through routing. Each `pair_row` status checks the saved origins and
+relative angle, and `distance_mm` gives their measured separation.
+
 ### Following diff_pairs
 
 `PAIR_ROWS_FOLLOW_DIFF_PAIRS` (false) keeps an unset `pair_rows` off
@@ -399,6 +411,12 @@ stuck parts first from the anneal that gave the kept placement
 or tighter bodies is a new problem and gets a fresh anneal too, which may
 beat the kept placement.
 
+**Packing along an edge.** If eviction leaves a part held at an edge
+without room, the legaliser tries sliding the movable parts held along
+that edge together. It keeps their order and seeks a legal slot for the
+stuck part. The placement work budget and a per-attempt limit cap the
+scan.
+
 **Shortcuts**, each for a case that used to waste the budget: a level
 whose bodies need more area than a side has is skipped (`overfull`); where
 even the last level is overfull or the parts cannot lie side by side in
@@ -431,6 +449,23 @@ body by the level's rules, hard constraints kept), looking up to 2 mm
 farther for fewer crossings (`CROSSING_REACH`) and paying escape-demand
 overflow. On a fine grid it searches only near the part's wanted spot.
 `legal::conflict_kind` says why two parts may not touch.
+
+The dense pass can spend nearly all its work checking points close to the
+same crowded bank. A fresh level with a modeled work limit reserves the
+last 1/32 of the seed's budget for the remaining parts to sample the
+whole board. The step is a multiple of the existing grid, at least 2 mm.
+The test uses the same board and placement legality and checks that
+individual relation misses do not increase. Seated parts stay in place
+during the search. The new poses are kept only when all remaining parts
+fit. On success, `board-placer.json` records their count and modeled work
+under `sparse_legalization` for the selected placement.
+
+At the fine-grid stage, when one part remains unplaced after eviction,
+the placer can try giving that part first choice on a subset of the
+current grid and reseating the other movable parts. It keeps the trial
+only when every part fits the original geometry and authored placement
+constraints. The same budget bounds the trial. `moved_others` records the
+number of other poses changed by a successful reseat.
 
 ### The legality model against KiCad
 
@@ -474,6 +509,22 @@ close it are moved or turned (within `reach_mm`, the cheapest of
 reported and rank right after illegal parts. Needs the router's config
 (layout or place check). Stage 1 on its four boards: -3.0 % (p 0.228);
 the full protocol is pending.
+
+The probe also reports a surface pad with no legal grid node when a
+rule area fully covers its copper and bars both tracks and vias. The
+bounds check leaves pads that could still reach the area outside the
+keepout to the router's escape search.
+
+`pad-exits-kicad-board --repair-config <pad-exits.json>` can preview a
+repair on a saved placement. With
+`{"scope": "rule_areas", "reach_mm": 3, "candidates": 160}` it tests surface
+pads fully covered by authored board areas that forbid tracks and vias.
+It searches for a legal local pose with room to reach all of a trapped
+footprint's pads. If up to two movable neighbors block that pose, the
+legalizer tries to reseat those neighbors within the same reach. The
+preview leaves the board file untouched. On a routed board,
+`repair-kicad-opens --rule-area` can verify and publish a repair for a
+specific open pad.
 
 ### Bus-group moves
 
@@ -646,6 +697,12 @@ with a budget share by its parts (its own fullness decides its levels),
 then the unassigned parts. With every part stacked and no `--reference`,
 the pieces are only reported.
 
+On a single-board outline, the placer also keeps movable parts off
+narrow exterior fabrication rails. A rail spans its side of the outline
+and has a small eroded core beside mouse bites or a V-cut. Explicit
+edge, overhang and region constraints, and fixed connected footprints
+on the rail, take priority.
+
 ### Modules of one board
 
 A board can be one circuit cut into breakaway modules. protoesp's outline
@@ -688,6 +745,23 @@ the designer's crosses 35.
   that is not a box (protoesp's protoboard wraps three small ones) holds
   its parts in its box. The layout's moves after the first route lower the
   placed board again without the regions, as with sub-boards.
+
+When a part has no legal pose, its regional diagnosis records
+`origin: breakaway_module` for an automatic module hold, `board_piece`
+for an inferred board-piece hold, or `authored` for a brief region.
+The placement guidance groups parts held by the same kind of
+automatic assignment. An explicit region inside the intended module
+can override that assignment. Use `placer.keep_in_modules: false`
+for a separate comparison where parts may cross the breakaway sections.
+
+`unplaced_parts[].local_diagnosis.region.fixed_region_cover` lists held
+footprint identities and poses when their bodies together obstruct every
+permitted centre and rotation in the part's region. The proof uses
+same-face rectangular bodies and inscribed squares for circular fixed
+bodies, and applies only to a rectangular moving body at quarter-turn
+angles. This identifies cases where a retry with the same holds would
+leave the part unplaced. Review the reported holds with the mechanical
+owner before changing a pose, section, or mounting face.
 
 `modules-kicad-board <project-dir> <board-id> [layout.json] --designer
 <board>` prints the modules and the assignment without placing. The
@@ -886,6 +960,16 @@ greedy legaliser and `tuning.whitespace_fill`.
 
 Global placement and start:
 
+- Starting the anneal from the schematic drawing (November 18, seed 1).
+  Sheet instances supplied the groups, their cross-sheet nets and fixed
+  parts located each group, and symbol positions located its members.
+  The mini and 30x30 OpenESC boards improved from 117 to 110 and from
+  99 to 92 KiCad opens after the first route. Shuffling the same starting
+  points gave 145 and 132. OpenFC went from zero to four opens in a full
+  layout despite a shorter placed wirelength. Copying the solver's own
+  physical arrangement of a repeated channel gave 126 opens on the mini.
+  Both experiments kept the mechanical constraints. The stock start
+  remains the default.
 - `routing_demand` (October): each net's wire area as charge over its box;
   no change within the seed noise.
 - Crossings in the global placement (`tuning.ratsnest_crossings.global`,

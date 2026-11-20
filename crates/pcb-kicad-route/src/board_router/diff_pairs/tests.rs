@@ -59,6 +59,410 @@ fn terminals(board: &core::Board, name: &str) -> Vec<String> {
 }
 
 #[test]
+fn an_exclusion_resolves_exact_pad_net_names_and_reports_native_rules() {
+    let pcb = parse(BOARD).unwrap();
+    let (board, mut config) = lowered();
+    let pair = ["/D-".to_string(), "/D+".to_string()];
+    config.diff_pair_exclusions = vec![pair.clone()];
+    config.excluded_pair_connections = config.resolve_pair_exclusions(&pcb).unwrap();
+    assert!(find_pairs(&board, &config).is_empty());
+
+    let [positive, negative] = config.excluded_pair_connections[0].clone();
+    config.diff_pair_rules.insert(
+        positive,
+        KiCadDiffPairRule {
+            partner: negative,
+            asked: Some("rule 'pair gap' constrains diff_pair_gap".into()),
+            rules: vec!["pair gap".into()],
+            ..Default::default()
+        },
+    );
+    let mut report = KiCadDiffPairs::default();
+    report.record_exclusions(&config);
+    assert_eq!(report.excluded_pairs[0].nets, pair);
+    assert_eq!(report.excluded_pairs[0].native_rules, ["pair gap"]);
+    assert_eq!(config.diff_pair_rules.len(), 1);
+
+    config.diff_pair_exclusions = vec![["D+".into(), "/D-".into()]];
+    assert!(
+        config
+            .resolve_pair_exclusions(&pcb)
+            .unwrap_err()
+            .contains("exact KiCad")
+    );
+    config.diff_pair_exclusions = vec![["/D+".into(), "/GND".into()]];
+    assert!(
+        config
+            .resolve_pair_exclusions(&pcb)
+            .unwrap_err()
+            .contains("not complementary")
+    );
+    config.diff_pair_exclusions = vec![pair, ["/D+".into(), "/D-".into()]];
+    assert!(
+        config
+            .resolve_pair_exclusions(&pcb)
+            .unwrap_err()
+            .contains("listed twice")
+    );
+}
+
+#[test]
+fn a_pair_via_fails_clearance_against_an_earlier_nets_track() {
+    let (mut board, config) = lowered();
+    let mut pair = find_pairs(&board, &config).remove(0);
+    pair.positive = 1;
+    pair.negative = 2;
+    board.obstacles.clear();
+    board.nets[0].name = "ordinary".into();
+    let mut routes = vec![core::NetRoute::default(); board.nets.len()];
+    routes[0].segments.push(core::Segment {
+        layer: 0,
+        start: [10.0, 8.0],
+        end: [30.0, 8.0],
+        width: 0.2,
+    });
+    let group = Group {
+        pair: 0,
+        segments: [Vec::new(), Vec::new()],
+        vias: [vec![[10.2, 8.47]], Vec::new()],
+        run: [0..0, 0..0],
+        moved: false,
+    };
+    // The verifier reports the relationship from the track's net. Its
+    // midpoint is far from the via and cannot identify it.
+    let refused = refused_groups(&board, &routes, &[pair], &[group]);
+    assert!(
+        refused[0]
+            .as_deref()
+            .is_some_and(|why| why.contains("ordinary"))
+    );
+}
+
+#[test]
+fn a_pair_tuning_group_keeps_scoped_pad_clearance() {
+    use pcb_router::rules::{ClassRules, PAD, TRACK, kind_bit};
+
+    let (board, config) = lowered();
+    let pairs = find_pairs(&board, &config);
+    let positive = board.nets[pairs[0].positive as usize].name.clone();
+    let ground = board
+        .nets
+        .iter()
+        .find(|net| net.name.trim_start_matches('/') == "GND")
+        .unwrap();
+    let rules = core::NetRules {
+        clearances: vec![core::ClearanceRule {
+            first: Some(vec![positive]),
+            second: Some(vec![ground.name.clone()]),
+            kinds: kind_bit(TRACK, PAD),
+            layers: 1,
+            clearance: 0.6,
+            except_pads: Default::default(),
+        }],
+        ..Default::default()
+    };
+    let (split, rules) = ClassRules::split(&board, &rules);
+    let routes = vec![core::NetRoute::default(); board.nets.len()];
+    let group = Group {
+        pair: 0,
+        segments: [vec![(0, [16.0, 5.05], [20.0, 5.05])], Vec::new()],
+        vias: Default::default(),
+        run: Default::default(),
+        moved: false,
+    };
+    assert!(refused_groups(&board, &routes, &pairs, std::slice::from_ref(&group))[0].is_none());
+    let refused = super::check::refused_groups_with_rules(
+        &split,
+        &routes,
+        &pairs,
+        &[group],
+        0.0,
+        Some(&rules),
+    );
+    assert!(
+        refused[0]
+            .as_deref()
+            .is_some_and(|why| why.contains("0.600")),
+        "{refused:?}"
+    );
+}
+
+#[test]
+fn emitted_mate_tracks_use_the_gap_without_reducing_other_clearances() {
+    use pcb_router::rules::{TRACK, kind_bit};
+
+    let (mut board, config) = lowered();
+    let pair = find_pairs(&board, &config).remove(0);
+    let ordinary = board
+        .nets
+        .iter()
+        .position(|net| net.name.trim_start_matches('/') == "GND")
+        .unwrap() as core::NetId;
+    for class in &mut board.classes {
+        class.clearance = 0.4;
+    }
+    board.hole_clearance = 0.25;
+    board.obstacles.clear();
+    let track = |net, y| {
+        net_copper(
+            core::Shape::Capsule {
+                start: [10.0, y],
+                end: [14.0, y],
+                radius: 0.1,
+            },
+            1,
+            core::ObstacleKind::Copper,
+            net,
+            "existing track".into(),
+        )
+    };
+    board
+        .obstacles
+        .extend([track(pair.negative, 10.575), track(ordinary, 9.425)]);
+    for (kind, radius, label) in [
+        (core::ObstacleKind::Copper, 0.2, "existing via"),
+        (core::ObstacleKind::Copper, 0.2, "mate.pad"),
+        (core::ObstacleKind::Hole, 0.15, "mate drill"),
+    ] {
+        board.obstacles.push(net_copper(
+            core::Shape::Circle {
+                center: [12.0, 10.4],
+                radius,
+            },
+            1,
+            kind,
+            pair.negative,
+            label.into(),
+        ));
+    }
+    let mut routes = vec![core::NetRoute::default(); board.nets.len()];
+    routes[pair.positive as usize].segments.push(core::Segment {
+        layer: 0,
+        start: [10.0, 10.0],
+        end: [14.0, 10.0],
+        width: 0.2,
+    });
+    let check = super::super::route::check_copper;
+    assert_eq!(check(&board, &routes, &config).len(), 5);
+    let keys = (
+        pair.positive.min(pair.negative),
+        pair.positive.max(pair.negative),
+    );
+    board.attachment.verified_pair_track_gaps.insert(keys, 0.13);
+    let findings = check(&board, &routes, &config);
+    assert_eq!(findings.len(), 4);
+    assert_eq!(
+        findings
+            .iter()
+            .filter(|finding| finding.other == "existing track")
+            .count(),
+        1
+    );
+
+    // An explicit clearance on the same track pair or a local track
+    // floor still applies. Ordinary router verification keeps its floor.
+    let mut scoped = config.clone();
+    scoped.net_rules = Some(std::sync::Arc::new(core::NetRules {
+        clearances: vec![core::ClearanceRule {
+            first: Some(vec![board.nets[pair.positive as usize].name.clone()]),
+            second: Some(vec![board.nets[pair.negative as usize].name.clone()]),
+            kinds: kind_bit(TRACK, TRACK),
+            layers: 1,
+            clearance: 0.5,
+            except_pads: Default::default(),
+        }],
+        ..Default::default()
+    }));
+    assert!(
+        check(&board, &routes, &scoped)
+            .iter()
+            .any(|finding| finding.required == 0.5)
+    );
+    assert_eq!(core::verify(&board, &routes).len(), 5);
+    board.obstacles[0].clearance_override = Some(0.39);
+    assert!(
+        check(&board, &routes, &config)
+            .iter()
+            .any(|finding| finding.required == 0.39)
+    );
+}
+
+#[test]
+fn a_fixed_escape_uses_only_the_owned_plated_mate_pad_gap() {
+    use pcb_router::rules::{ClassRules, PLATED, TRACK, kind_bit};
+
+    let (mut board, config) = lowered();
+    let pair = find_pairs(&board, &config).remove(0);
+    let ordinary = board
+        .nets
+        .iter()
+        .position(|net| net.name.trim_start_matches('/') == "GND")
+        .unwrap() as core::NetId;
+    for class in &mut board.classes {
+        class.clearance = 0.4;
+    }
+    board.obstacles = [
+        (pair.negative, 11.17, "connector.mate"),
+        (ordinary, 8.83, "connector.unrelated"),
+    ]
+    .into_iter()
+    .map(|(net, y, label)| core::Obstacle {
+        plated: true,
+        ..net_copper(
+            core::Shape::Circle {
+                center: [12.0, y],
+                radius: 0.76,
+            },
+            3,
+            core::ObstacleKind::Copper,
+            net,
+            label.into(),
+        )
+    })
+    .collect();
+    let mut routes = vec![core::NetRoute::default(); board.nets.len()];
+    routes[pair.positive as usize].segments.push(core::Segment {
+        layer: 0,
+        start: [10.0, 10.0],
+        end: [14.0, 10.0],
+        width: 0.2,
+    });
+    let keys = (
+        pair.positive.min(pair.negative),
+        pair.positive.max(pair.negative),
+    );
+    let plated = BTreeMap::from([(keys, 0.13)]);
+    let check = |board: &core::Board, rules: Option<&ClassRules>| {
+        core::verify::verify_with_pair_gaps(board, &routes, rules, &BTreeMap::new(), &plated)
+    };
+    assert_eq!(core::verify(&board, &routes).len(), 2);
+    let findings = check(&board, None);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].other, "connector.unrelated");
+
+    let mut project = core::NetRules {
+        clearances: vec![core::ClearanceRule {
+            first: Some(vec![board.nets[pair.positive as usize].name.clone()]),
+            second: Some(vec![board.nets[pair.negative as usize].name.clone()]),
+            kinds: kind_bit(TRACK, PLATED),
+            layers: 1,
+            clearance: 0.45,
+            except_pads: Default::default(),
+        }],
+        ..Default::default()
+    };
+    let (split, rules) = ClassRules::split(&board, &project);
+    assert!(
+        check(&split, Some(&rules))
+            .iter()
+            .any(|finding| finding.required == 0.45)
+    );
+    project.clearances[0].layers = 2;
+    let (split, rules) = ClassRules::split(&board, &project);
+    assert_eq!(check(&split, Some(&rules)).len(), 1);
+    board
+        .fixed_pad_route_clearance
+        .insert("connector.mate".into(), 0.35);
+    assert!(
+        check(&board, None)
+            .iter()
+            .any(|finding| finding.required == 0.35)
+    );
+}
+
+#[test]
+fn scoped_link_inherits_rules_from_either_conductor_without_extending_peer_rules() {
+    use pcb_router::rules::{PAD, Resolved, TRACK, VIA, kind_bit};
+
+    let (mut board, _) = lowered();
+    let [positive, negative, ground] = ["D+", "D-", "GND"].map(|name| {
+        board
+            .nets
+            .iter()
+            .position(|net| net.name.trim_start_matches('/') == name)
+            .unwrap()
+    });
+    let run = board.nets.len();
+    let mut link = board.nets[0].clone();
+    link.name = "coupled D".into();
+    link.terminals.clear();
+    board.nets.push(link);
+    let name = |id: usize| board.nets[id].name.clone();
+    let rules = core::NetRules {
+        clearances: vec![
+            core::ClearanceRule {
+                first: Some(vec![name(positive)]),
+                second: Some(vec![name(ground)]),
+                kinds: kind_bit(TRACK, PAD),
+                layers: 1,
+                clearance: 0.5,
+                except_pads: BTreeSet::from(["J5.1".into()]),
+            },
+            core::ClearanceRule {
+                first: Some(vec![name(ground)]),
+                second: Some(vec![name(negative)]),
+                kinds: kind_bit(VIA, TRACK),
+                layers: 2,
+                clearance: 0.65,
+                except_pads: BTreeSet::new(),
+            },
+        ],
+        ..core::NetRules::default()
+    };
+    let group = |r: &Resolved, id: usize| r.net_group[id];
+    let original = Resolved::new(&rules, &board);
+    board.attachment.clearance_aliases.insert(
+        run as core::NetId,
+        [positive as core::NetId, negative as core::NetId],
+    );
+    let resolved = Resolved::new(&rules, &board);
+    let l = group(&resolved, run);
+    let g = group(&resolved, ground);
+    let excluded = board
+        .obstacles
+        .iter()
+        .find(|obstacle| obstacle.label == "J5.1")
+        .unwrap();
+    assert_eq!(resolved.extra_on(l, TRACK, g, PAD, 0), 0.5);
+    assert_eq!(resolved.extra_on(l, TRACK, g, PAD, 1), 0.0);
+    assert_eq!(resolved.extra_on(l, TRACK, g, TRACK, 0), 0.0);
+    assert_eq!(
+        resolved.extra_on(l, TRACK, resolved.obstacle_group(excluded), PAD, 0),
+        0.0
+    );
+    assert_eq!(resolved.extra_on(l, TRACK, g, VIA, 1), 0.65);
+    assert_eq!(resolved.extra_on(l, TRACK, g, VIA, 0), 0.0);
+    assert_eq!(
+        resolved.extra_on(l, TRACK, group(&resolved, positive), PAD, 0),
+        0.0
+    );
+    for from in [positive, negative, ground] {
+        for to in [positive, negative, ground] {
+            for layer in [0, 1] {
+                for kind in [TRACK, PAD, VIA] {
+                    assert_eq!(
+                        resolved.extra_on(
+                            group(&resolved, from),
+                            TRACK,
+                            group(&resolved, to),
+                            kind,
+                            layer
+                        ),
+                        original.extra_on(
+                            group(&original, from),
+                            TRACK,
+                            group(&original, to),
+                            kind,
+                            layer
+                        )
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn pair_points_are_pads_side_by_side_and_links_join_parts() {
     let (board, config) = lowered();
     let pairs = find_pairs(&board, &config);
@@ -130,6 +534,34 @@ fn pair_named<'a>(board: &core::Board, pairs: &'a [Pair], name: &str) -> &'a Pai
         .iter()
         .find(|pair| board.nets[pair.positive as usize].name.ends_with(name))
         .unwrap()
+}
+
+#[test]
+fn opposing_pair_rows_keep_an_unused_endpoint_across_a_ground_pin() {
+    let pcb = parse(
+        &BOARD
+            .replace(
+                "(pad \"3\" smd rect (at 0 2)",
+                "(pad \"3\" smd rect (at -2 0)",
+            )
+            .replace(
+                "(pad \"4\" smd rect (at 0 2.5)",
+                "(pad \"4\" smd rect (at -2 0.5)",
+            ),
+    )
+    .unwrap();
+    let (_, config) = lowered();
+    let board = lower(&pcb, &config, true).unwrap().board;
+    let pairs = find_pairs(&board, &config);
+    let pair = pair_named(&board, &pairs, "D+");
+    let p = &board.nets[pair.positive as usize];
+    assert_eq!(pair.links.len(), 2);
+    assert!(
+        pair.points
+            .iter()
+            .zip(&pair.kinds)
+            .any(|(&(i, _), kind)| { *kind == PointKind::Pin && p.terminals[i].label == "U1.1" })
+    );
 }
 
 /// A pair with no link otherwise (one part with its pads side by side)
@@ -1390,7 +1822,16 @@ fn a_stub_through_another_pad_of_its_net_reaches_the_run() {
         &route,
         0,
         ([0.0, 0.0], [9.0, 0.0]),
-        lead,
+        (0, lead),
+        0.2
+    ));
+    // The same XY endpoint on another layer cannot land on the run.
+    assert!(!stub_joined(
+        &board,
+        &route,
+        0,
+        ([0.0, 0.0], [9.0, 0.0]),
+        (1, lead),
         0.2
     ));
     // Without the ESD pin's copper the two tracks do not meet.
@@ -1400,7 +1841,7 @@ fn a_stub_through_another_pad_of_its_net_reaches_the_run() {
         &route,
         0,
         ([0.0, 0.0], [9.0, 0.0]),
-        lead,
+        (0, lead),
         0.2
     ));
     // Through the other end's pad: not this end's stub.
@@ -1410,9 +1851,91 @@ fn a_stub_through_another_pad_of_its_net_reaches_the_run() {
         &route,
         0,
         ([0.0, 0.0], [2.0, 0.0]),
-        lead,
+        (0, lead),
         0.2
     ));
+}
+
+#[test]
+fn a_parallel_branch_is_removed_only_when_the_retained_run_connects_both_pads() {
+    let mut board = lowered().0;
+    let points = [[10.0, 10.0], [20.0, 10.0]];
+    board.planes.clear();
+    board.obstacles = points
+        .iter()
+        .map(|&center| {
+            net_copper(
+                core::Shape::Circle {
+                    center,
+                    radius: 0.35,
+                },
+                1,
+                core::ObstacleKind::Copper,
+                0,
+                "pad".into(),
+            )
+        })
+        .collect();
+    board.nets[0].terminals = points
+        .into_iter()
+        .enumerate()
+        .map(|(pad, anchor)| core::Terminal {
+            anchor,
+            layers: 1,
+            pad,
+            contact: None,
+            label: format!("pad {pad}"),
+        })
+        .collect();
+    let protected = |start, end| {
+        net_copper(
+            core::Shape::Capsule {
+                start,
+                end,
+                radius: 0.07,
+            },
+            1,
+            core::ObstacleKind::Copper,
+            0,
+            "existing track".into(),
+        )
+    };
+    board.obstacles.push(protected(points[0], points[1]));
+    let trace = |start, end| core::Segment {
+        layer: 0,
+        start,
+        end,
+        width: 0.147,
+    };
+    let bypass = core::NetRoute {
+        segments: vec![
+            trace(points[0], [10.0, 12.0]),
+            trace([10.0, 12.0], [20.0, 12.0]),
+            trace([20.0, 12.0], points[1]),
+        ],
+        vias: Vec::new(),
+    };
+    let mut route = bypass.clone();
+    assert!(prune_parallel_branch(&board, 2, &mut route, 0));
+    assert!(route.segments.is_empty());
+    assert_eq!(board.obstacles.len(), 3);
+
+    // The same candidate is forbidden if the visible through run was authored.
+    let mut route = bypass.clone();
+    assert!(!prune_parallel_branch(&board, 3, &mut route, 0));
+    assert_eq!(route.segments, bypass.segments);
+
+    board.obstacles[2] = protected(points[0], [18.0, 10.0]);
+    assert!(!prune_parallel_branch(&board, 2, &mut route, 0));
+    assert_eq!(route.segments, bypass.segments);
+
+    // The launch has some direct copper overlap at the pad. Its tiny
+    // connector still provides the exact trace centreline to the pair.
+    board.obstacles[2] = protected([10.4, 10.0], points[1]);
+    let connector = trace([10.3, 10.0], [10.4, 10.0]);
+    route.segments.push(connector.clone());
+    assert!(prune_parallel_branch(&board, 2, &mut route, 0));
+    assert_eq!(route.segments, vec![connector]);
 }
 
 /// A link whose copper holds but whose pad's stub the attempt left out
@@ -1598,6 +2121,137 @@ fn what_joins_nothing_is_pruned() {
             .iter()
             .all(|segment| segment.layer == 0 && segment.start[1] == 0.0)
     );
+}
+
+#[test]
+fn fallback_removes_only_a_leaf_shadowed_by_generated_pair_copper() {
+    let track = |start, end| core::Segment {
+        layer: 0,
+        start,
+        end,
+        width: 0.2,
+    };
+    let obstacle = |track: core::Segment| {
+        net_copper(
+            core::Shape::Capsule {
+                start: track.start,
+                end: track.end,
+                radius: track.width / 2.0,
+            },
+            1,
+            core::ObstacleKind::Copper,
+            0,
+            "existing track".into(),
+        )
+    };
+    let (mut board, _) = lowered();
+    board.obstacles = vec![
+        obstacle(track([-0.269, -0.3011], [1.128, 1.0959])),
+        obstacle(track([1.128, 1.0959], [1.128, 4.5])),
+    ];
+    let leaf = track([0.0, 0.0], [1.1, 1.1]);
+    let trunk = track([1.1, 1.1], [1.1, 7.0]);
+    let mut route = core::NetRoute {
+        segments: vec![leaf.clone(), trunk.clone()],
+        vias: Vec::new(),
+    };
+    assert!(!prune_fallback_overlap(&board, 2, &mut route, 0));
+    assert_eq!(route.segments.len(), 2);
+    let mut protruding = route.clone();
+    protruding.segments[0].start = [-1.0, -1.0];
+    assert!(!prune_fallback_overlap(&board, 0, &mut protruding, 0));
+    let mut wider = route.clone();
+    wider.segments[0].width = 0.3;
+    assert!(!prune_fallback_overlap(&board, 0, &mut wider, 0));
+    let mut connecting = route.clone();
+    connecting.segments.push(track([0.36, 0.64], [-0.4, 1.4]));
+    assert!(!prune_fallback_overlap(&board, 0, &mut connecting, 0));
+    assert!(prune_fallback_overlap(&board, 0, &mut route, 0));
+    assert_eq!(route.segments, vec![trunk.clone()]);
+
+    // The nearby parallel copper can also be part of the fallback route.
+    board.obstacles = vec![obstacle(track([8.0, 1.0], [10.0, 1.0]))];
+    let mut fallback = core::NetRoute {
+        segments: vec![
+            leaf,
+            trunk,
+            track([-0.269, -0.3011], [1.128, 1.0959]),
+            track([1.128, 1.0959], [1.128, 4.5]),
+        ],
+        vias: Vec::new(),
+    };
+    let expected = fallback.segments[1..].to_vec();
+    assert!(prune_fallback_overlap(&board, 0, &mut fallback, 0));
+    assert_eq!(fallback.segments, expected);
+}
+
+#[test]
+fn replacing_a_launch_removes_its_old_tip_from_generated_copper() {
+    let (mut board, _) = lowered();
+    let pad = [1.6075, 0.63];
+    let join = [0.535, 0.9344];
+    let track = |start: Point, end: Point| core::Segment {
+        layer: 0,
+        start,
+        end,
+        width: 0.1,
+    };
+    let fixed_track = |track: &core::Segment| {
+        net_copper(
+            core::Shape::Capsule {
+                start: track.start,
+                end: track.end,
+                radius: track.width / 2.0,
+            },
+            1,
+            core::ObstacleKind::Copper,
+            0,
+            "existing track".into(),
+        )
+    };
+    board.obstacles = vec![
+        net_copper(
+            core::Shape::rectangle(pad, [0.7375, 0.15], 0.0),
+            1,
+            core::ObstacleKind::Copper,
+            0,
+            "pad".into(),
+        ),
+        fixed_track(&track(join, [0.3, 1.35])),
+    ];
+    let tip = track([0.595, 0.78], [0.795, 0.78]);
+    let replacement = [
+        track(pad, [0.944, 0.63]),
+        track([0.944, 0.63], [0.817, 0.63]),
+        track([0.817, 0.63], [0.563, 0.884]),
+        track([0.563, 0.884], join),
+    ];
+    let old_launch = [track(pad, [0.895, 0.68]), track([0.895, 0.68], tip.end)];
+    let route = core::NetRoute {
+        segments: old_launch.into_iter().chain(replacement.clone()).collect(),
+        ..Default::default()
+    };
+    let mut generated = route.clone();
+    generated.segments.insert(1, tip.clone());
+    assert!(cut_old_connection(
+        &board,
+        &mut generated,
+        0,
+        pad,
+        &replacement
+    ));
+    assert_eq!(generated.segments, replacement);
+
+    board.obstacles.push(fixed_track(&tip));
+    let mut with_input_tip = route;
+    assert!(!cut_old_connection(
+        &board,
+        &mut with_input_tip,
+        0,
+        pad,
+        &replacement
+    ));
+    assert_eq!(with_input_tip.segments, replacement);
 }
 
 /// Why a link was not routed comes from the router's diagnostics, the

@@ -24,15 +24,97 @@ and a netlist's import go on without it, with a warning in the verdict
 
 ## 0. From a schematic
 
+When the mechanical brief is ready, run import and ordinary layout together.
+
+```sh
+pcb-maker layout-kicad-schematic hardware/board.kicad_sch board run \
+  --constraints constraints.json --mechanical-from hardware/board.kicad_pcb \
+  --layout-config layout.json
+```
+
+Create a fresh output directory by passing its path as `run`. The
+mechanical donor and the layout config are optional. The command places
+the supplied constraints in `run/project` before import so the importer
+can apply any `add` entries and explicit mechanical poses. Layout reads
+that same brief. A supplied layout config can omit `placer.constraints`
+or point it at `constraints.json`.
+
+When a donor has a locked schematic footprint, give it an absolute
+`place` entry with a matching `front` or `back` assignment. To let that
+part move, explicitly name it in the layout config's `placer.free`.
+The workflow stops at import if it finds an unapplied donor hold.
+
+Read `run/workflow.json` for the current stage, exit code, next actions
+and report paths. If import stops, `run/import.json` and `run/import.log`
+record what it found and `run/project` retains the generated files.
+The initial layout streams to `run/layout.log`. Read `outputs.result`
+and `outputs.layout_verdict` in the workflow report for the selected
+project and verdict.
+
+The workflow's `schematic_parity` records the check against the staged
+schematic that accompanies the returned PCB. If the importer assigned
+different footprint IDs, `footprint_identity` points to `footprint_id_changes`
+in `import.json` for each source and imported ID. Verify against the
+original KiCad project when its exact assignments are required.
+
+When native checks leave one to three opens, the workflow can spend
+the remaining modeled budget on one advised recovery. It first
+considers the result's prepared row-escape advice and can apply its
+exact pad list to the current router settings. An explicit list takes
+precedence. Otherwise it can use an alternate placement seed suggested
+by the result. Both strategies use the same imported project and brief.
+Explicit seeds, route reuse and reserved recovery are honored. The
+candidate must satisfy placement constraints, close every native
+open in both copper states and introduce no active errors or parity
+findings. `placement_retry` records the strategy, budget, work,
+decision and both results. On a tie or a failed check, the first
+result stays selected.
+
+If the board is already connected and has one supported body-to-pin
+distance miss, the layout can check a neighboring position on the
+selected grid with its existing tracks and vias. This keeps the applied
+grid, halos and footprint faces. When `spacing_mm` is omitted, the trial
+may use the placer's courtyard-clearance model. A candidate must meet
+every placement constraint and preserve native quality in both stored
+and refilled copper. `body_near_grid_retry` records the result and modeled
+work. The verdict links to the final placement report and playback and
+identifies the pre-retry placement report.
+
+The schematic workflow can also retry at a new pose on a finer local
+pitch with the two inferred routing halos varied. Explicit grid and halo
+settings take precedence for that search. The retry reuses eligible
+copper and keeps the original brief, rules and other poses. The
+`placement_retry.body_near_reseat` receipt records the measured gap,
+requested limit and trial pose. A skipped retry reports why, including
+when the geometry was ineligible or the search ran out of work.
+
+`stored_delivery` reports the returned copper's verification scope.
+With the default `save_zone_fills`, a refill-only completion is
+incomplete at the workflow level until stored copper is verified.
+The first action shows how to save fills and check them in a separate
+directory. With `save_zone_fills: false`, the workflow can complete
+with the reported refill-only scope. An unapplied donor hold also
+returns exit 1.
+
+When an unplaced RF module has a native antenna keepout and no existing
+location constraint, the placement verdict can suggest the same
+`edge` entry as the constraints template. Try it only when the enclosure
+allows the antenna to extend beyond the board. The command reports the
+edit in `next_actions` and leaves the brief intact.
+
+Use the separate import when you still need to inspect footprints or
+draft the constraints.
+
 ```sh
 pcb-maker import-kicad-netlist <project>/<name>.kicad_sch <project-dir> <board-id> [--layers 4]
 ```
 
 does what KiCad's "Update PCB from Schematic" does for a new board, on
-`--layers` copper layers (default: the `--footprints-from` board's count,
-below, else 2; the report's `copper_layers` and `copper_layers_from` say
-which, since 2026-11-04: trial 6's eurorack-pmod came out on two layers
-from a six-layer designer's board without a word):
+`--layers` copper layers. Without an explicit count, the importer uses the
+`--stackup-from` board's count, the mechanical board's count, the
+`--footprints-from` board's count, or two layers, in that order. The report records `copper_layers` and
+`copper_layers_from`. The import includes the following schematic data.
+
 - every symbol's footprint from the project's and the user's
   `fp-lib-table` (KiCad's own libraries without one), with its fields (an
   `LCSC` field ends up in the BOM) and its DNP and BOM flags. The user's
@@ -46,14 +128,25 @@ from a six-layer designer's board without a word):
   `%ProgramFiles%\KiCad\<version>\share\kicad\footprints` that exists;
   set `KICAD10_FOOTPRINT_DIR` for an install elsewhere;
 - pads on their nets, footprints linked to their symbols, so KiCad's
-  schematic parity check passes;
+  schematic parity check passes. Pads in older libraries that lack an ID
+  get a deterministic UUID per footprint instance and pad. Re-importing
+  the same design preserves the pad identities reported in native DRC;
 - the schematic, project file and the project's own libraries copied
   next to the board.
+
+The import copies the input's companion `.kicad_dru` to
+`<project-dir>/<board-id>.kicad_dru`. For a netlist without a companion
+file, it also looks for the rules of the schematic named in the netlist.
+An existing output rules file takes precedence and is retained on
+re-import. To use revised rules from the source, update the output
+rules file or import into a fresh directory.
 
 A KiCad netlist (`.net`, from `kicad-cli sch export netlist`) works in
 place of the schematic; its footprints come from the libraries of the
 netlist's folder and of the project the netlist names as its source. A
-file that is not a KiCad netlist is an input error (exit 2). Footprints
+same-stem `.kicad_pro` beside the `.net` supplies the project rules under
+the chosen output board ID. An existing output `.kicad_pro` takes
+precedence. A file that is not a KiCad netlist is an input error (exit 2). Footprints
 from KiCad 5 and 6 libraries (`module`, `fp_text reference`, arcs given by
 centre and angle) are brought to today's form, so KiCad loads the board
 and reads the schematic's reference, not the library's. Libraries outside
@@ -154,15 +247,66 @@ The report lists what needs a look:
   three parents (`<checkout>/hardware/libs/custom/AudioJacksFixed.pretty`)
   and used from there; trial 6's eurorack-pmod found 2 of its 3 such
   libraries so (132 footprints to 141);
-- `unmatched_pins`: symbol pins on a net that the footprint has no pad
-  for (a library that changed since the schematic was drawn). A pin on
-  KiCad's own `unconnected-(...)` net (a no-connect pin, a module's pads
-  the footprint leaves out) loses nothing; KiCad's schematic parity check
-  still reports it as `net_conflict` ("No pad found for pin"), which the
-  verdict counts in `schematic_parity_issues` and does not judge;
-- `clearances`: footprints whose own pads are closer than the board's
-  clearance (a solder jumper's), given their pads' gap as their own
-  clearance, as designers do;
+- `unmatched_pins` lists schematic pins missing from the selected footprint.
+  `unmatched_pin_details` identifies each part, footprint, pin, and net.
+  Its `connection` field distinguishes a named net, an explicit
+  no-connect pin, and an unwired pin. For a named net, check the footprint
+  variant and pin numbering before routing. Then re-import and check parity.
+  With an own-reference `--footprints-from` match, the detail can include
+  `donor_pin_numbering`. A `unique_candidate` is one donor pad number
+  present in the selected footprint, absent from the schematic pin list,
+  and on the same authored net. Repeated physical pads of that number are
+  shown separately, with their source IDs and footprint-local positions.
+  `ambiguous` and `no_candidate` give the reason mapping evidence was
+  insufficient. Review any candidate against the source symbol and
+  footprint before correcting the source. The importer keeps the original
+  numbering. `layout-kicad-schematic` surfaces unique matches in
+  `workflow.json.pin_numbering_review`.
+- For KiCad's `footprint_filters_mismatch`, open the named symbol in the
+  schematic and compare its assigned footprint with its footprint filters.
+  Check the package and pad numbers first. If the assignment is wrong,
+  correct the footprint. If the custom footprint is intentional, add a
+  filter specific to its library and name to the corresponding symbol
+  and run schematic parity again. On a copy of TelemetryOnboard, adding
+  `Footprints:JL1` to the filters for `Symbols:JL1_JL3` cleared JL1's
+  finding. JL3 still reported its own mismatch. The PCB was byte-identical
+  and KiCad reported the same 131 physical findings and zero opens.
+- `donor_connectivity`: when a footprint donor is supplied, compares
+  electrical groups on shared, unambiguous reference and pad numbers.
+  Renaming a net or relabeling an isolated terminal as a no-connect
+  preserves connectivity. A `different` report gives counts and examples
+  of split, merged or isolated groups to review before layout. The
+  imported board uses the schematic or netlist's connections. The report
+  counts pads found on only one side and excludes repeated references and
+  conflicting duplicate pad numbers from comparison;
+- For an authored footprint ID without a library nickname, an
+  unambiguous same-reference donor with the same name supplies the model.
+  The board keeps the schematic's footprint ID and the importer stages a
+  local library copy of the model;
+- `clearances` lists the footprint clearance overrides applied for gaps
+  below the net class clearance that meet the board minimum;
+- `clearance_conflicts` names the footprint, measured pad gap and
+  required clearance when a board minimum or explicit rule requires more
+  spacing, or when `--keep-footprint-clearances` retains an inherited
+  net class requirement. Check the footprint and the named rule before
+  laying out the board;
+- Pass `--keep-footprint-clearances` to keep the clearance policy of the
+  supplied footprints. `footprint_clearance_policy` records the choice.
+  For each footprint with a supplied override or an eligible own-pad
+  gap, `footprint_clearance_evidence` records the supplied value if
+  present, the measured gap and rule, the proposed value, and whether
+  import applied it. The same diagnostic check runs in either mode;
+- `footprint_findings` reports KiCad errors on the pads or drills of one
+  footprint from the importer's existing isolated DRC. Each group gives
+  the reference, library footprint, finding type, count, and KiCad's
+  measured and required values where reported. Read the evidence and
+  check the part drawing and the project's fabrication rules before
+  routing. This check covers built-in hole clearance, hole-to-hole,
+  annular width, drill size and padstack errors. A zero-width annulus
+  on an unnumbered plated hole with no net prompts a check of the
+  part drawing's plating specification. A plated electrical pad needs
+  the required copper annulus around its drill. Placement, board geometry
+  and custom-rule findings remain for the final KiCad check;
 - `added`: the parts of `constraints.json`'s `add` (below).
 
 **A board to take footprints from: `--footprints-from <board.kicad_pcb>`.**
@@ -175,16 +319,43 @@ grew, a hotswap socket redrawn). When you have a board with these parts
 pcb-maker import-kicad-netlist <project>/<name>.kicad_sch <project-dir> <board-id> --footprints-from old/<name>.kicad_pcb
 ```
 
-- A footprint no library has is taken from that board: the symbol's own
-  footprint (by the symbol's path, else its reference), else any footprint
-  of that name. It is brought back to library form as KiCad's "Export
-  Footprints to Library" does (flipped to the front, rotation and position
-  removed, nets dropped) and written to a library in `<project-dir>`
-  (`<library>.pretty` under the schematic's library name and named in the
-  project's `fp-lib-table`; `from_board.pretty` when a library of that
-  name exists but lacks the footprint), so the project is complete.
-  Reported in `footprints_from_board`. A symbol without a footprint takes
-  the board's footprint of it too.
+- The importer assigns each footprint on that board to at most one symbol.
+  A path unique in both files follows the symbol even after renumbering.
+  When a path repeats, the importer matches unique references within that
+  path, then matches unique references among the remaining parts. If the
+  symbol still needs a model and its library lacks it, the importer can
+  copy an unambiguous donor model of the same name. It restores library
+  form by bringing the footprint to the front at the origin, removing
+  its rotation and dropping pad nets. An exact qualified ID from the
+  symbol's own donor footprint can be kept when the current KiCad
+  library lacks the model. The importer adds it to the staged project
+  library or copies every existing model under that nickname into a
+  project-local library before adding it. Equivalent models can share
+  the authored ID when their hidden properties have different positions
+  on individual footprints. The board instances keep those positions and
+  the property values. With a schematic as input, several parts can also
+  share a land pattern when each part's own donor agrees exactly with
+  that symbol's hidden `Datasheet`, `Description`, `LCSC`, `MFG` and
+  `MFGPN` fields. Each PCB footprint retains its own field forms.
+  The shared library model has standard Reference and Value defaults.
+  Distinct geometry, assembly attributes, visible field positions and
+  unresolved property differences can still produce individual models in
+  `from_board.pretty`. These choices appear in `footprints_from_board`.
+  A symbol without a footprint takes the board's footprint of it too.
+- A schematic's footprint table can point to a missing legacy `.mod`
+  library. Import into a separate output project with `--footprints-from`
+  to restore the nickname there for exact, unambiguous models from each
+  symbol's own donor footprint. The importer stages a native `.pretty`
+  library and preserves the original table. If the legacy file exists or
+  its location cannot be resolved, the donor model gets a separate ID.
+  To use the models from a legacy library itself, convert that library to
+  KiCad's `.pretty` format first.
+- To keep a schematic export portable, the importer copies regular
+  footprint models from a native `.pretty` library referenced by a
+  project-relative path outside the source folder. The copied project's
+  table keeps the library nickname and points to the local copy. A
+  different library already available at the output path keeps precedence
+  in the output table.
 - Where the board has the symbol's footprint, **the board's version is
   used over the library's**: the board is what was made and checked, the
   library is what changed since. The count is `board_versions`;
@@ -194,8 +365,26 @@ pcb-maker import-kicad-netlist <project>/<name>.kicad_sch <project-dir> <board-i
   board 12.85 x 11.60 mm, 6 pads`). Where the board's footprint has another
   name than the schematic's (the board was changed after the schematic, or
   the schematic after the board), the board's is used under its own name
-  and listed in `substituted`; the copied schematic names it too. Want the
-  library's versions instead? Import without `--footprints-from`.
+  and listed in `substituted`. The copied schematic links the selected model
+  for each symbol. `schematic_footprint_link_conflicts` lists links the
+  importer could not update, such as a symbol in a modern shared sheet
+  whose instances use different footprint IDs on the board. Import without
+  `--footprints-from` to use the library versions.
+  When the symbol's own donor instances share a footprint ID and differ
+  only in User.Drawings shapes or supported Fab reference text
+  presentation, the importer keeps that ID and preserves each instance's
+  drawings and text on the board. For a Fab reference at the same anchor,
+  the instance angle can differ. `footprints_from_board` records that choice.
+  Nested footprint groups share a model when their names and member trees
+  agree after resolving item UUIDs. Each instance keeps its own group links
+  and child IDs. Different or unresolved group membership keeps models
+  distinct.
+  A missing model for a two-terminal rectangular SMD footprint can retain
+  its authored ID when every donor belongs to its own schematic symbol and
+  differences are limited to one nanometre per local pad-centre or solid
+  silkscreen line coordinate, line direction, and the presentation of
+  standard hidden Fab fields. The comparison preserves one exact donor
+  model in the project library and each instance's own geometry on the PCB.
 - A symbol's own footprint (and a `from_board` part's) **keeps the board's
   ids** (the footprint's, its pads' and drawings'), as KiCad's "Update PCB
   from Schematic" does: the project's DRC exclusions name items by them,
@@ -204,6 +393,124 @@ pcb-maker import-kicad-netlist <project>/<name>.kicad_sch <project-dir> <board-i
   where the part stays where the designer put it. A copy of a footprint
   (another part of that name) gets ids of its own.
 - `missing` then says when the board lacks a part as well.
+
+**An authored fabrication stackup** can be copied with
+`--stackup-from old.kicad_pcb`. This imports the board thickness and the
+complete copper, dielectric and finish definitions. The donor's active
+copper layers and authored stackup must agree with each other and with
+any `--layers` value. The import report records the donor and its SHA-256.
+The standalone from-schematic workflow takes the same option. Its
+prepared package and saved-board scorer check the whole stackup. They use
+KiCad's nanometre precision for thickness and the physical order of its
+numbered dielectric layers. Material and electrical properties must match.
+
+**A mechanical starter board** can supply its board-level Edge.Cuts, rule
+areas and locked schematic-backed footprint poses and sides.
+
+```sh
+pcb-maker import-kicad-netlist hardware/board.kicad_sch work board \
+  --mechanical-from hardware/starter.kicad_pcb
+pcb-maker layout-kicad-board work board result auto work/layout.json
+```
+
+The imported project contains schematic-derived pads and nets. Parts
+without a hold are movable. Add `--footprints-from` or `--stackup-from` explicitly
+to use a PCB's footprint definitions or fabrication stackup. The
+`mechanical_from` report gives the source and geometry hashes, counts of
+edge items and rule areas, and each locked match's pose, side and applied
+status. When a schematic footprint carries the supplied perimeter, the
+import also holds that footprint at its authored pose and reports its
+exact native local shape count as `locks[].perimeter_edge_cuts`. Its
+existing schematic pad assignments stay in place. A movable part with a
+slot inside the board keeps its usual placement behavior. The import
+also transfers locked board-only footprints that provide
+unnetted non-plated drills or footprint Edge.Cuts. These retain their
+native UUIDs and poses even when display references repeat. See
+`retained_board_objects` for their drill and edge counts. Footprint
+edges can join the main contour. The importer checks closure with
+those edges at their retained positions. For a held footprint with a
+closed interior cutout drawn as connected lines and arcs, an absolute
+`place` entry lets the placer establish the cutout at that pose before
+seating the other parts. Duplicate UUIDs on hidden
+footprint metadata fields are recorded under `reidentified_metadata`.
+`--mechanical-footprint UUID` explicitly transfers a board-only physical
+footprint at its native pose, even if it is unlocked on the source PCB.
+Repeat the option for each UUID and repeat the selection when reimporting.
+This accepts unnetted, circular plated drills with concentric standard
+lands on all copper layers. Their pad UUIDs, local positions, drill and
+land diameters appear in `retained_board_objects[].plated_drills`.
+A bare UUID also accepts a board-only footprint tagged `fiducial`, with a
+single unnumbered circular copper mark and explicitly sized solder mask
+opening on the same face. `retained_board_objects[].optical_fiducial`
+records the pad UUID, local center, copper and mask diameters, and any
+pad clearance. The mark stays netless at its authored pose and side.
+Use `--mechanical-footprint UUID=NET` for an explicitly board-only
+footprint whose plated drills already use one named schematic net.
+The import checks the existing assignments against the requested net
+and an imported schematic pad. Bound drill receipts include `net`.
+Unassigned drills keep their unassigned state. Reimport repeats the
+selection and checks each plated pad UUID against the donor's binding.
+The same receipt sets `explicit_selection`. The transferred footprints
+are locked on the imported board.
+`excluded_board_objects` identifies omitted locked or selected physical objects
+with their reference, available UUID and reason. These make the import
+incomplete. Reconcile an omitted drill or cutout with the mechanical source.
+Other unmatched locks, including
+artwork, appear in `unmatched_locks`. Mixed
+copper and technical rule-area layers are preserved when the generated
+stack supports their names. A locked footprint must have a unique
+matching reference. When both boards have schematic paths for that
+reference, the paths must agree. Ambiguous or conflicting identities
+appear under `conflicting_locks` and cause an incomplete import exit.
+
+An explicit `add.from_board` can also satisfy an authored board-only
+lock when both donor options read the same PCB bytes. Keep the original
+reference, footprint UUID, pose, side, pad nets and physical model.
+`mechanical_from.matched_additions` lists the verified copies. A renamed,
+moved or missing object still requires resolving its mechanical transfer.
+
+Pass `--mechanical-from` again when reimporting. The importer keeps
+existing constraints and layout files. When the output PCB already has
+an outline, it keeps its local Edge.Cuts and rule areas. The kept
+constraints are authoritative for footprint poses and sides. Use a
+fresh output directory to start from a different mechanical source.
+Applied holds are native PCB footprint locks, so KiCad also keeps them
+in place. On reimport the importer uses the current layout's absolute
+pose and explicit side for each matching hold. Removing the pose or
+listing the reference in `placer.free` releases that native lock.
+To release a component that carries the perimeter, first transfer its
+outline geometry to board-level Edge.Cuts in the existing project.
+Matching board-only mechanical UUIDs keep admissible local geometry
+and poses. Reimporting from the donor restores an absent donor object.
+
+If a held footprint carries the whole outline and represents rows of
+perimeter contacts without a separate body shape, the placer can retry
+failed placement using all of that footprint's pad and copper obstacles.
+`board-placer.json.perimeter_contact_recovery` reports the attempt and
+modeled cost. This retry keeps the held pose and accepts a placement
+only when every part fits and all authored placement constraints pass.
+
+When front-side crowding blocks placement and movable SMD passives can
+be considered for the rear, `verdict.json.rear_placement_recovery`
+lists exact references in `allow_back_additions`. If the assembly
+permits rear mounting, append the approved references to
+`placer.allow_back` and retry. `affected_movable` counts movable parts
+without a legal position. `rear_headroom_mm2` estimates rear area at the
+placer’s utilization target. The retry must still pass placement and
+routing checks.
+When placement uses the input PCB’s supplied Edge.Cuts,
+`outline_from_input` is true and the verdict keeps that outline as the
+basis for recovery.
+
+Set `placer.signal_anchor_seed` to `true` to try one alternate starting
+pose for a signal-dense movable footprint connected to held interfaces.
+The placer estimates its orientation and position from the pad graph and
+projects the estimate to a legal body position. That footprint remains
+movable during full placement. Ordinary seeds still compete on the same
+layout. When the placer proposes a pose, `board-placer.json` records the
+reference, estimated and projected positions, angle, seed number and
+estimated work in `signal_anchor_seed`. Use `seed_kept` to identify the
+placement the solver selected and `footprints` for the final positions.
 
 **Parts the schematic does not have** (mounting holes plated on GND, a
 second footprint for another switch): an `add` entry in
@@ -279,6 +586,19 @@ The file lists what constraints refer to:
   wider one a current to carry; nothing in KiCad ties a class without
   such rules to a layer (a route's `verdict.class_layers` says where it
   went);
+- `class_assignment_suggestions`, where a net in `Default` matches one
+  unused project class by name (ignoring a leading sheet slash and ASCII
+  case). Each row gives the net's router name (`net`), its full KiCad
+  name (`kicad_net`), its current class and resolved track width and
+  clearance, and the matching class and its declared values. For
+  example, the RP2040 motor controller's `VMOT` resolves to 0.2 mm in
+  `Default` while its unused `VMOT` class declares 2 mm. If the class is
+  intended for that net, add the row's `netclass_pattern` entry to
+  `net_settings.netclass_patterns` in the `.kicad_pro`, or set the class
+  with a schematic directive and update the board. Use the directive
+  for names with special characters, where the row omits the pattern.
+  Describe the board again to confirm the class. The field is absent
+  when there are no suggestions;
 - `custom_rules` (since 2026-11-06): every constraint of the project's
   `.kicad_dru` with its `status` as the router reads it (`applied`,
   `approximated`, `no_effect`, `not_routing`, `unmodelled`, `skipped`)
@@ -381,8 +701,9 @@ U2:10, the constraints the trial wrote by hand.
 ```
 
 Full reference: [constraints.md](constraints.md).
-- **`move_all`** places every part, except locked ones and those named in
-  `fixed`. Use it for a board straight from a netlist. Mounting holes no
+- **`move_all`** places each movable part. It keeps native locks, the
+  brief's `fixed` entries, and the placer's `fixed` and `fixed_patterns`
+  holds. Use `placer.free` to release a default hold. Mounting holes no
   constraint names go to the corners.
 - **`place`** says where a part goes in words (`"at": "top-left"`,
   `"center"`, `"front"` with `device_front`) or exactly (`x`, `y`,
@@ -398,7 +719,10 @@ Full reference: [constraints.md](constraints.md).
   glob that fixed parts still stacked at their import position) are
   warned of before the run, in the log and first in the verdict's
   next_actions: `fixed parts C1 and C2 overlap (courtyards and pads on
-  F.Cu)`.
+  F.Cu)`. These warnings use the contours and pads at the held poses.
+  A `bounding boxes` warning marks a pair whose exact overlap remains
+  unverified, for example when just one footprint has a reverse-side
+  courtyard. Inspect the held poses and contours in KiCad.
 - **`hollow`** lets parts sit inside a big part's outline (a shield, a
   module above parts): only its pads block. Parts with holes still stay
   out of its courtyard's shapes, as KiCad forbids holes inside a
@@ -436,7 +760,9 @@ Unknown keys, parts or pads are errors, not silently ignored.
 | "Each key's diode right at its switch" | `"near": [{"part": "D2", "part_of": "SW2", "max_mm": 3}, ...]` (one per key; the keys may be in a row) |
 | "The thumb keys below the grid" | `"relative": [{"part": "SW16", "below": "SW1", "max_gap_mm": 10}]` (`SW1`, the row's first key, stands for the grid) |
 | "WiFi antenna over the board edge" | `"edge": [{"part": "U1", "edge": "top", "flush": true, "overhang": {"edge": "top"}}]` (the footprint needs an antenna keepout zone; one without, such as the ESP32-S2-MINI-1 of trial 6's laptop power, is refused: then the edge entry alone and a `rotation` that turns the antenna end to that edge) |
-| "Decoupling caps at their IC's supply pins" | `"near": [{"part": "C1", "pin_of": "U1:3", "max_mm": 2}]` (`REF:PAD`, the pad number; `describe-kicad-board` lists each net's pads) |
+| "Place the capacitor's supply pad as close as feasible to the IC supply pin" | `"near": [{"part": "C1", "pad": "1", "pin_of": "U1:3", "minimize": true}]`. Use `describe-kicad-board` to find the pad numbers on the supply net. Read the achieved centre-to-centre distance in millimetres from the `pad_near_objective` row. |
+| "Keep those two pad centres within 2 mm" | `"near": [{"part": "C1", "pad": "1", "pin_of": "U1:3", "max_mm": 2}]`. The `pad_near` evidence gives the measured distance and any excess over 2 mm. |
+| "Keep the capacitor body within 2 mm of the supply pin" | `"near": [{"part": "C1", "pin_of": "U1:3", "max_mm": 2}]`. A missed, unambiguous request reports the pin, measured gap and limit in `body_near_pin`. |
 | "Keep the temperature sensor away from the regulator" | `"apart": [{"parts": ["U4"], "from": ["U2"], "min_mm": 10}]` |
 | "Keep the power supply together, bottom right" | `"group": [{"parts": ["U2", "L1", "C1?"], "max_mm": 4}]`, `"place": [{"part": "U2", "at": "bottom-right"}]` |
 | "Nothing under the display window" | `"keepout": [{"x": [10, 40], "y": [5, 25]}]` |
@@ -498,6 +824,12 @@ placed after it. What you can influence, by the code since 2026-11-04:
   placed again after the copying, in its copy's region (where its region
   lets it keep the constraint). So does a `near` or `relative` towards a
   part outside the copy (a shared connector, another copy's part).
+- **A stranded edge connector on a single-piece panel** can use a nearby
+  slot that straddles an inferred cell boundary. The search keeps its
+  side, rotation, authored regions and edge limit. Its centre stays within
+  the cell's depth and at least a quarter of its width remains within the
+  cell along the edge. The board outline, cutouts and clearance still
+  apply to every proposed pose.
 - `describe-kicad-board` lists each footprint's `uuid` and position, and
   `panel_copies.copies[]` each copy's region and its references in the
   first copy's order: the r-th reference of every copy is the same part.
@@ -511,8 +843,58 @@ echo '{"placer": {"constraints": "constraints.json"}}' > layout.json
 pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
 ```
 
+- **Panel assignments.** Add `--check-sub-boards` to the layout command
+  to check the configured outline and sub-board assignments before the
+  placement and routing search. The check prints JSON to stdout and
+  leaves `<out-dir>` available for the layout. Exit 1 means that
+  `next_actions` has an assignment to review. On panels of separate
+  boards, supply the placed project with `--reference`, or group parts
+  into `region` constraints with `"origin": "absolute"`. Use the
+  `sub_boards` boxes as a starting point and verify any piece inferred
+  to be a frame. Rerun the check with the same layout config and updated
+  inputs. Exit 0 means the assignment check found no blocking issue or is
+  disabled (`enabled: false`). Check `unassigned` for parts that still lack
+  ownership. KiCad DRC and placement legality are checked in the layout.
+
+  On a panel that retains source-sheet metadata, `sub_boards.sheet_ownership`
+  lists movable parts by sheet file and instance path. A
+  `suggested_sub_boards` entry proposes a physical piece for a witnessed
+  sheet subtree, including children without their own fixed parts.
+  Confirm the destination and copy its `constraint` into `sub_board`
+  in the placement brief. Each entry identifies the piece by a point
+  inside it, including where its bounding box overlaps a fabrication rail.
+
+  ```sh
+  jq '[.sub_boards.sheet_ownership.suggested_sub_boards[]? | .constraint]' panel-check.json
+  ```
+
+  A `suggested_region`
+  needs at least two fixed electrical witnesses on one piece, agreement with
+  existing assignments, and a separately witnessed group on another piece.
+  Append the confirmed rows to `constraints.json` under `region` and rerun
+  the check. To collect the proposed rows from a saved report:
+
+  ```sh
+  jq '[.sub_boards.sheet_ownership.groups[] | .suggested_region // empty]' panel-check.json
+  ```
+
+  For a group with no suggestion, use its `unresolved_parts` as the starting
+  list for a region once the board's mechanical brief identifies its piece.
+  Review `unclassified_parts` separately. The preview lists all outline
+  boxes, including pieces without assigned parts. Those can be boards or
+  panel rails. The preview leaves every proposed assignment for you to confirm.
+  Once explicit groups locate two sheets on separate pieces, net names shared
+  across sheets no longer place unassigned parts by association. `movable_held`
+  counts movable parts actually held on their assigned pieces by the configured
+  placement, including those with explicit regions.
 - **`auto`** takes the design rules (net classes, clearances, widths,
   vias) from the project's `.kicad_pro`.
+- **Try another placement.** When KiCad finds open connections and the
+  movable placement and its constraints otherwise pass, `next_actions`
+  can give a command to try a different placement in a sibling output
+  directory. `--placement-seed N` sets the starting seed for the placer.
+  Reuse the original project, router and layout files, and any `--reference`
+  option. The retry uses the same constraints, design rules and work budget.
 - **Only routing?** When the placement is already final, use
   `pcb-maker route-kicad-board <project-dir> <board-id> <out-dir> auto`.
   The board's own tracks and vias stay (pre-routed nets, below);
@@ -598,12 +980,14 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     done: `placed`, per footprint the `rule` that admitted it (`the board
     has 10 vias in U106's pads B2, ...` or `via_in_pad: ["U106"]`), the
     `via_mm` and the `pads`, and under `closed` the footprints whose
-    enclosed pads no rule admits. When connections are open at such
-    pads, the verdict's next_actions names the part, its pads and nets
-    and the opt-in (`U106 (Package_TFBGA:TFBGA-153_11.5x13mm): pads B2
-    (MEM_DAT3), ... have no way out but a via in the pad ...; add
-    "via_in_pad": ["U106"] to the router config`); `describe-kicad-board`
-    lists the same before any run (`vias_in_pads`). The vias are written
+    enclosed pads no rule admits. The verdict groups equivalent land
+    patterns under `via_in_pad_retries` when KiCad names those exact pads
+    as open endpoints. The report lists the pad UUIDs, nets and references.
+    `router_config_patch` gives explicit part entries to merge into the
+    existing `via_in_pad` list when the fabrication process permits it.
+    The through vias need clearance on the opposite side.
+    `describe-kicad-board` lists enclosed pads before routing
+    (`vias_in_pads`). The vias are written
     `(capping yes) (filling yes)`, so KiCad's fab outputs carry the
     process, and score-kicad-board's "vias in pads" does not count them
     (`filled_vias_in_pads` does; `vias_in_pads_at` lists every via in a
@@ -742,6 +1126,11 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     project's is unchanged.
   - `existing_tracks` (default `keep`): route mode's handling of the
     board's own tracks and vias; `strip` is `--strip`.
+  - `retained_pad_tips`: exact pad names for the detailed Keep router,
+    for example `["U1:42", "U1:43"]`. See the retained-tip procedure below.
+  - `prepared_row_escape_pads`: two to four exact consecutive pad names
+    of one dense surface row on a fixed placement. Use on copper-free
+    input or with `--strip`. See the prepared row escape procedure below.
   - `diff_pairs` (default by need; `PCB_ROUTER_DIFF_PAIRS=1` or `0`
     where the settings name none): route mode routes differential pairs
     (KiCad's names: `D+`/`D-`, `USB_DP`/`USB_DN`) as coupled runs at the
@@ -776,8 +1165,9 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     `{"placer": {"pair_rows": true}}`, off by default; since 2026-11-04)
     makes those rows itself: two free parts of one footprint with two pads
     each, whose pads of one number lie on the two nets of a pair (the
-    pair's AC-coupling capacitors or series resistors) and that no
-    constraint names, become a row of two across their pads at the
+    pair's AC-coupling capacitors or series resistors) become a row of two
+    when they share a face and have no authored position or rotation
+    constraints. The row runs across their pads at the
     pair's track width plus gap where the footprint allows it (else the
     courtyards' width), turned so that each side faces its own nets' far
     pins (the pair's source and destination; any quarter turn where they
@@ -813,6 +1203,11 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     A `diff_pair_*` finding's next action says which of these happened:
     the setting where the pairs were off, else the counts and, per pair,
     why the links fell back (board-router.json `diff_pairs.pairs[].why`).
+    For a native-checked board with zero opens,
+    `verdict.diff_pairs.fallback_lengths` gives the exact net names, pads and
+    planar track lengths of simple pairs routed separately. Use those net
+    names to scope a KiCad `skew` rule if the electrical brief specifies a
+    timing limit. [Skew on separately routed pair members](router.md#skew-on-separately-routed-pair-members)
   - `diff_pair_give_up` (default off; `PCB_ROUTER_DIFF_PAIRS_GIVE_UP=1`
     where the settings name none): a link the negotiation finds no path
     for, or whose conflicts stop falling once the price of sharing is high,
@@ -909,8 +1304,11 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
   straps, a UART the bootloader uses, ADC-only pins): those go in
   `except`.
 - **Output.** `<out-dir>/result/` holds the finished project, copied, with
-  the placement and the copper. `<out-dir>/placed/placement.html` animates
-  the placement.
+  the placement and the copper. `<out-dir>/placed/board-placer.json`
+  describes the placement in the adjacent board. Each footprint row
+  records its `at` coordinates, mounting `side`, and UUID when available.
+  `placement.html` animates the placement or shows the selected layout
+  poses when the layout changed them.
 - **Iterate quickly.** Work in three steps:
   1. Check the constraints alone, without routing:
      `pcb-maker place-kicad-board <dir> <id> <out> <dir>/layout.json`
@@ -1004,6 +1402,21 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
      Edge.Cuts hole under another part, its copper or a board cutout),
      `bodies overlap`, `shaped or hollow boxes`, `pads in a cutout or
      pad keepout`, `far side`, or `the outline or a hard constraint`.
+     `local_diagnosis` gives the side and relaxed body bounds, then the
+     conflicting footprints or board features at the retained pose. For
+     a part held to a region, `region.by_rotation` gives its body size
+     and the permitted center rectangle at each allowed rotation. If one
+     retained body blocks the entire region, `region.blocked_by` names it.
+     Where a rectangular-body bound proves the pair cannot fit anywhere on
+     their current sides, `region.packing_conflict` gives the available
+     width left, above, right and below the region-constrained part and
+     the other part's minimum projected width and height. The verdict
+     leads with the applicable change to review.
+     If the selected seed found room by searching farther across the
+     board, its placement report includes `sparse_legalization.seated`
+     and `sparse_legalization.work_seconds`. The search uses the
+     supplied outline, placement grid and constraints. In a layout run,
+     read `result/board-placer.json` for the seed used by the routed board.
      With the placer's `pad_exits` on (off by default;
      `{"placer": {"pad_exits": {}}}` or `PCB_PLACER_PAD_EXITS=1`; since
      2026-11-04) it also has `pad_exits`: `closed` lists the pads of the
@@ -1085,15 +1498,50 @@ pcb-maker route-kicad-board <project-dir> <board-id> <out-dir> auto
   `nets`, `connections_made`, `nets_complete` and `floating` (pieces on no
   pad); stdout has a line `kept: ...`. `routable_connections` and the
   nets' `terminals` count what was left to route.
-- The router's new tracks join a kept group at one pad of it (the
-  group's first in the board's order), not along a kept track or at its
-  other pads: a route may come out longer than one a designer would draw
-  to the nearest point of the group. A kept track of a pour net that ends in the pour (not on a pad)
-  does not tell the router its pad is connected: the router connects that
-  pad again (correct, one more track). KiCad's DRC still judges the whole
-  board, kept copper included: a kept track too close to something is a
-  finding like any other (`--reference` defaults to the input, so the
-  input's own findings are pre-existing).
+- The router joins a kept group at one pad, so a route can be longer
+  than a connection to the nearest point on the existing track. KiCad
+  checks the entire result, including any copper that was already there.
+  By default `--reference` uses the input to identify pre-existing findings.
+- When an authored short trace already escapes a crowded surface pad,
+  select its exact `REF:PAD` in `retained_pad_tips` in the router JSON.
+  The trace must be a single retained straight segment, at most 2.5 mm,
+  with a stable UUID, one endpoint at the pad centre and a free tip
+  outside the pad on the same layer. The source pad must have its own
+  copper component. The router uses that tip as its terminal so it can
+  extend the existing trace. Keep the original project and named areas
+  with the board so KiCad checks the actual clearances. Use
+  `kept_copper.retained_pad_tips` in `board-router.json` for selected
+  tips and ignored pads. Check the returned native findings and opens
+  to see whether each extension worked.
+- If KiCad reports several open pads on one dense row, look for
+  `prepared_row_escape_advice` in `inspect-routing-run`. Merge its
+  `router_config_patch` into an ordinary route config and rerun on the
+  same copper-free placement. To reroute the routed board itself, pass
+  `--strip`. The planner sizes all of the short planar launches together
+  using the project's item-specific clearance and minimum track widths.
+  It leaves spacing for neighboring pad exits. Use the same router
+  configuration with `layout-kicad-schematic --router-config` to plan
+  launches on a new placement. The imported and placed boards remain
+  copper-free, and the selected launches are part of the routed result.
+  The project rules stay in place. Review `kept_copper.retained_pad_tips`,
+  native opens and DRC before adopting the returned project.
+- With an authored copper zone and existing tracks, `route-kicad-board`
+  can use a fresh KiCad check to recognize connections through plane fill.
+  It returns the original PCB byte for byte when all these connections
+  already pass. On an eligible partial board, it can route the open nets
+  while protecting the plane nets KiCad already verified. A protected trial
+  must reduce native opens and preserve existing copper and native DRC.
+  `input_connectivity` in `verdict.json` reports the decision, native open
+  counts as stored and after refill, and any rejected trial. For a trial
+  that introduced a reported error, `trial_rejection` includes KiCad's
+  description and up to two affected items. Use `rejected_drc` for the
+  complete trial report, including item UUIDs and positions. When KiCad
+  caps a footprint-library warning category, `source_library_sample`
+  points to a second check of the original project with its footprints
+  listed in reverse order. Each additional trial warning must match an
+  original warning, including its item UUIDs and multiplicity. If only the
+  refilled result is closed, use the supplied `retry_argv` to save and verify
+  the fills in a separate output directory.
 - `--strip` (router config `"existing_tracks": "strip"`) removes the
   board's tracks, arcs and vias first: the board is routed from nothing.
   Copper zones stay either way. `layout-kicad-board` always strips (it
@@ -1103,6 +1551,155 @@ Before 2026-10-21 route mode lowered the board's tracks and vias as
 obstacles of their nets, routed every connection anew and then deleted
 them from the result: other nets avoided copper that was not in the
 board they got, and arcs were refused.
+
+### Reuse verified routing after a revision
+
+Pass a previous KiCad PCB to `--reuse-routes` when the revised board's
+unchanged parts are still at the same coordinates.
+
+```sh
+pcb-maker route-kicad-board revised-project board-id revised-routing auto \
+  --reuse-routes previous-layout/result/board-id.kicad_pcb
+```
+
+For a fresh layout after a schematic edit, add the same flag to
+`layout-kicad-board`. The placer tries compatible previous positions and
+can make room for newly added parts. It checks the current mechanical
+brief and placement legality before trying the previous routing.
+`board-layout.json` records how many footprints moved back to their
+previous positions and how many new footprints moved to make room under
+`route_reuse_placement`.
+
+The placer and router identify renumbered footprints by their unique KiCad
+schematic instance paths. A legacy KiCad timestamp matches its
+zero-padded UUID form at any level of the path. The router then matches pad numbers and checks pose,
+shape and layers. KiCad versions may write a pad's mask and paste layers
+in a different order. The router checks layer membership, so reordering
+the same entries preserves eligibility. Adding or removing a layer makes
+that contact ineligible for full reuse. A unique unchanged reference can match an older unlinked
+board when there is no conflicting instance path. Recycled references and
+ambiguous links leave affected copper for ordinary routing. Update any
+reference-based mechanical brief to name the parts meant by the revised
+schematic. If a numbered pin has several
+physical lands, all must still belong to one net and every contact must match.
+An eligible net can be renamed or gain terminals. The router uses the current project's
+schematic, layout and rules, and keeps any copper already on the current
+board. Reused tracks and vias use the current routing dimensions.
+An older protected-escape segment can qualify at its historical neck
+width when its generated UUID matches its exact geometry, net and
+originating pad. This compatibility check requires matching pad
+contacts, the same board setup and native project rule files, and
+the project's Default width settings. An explicit class or custom width
+rule keeps its own dimensions. The independent native check still
+decides whether the trial can be kept.
+An exact replay can also keep the previous board's copper item order
+and UUIDs when all donor tracks qualify and their IDs are unique.
+Nets with active length, skew or coupled-pair routing use ordinary routing.
+A net can keep the connected portion of a proven segment tree when one
+terminal moves or leaves the net. For a short compatible move, the trial
+replaces the leaf's first segment with a connection to its original
+neighbor. A terminal that leaves the net has its old leaf branch removed.
+Where a branch joins the middle of a straight trunk at an exact tee, the
+connectivity check can split that line internally and retain the whole
+original trunk segment on the board.
+KiCad checks the trial against the current board.
+Before trying prior copper, the router checks straight-sided rule areas
+that forbid tracks or vias on the relevant layers. A confirmed overlap
+withholds that prior net for rerouting. The detailed report and verdict
+name it in `keepout_skipped_nets`. KiCad checks the full copper geometry,
+including curved rule areas and overlaps the preliminary check cannot resolve.
+
+In route mode the trial gets 10% of the modeled budget, up to 30 seconds. KiCad
+checks the trial against the current input with all track findings enabled.
+An accepted trial has no new DRC findings, opens or schematic parity issues.
+If the trial fails, routing resumes from the current board with the
+remaining budget. `board-router.json` records provenance, reuse eligibility,
+the decision, the work charged, and the native comparison time under
+`route_reuse`.
+
+`shared_final_drc: true` means one fresh all-track KiCad report served both
+final board verification and comparison against the current input. The
+input gets its own check. Sharing requires matching board, schematic,
+rules, library inputs and report contents. The first model-complete
+attempt can share an all-track report with zero opens and parity findings
+and only optional footprint library warnings. It can have pours if the
+regular KiCad check can refill them without repairing the board first.
+Findings that need ordinary verification keep their separate report. The
+fresh raw report can serve the reuse comparison while the checked inputs
+still match.
+
+Read the reuse outcome in `verdict.json` for either command. [Reuse outcome fields](#route-reuse-in-the-verdict)
+
+### Saved zone copper on layouts
+
+When a selected layout has fillable copper zones and enough work remains,
+KiCad fills a private copy, then checks the returned PCB with its fill as
+stored. The returned PCB keeps its original items, zone outlines and rules.
+KiCad may round outline coordinates to its integer nanometre grid when it
+saves the private copy. The handoff checks the vertices on that grid and
+keeps the original outline coordinates in the returned file. It expands
+copper layer aliases against each board's stack and checks that each
+zone still covers the same layers.
+`fill_publication` in the layout report and verdict records the outcome,
+both PCB hashes, filled zone and polygon counts, and the native check cost.
+The stored-board report is `result/drc-saved-fill.json`.
+When the routing budget expires before the save and reopen checks,
+`fill_publication.retry_argv` gives the standalone command to create a
+verified filled project in a sibling of `result/`. The CLI puts this
+handoff first in `next_actions` when the layout otherwise completes.
+When a layout with copper pours already connects its modeled terminals,
+optional footprint moves and polishing reserve work for the final native
+checks and saved fill. A layout with open connections can use that work
+to seek a route.
+
+`route-kicad-board` also saves and verifies fills on newly routed projects
+that complete native verification and have fillable zones. The two checks
+use the routing budget that remains after search. The expected refill,
+staged refill and reopened PCB must reproduce the same native findings.
+The route verdict records `fill_publication` and links `drc-saved-fill.json`
+when the handoff succeeds. A budget deferral leaves the route's completion
+scoped to the refilled check and gives a `retry_argv` for a filled sibling
+project. Boards without fillable zones incur no handoff checks. Existing
+copper kept byte-for-byte still uses its separate `input_connectivity`
+report and fill command.
+
+On KiCad 10.0, a capped `lib_footprint_issues` warning set can accompany
+published fill. A capped `silk_overlap` warning set can also accompany it
+when every physical zone is on copper only. Publication still compares
+every reported finding by identity and records the capped types under
+`fill_publication.saved_as_stored.possibly_capped_types`. Other caps
+block publication, including caps on opens, parity or electrical
+findings. [KiCad silkscreen check](https://github.com/KiCad/kicad-source-mirror/blob/10.0/pcbnew/drc/drc_test_provider_silk_clearance.cpp) · [KiCad footprint library check](https://github.com/KiCad/kicad-source-mirror/blob/10.0/pcbnew/drc/drc_test_provider_library_parity.cpp)
+
+Set `"save_zone_fills": false` in the layout config for a faster routing
+iteration. The normal native check still refills in memory. The verdict
+records that the stored fill was skipped. To save and check the fill later,
+use `drc-kicad-board --save-filled` with a new output directory.
+
+Near the work limit, the ordinary final layout check can save its refill
+in scratch when KiCad's isolated settings are established. The receipt
+binds the selected board, project inputs, native tool and exact DRC
+report. Publication still reopens the stored board with an all-track
+native check and compares the complete findings. A reused receipt is
+reported as `fill_publication.refill_source: "fresh_layout_drc"` and
+charges one additional check.
+
+When an incremental layout keeps a route that already closes the board,
+the fresh all-track reuse check can capture the fill on a private copy.
+Publication then uses that fill and runs a fresh as-stored check.
+`refill_source: "fresh_route_reuse_drc"` and `native_checks: 1` identify
+this case. The project, board and native inputs must still match the
+checked snapshot.
+
+Equivalent inputs can reuse verified stored fills from the local
+`verified-fills/` cache. The key includes the selected PCB and project
+design files, library paths, and the KiCad executables, settings and
+check policy. Caching requires a flat schematic and contained KiCad
+libraries. Unsupported projects still run the fresh checks. A hit
+reports `cache_status: "hit"` and `native_checks: 0`. It retains two
+`native_checks_charged` so a hit and a miss use the same modeled budget.
+`PCB_MAKER_NO_CACHE=1` runs a fresh check without using or updating the
+cache. Choose a new `PCB_MAKER_CACHE_DIR` to start a fresh cache.
 
 ## 4. Read the verdict: exit code and `<out-dir>/verdict.json`
 
@@ -1409,29 +2006,42 @@ A finished run also carries it as `verdict` in its report:
 | Field | Meaning |
 | --- | --- |
 | `status`, `exit_code`, `reason` | As above; `reason` is one line. |
+| `route_reuse` | The reuse decision and retained copper counts after requesting `--reuse-routes`. [Reuse outcome fields](#route-reuse-in-the-verdict) |
 | `kicad_checked` | Whether KiCad's DRC checked the result (`false` with `PCB_SKIP_NATIVE` or `skip_native_verification`, and for a placement or an error). |
 | `open_connections`, `unconnected_terminals` | The router's own count of unfinished connections and unreached pads. |
+| `saved_copper` | The final PCB's `track_length_mm`, `segments`, `arcs` and `vias`, including retained copper, pair routing and accepted repairs. Length sums the centrelines of straight and circular track objects. Also in `board-router.json` and `board-layout.json.routed`. The router's legacy `length_mm` and `vias` still sum its per-net route-emission records. |
 | `kicad_unconnected_items` | KiCad's count, which decides (`null`: KiCad did not check). On a panel of different boards the items between two sub-boards are not in it (`sub_boards`). |
 | `new_findings_strict` | KiCad errors per type that the reference does not have at the same place: the run's own. They decide. |
 | `new_findings` | The old rule: errors per type beyond the reference's count of that type anywhere on the board. For comparisons only. |
 | `preexisting_findings`, `preexisting_from` | Errors per type the reference board has at the same place, and its project. |
-| `footprint_findings` | Without a reference: errors per type that lie within one footprint each (no short), or are one pad's own ring, hole or padstack, which do not count; absent when there are none. next_actions has the custom rule that accepts them. |
+| `footprint_findings` | Without a reference: errors per type that lie within one footprint each (no short), or are one pad's own ring, hole or padstack, which do not count; absent when there are none. For a different-net pad clearance finding, `next_actions` gives the pads and nets, measured and required gap, and shortfall in millimetres where the native evidence resolves them. It names the footprint library ID and its resolved project-library copy when available. Check the source land pattern and fabrication requirements before updating the PCB. For a plated through hole with zero annular width, it names the footprint and location and asks you to confirm the intended plating. |
+| `footprint_clearances` | Up to four of the largest resolved different-net copper-clearance shortfalls within a footprint. Each entry has the `reference`, two `pads` with `number`, `net` and any native item `uuid`, and numeric `measured_mm`, `required_mm` and `shortfall_mm`. When available, `library_id` identifies the source footprint and `resolved_library_copy` locates the copy resolved through the current project. The field is omitted when no pair resolves. See `drc.json` for all native items. |
+| `held_pad_shorts` | KiCad different-net pad shorts between two held footprints, with both references and footprint UUIDs, the native finding count, and up to three matching pad and net samples. Correct the footprint geometry or revise a held pose. For placement-only runs, a held body warning calls for review and names modeled copper overlap when the geometry supports it. |
+| `invalid_padstacks` | Up to eight blocking KiCad custom-pad geometry findings resolved to a unique pad on the saved PCB. Each gives its `reference`, `pad`, `net`, reported `layer`, item `uuid`, source `footprint_id` and native `reason`. The errors remain in the strict count. Repair the source footprint and verify the resulting board in KiCad. |
 | `input_findings` | Without a reference: errors per type that are the input's (edge clearance, solder mask bridges, courtyards; every item a part kept where the input has it, the board edge, the input's board graphics or zones; never a short or a clearance), which do not count; absent when there are none. next_actions has the custom rule or the exclusion that accepts them. |
+| `retry_guidance` | A route whose only blockers are native DRC errors between pads or holes of footprints kept at their input poses can report `kind: "fixed_input_pads"` and `same_placement_and_rules_can_resolve: false`. It names the footprints, counts all blocking errors by KiCad type, and includes up to four examples with native item descriptions and reported anchors. Correct the input pad or hole geometry before rerouting, or move a footprint where the finding spans two footprints. The geometry action precedes parity advisories. This field is omitted when other blockers exist or the evidence is incomplete. |
 | `preexisting_unknown` | Types the reference has at KiCad's cap (199 or more): only the findings at the same place are subtracted. |
 | `clean_without_subtraction` | KiCad checked the result and finds no unconnected item and no error that counts, with nothing subtracted. |
 | `diff_pairs` | Route mode, and a layout whose router config sets `"diff_pairs": true` (absent in a layout's verdict otherwise; docs/router.md "Differential pairs"): `on`, `default` (`rules`: a custom `diff_pair_gap` or `diff_pair_uncoupled` rule holds for a paired net, so the pairs routed coupled by default; `off`: nothing asks, so they did not; `explicit`: the settings' `diff_pairs` or `PCB_ROUTER_DIFF_PAIRS` decided), `reason` (the rule and the net, or the setting); off, the counts are 0. With the pairs on: `found` (pairs KiCad names by `_P`/`_N`, `+`/`-` or `P`/`N`, both nets with pads), `coupled` (every link between the pair's parts a coupled run), `partly_coupled`, `fallen_back` (routed as two ordinary nets), `links`, `links_coupled`, `crossed` (coupled links whose pads lie in the other order at one end: the stubs cross there, uncoupled), `crossovers` (of those, links whose crossed end has a crossover in its lead: one net dives under the other with a via each side, so the stubs do not cross; since 2026-11-05 on, where the link carries the stubs to it), `coupled_mm`, `uncoupled_mm` (per coupled pair the longer net's tracks less its coupled run, KiCad's measure), `skew_mm` (the largest skew of a pair with a coupled link: its two nets' lengths apart in the written board, tracks and vias at the stackup's height), `meanders` (pairs whose shorter net got a meander, written as a KiCad tuning pattern, to match the custom rules' `skew` maximum, else the pair's gap, or a `length` minimum), `skews` (per pair with a coupled link: `positive`, `negative`, `lengths_mm`, `uncoupled_mm` (since 2026-11-05: the longer net's length less the coupled run, KiCad's uncoupled length, per pair), `skew_mm`, `target_mm`, `meander_mm`, `pair_vias`, `return_vias`), `not_routed` (the links whose coupled run was not routed, by cause: `a launch has no legal node`, `no path in the negotiation`, `the hard repair found no room`, `no hard repair: the attempt was judged hopeless`, `the hard repair's budget ran out before it`, `lost after the repair`, and with `diff_pair_give_up` `given up in the negotiation: no room` or `...: no path`; absent when none), `given_up` (the links the negotiation gave up, `diff_pair_give_up`: their pairs' nets routed uncoupled in the same attempt), `stubs_routed` (since 2026-11-05: stubs from a pad to its end of a coupled run that the attempt left out, routed after it with everything else kept, so that the link is coupled instead of falling back for "a pad's stub does not reach the run"; absent when none), `pair_vias` and `return_vias` (the kept links' vias, and the vias of the reference net placed beside them, each within 0.5 mm ring to ring where a pour of that net reaches it on two layers and every clearance holds; `diff_pair_return_vias: false` turns them off), `return_net` (their net: `diff_pair_return_net`, else `GND`), `work_seconds` (the fallback router's, which routes what the coupled runs left open, charged to the ladder). `board-router.json` also lists each pair: its nets, width, gap, where they came from, why links fell back. |
 | `lengths` | Where the project's custom rules have `length` or `skew` constraints (docs/router.md "Length and skew rules"; absent elsewhere, and with `length_matching` off): per rule and net `net`, `rule`, `constraint` (`length` or `skew`), `length_mm` (as KiCad 10 counts it for the rule: the tracks on the layers the rule holds on, a track's way inside a pad as the straight line from the pad's position, vias at the stackup's height), `target_mm` (what the meander aimed at: a length rule's opt, else the middle of its bounds; a skew rule's longest net less half the skew), `min_mm` and `max_mm` (the bounds KiCad holds the net to; a skew rule's: its longest net less the skew, and the longest), `meander_mm` (what the meanders added), `within` (KiCad then has no finding), `note` (why not: not routed, no straight track with room for all of it, longer than the maximum, a coupled pair's net). A net whose copper lies only off a rule's layers (a rule with a layer condition: Sisu_SSE-9's USB rule on In1.Cu and In4.Cu) has no length the rule counts and is not checked by it, nor of a skew rule's group: `within` true, `note` `routed off the rule's layers (...)` (since 2026-11-06, trial 7; before, "not routed", and the action called such nets open); a net of one pad has nothing to route. A net the route takes onto the rule's layers joins its skew group (Sisu's route mode: six USB nets on In4.Cu matched against a 43 mm pair). Since 2026-11-06 also `layers` (the copper layers its tracks went on), `in_group` (KiCad counts copper of it for the rule: of the skew group, checked by a length rule) and `preferred` (the layers the router asked it to keep to and why: `In1.Cu, In4.Cu (on the rule's layers, by the designer's board)` or `F.Cu, B.Cu (off the rule's layers, by the designer's board)`): with `length_rule_layers` (default `"designer"`) each net of a rule on some layers only prefers the side of those layers the designer's board (the `--reference`, else the input's own tracks, `--strip` or not) runs it on, a step elsewhere costing ten times as much (`layer_preference_cost`), and a coupled pair whose two nets prefer the same layers couples on them; nothing without the designer's tracks (a layout from a netlist import). `"rule"` puts every net of such a rule on its layers, `"off"` none (docs/router.md, "Skew groups' layers"). |
 | `narrowed_classes` | Route and layout, where the narrow-signal step (the ladder's last resort: the signal nets of the Default class at the project's narrowest predefined width when connections stay open at the class widths) routed nets of the board written below their class's track width (since 2026-11-06, trial 7; absent otherwise): per class `class`, `class_width_mm`, `routed_width_mm` and its `nets`. Since 2026-11-06 the step narrows only the Default class (a net no other class gives a width, at Default's width): every class the designer named keeps its width, so the list holds `Default` alone. Until then it narrowed every class wider than the menu's width, and trial 7's Sisu_SSE-9 layout wrote its RF_ANT nets (0.1422 mm, the designer's 50 ohm microstrip), MODEM_ANT1 (RF_ANT_INT, 0.1102 mm stripline) and Power_VBATT_3V8's 0.5 mm charger nets at 0.1 mm with no finding (KiCad's DRC checks no class width); no board of the 109 tasks completed only by narrowing a named class (docs/router.md, "The narrow-signal step's classes (2026-11-06)"). Should a class other than Default appear all the same (a guard: the step's rule and the report attribute a net to its class alike), a next action lists it and gives the levers: a custom rule giving the class's width as `opt` (`(rule "RF_ANT width" (condition "A.hasNetclass('RF_ANT')") (constraint track_width (opt 0.1422mm)))`; the step keeps a net whose width a rule gives on every layer), or `"use_narrow_signals": false` in the router config. Also in board-router.json's `rules.narrowed`. |
 | `class_layers` | Route and layout (since 2026-11-06, trial 7): per net class with tracks on the board written, `class`, `track_width_mm` (the class's own), `nets` and per copper layer its `layer`, `length_mm`, `nets` and `rule_width_mm` (where a custom `track_width` rule gives the class a width on that layer, as for one impedance on In1.Cu and In4.Cu), and `designer_layers` (the layers the designer's board runs the class on: the `--reference`'s, else the input's where it has tracks). KiCad ties no class to a layer unless a custom rule does, and its DRC checks no class width, so a class whose width is an impedance on one layer passes every check on another: trial 7's Sisu_SSE-9 route wrote MODEM_ANT1 (RF_ANT_INT, 0.1102 mm, the designer's stripline on In1.Cu) 55 mm on B.Cu. A `warning` (and one next action for all of them) says where a class went on a layer its width is not for: a class with widths per layer from the rules on a layer they give no width on (and the designer's board does not run it on); a class narrower than Default without layer rules (likely an impedance; a wider one is likely a current to carry) on a layer the designer's board does not run it on, or, with no designer's copper to compare, on both outer and inner layers (a microstrip's width outside is not a stripline's inside). What to do: keep the class off the layers it must not use with a custom rule in the board's `.kicad_dru`, `(rule "RF_ANT_INT layers" (condition "A.hasNetclass('RF_ANT_INT') && A.Layer == 'B.Cu'") (constraint disallow track))` per such layer (applied on every rung of the router's ladder; a new file starts with `(version 1)`), or give it a `track_width` rule per layer (a condition on `A.Layer`) for the layers it may use, each layer at its own width; then run again. |
-| `designer_widths` | Route and layout with a designer's board, the `--reference` or else the input with its tracks (since 2026-11-08, trial 8): per net the board written runs at under half the designer's width, `net`, `class`, `designer_width_mm` and `routed_width_mm` (each the width at half the net's track length), the lengths, and `unassigned_class` with its width where the project defines a class of the net's name that holds no net. KiCad's DRC checks no width above the minimum, so nothing else says it; the next action gives the `net_classes` entry to paste and, for an unassigned class, that the .kicad_pro's `netclass_patterns` assign it for KiCad too (the rp2040 motor controller in route mode: VMOT 2 mm on the designer's board, 0.2 mm here; its project's VMOT class of 2 mm names no net). |
+| `class_track_widths` | Route and layout measure saved tracks by copper layer and width for each routed net whose saved class specifies a width above Default. The class width is the preferred width. `below_class_width_mm` measures narrower copper separately from `native_width_errors`, the active width findings KiCad names on the net when checked. The reference track distribution is included only for an exact match of electrical terminals. |
+| `designer_widths` | Route and layout with a designer's board, the `--reference` or else the input with its tracks (since 2026-11-08, trial 8): per net with matching terminals that the board written runs at most half the designer's width, `net`, `class`, `designer_width_mm` and `routed_width_mm` (each the width at half the net's track length), the lengths, and `unassigned_class` with its width where the project defines a class of the net's name that holds no net. KiCad's DRC checks no width above the minimum, so nothing else says it; the next action gives the `net_classes` entry to paste and, for an unassigned class, that the .kicad_pro's `netclass_patterns` assign it for KiCad too (the rp2040 motor controller in route mode: VMOT 2 mm on the designer's board, 0.2 mm here; its project's VMOT class of 2 mm names no net). |
+| `reference_keepout_overlaps` | Layout with an explicit `--reference`. Reports when at least half of a footprint antenna keepout overlapped the same retained board copper rule area in the reference and the saved board has no measurable overlap there. The check requires matching zone IDs, copper layer policies and shapes. The reference pose is an observation. A `trial_pose` appears only when the current placement model accepts it with the other parts held. A pose trial requires rerouting and native verification. |
 | `pin_lines` | Whether the router's lattice had lines at the pin rows and why, in one line (the setting, route mode's or the final ladder's decision at the probes or after its leader's run, or a layout's decision at the kept placement's probe); absent where it had none. Also stdout's `pin lines: ...` and board-router.json's `pin_lines` and `attempts[].pin_lines` (since 2026-11-08, trial 8; a layout's own decision since the same day). |
 | `repairs` | What the run added for KiCad's DRC that changes no connection: `neck_tracks` and `neck_track_mm` (the connection-width repair's tracks kept, docs/router.md "KiCad's connection width"), `pour_mode` (the kept board's `pours`: `connect`, `tracks`, `none`, ...) and `pours_as_tracks`. Routes and layouts; also at the top of `board-router.json` and `board-layout.json`. |
-| `pours` | How whole the pours stayed, per zone and layer, by the router's pour model on the board written (after the final route; not a decision): `pieces` (the fill's pieces holding copper of the net, slivers under 0.25 mm² left out; KiCad removes the others, `islands_removed`), `largest_share` (the largest piece over the pour's area inside the outline), `coverage` (the copper over that area), `largest_mm2`, `copper_mm2`, `area_mm2`, `cut_mm` (other nets' tracks on the layer). A pour in more than 5 pieces, or whose largest piece holds less than half its copper, adds a next action: with `keep_whole_parts` (the parts of six pads or more under which a region on that layer would hold no other net's pad, at most four), the `add_pours` entry naming them, `{"net": "GND", "layers": ["B.Cu"], "keep_whole": [{"parts": ["U1"]}]}`; without, that a region under any such part would cut other nets' pads off on the layer, so `keep_whole` under parts does not fit it (a box clear of other nets' pads may; more room or layers). Until 2026-10-26 the action named `keep_whole` under parts in general, and an agent following it put one under the ICs on their own layer. Against KiCad's own fill (`benchmarks/fence/pour-pieces.py`) on the fence: copper within 2 %, pieces within about 10 %. Also `pour_quality` in `board-router.json`; score-kicad-board's `pours`. |
+| `pours` | How whole the pours stayed, per net and layer, by the router's pour model on the board written (after the final route; not a decision): `pieces` (the fill's pieces holding copper of the net, slivers under 0.25 mm² left out; KiCad removes the others, `islands_removed`), `largest_share` (the largest piece over the pour's area inside the outline), `coverage` (the copper over that area), `largest_mm2`, `copper_mm2`, `area_mm2`, `cut_mm` (other nets' tracks anywhere on the layer, using chords for arcs). `bounded_regions` measures other nets' straight track centreline inside each generated rectangular region by zone UUID and bounds. Its total counts a track portion shared by regions once. A pour in more than 5 pieces, or whose largest piece holds less than half its copper, adds a next action: with `keep_whole_parts` (the parts of six pads or more under which a region on that layer would hold no other net's pad, at most four), the `add_pours` entry naming them, `{"net": "GND", "layers": ["B.Cu"], "keep_whole": [{"parts": ["U1"]}]}`; without, that a region under any such part would cut other nets' pads off on the layer, so `keep_whole` under parts does not fit it (a box clear of other nets' pads may; more room or layers). Until 2026-10-26 the action named `keep_whole` under parts in general, and an agent following it put one under the ICs on their own layer. Against KiCad's own fill (`benchmarks/fence/pour-pieces.py`) on the fence: copper within 2 %, pieces within about 10 %. Also `pour_quality` in `board-router.json`; score-kicad-board's `pours`. |
 | `custom_rules` | Route and layout, where the project has a `.kicad_dru` (since 2026-10-27; before, in board-router.json's `rules.custom_rules` only): every constraint of its rules, `rule`, `constraint`, `status` and `detail`. `applied`: the router keeps it as KiCad does. `approximated`: kept more widely than KiCad asks (on every layer of the rule, for every item kind, for both nets of a pair, wherever a rule area may hold: MokyaLora's `TFT_ZONE_2W_Clearance`, 0.25 mm between tracks in its TFT_ZONE, kept as a pair rule on In3.Cu wherever the area lies), so it costs room but no finding. `no_effect`: the classes already keep as much, or nothing routed matches (MokyaLora's `Shrink_Clearance_In_MCU`, 0.085 mm below its classes' clearance: the router keeps the larger). `not_routing`: not about copper the router lays (silk, courtyards). `skipped`: its severity makes no error, or no layer has it. `unmodelled`: a routing rule the router cannot keep; KiCad checks it, and its findings name the rule (`rule 'NAME' ...` in drc.json's description): fix them by hand or move the parts; a rule that only allows less than the router keeps anyway (a `min` below the classes') costs nothing. A line on stdout before the verdict counts them by status: `custom rules (.kicad_dru): 2 constraints: approximated 1 (TFT_ZONE_2W_Clearance clearance), no_effect 1; ...`; a `length` or `skew` constraint the length matching keeps is said as what it became, with its bounds (since 2026-11-04; it was "approximated 1", explained as kept more widely than KiCad asks): `ULPI_exact_length length: applied as a length minimum of 31.40 mm and maximum of 31.60 mm (a meander after the route below the minimum, over the maximum the net routed again the short way and checked, no hard bound; verdict.lengths per net)`. |
 | `environment` | The result-changing environment variables that were set, with their values: `PCB_ROUTER_SEED`, `PCB_ROUTER_SEEDS`, `PCB_ROUTER_NO_WALL_GUARD`, `PCB_SKIP_NATIVE`, `PCB_MIN_CONNECTION_FLOOR`, `PCB_KICAD_NO_NECK_REPAIR`, `PCB_KICAD_TIMEOUT`, `PCB_MAKER_KICAD_USER_LIBS`, `PCB_PLACER_WORK_SECONDS`, `PCB_NARROW_RESERVE`, `PCB_PROBES_SIDE_BY_SIDE`, `PCB_LADDER_STATS`, `PCB_WORK_RATE`, `PCB_MAKER_TEST_PANIC_ATTEMPT`; and `pcb_maker_version`, the build that ran (`pcb-maker --version` without the name: the commit and the build date). |
-| `cosmetic_findings`, `warnings`, `schematic_parity_issues` | Counted, not judged. |
+| `cosmetic_findings`, `warnings` | Counts of cosmetic findings and native warnings. |
 | `silkscreen` | Layouts: the footprints' visible Reference and Value fields, placed after routing where KiCad's silkscreen checks find nothing (docs/placer.md, "The fields on the silkscreen"): `fields`, `moved`, `blocked` (fields no spot is clean for, kept at the spot with the fewest findings: the reference, the field and the findings predicted there; a next action lists them), `hidden` (with `"silkscreen": {"hide_when_blocked": true}` in layout.json, such fields are hidden instead) and `predicted` (KiCad's `silk_over_copper`, `silk_overlap` and `silk_edge_clearance` findings the fields will have, from our geometry). What `cosmetic_findings` has beyond them is the footprints' and the board's own graphics, which nothing moves. |
-| `schematic_parity_by_type` | `schematic_parity_issues` by KiCad's type (`net_conflict`, `missing_footprint`, ...). When every one is a pin the footprint has no pad for (`net_conflict` "No pad found for pin", a no-connect pin), `next_actions` says there is nothing to do. |
+| `schematic_parity_checked`, `schematic_parity_issues`, `schematic_parity_by_type` | Whether a native check included schematic parity, plus the total and counts by KiCad type. A zero count with `schematic_parity_checked: false` has no native parity evidence, as in a `.net`-only project. A missing schematic footprint, a missing pad on a named net, or a confirmed pad-net mismatch makes the route or layout incomplete even when its copper has zero opens. Other parity findings remain visible for review. |
+| `footprint_filter_mismatches` | Native schematic parity findings grouped by the actual PCB footprint ID and the symbol's filter text. Each group lists the affected references. Check the pin map and physical package against the intended part before correcting the footprint assignment or the symbol's filter in the source. Update the PCB from the schematic and rerun parity. |
+| `open_pad_concentration` | When at least half of the nets with native opens name local singleton pads at up to three footprints, lists the count of distinct nets, the footprint references, and the pad UUID and net for each. Each reported footprint has at least four distinct nets. The saved-board copper check requires one pad in each reported group and omits nets with ordinary pours. Review the named pad rows and nearby copper together. |
+| `missing_schematic_footprints` | Components KiCad found missing from the PCB. Use the reported reference and symbol value to check the footprint assignment and update the PCB from the current schematic. Set **Exclude from board** on a symbol intended to remain schematic-only. |
+| `missing_schematic_pads`, `schematic_net_mismatches` | Pin-level evidence from the saved PCB's native parity check. When KiCad can export the checked schematic, a missing-pad entry's `schematic_netlist` gives the net, terminal count and pin type for an unambiguous reference and pin. It distinguishes a no-connect marker, a no-connect symbol pin type, an isolated single-pin net and a connected pin. The native parity checks still govern acceptance. For a net mismatch, compare the PCB and schematic nets at the reported reference and pin. `physical_pads` counts the affected lands when a pin uses several pads. |
+| `rear_routing_candidates` | On a legally placed layout with native opens and a crowded front, lists exact passive SMD references that could use estimated rear headroom. If rear assembly is permitted, add approved names from `allow_back_additions` to `placer.allow_back` and rerun placement and routing. The area estimates include placement spacing. |
 | `starved_thermals`, `internal_violations` | Pads short of thermal spokes; the router's own clearance check. |
 | `constraints_missed`, `unplaced` | Placement constraints not kept (with mm), parts without a legal place. board-layout.json's `constraints` lists every one kept or not, also those kept by construction (`back`, `front`, `rotation`, `opening_outwards`, and `place` with `x` and `y`, checked against the part's final pose). |
 | `cut` | What the wall clock cut short (`deadline`, `negotiation guard`, `budget guard`, `ladder`, `placement`, `layout`). |
@@ -1443,8 +2053,8 @@ A finished run also carries it as `verdict` in its report:
 | `pour_work_seconds`, `lattice_work_seconds` | `route-kicad-board`: the parts of `work_seconds` that are the pour analyses and fill probes (every phase's: the negotiation's pour refresh, the clean-up's and the via reduction's pour checks, the manual spokes) and the routers' lattice builds with the board's lowerings, each modelled from what it counted, the same on every machine; the rest is search. Since 2026-10-21 route mode's budget counts all of them (a 30 s budget used to buy 30 s of search and leave the pour work, up to 47 s on a panel, on top). |
 | `skipped` | Steps of the router's attempt ladder that did not run while the board was incomplete, with why (`the narrow-signal step (signals at 0.15 mm) did not run: the ladder's budget was used (ladder_budget_seconds)`). |
 | `outputs` | Absolute paths: `project`, `board`, `drc`, `report`, `verdict`, `placement`. |
-| `next_actions` | What to do next, factual, in this order (since 2026-11-04; before, the input's own observations led the list on all three boards of trial 4): (1) on a panel whose parts' boards nothing tells (`sub_boards.unassigned`), the call for `--reference` (since 2026-10-27); (2) the input check's and the placement's warnings about what you gave (a keepout over a held part, a `keep_whole` region, a value below the project's minimum, a missing kicad-cli where the run went on without it, copper on a layer the stack lacks); (3) what this run left to act on: parts without a place and the outline to try, the wall clock's cut, a search at under half the reference's rate whose first route took the whole budget (below), open connections (where nets fought, which pads no track enters, the nets KiCad finds unconnected, what the evidence for density is, below) followed by the hot spot with the parts nearest it, a search at a loaded machine's rate, pads no via fits, starved thermals, the new DRC errors by type (the largest four each with KiCad's rule, the nets or items, and the setting or step for that type), constraints missed, the project's rules the router does not keep, parts on the board's texts, silkscreen fields without a clean spot, pours in many pieces, decoupling, the reference's capped or failed check, a skipped KiCad check, the steps that did not run; (4) last, the input's own observations, each starting with `nothing to do (the input's): ` (its tag: nothing this run did or can change; a complete run's list holds only lines that start with "nothing to do"): fixed parts on the board's own texts and silkscreen graphics, fixed parts on top of each other, the findings within one footprint (`footprint_findings`) and the input's own (`input_findings`), schematic parity, and with `--reference` the reference's findings between two nets that the release still refuses. Observations of one kind that repeat per part fold into one line at the first one's place (since 2026-11-04; the Quanta75's four lines of fixed parts on its texts, Batch_1's three of overlapping fixed parts): `nothing to do (the input's): 4 fixed parts lie on 12 of the board's texts and silkscreen graphics (6.25u stabilizer on 8, J3 on 2, SW42 on 1, M2.5 on 1): all stay where the input put them (input_observations has each part's marks)`, `3 pairs of fixed parts overlap (C8 and U2 (courtyards), C16 and U2 (courtyards), M1 and U2): ...`, the first five named and the rest counted (`and 7 more`); a name that repeats (a panel's copies share their references) is named once with its count (`C2 and U1 (courtyards) 9 times`; since 2026-11-04, trial 5's SmartSpin2k named "C2 and U1 (courtyards)" five times). Only pads on each other cost a connection: an overlap of courtyards or bodies alone (parts under a socket or module on purpose: jetson-nano-baseboard's 36 parts under its SO-DIMM socket) says its pads are apart and that it costs none (since 2026-11-04, trial 5; it said their pads "cannot both be connected"). **Open connections in a layout**: the placement is the layout's, so `inspect-routing-run --reference`'s `reference.connected` (the designer's route on the designer's placement) is no evidence for it; the action says so, with KiCad's unconnected items on the designer's board where the reference was checked, and the layout's own routes of its placement (the footprint moves tried and kept, `moves`); in route mode (the input's placement) the designer's route is the evidence, as before. **The rate first** (since 2026-11-04): where a layout searched at under half the reference's rate and nothing ran after its first route (no move, no final ladder, nothing cut), the rate's action leads the open connections and says so: `this run searched at 0.39 of the reference's rate ...; the placement and the first route used 1502 of the 1500 s of work the layout's budget counts (total_seconds), so no move and no final ladder ran` (trial 5's SmartSpin2k: 475 unconnected so, 51 at the reference's rates; the action came third, after the hot spot). At a rate that is no reason the open connections' action says it instead (`connections are open (the placement and the first route used ...: a larger total_seconds in the layout config gives them their time)`). **The hot spot** (since 2026-11-04): the worst of `diagnostics.hot_spots` on an open net (else the worst), its layer, point and open nets, the tile's pads on them (else on the nets in conflict; up to four, `REF:NUMBER (x, y)` in mm, the rest in `diagnostics.hot_spots[i].pads`) and the other nets still in conflict there (since 2026-11-05; the remapper trial's hot spots had no object links), and the five parts nearest its point on its layer, each with its side and the distance from the point to what of it is on that layer (`over it` inside): its pads on the layer (a through-hole pad on every layer) and, on an outer layer, its body (courtyard, else the pads' box) when it lies on that side, so that a key switch on the front over a back-side MCU's hot spot counts by its pins only: `hot spot 2 (diagnostics.hot_spots[2]: B.Cu at 202.75, 149.46, on the open nets +1V1; their pads in its tile U1:23 (202.70, 149.50); in conflict there with +3V3): the parts nearest it on B.Cu are C16 (back, 0.7 mm), U1 (back, 0.8 mm), ...`, then what moves them (in a layout `place`, `apart` or a `keepout`; in route mode the input). Where KiCad names an unconnected item on one of the hot spot's open nets, the action ends with that open link, whose far end may lie elsewhere, and a `near` to paste (since 2026-11-04; trial 5's jetson: R8, 10.4 mm from J1:11, was not among J1's neighbours): `its open link on Display/TMDS_D0_C_N runs from J1:11 to R8:2, 10.6 mm apart (KiCad's unconnected item): bring R8 to J1:11 with a near constraint (constraints.json's near: {"part": "R8", "pin_of": "J1:11", "max_mm": 2})`: the free part of the two (of two free ones the one with fewer pads) to the other's pin; with both fixed it says so; in route mode the input to change. **Starved thermals** name the pads (`U1.57 on F.Cu`) and say what `solid_starved_thermals` did for them on the board written: connected solid and undone by KiCad's check (its unconnected items and findings solid and with spokes; `solid_starved` in board-router.json), kept, or not tried on this board; then the first pad's advice (without the solid connection where it was undone). A layout whose decoupling capacitors lie far from their pins (under 60 % of them within 3 mm of a supply pin, the share designers reach; score-kicad-board's `capacitors_within_3mm`, three capacitors or more) gets one, complete or not: `decoupling: 14 % of the decoupling capacitors lie within 3 mm of a supply pin (designers 60 % or more), a median 6.3 mm; supply pins farthest from a capacitor: U3:5 21.7 mm, U4:5 16.1 mm, ...: give the capacitors of those pins a near constraint (...), or turn on the placer's decoupling_near (...)` (since 2026-10-26; the trial's rp2350-dual-usb was complete with 7 % and no word of it). It names a pin only where a capacitor that counts for it (1 uF or less on its rail; at a regulator's pin its rail's bulk ones too) is free of a near constraint, its example is such a capacitor at that pin, and it offers `decoupling_near` only when that is off and a free capacitor exists; where every capacitor of those rails is held at another pin it says so ("no placement brings one nearer, and one at them is a schematic change": the schematic trial followed `decoupling_near` on such a board and got the same board). `describe-kicad-board --constraints-template` writes the near constraints; `decoupling_near` (off by default) pulls every capacitor to the nearest supply pin of its rail (measured: nearer on most boards, routing within the noise, farther on a few boards with four capacitors) ([placer.md](placer.md)). |
-| `input_observations` | The input's own observations of `next_actions` (4) each in full and untagged, before the folding (since 2026-11-04; absent when there are none): every fixed part on the board's texts with its marks, every overlapping pair, the footprints' and the input's own findings' notes, schematic parity, the reference's findings the release refuses. |
+| `next_actions` | What to do next, factual, in this order (since 2026-11-04; before, the input's own observations led the list on all three boards of trial 4): (1) on a panel whose parts' boards nothing tells (`sub_boards.unassigned`), the call for `--reference` (since 2026-10-27); (2) the input check's and the placement's warnings about what you gave (a keepout over a held part, a `keep_whole` region, a value below the project's minimum, a missing kicad-cli where the run went on without it, copper on a layer the stack lacks); (3) what this run left to act on: parts without a place and the outline to try, the wall clock's cut, a search at under half the reference's rate whose first route took the whole budget (below), open connections (where nets fought, which pads no track enters, the nets KiCad finds unconnected, what the evidence for density is, below) followed by the hot spot with the parts nearest it, a search at a loaded machine's rate, pads no via fits, starved thermals, the new DRC errors by type (the largest four each with KiCad's rule, the nets or items, and the setting or step for that type), constraints missed, the project's rules the router does not keep, parts on the board's texts, silkscreen fields without a clean spot, pours in many pieces, decoupling, the reference's capped or failed check, a skipped KiCad check, the steps that did not run; (4) last, the input's own observations, each starting with `nothing to do (the input's): ` (its tag: nothing this run did or can change; a complete run can still carry schematic parity review actions): fixed parts on the board's own texts and silkscreen graphics, fixed parts on top of each other, the findings within one footprint (`footprint_findings`) and the input's own (`input_findings`), and with `--reference` the reference's findings between two nets that the release still refuses. Observations of one kind that repeat per part fold into one line at the first one's place (since 2026-11-04; the Quanta75's four lines of fixed parts on its texts, Batch_1's three of overlapping fixed parts): `nothing to do (the input's): 4 fixed parts lie on 12 of the board's texts and silkscreen graphics (6.25u stabilizer on 8, J3 on 2, SW42 on 1, M2.5 on 1): all stay where the input put them (input_observations has each part's marks)`, `3 pairs of fixed parts overlap (C8 and U2 (courtyards), C16 and U2 (courtyards), M1 and U2): ...`, the first five named and the rest counted (`and 7 more`); a name that repeats (a panel's copies share their references) is named once with its count (`C2 and U1 (courtyards) 9 times`; since 2026-11-04, trial 5's SmartSpin2k named "C2 and U1 (courtyards)" five times). Only pads on each other cost a connection: an overlap of courtyards or bodies alone (parts under a socket or module on purpose: jetson-nano-baseboard's 36 parts under its SO-DIMM socket) says its pads are apart and that it costs none (since 2026-11-04, trial 5; it said their pads "cannot both be connected"). **Open connections in a layout**: the placement is the layout's, so `inspect-routing-run --reference`'s `reference.connected` (the designer's route on the designer's placement) is no evidence for it; the action says so, with KiCad's unconnected items on the designer's board where the reference was checked, and the layout's own routes of its placement (the footprint moves tried and kept, `moves`); in route mode (the input's placement) the designer's route is the evidence, as before. **The rate first** (since 2026-11-04): where a layout searched at under half the reference's rate and nothing ran after its first route (no move, no final ladder, nothing cut), the rate's action leads the open connections and says so: `this run searched at 0.39 of the reference's rate ...; the placement and the first route used 1502 of the 1500 s of work the layout's budget counts (total_seconds), so no move and no final ladder ran` (trial 5's SmartSpin2k: 475 unconnected so, 51 at the reference's rates; the action came third, after the hot spot). At a rate that is no reason the open connections' action says it instead (`connections are open (the placement and the first route used ...: a larger total_seconds in the layout config gives them their time)`). **The hot spot** (since 2026-11-04): the worst of `diagnostics.hot_spots` on an open net (else the worst), its layer, point and open nets, the tile's pads on them (else on the nets in conflict; up to four, `REF:NUMBER (x, y)` in mm, the rest in `diagnostics.hot_spots[i].pads`) and the other nets still in conflict there (since 2026-11-05; the remapper trial's hot spots had no object links), and the five parts nearest its point on its layer, each with its side and the distance from the point to what of it is on that layer (`over it` inside): its pads on the layer (a through-hole pad on every layer) and, on an outer layer, its body (courtyard, else the pads' box) when it lies on that side, so that a key switch on the front over a back-side MCU's hot spot counts by its pins only: `hot spot 2 (diagnostics.hot_spots[2]: B.Cu at 202.75, 149.46, on the open nets +1V1; their pads in its tile U1:23 (202.70, 149.50); in conflict there with +3V3): the parts nearest it on B.Cu are C16 (back, 0.7 mm), U1 (back, 0.8 mm), ...`, then what moves them (in a layout `place`, `apart` or a `keepout`; in route mode the input). Where KiCad names an unconnected item on one of the hot spot's open nets, the action ends with that open link, whose far end may lie elsewhere, and a `near` to paste (since 2026-11-04; trial 5's jetson: R8, 10.4 mm from J1:11, was not among J1's neighbours): `its open link on Display/TMDS_D0_C_N runs from J1:11 to R8:2, 10.6 mm apart (KiCad's unconnected item). To bring R8:2 closer to J1:11, add {"minimize":true,"pad":"2","part":"R8","pin_of":"J1:11"} to constraints.json's near list.`: the free part of the two (of two free ones the one with fewer pads) to the other's pin; with both fixed it says so; in route mode the input to change. **Starved thermals** name the pads (`U1.57 on F.Cu`) and say what `solid_starved_thermals` did for them on the board written: connected solid and undone by KiCad's check (its unconnected items and findings solid and with spokes; `solid_starved` in board-router.json), kept, or not tried on this board; then the first pad's advice (without the solid connection where it was undone). A layout with at least three measured capacitors and fewer than 60 % within 3 mm of a same-rail supply pin reports the median and the farthest measured pins. `decoupling_near_suggestions` lists capacitors beyond the near limits used by a fresh schematic template when the schematic assignment agrees with the placed board’s template on which IC they serve. Each entry gives the capacitor, the exact supply pin, the suggested `max_mm` and the measured body-to-pin distance. The example in `next_actions` uses the same pair. Fixed capacitors and capacitors with an existing `near` entry keep their established placement intent. The same-rail measurements remain available when there is no schematic pairing. |
+| `input_observations` | The input's own observations of `next_actions` (4) each in full and untagged, before the folding (since 2026-11-04; absent when there are none): every fixed part on the board's texts with its marks, every overlapping pair, the footprints' and the input's own findings' notes, the reference's findings the release refuses. |
 | `drc_cache` | `{calls, hits}`: KiCad DRC runs the process asked for (its attempts, the reference) and how many the DRC cache answered (see below). |
 | `skeleton_race` | Placement and layout with the placer's race over skeletons on (the default; absent on a panel of copies or sub-boards): what it did in one line, board-placer.json's `skeleton_race.summary` (`not run: each seed's placement had 200 s of work, under min_work_seconds (500 s), ...` or `ran: the kept seed placed its skeleton of 68 parts first (level 3) ...`; since 2026-11-06). |
 | `room` | Placement and layout (also an input error that a constraint needs more room than the outline has): the room as numbers, below. Absent for a route. |
@@ -1483,6 +2093,13 @@ walkthrough uses, the layout's verdict has `utilization` [0.066, 0.141],
 `missing_mm2` [0, 0] and `smallest_outline_mm` [213.5, 54.5]: the two
 grids side by side.
 
+If a layout's blocking solder-mask bridge names a round non-plated hole
+and a round plated pad on two held footprints, the verdict checks whether
+the drill reaches the pad's copper. With matching native items and exact
+authored holds, `next_actions` names both footprints, the faces and pad
+positions KiCad reported, and the `place` or `add` entries. Review the
+footprint geometry or change an authorized pose before rerouting.
+
 **KiCad's DRC is cached.** Every DRC (15-25 s and 2.2 GB on a large
 board) is kept in `$XDG_CACHE_HOME/pcb-maker/drc/` (`~/.cache/pcb-maker/drc/`
 without it) under a hash of everything it reads: the board's bytes and file
@@ -1516,16 +2133,63 @@ these three warnings depend on the libraries installed, so
 `verification.json` leaves them out of `erc_violations` and counts them by
 type in `erc_library_warnings`.
 
+Read `verdict.json` for the routing or layout decision. The native
+summary in `result/verification.json` sets `complete` only when
+`erc_violations`, `drc_design_violations`, `schematic_parity_issues`
+and `selected_net_unconnected_items` are all zero. An existing schematic
+ERC finding can therefore leave that flag false on a fully routed layout.
+Use `erc.json` to inspect the schematic finding. The summary's
+`schematic_parity_checked` is true after a native parity check or an exact
+verification cache match for such a check. Board-only verification leaves
+it false and applies the existing completion policy.
+
 The other commands exit 0 when done, 1 when their result is incomplete
 (`repair-kicad-silkscreen` with findings left, `import-kicad-netlist` with
 footprints missing, `fab-kicad-board` refused by the DRC), 2 on usage or
 input errors and 4 on internal errors.
 
+### Route reuse in the verdict
+
+`route_reuse` is present after an opt-in routing decision, including when
+an illegal initial placement stops a layout before routing. Ordinary
+runs omit the object.
+
+When exactly one terminal moves or leaves a net, reuse can keep its
+straight-segment tree. The moved pad must be a leaf with a short direct
+escape to its previous joint on the same layer. A removed terminal's
+branch is trimmed back to the first surviving pad or joint. The tree
+must connect every old terminal through exact track joins and plated
+through-hole pads, with its tracks on layers separate from any copper
+zone on the net. The trial uses current zones and rules and requires a
+fresh native connectivity, schematic parity and all-severity DRC check.
+
+| Field | Meaning |
+| --- | --- |
+| `status` | `accepted` means the returned board contains the verified prior copper. `skipped` means reuse ended before the trial. `fallback` means the warm candidate was set aside and ordinary routing continued. |
+| `reason` | Why reuse was skipped or fell back. |
+| `retained_nets`, `retained_segments`, `retained_arcs`, `retained_vias` | Counts of copper retained from the previous board. All four are zero after a skip or fallback. |
+| `partial_nets` | Accepted branch reuse, keyed by current net name. Each entry gives the `pruned_terminal`, counts of retained and pending terminals, and counts of retained and pruned segments. `spliced_segments` counts new segments that reconnect a moved terminal. The detailed report also records branches offered in a rejected trial. |
+| `pending_routed_connections`, `pending_routable_connections` | Accepted reuse only. The router's counts for work left after keeping copper. Both are zero when the retained copper already completes the board. |
+| `saved_routable_nets` | Accepted reuse with zero KiCad opens and schematic parity findings. An inventory of named nets with multiple electrical contacts on the saved board. A retained net can also need pending routing. |
+| `renamed_references` | Previous to current reference for unique matching schematic instances on an accepted trial. Detailed route reports also list proposed matches after fallback. |
+| `restored_poses` | Layouts only. The number of footprints moved back to their previous positions on the returned board. |
+| `keepout_skipped_nets` | Current net names withheld from reuse because their previous copper would encounter an explicit current copper keepout. Ordinary routing handles these nets. |
+| `baseline_schematic_parity_by_type` | KiCad schematic parity findings on the current input that prevented the reuse trial from starting, counted by type. |
+| `new_findings` | Counts by KiCad finding type when the reuse comparison found new violations on the rejected candidate. |
+| `new_finding_examples` | Up to six of those findings, favoring different types. Each shows the native severity and description, a named rule when available, and up to three items with their native descriptions, net names, and anchors where available. |
+
+The examples describe the rejected trial. An item's `anchor_mm` is
+the position KiCad reported for it, such as a track endpoint. The
+conflict can occur elsewhere along that item. Long descriptions may be
+shortened. The top-level findings and verdict describe the returned board.
+For trial eligibility, provenance and work, read `board-router.json`
+in the route output or `result/board-router.json` in the layout output.
+
 ### The layout's report: `<out-dir>/board-layout.json`
 
 | Field | Meaning |
 | --- | --- |
-| `routed.routed_connections` / `routable_connections` | Connections made / needed. |
+| `routed.routed_connections` / `routable_connections` | The router's made and needed connection counts. Accepted reuse counts the remaining work after retaining copper. |
 | `routed.unconnected_terminals` | Pads the router could not reach. |
 | `routed.native` | KiCad's raw counts: `complete`, `drc_design_violations`, `selected_net_unconnected_items`, `schematic_parity_issues`. They count every finding of any severity, silkscreen warnings included (a layout places the fields itself, `verdict.silkscreen`; `repair-kicad-silkscreen` places them on any board with the layout's scorer and also clips front silkscreen strokes off pads, other silkscreen and the edge; it takes any outline, a `gr_rect` too, and keeps strokes within the bounding box of one that is not a rectangle, noted in `proposal.notes`), so `complete` is often false on a board that passes: `verdict` decides. |
 | `routed.vias`, `routed.length_mm` | Cost of the routing. |
@@ -1536,6 +2200,19 @@ input errors and 4 on internal errors.
 | `constraint_warnings` (in `placed/board-placer.json`) | Inputs accepted but not acted on; the verdict's `next_actions` repeat them. |
 | `placement_digest` | A sha256 of everything the steps after the placement read from it (the placed board, the lowered placement problem with the placer settings it carries, the race's other placements, the pin swaps, the work the placement booked; since 2026-10-28), also printed on stderr as `layout: placement digest <sha256>` before the race: two layouts of one binary, task, settings and rates with the same digest route alike (benchmarks/agent-tasks/run.py `--reuse` keys on it). |
 | `stopped_after_first_route` | With the layout option `stop_after_first_route` (a measurement mode, off by default): the layout ended with its first route's board, KiCad's check and the report, skipping the moves, the polish, the final ladder and the neck repair. |
+
+When the layout selects another placement seed, keeps a footprint move,
+or restores prior poses, the placement report and view in `placed/` and
+`result/` show the selected poses. `selected_placement` records the source
+(`layout` or `route_reuse`), the seed's pool index for layout, and the
+number of kept layout moves. `initial_placement_report` links to the
+original report beside its board and animation in `initial-placement/`
+or `reuse/initial-placement/`. Final wirelength, constraints and room use
+the selected placement. `seed_kept`, global metrics and the pre-move
+wirelength stages describe the base solver seed, when one applies. Pool
+work still covers the original placement run. Solver diagnostics tied to
+the original placement remain in its archived report when they do not
+apply to the selected placement.
 
 ## When it does not work out
 
@@ -1580,7 +2257,11 @@ input errors and 4 on internal errors.
   of pads, KiCad's pairs, the rules and their sources, and the designer's
   route of the net. `routed.diagnostics` adds `hot_spots` (where nets
   fought longest, with the pads and nets in each tile) and `dead_pads`
-  (pads whose class is too wide for them). Density is a hypothesis, not a
+  (pads the router found no legal way to enter). When KiCad also reports
+  an open at the same pad on the same net, the verdict names up to three
+  such pads and shows the layer, clearance or obstacle from the router's
+  access check. For example, a pad inside a track keepout points to a
+  placement or rule-area change. Density is a hypothesis, not a
   finding: when the designer's board routes the same placement under the
   same rules (`reference.connected: true` for the open nets), density is
   not the reason, and a larger outline, more layers or narrower classes
@@ -1593,6 +2274,10 @@ input errors and 4 on internal errors.
   [constraints.md](constraints.md); a `copper_edge_clearance` error left in
   drc.json is copper the placer did not hold (a fixed part, a board
   graphic) or a project rule changed after the placement.
+  When KiCad identifies a held pad against the board outline, the verdict
+  names that pad and gives the measured and required clearance when KiCad
+  reports both. Check the source footprint's pad geometry and the held
+  interface pose against the outline before rerouting.
 
 ## 5. Order it
 
@@ -1623,7 +2308,7 @@ is a fab release gated by KiCad's DRC:
   line, then the blocking findings; released, the findings it went ahead
   with, the parts without an LCSC number, the rotations to check), last
   the footprints' own and the board's own findings that do not block,
-  tagged `nothing to do (the input's): `; `verdict.input_observations`
+  tagged `nothing to do (the input's): ` or `review the input footprint: `; `verdict.input_observations`
   holds those two notes. The refusal's `reason` is unchanged.
   Warnings,
   excluded and cosmetic findings (silkscreen, text, library) do not block.
@@ -1728,7 +2413,7 @@ differ between KiCad and assemblers.
 ## Check a board with KiCad
 
 ```sh
-pcb-maker drc-kicad-board <project-dir> <board-id> <report.json> [--no-refill] [--input <project-dir>]
+pcb-maker drc-kicad-board <project-dir> <board-id> <report.json> [--no-refill] [--input <project-dir>] [--stitch-zone-island <out-dir> | --save-filled <out-dir> | --localize-zone-widths]
 ```
 
 runs KiCad's DRC on the board and its rules (`.kicad_pro`, `.kicad_dru`;
@@ -1736,13 +2421,13 @@ no schematic parity), zones refilled unless `--no-refill`, through the DRC
 cache (section 4), and writes KiCad's report (every severity) to
 `<report.json>`. One line on stdout counts errors by type, unconnected
 items, warnings and cosmetic findings, and the cache's calls and hits.
-The boards pcb-maker writes carry their zones unfilled (KiCad fills them
-when the board is opened and filled, `B` in pcbnew): checking one with
-`kicad-cli pcb drc` yourself, pass `--refill-zones` (and
-`--schematic-parity` for the parity check), as this command does.
-Without it the pads a pour joins count as unconnected: the schematic
-trial's board routed on the designer's placement, 0 unconnected with the
-refill, 24 without.
+Use `--no-refill` to check the copper actually saved in the PCB.
+For layouts, `fill_publication` in the verdict records whether the
+verified fill was saved. An unfilled board can show extra opens in a
+stored-copper check. One schematic trial had 24 opens as stored and
+zero after refill. To check schematic parity as well, run
+`kicad-cli pcb drc --refill-zones --schematic-parity` on the PCB in
+the directory containing its matching schematic and project settings.
 Exit 0 when no error counts (warnings, excluded and cosmetic findings do
 not, nor a footprint's own findings and the board's own edge clearances,
 mask bridges and courtyards with no track or via in them: section 4, "The
@@ -1753,9 +2438,824 @@ board, 4 when KiCad fails. After the count, `next:` lines in a verdict's
 order (since 2026-11-04): the project's rules the router does not keep
 where the check fails, then, last, the footprints' own findings with the
 custom rule that accepts them and the board's own with theirs, each
-`next: nothing to do (the input's): ...` (until then a `footprint:` and
+`next: nothing to do (the input's): ...`, or `next: review the input footprint: ...` for a plated hole with zero annular width (until then a `footprint:` and
 an `input:` line ahead of the rest). The benchmark runners (`run.py`'s designer
 check, `freerouting.py`) use it when the binary has it.
+
+Two findings give specific guidance when reviewing an imported layout.
+
+- A solder-mask bridge between a track or via marked `<no net>` and an
+  unassigned pad identifies the affected footprint. Check its schematic pin
+  and the nearby routing before assigning a net or removing copper.
+- For a bridge at a footprint's mask graphic, inspect the listed opening
+  and copper on the same board face. If KiCad names a zone on that face,
+  or a foreign-net zone outline covers the marker, check whether the
+  refilled copper participates before editing the zone.
+- An isolated copper zone marked `<no net>` identifies the affected layer.
+  Use separate report paths for a default check and a `--no-refill` check.
+  The first measures regenerated copper. The second checks the fill saved
+  in the board file. Consult the design brief before assigning the plane net.
+
+**Locate a narrow connection within a zone.** When a `connection_width`
+error names only a zone, KiCad gives the zone's anchor as its position.
+Use `--localize-zone-widths` on its own with a report outside the project.
+The ordinary refilled DRC report gains a `zone_width_localization` section
+with the finding, zone UUID, net, layer and measured chord and midpoint in
+millimetres where independently witnessed. The report identifies whether the
+geometry came from the saved board or a private refill. A bounded geometry
+search uses the KiCad Python bindings. KiCad must reproduce the complete
+original width finding set with temporary witnesses in a private board.
+The source project stays unchanged and the command retains the ordinary DRC
+exit status. A diagnostic reason accompanies any unconfirmed coordinates.
+
+**Stitch a zone island.** When KiCad reports one open between two islands
+of the same zone, `--stitch-zone-island <out-dir>` tries a through via
+where filled copper overlaps on two layers. It uses the net's resolved via
+diameter and drill and checks up to six sites with KiCad after refilling.
+A layout or route verdict with a verified zone identity provides its net,
+zone UUID and a command as `zone_island_recovery.retry_argv`. The command
+tests the returned board with fresh refill and DRC.
+A repair is kept only if the open closes with no new noncosmetic findings.
+The new directory must be outside the input project. It receives a copy
+of the project including its schematic, child sheets and local libraries,
+the board with one additional via, and fresh `drc.json` and
+`zone-island-repair.json` reports. Other pcb-maker run reports are dropped.
+Use a sibling directory when the project refers to external libraries by
+relative path. The requested `<report.json>` still holds the input's DRC.
+Stdout reports the attempts with the net, site, layers, via dimensions, remaining opens and new
+findings, even when the repair is rejected and no new directory is written.
+The flag is optional and requires zone refill.
+
+For one open within a single-layer zone, the DRC, route and layout
+reports name the zone and its layer. Inspect the filled polygons on
+that layer for a gap. A higher-priority pour, a keepout, or clearance
+around tracks can divide a continuous zone outline into separate pieces.
+KiCad can list the same UUID and position at both ends of this open.
+Refill and verify the stored board after editing its copper.
+
+**Save the checked fill.** Use `--save-filled` to hand off a project with
+KiCad's regenerated zone copper saved in its board file.
+
+```sh
+pcb-maker drc-kicad-board run/result board_id build/refilled.json --save-filled build/filled-project
+```
+
+Use a fresh output directory and a separate report path outside the source
+project. Use a sibling directory if the project refers to external files by
+relative path. The copy keeps the project rules, schematic hierarchy and
+local libraries. KiCad checks the stored source and refills a private copy.
+When zone identities match, pcb-maker keeps the source footprint, track and
+zone outline forms and copies KiCad's generated fill. This can include
+pad/via teardrops and derived layer connections. It then opens the new file
+and repeats DRC without refill. If source-form preservation cannot pass
+those same checks, the handoff tries KiCad's own saved board. If a matching
+schematic exists, each check includes schematic parity. These checks use
+fresh, raw native DRC reports.
+
+KiCad can choose different ratsnest endpoints for the same disconnected
+copper. If that is the only difference in the uncapped reports, pcb-maker
+can verify the saved fill on the authored board by proving that every
+named pad, track, arc and via belongs to the same connected component
+with in-memory refill and after reopening the saved file. This additional
+check requires the optional KiCad `pcbnew` Python bindings for the same
+version as `kicad-cli`. It applies to layout publication only if the
+remaining modeled budget covers the two additional native checks. If
+footprint library warnings reach a report cap, install the project's
+libraries and retry with `PCB_MAKER_KICAD_USER_LIBS=1`.
+
+The requested report captures the refill. The output contains `drc.json`
+for the saved board, `drc-before-fill.json` for the source as stored, and
+`fill-handoff.json` with both board hashes, counts, inherited findings and
+rule types that reached a native report limit. `preserved_source_forms`
+records which board form was saved. `connectivity_checks`
+records whether the additional native component checks ran. When present,
+`connectivity_proof` records the number of copper objects, components and
+nets checked. The manifest also records elapsed checking time in `wall_seconds`.
+When saving changes which footprint-library warnings fit into a capped
+report, the handoff reopens the saved PCB and refills it in memory.
+`drc-refilled-as-published.json` records that extra check. Every raw
+finding must match the check of the saved board.
+For a measured connection-width or uncoupled-length finding whose reported
+track changes on reopen, the standalone handoff can retry with KiCad's
+track order. It moves complete original copper forms, preserves the same
+native rule measurements and affected nets, and verifies the full native
+connectivity of the saved and freshly refilled board against the original
+refill. `reordered_copper_forms` counts the moved forms. The width and
+uncoupled-length findings stay visible in the saved board's report.
+Exit 0 means the copy has zero native errors, opens and parity findings.
+Exit 1 also delivers the verified copy and reports the remaining issues.
+Exit 2 means invalid input. Exit 4 means saving or verification failed.
+Use `--save-filled` without the other DRC options.
+
+## Compare explicit copper pour policies
+
+Run `compare-kicad-pour-policies` to compare several requested pours on
+one layout brief. The policy file is a JSON array. Omit `add_pours` from
+an entry to keep the shared router settings. An entry with `add_pours`
+replaces that list and uses the ordinary layout's format for the requests.
+
+```sh
+cat > policies.json <<'EOF'
+[
+  {"name":"as supplied"},
+  {"name":"ground on both sides","add_pours":[{"net":"GND","layers":["F.Cu","B.Cu"]}]}
+]
+EOF
+pcb-maker compare-kicad-pour-policies project board comparison policies.json auto project/layout.json
+```
+
+Every policy gets the layout file's full `total_seconds` budget, so two
+policies request twice that work. The comparison holds the work rates,
+project, design rules, placement constraints and starting seed fixed.
+The ordinary layout can choose different movable placements as it routes
+each policy. The report includes initial and final placement digests.
+
+`comparison/pour-policies.json` gives per-policy and total planned work,
+the work reported by each run, raw and counted opens, raw errors, counted
+new errors and inherited findings. On a panel, the raw open count includes
+links between separate sub-boards that the layout verdict sets aside. The
+comparison includes incomplete runs and their logs.
+
+For a pad-relative zone, `bounded_regions` reports the requested rectangles
+and the other nets' track length through them. A `keep_whole` suggestion for
+that zone requires a part's proposed region to fit inside one rectangle and
+to leave other nets' pads clear on the named layer. Apply the suggestion to
+the existing bounded request on that layer.
+
+A policy qualifies when the ordinary native layout verdict passes, all
+placement constraints hold, and a schematic, where supplied, was checked
+for parity. If a policy keeps the shared router settings, its parity
+findings are the baseline and a candidate adding any of them is ineligible.
+The comparison prefers fewer parity findings, then shorter physical track
+length, then fewer vias. Inherited DRC findings can remain. The chosen
+project, board and verdict are in `selected`. Exit 1 means `selected` is
+`null` because no policy qualified.
+
+## Retry an open plane pad with protected escapes
+
+When a dense footprint has a surface pad still open to a copper plane,
+one local escape can take room needed by a nearby pad on another plane.
+An opt-in layout can reserve part of its modeled budget to reroute the
+same placement with both short plane escapes held:
+
+```sh
+pcb-maker layout-kicad-board project board layout auto layout.json --plane-escape-budget 150
+```
+
+For example, with `"total_seconds": 390` in `layout.json`, ordinary
+layout uses its usual 240-second budget and the retry has up to 150
+modeled seconds. The retry is eligible when the selected native result
+has one open and clean schematic parity. It needs an identifiable
+surface pad on a plane net and a nearby pad on a different plane net
+with an exact short connection to a through via in the first route.
+The staged search holds both escapes while routing the rest of the board.
+A fresh all-track KiCad check must find zero opens and no new errors,
+warnings or exclusions. The retry never moves footprints or edits rules.
+
+`plane_escape` in `board-layout.json` and `verdict.json` records the
+outcome, reserved and measured work, both terminal paths, native check
+counts and raw errors. The physical statistics of the selected layout
+include the held tracks and vias. If the retry is skipped or rejected,
+`result/` retains the ordinary layout. A successful layout uses the
+standard verified zone-fill publication if enabled and within budget.
+Inherited footprint errors remain visible in the native reports.
+
+To retry an existing layout without rerunning placement:
+
+```sh
+cat > retry.json <<'JSON'
+{"ladder_budget_seconds": 150}
+JSON
+pcb-maker repair-kicad-opens layout/result board --plane-escape repaired layout/placed retry.json
+pcb-maker drc-kicad-board repaired board repaired-filled-drc.json --save-filled repaired-filled
+```
+
+The standalone repair assumes matching project and original copper-free
+placement. It writes `plane-escape.json` with native comparisons after
+refill. The separate handoff saves and reopens the zone copper so KiCad
+can verify stored connectivity.
+
+## Verify an additive repair for open connections
+
+After selecting a partial layout, `layout-kicad-board` uses any remaining
+modeled work to try one additive local repair on one native open net.
+The stage reserves work for its native checks and for requested zone-fill
+publication. It uses the layout's routing rules. On two-layer boards it
+can try a pair inferred only from exact complementary net names when
+coupling is off and neither member has an applicable coupling, length
+or skew rule. The local report gives the companion in
+`name_inferred_pair_partner`. The main router handles coupled pairs and
+length-constrained nets. The native trial checks both nets and the rest
+of the board.
+Verified additions leave the selected placement and its
+existing copper intact. `local_open_repair` in `verdict.json` gives the
+outcome, work, report path and a standalone retry command as an argument
+array when standalone repair could do more. `same_board_search_complete`
+means a completed search covered every native open on the selected board
+and would repeat with the standalone rules. Check the native witnesses
+or the suggested alternate placement in `next_actions` for a different
+approach. With `model_precedes_additive_repair`, router counts describe
+the original route. Use native verification and layout quality for the
+selected board.
+
+On a routed board, search from the copper already connected to the endpoints
+of KiCad's opens.
+
+```sh
+pcb-maker repair-kicad-opens routed board --local repaired
+```
+
+The search starts at a 0.025 mm pitch and can land on reachable tracks
+and vias elsewhere on the same connected component. Larger windows use
+the finest pitch up to 0.127 mm that fits 4.5 million copper-layer cells.
+It holds existing copper and footprint poses fixed and keeps the original
+project and rules. It tries up to four nets with identifiable native opens.
+Repeat `--net "/NET_NAME"` after the output directory to restrict the
+search to exact net names. Names copied from KiCad's DRC report work
+when they identify one board net. `unmatched_requested_nets` lists
+requests without an unambiguous native open, even when other requested
+nets can be tried. `local_search` in `open-repair.json`
+records the window, pitch, modeled components and search work. When a
+component has no legal launch, `blocked_terminals` records the affected
+pads, layers and nearby obstacles identified by the router.
+When local search cannot reach a single native open, it can try one
+straight bridge to a nearby same-net surface pad of the same footprint.
+The pad centres must be within 1.5 mm on the same copper layer. The
+bridge respects the project's track-width floor, and each end lands
+inside its pad copper. Coupled and length-constrained nets stay with
+their own routing. KiCad must prove the bridge joins the two components
+behind the open without adding findings or changing other components.
+With zones, the repair also checks stored copper. If KiCad changes
+the remaining stored ratsnest witnesses, the repair verifies their
+connectivity partitions. `local_search.same_footprint_pad_bridge`
+records the pad UUIDs, geometry and stored verification.
+
+For a poured net with multiple opens, KiCad's filled connectivity can
+identify witness endpoints already in one electrical component.
+`refilled_components` reports the number of distinct native groups when
+local repair used them to select fewer targets. KiCad still checks each
+proposed repair.
+When KiCad names two zones without reporting a physical endpoint, a
+named local repair can report `zone_open_pad` from its baseline native
+copper partition. Use the pad UUID, position and layer to inspect the
+open, especially when one footprint repeats its pad number.
+When an explicitly named net's native open ends at a generated teardrop,
+local repair can use a same-net track inside the uniquely matched refill
+polygon. `teardrop_contacts` gives the layer, witness location, and kept
+track UUID and contact point. An accepted repair must improve the stored
+and refilled native checks. This search applies to single boards and
+leaves coupled or length-constrained nets to their dedicated routing.
+On a two-layer board, a named local repair that finds no route can also
+try one smaller through-via size listed in Board Setup. It keeps the
+board's diameter, drill and annular ring minimums and leaves the default
+net-class size intact. `preset_via_mm` records the size tried. KiCad
+checks the candidate as stored and after refill before it is accepted.
+On stacks with more than two copper layers, the search excludes dedicated
+foreign plane layers from new track paths. It reports them as
+`reserved_plane_layers` and applies the board's via span and layer rules.
+On a single board, standalone local repair can try one recognized pair
+with two pads and a native open on each conductor, with neither
+conductor already routed. If using `--net`, select both names. The two
+conductors are routed and checked together with the original rules.
+`paired_search` names both members and their pads. It records the
+router's geometry measurements or the reason the attempt declined.
+An unmatched end can include its spacing and the planner's ordinary span.
+The repair requires both opens to close with no new findings in KiCad's
+refilled and stored-board checks. On a panel, the command reports opens
+per physical piece and checks that all copper
+of an accepted trial stays on the piece whose open count decreased. If
+KiCad changes the endpoint it reports across the gap, the repair can
+accept a newly added track at the same copper contact with the original
+net, layer and peer. `panel_witness_replacements` records the track and
+original endpoint UUIDs. KiCad
+refills zones for the checks when the board contains zones. On a single
+board, if the trial closes an open and the only new findings are narrow
+joints between new track tips and existing straight tracks, the repair can
+retry once with those tips on the existing centerlines. The
+`contact_refinement` report lists both native checks and the adjusted
+contact coordinates. The retry must pass the same native checks as the
+original trial. In both local and alternate-board repair,
+`drc_refilled_zones` records whether the
+open counts include a refill. After adding copper in that mode, the CLI
+reads the repaired project's PCB. With fillable copper zones, it prints
+a `drc-kicad-board --save-filled` command to save those fills in a new
+project and verify its connectivity after reopening it. If the board
+has no fillable copper zones, the command uses `--no-refill` to check
+the repaired PCB as stored. Rule areas alone require no fill handoff.
+For a net named with `--net` that has more than eight disconnected
+components, the local command tries up to four short branches from the
+native ratsnest within one 20-second search window. It submits at most one
+branch per net for native verification. The report lists the searched
+endpoint pairs in `local_search.attempted_branches`.
+If the project's native DRC disables copper-to-edge clearance,
+`native_edge_clearance_ignored` records that gap in verification.
+
+For a cold layout with a few tightly spaced open pads, reserve work for a
+single retry on the chosen placement.
+
+```sh
+pcb-maker layout-kicad-board project board layout auto layout.json --terminal-launch-budget 190
+```
+
+The flag reserves 190 modeled seconds within the layout's existing
+`total_seconds`. The ordinary layout uses the rest. The retry looks for
+one or two pads that KiCad names in its open findings and the router
+identifies as blocked, on one compact two-row surface-mount footprint.
+KiCad checks the provisional outward tracks against the same placement
+before rerouting. The reroute has up to eight native checks and can
+finish with bounded local repair. The work reserve also covers the
+comparison checks and saved-fill publication. It keeps the
+first board unless KiCad confirms that all opens closed with no new
+findings or schematic parity issues. The verdict's `terminal_launch_retry`
+records the pads, geometry, modeled work and outcome. Its `local_trials`
+list gives the net, trial open counts, decision and report path relative
+to the layout directory. The retry's top-level counts describe the board
+the layout selected. Wall time depends on the machine and its native checks.
+
+To select the pads yourself, add `"terminal_launch_pads": ["U1:7", "U1:8"]`
+to the layout JSON and use the same reservation flag. Choose one or two
+native open witnesses on the same surface-mount footprint of the selected
+placement. This retry starts from a placement without authored tracks or
+vias. It proposes short outward traces on rectangular, rounded rectangular
+or oval pads with a clear tip, then checks those traces under the original
+KiCad project rules. The detailed router must use each tip and close every
+remaining open. The retry replaces the first board only after the native
+checks reproduce those results on the saved PCB without new rule findings
+or schematic parity issues. `terminal_launch_retry.requested_pads` and its
+decision explain which selection was tried.
+On a suitable ordinary layout, `terminal_launch_advice` gives the JSON
+patch, the reservation flag and candidate geometry. Its minimum reserve
+is the modeled work needed to start the trial. A full reroute can need
+more. KiCad verifies the proposed tracks in the actual retry.
+
+For an open between two nearby surface pads on opposite faces, give the
+inspector the original placed project with its `board-placer.json`.
+
+```sh
+pcb-maker inspect-routing-run routed --terminal TP1:1 --escape-placement placed
+```
+
+`placement_escape` checks the exact native pad pair against the original
+placement. It screens short straight traces with one through via, using
+KiCad's pad shapes and the project's default or resolved class sizes.
+If a short escape already fits in the sample, it leaves the poses alone.
+If one movable front footprint accounts for the obstruction, the probe
+tests shifts of up to 1 mm on that face and reports a witness and a
+`constraints_patch` when a shift clears the sampled geometry. The patch
+holds every other pose. Nearby footprints without a native courtyard
+are listed in the result. Keep the original face declarations and
+mechanical constraints, run ordinary placement with the patch, then
+reroute and compare the native findings on the saved result.
+
+If one local open remains in a channel too narrow for its via, the retry
+can detour one short generated track between its original endpoints.
+It compares the native finding identities and copper component membership
+before retrying the net. `track_detour` records the track and the proposed
+coordinates when this step runs.
+
+For an open surface pad fully covered by an authored track-and-via
+keepout, give the routed project and the exact pad number.
+
+```sh
+pcb-maker repair-kicad-opens routed board --rule-area repaired --pad C90:2
+```
+
+The command confirms the pad's UUID in the native open report. It searches
+within 3 mm of the original pose and can reseat up to two movable neighbors.
+It routes only nets of the moved footprints and preserves all existing
+tracks and vias. The staged repair must reduce stored and refilled native
+opens, close the named pad, and preserve native DRC and schematic parity.
+When KiCad reports a different witness for a remaining open, its native
+connectivity partition must show that no existing component split.
+Exit 0 saves the verified filled PCB. Exit 1 leaves the original board in
+the output project. `rule-area-open-repair.json` lists the moves, work and
+checks. The source project is read only.
+
+When an authored rule area prohibits tracks and allows zone fill at an open
+surface-mount pad, ask KiCad to try a local pour on the pad's copper layer.
+`inspect-routing-run` lists these pads under `nets[].local_pour_retries`.
+
+```sh
+pcb-maker repair-kicad-opens routed board --local-pour repaired --pad PNT1:MP
+```
+
+Both native reports must identify the same physical open pad. The command
+tries one rectangle around that pad's copper and the nearest retained
+through via in a different component of the same net, with a 0.30 mm
+margin. The trial keeps existing copper and rule-area geometry. It publishes
+the filled board only if KiCad confirms the selected pad-to-via join and
+one fewer open in both stored and refilled checks, with the same other
+findings and all other electrical components preserved. Exit 1 leaves the
+original PCB in the copied project. `local-pour-repair.json` records the
+selected pad and via UUIDs, layer, bounds, and native checks.
+
+When retained copper blocks a route, prepare a candidate PCB with the same
+footprint placements and keep every original track and via UUID. Submit the
+candidate with the native open's exact net name.
+
+```sh
+pcb-maker repair-kicad-opens routed board --relocate repaired candidate.kicad_pcb --net /SIGNAL
+```
+
+This checks one proposed edit with up to eight relocated unlocked straight
+tracks or through vias, at most 0.25 mm from their original geometry, and
+up to 128 added copper items. Existing track widths, layers, via sizes, drills
+and net names must match. Preserve each outer segment endpoint. A bend
+shared by two moved segments can move with both, and an endpoint attached
+to a relocated via can follow that via. New segments on
+other nets must stay within the same limit of a relocated original segment.
+The command takes only the copper edit from the candidate and checks it under
+the source project's board, footprint and design rules.
+
+KiCad must confirm fewer opens on the requested net in the stored and
+refilled board. Native findings and schematic parity must match, and every
+other original electrical component must retain its membership. The native
+checks have a 150-second wall limit and require matching KiCad Python
+bindings. The report `relocated-open-repair.json` records the candidate
+UUIDs, counts, the native connectivity proofs and the decision. Exit 0 saves
+the verified fill. Exit 1 publishes a byte-identical copy of the original PCB.
+
+For a two-layer board with a listed through-via preset, the same command can
+search small bends in the router's generated tracks. Supply the original
+placed project to identify which copper must be kept.
+
+```sh
+pcb-maker repair-kicad-opens routed board --relocate repaired --generated-from placed --net /SIGNAL
+```
+
+The search tries small shifts of neighboring three-track chains and a
+short branch on the requested net. Tracks in the placed input stay fixed.
+The same stored and refilled DRC and connectivity proof gate
+publication. `automatic_search` records the variants and candidates.
+
+On multilayer boards this command can also try moving one router-generated
+filled and capped via up to 2 mm inside its original large land to open an
+escape on the other face. The full ring stays on the land. The via
+dimensions, fabrication flags, original tracks and footprint poses stay
+fixed. A new trace reconnects the via to its original junction.
+`automatic_search.filled_pad_via` records the pad, via, old and
+proposed positions, and the retained junction. Both native checks must
+verify the repair. Any resolved centering warnings at that via are recorded
+in stored and refilled order under `resolved_via_centering_warnings`.
+If KiCad selects different objects for an existing connection-width warning,
+the tool can replay that exact warning on unchanged source copper.
+`reproduced_width_warning` identifies which check needed this proof.
+An ordinary layout verdict and its `inspect-routing-run` report can list
+`generated_pad_via_retries` for an exact native open beside such a via.
+Each entry gives both pad UUIDs, the via and junction geometry, and a
+`retry_argv` command using that layout's original placed project.
+A normal layout with verified stored fill and enough remaining work tries
+one eligible generated pad-via repair before writing its verdict. The
+layout charges the local routing work, native checks and connectivity
+proofs to its budget. See `generated_pad_via_recovery` for the outcome and
+`saved_copper` for the published board's geometry. The retry remains
+available when the layout runs short of work.
+If native findings hit KiCad's report cap, the repair leaves the board
+alone and identifies the evidence limit. Restore missing project libraries
+before retrying.
+
+Automatic layout repair tries locally short native opens first and
+submits at most one ordinary trial to native DRC. On a single board it
+can then try one branch of a larger open net. It routes against any
+copper just accepted in the ordinary trial. The branch needs remaining
+work for its search, native DRC and two native component checks. Layout
+also reserves additional checks to verify the saved fill when needed.
+When the reports differ only in which
+endpoints KiCad chose to show an open, two further native connectivity
+checks can certify the repair within the remaining budget. The selected
+net may merge connected components. Every other net must keep the same
+copper components. `trials[].connectivity_proof` records the merge and
+the verified copper counts in `open-repair.json`. The native DRC and
+parity findings must still agree for this check to run.
+
+`verdict.json.via_cost_retry` can propose a controlled comparison on
+a multilayer board with many verified opens and existing routed vias.
+Apply `router_config_patch` to a copy of the current router JSON, keeping
+its other keys, and use the same placement and project rules. An `auto`
+run can use the patch as its router JSON, including any effective seed
+count. This suggestion is omitted when the current router settings
+specify a via cost. Compare saved and refilled opens, findings and via
+count before choosing the resulting route.
+
+Use `--compare-incumbent` on `route-kicad-board` for a fixed-placement
+trial against a routed incumbent. Start with the layout's `placed/`
+project and write the alternate route to a fresh directory. Supply a
+router JSON with an explicit `ladder_budget_seconds` and the strategy
+changes you want to test.
+
+```sh
+pcb-maker route-kicad-board run/placed board-id alternate alternate-router.json \
+  --compare-incumbent run/result
+```
+
+The comparison checks the complete placement, board design, locked and
+grouped copper, project rules and schematic inputs. Four private KiCad
+checks use the work left in the budget to compare the two saved boards
+and both native refills. `verdict.json.fixed_route_comparison` lists
+new findings and each open net's before and after counts. A result can
+improve the total while opening a previously connected net. Review each
+tradeoff before choosing a route. The ordinary route exit code still
+describes the candidate, and both PCB files stay available. With too
+little work to finish the native comparison, its verdict is
+`inconclusive` and reports the required work.
+
+When only the saved pad/via teardrops differ, the refilled check also
+saves a private copy and verifies that KiCad regenerates the exact
+stored shapes. The verdict records the count for each verified board in
+`verified_regenerated_teardrops`. Authored zones and locked or grouped
+copper remain part of the fixed design comparison.
+
+Local repair can verify a capped `silk_overlap` warning on KiCad 10.0.8
+when the project uses implicit silkscreen rules and the reported pairs
+resolve to unchanged artwork on the same silkscreen face. The native
+reports retain every warning they emitted. `verified_invariant_native_caps`
+records this proof in the accepted repair report. Other capped categories,
+including `silk_over_copper`, still prevent this acceptance.
+
+If a routed board has a few native opens, try a different router pitch or
+seed while keeping the copper already on the board. For example:
+
+```sh
+cat > retry.json <<'EOF'
+{"existing_tracks":"keep","seeds":1,"ladder_budget_seconds":40,"tuning":{"pitches":[0.075]}}
+EOF
+pcb-maker route-kicad-board routed board alternate retry.json
+pcb-maker repair-kicad-opens routed board alternate/board.kicad_pcb repaired
+```
+
+You can use the alternate board if its reroute wrote the board and kept the
+placement. The command selects up to four nets with native opens and
+matching additions in the alternate file. To target a particular open,
+append `--net '+3V3'` after the output directory. Repeat `--net` for
+other names exactly as KiCad reports them. Both modes make a copy of
+`routed` in a new directory outside the source project and accept up to 256
+copper objects per net. The checks use the source schematic, project and
+custom rules.
+KiCad must report fewer opens and no new findings at any severity, including
+schematic parity when available. Native reports with unstable item IDs or
+truncated findings can prevent acceptance.
+
+When missing footprint libraries cause KiCad to hit its reporting limit,
+`open-repair.json` lists the library nicknames and the number of visible
+warnings for each in `reported_missing_footprint_libraries`. Restore the
+source project's `fp-lib-table` beside the PCB and copy the libraries to
+the paths in that table. Set `PCB_MAKER_KICAD_USER_LIBS=1` if the
+project depends on installed user libraries. Retry the same repair in a
+fresh output directory.
+
+`unstable_native_copper_ids` means the trial's unmatched findings differ
+only in native IDs at legacy copper coordinates. The `native_identity`
+field reports the trial's open count, the number of unmatched findings
+and how many source tracks, arcs or vias lack a persistent ID. On a fresh
+copy of the entire source project, use KiCad to persist the IDs before
+retrying the same candidate:
+
+```sh
+cp -a routed upgraded-routed
+kicad-cli pcb upgrade --force upgraded-routed/board.kicad_pcb
+pcb-maker repair-kicad-opens upgraded-routed board alternate/board.kicad_pcb repaired-upgraded
+```
+
+The retry compares the upgraded copy with a fresh native report and
+applies the same strict acceptance check.
+At least 199 findings of most DRC types or 499 opens can indicate truncated
+output and prevent acceptance. KiCad 10.0 also uses 499 for clearance
+findings. A local trial on a capped report can collect evidence in the
+output, and the published board retains its original copper.
+`capped_schematic_parity_types` identifies
+possibly truncated inherited parity. Repairs still compare all reported
+parity identities and keep the source schematic and pad assignments.
+
+Exit 0 means an improvement was verified. Exit 1 means that the copy retains
+the original board. Exit 2 indicates invalid input and exit 4 indicates a
+failed check or write. Read `open-repair.json` for identified nets, attempts
+and their native reports, and `drc.json` for the result in the output. An
+improvement can leave inherited findings or other opens.
+
+## Shorten a routed connection between two named pads
+
+Use this command when placement is settled and two pads on the same net
+need a shorter copper path. For example, to shorten the connection from
+a capacitor's supply pad to a module pin, run
+
+```sh
+pcb-maker shorten-kicad-pad-path layout/result board shortened --pads C3:1 U5:16
+```
+
+Use the board's file stem for `board` and a fresh directory for `shortened`.
+The command works on a private copy. It can replace a leaf of a routed
+net with a direct track while retaining the junction that serves the
+rest of the net. It checks the original and proposed copper with KiCad
+both as saved and after refilling zones.
+
+Read `shortened/pad-path.json` for the outcome. Exit 0 publishes the
+shortened path. Compare its estimated pad-to-pad span with the change in
+total track length. Preserving a branch can shorten the selected path
+while increasing total copper. Exit 1 keeps the original copper in the
+copy and records why the command stopped. When KiCad rejects a trial,
+inspect its entry in `rejected` for the layer, affected rule types, and
+the path to the native report that identifies the items.
+
+Native verification refusals name the stored or refilled check and link
+to its report when the output retains one. If footprint
+library warnings reach KiCad's report limit, restore missing footprint
+libraries or retry with `PCB_MAKER_KICAD_USER_LIBS=1` when the correct
+libraries are already configured in KiCad. If the project disables a
+required copper check, the reason names the setting to enable before
+retrying. These checks also apply to parallel feeds.
+
+For a capacitor-to-supply detour through other branches or layers, add
+`--decoupling-shortcut` after the two pad names. KiCad's current schematic
+must identify the two-pin capacitor, its grounded return, and the
+selected power-input pin on the same supply net. The search retains the
+old copper and tries a direct local route with at most one via. It uses
+the KiCad Python bindings to measure the planar trace span outside the
+pad and via copper. Read `path-before.json` and `path-trial.json` in the
+reported native checks directory. If a new via intersects stored fill,
+the command can save regenerated fill after both native modes pass.
+
+## Add a separate feed between connected pads
+
+Use this command when a completed board needs an additional current path
+between two known pads. Select the endpoints, copper layer and trace width
+from the electrical brief.
+
+```sh
+pcb-maker add-kicad-parallel-feed routed board reinforced \
+  --pads J1:1 U5:22 --layer B.Cu --width-mm 0.513593
+```
+
+Supply the current schematic and a fresh output directory. Both uniquely
+named pads must belong to the same net and expose copper on the chosen
+layer. The search adds straight tracks of the requested width on that
+layer, with electrical contact to existing copper confined to the two
+pads. It keeps the existing tracks, vias, footprints, rules and zones in
+the copy. Selected nets with coupling or length requirements, enabled
+teardrops on that layer, and selected layers with same-net or unassigned
+copper zones are outside this command's scope.
+
+Exit 0 publishes the feed after stored and refilled KiCad checks confirm
+zero opens, unchanged schematic parity and no new DRC findings. Exit 1
+publishes a copy with the original PCB. Read `parallel-feed.json` for the
+selected net, exact width and layer, added track length, search outcome,
+and native evidence. The router gets one bounded search with a 20-second
+wall limit and at most 128 segments per candidate. The native checks have
+a separate 60-second wall limit.
+
+If the only new stored findings are clearance violations between the new
+tracks and existing zone fill, the command tries the native refill. When
+that check passes, it copies the verified fill payload to the private
+board and reopens it for another stored check. `fill_publication` records
+the outcome. The original zone outlines, allocation, and rules stay in
+the board. If the refill creates an open, a starved thermal, or another
+new finding, the output copy retains the original PCB.
+
+Ask for the load and allowable drop when the electrical objective is
+unspecified. Use the board's layer thickness and actual loads to measure
+the voltage drop after adding a feed. The path length is a geometry
+measurement.
+
+## Widen a narrow join between repair tracks
+
+After a neck repair that wrote `track_ids` in `necks.json`, run
+`pcb-maker repair-kicad-necks routed board --widen-supplemental widened`.
+The command checks the original again and tries widening pairs of its
+recorded repair tracks that KiCad identifies in the same width finding.
+It keeps all track centrelines, authored zone settings and design rules.
+It publishes a separate project in the fresh output directory outside
+the source. The copy keeps the original copper if widening fails to
+reduce the width errors or KiCad reports any new finding. Read
+`supplemental-neck-repair.json` for the counts and `drc.json` for the
+result, including any remaining zone width findings.
+
+### Repair width while preserving hatch settings
+
+Ordinary layout tries the same-hatch repair after its usual neck repair
+and fill publication when KiCad names a hatched zone in a connection
+width error on a fully connected board. The trial can widen recorded
+generated tracks and add local bridges or small solid copper patches.
+It keeps the selected board unless the trial removes native width
+errors, preserves the original hatch and other authored geometry, and
+passes both refilled and stored-board verification without adding a
+finding. `unchanged_hatch_width_repair` records the outcome, work and
+supporting report.
+
+If the repair did not fit in the layout's remaining work but the original
+fill was verified, the report includes `retry_argv`. The standalone
+command starts from the verified filled project and writes a new copy.
+
+```sh
+pcb-maker repair-kicad-necks routed board --preserve-hatch repaired
+```
+
+The standalone repair handles one unsmoothed hatch. Its solid patches can
+change the copper area after refill, even though the hatch spacing,
+orientation and hole-area fraction stay the same.
+
+The repair publishes changes only when KiCad reports fewer width errors
+and identical other findings, opens, and schematic parity in fresh
+refilled and reopened checks. Use `unchanged-hatch-width-repair.json`
+for the exact widened track IDs, added track and zone IDs, and native
+verification. `drc.json` records the refilled result and
+`drc-saved-fill.json` records reopened copper. Exit 1 leaves the source
+copper intact in the output copy.
+
+### Retain copper at clipped hatch holes
+
+If the project's hatch policy permits a higher minimum hole area,
+specify the new fraction for a verified repair on a separate copy.
+
+```sh
+pcb-maker repair-kicad-necks routed board --retain-clipped-hatch 0.6 repaired
+```
+
+A larger fraction leaves copper where KiCad clipped a hatch hole to
+less than that fraction of its full area. The option applies to one
+unsmoothed hatched zone named by a KiCad width error. The new fraction
+must exceed the zone's current value and be below 1. The check keeps the
+zone outline, hatch pitch and orientation, footprints, and design rules.
+It may widen recorded repair tracks and add one short bridge at a
+remaining narrow connection. A multilayer zone shares its minimum hole
+area across its layers, so this option can change copper on each of them.
+
+The repair keeps changes that reduce width errors without adding a native
+finding, including opens and schematic parity. Exit 0 requires the saved
+PCB to reproduce the repaired findings when reopened without a refill.
+The saved PCB carries KiCad's zone fill and generated pad/via teardrops.
+Read `hatched-neck-repair.json` for the selected zone, remaining width
+errors, `as_refilled` and `as_stored` counts, and elapsed time. An
+unimproved copy retains the original copper. If the repair improves
+refilled DRC and fill publication fails, exit 1 and the
+`fill_publication.retry_argv` describe how to verify a separate saved
+fill. `drc.json` reports the PCB as stored and
+`drc-refilled-after-hatch-repair.json` records the refill check.
+
+When new width errors name an eligible hatched zone, the verdict reports
+its UUID and current minimum hole-area fraction. The suggested repair
+command is for designs that permit retaining copper at clipped holes.
+
+## Repair a via-to-track short
+
+```sh
+pcb-maker repair-kicad-via-short layout/result board layout/placed repaired
+```
+
+Supply the matching pre-route `placed/` directory so the repair can exclude
+existing copper. The repair can jog one freshly generated, straight track
+away from a different-net through via. It keeps the track width, layer and
+endpoints as well as the via and all other board items. Tracks belonging to
+differential pairs, length rules or KiCad groups are outside this repair's
+scope. Ordinary `layout-kicad-board` can try the same repair automatically
+when a native short identifies these items and its remaining budget covers
+the checks and any requested fill publication.
+
+The command checks the original and trial both as stored and after refill.
+It requires closed refilled connectivity, zero schematic parity findings
+and no new native finding. If KiCad changes the witnesses for the same
+stored opens, the repair requires identical native copper components after
+substituting the jog for the old track. Exit 0 publishes the repair. Exit 1
+keeps the original PCB in the new project. Read
+`via-detour.json` in the new project for the outcome, native check count and
+track geometry. A successful standalone repair moves the old routing and
+verification reports to `via-detour-input-evidence/` and writes current
+KiCad reports beside the PCB. A normal layout also records the outcome in
+`board-layout.json` under `via_detour`.
+
+## Remove a generated dangling track
+
+Run `pcb-maker repair-kicad-dangling routed board repaired` on the output
+of a completed route or a layout's `result/` directory. The router records the IDs of
+short, generated pad stubs in `board-router.json`. The repair tries
+removing at most one such track when a fresh KiCad `track_dangling`
+error identifies it. It verifies the trial with a second native check,
+including zone refill and schematic parity when applicable. It keeps
+the change only when the trial removes a dangling-track error without
+introducing a native finding or open. The source board, authored zone
+settings, and all other copper are preserved.
+
+The command publishes a separate project. Exit 0 means it verified a
+repair. Exit 1 means the copy retains the original copper. Older route
+reports without the track IDs yield no eligible repair. Read
+`dangling-repair.json` for the track, removed length, native check count,
+and elapsed time. The published project's `drc.json` includes any
+remaining findings.
+
+For a dangling branch in a layout's own generated copper, add
+`--generated-from <layout-dir>/placed` to the same command. Use that
+layout's `result/` as the routed project. The placed project must match
+the routed design rules and footprint geometry, and any copper supplied
+by placement must be intact. Both native modes must name the same sole
+dangling track. The repair checks that every surviving copper object's
+net and connected group are identical both as stored and after refill.
+If KiCad changes which endpoints it shows for existing opens, the
+repair also verifies that the open count for each net stays the same.
+A changed width-warning witness on untouched copper requires a replay of
+the complete finding on the original design.
+The command keeps the original copper if these checks fail and gives
+the reason in `dangling-repair.json`.
+The layout verdict and `inspect-routing-run` publish `generated_dangling_retry`
+when KiCad names a generated leaf. It includes the measured track, its UUID,
+and `retry_argv` with the exact placed project.
 
 ## Which nets stayed open: `inspect-routing-run`
 
@@ -1774,13 +3274,72 @@ KiCad's DRC first (cached, into `native-check-drc.json` beside the board)
 when the run has none. Exit 0 with the report written, 2 for a directory
 without board-router.json or an unknown net or pad.
 
+Use `--near-paths` to measure saved copper for a brief's near-pin pairs,
+including on a completed route. It reads `constraints.json` beside the
+PCB, or the file supplied by `--near-constraints`. Pass the saved PCB
+directly after a fill or a repair that retains no router report.
+
+```sh
+pcb-maker inspect-routing-run layout/result --net /TARGET_VREF --near-paths
+pcb-maker inspect-routing-run saved/MioLink.kicad_pcb --near-paths --near-constraints constraints.json
+```
+
+`near_paths` records the board and brief digests and lists the exact
+pad endpoints, shortest planar trace span outside contact copper,
+layers, transitions and intermediate pads. Intermediate pad contacts give
+their physical UUIDs and positions, including for repeated pin numbers.
+The requested endpoints must each identify one physical pad. When an intermediate pad
+is farther from the direct line than the terminal spacing and the
+saved project netlist identifies a supported decoupling pair,
+`recovery.argv` gives a [pad path shortening trial](#shorten-a-routed-connection-between-two-named-pads).
+The trial checks the live schematic and native rules again. A copper zone, ambiguous endpoint
+or unsupported copper produces an unavailable reason. The optional
+native measurement requires matching KiCad Python bindings and has a
+512-item per-net limit. It does not add a DRC or change route acceptance.
+
+For a selected later ladder attempt, `attempts.strategy_history` identifies
+the selected attempt and sums the recorded work of the rows before it.
+This sum uses ledger order and can include work inherited from a probe.
+It excludes work outside those rows. Use it to budget a separate trial
+on a related revision, with wall time and actual savings measured on
+that revision.
+
+When a checked plain or exclusive-plane connect rung closes all opens
+at a new finer pitch and a matching coarser rung still had opens,
+`strategy_history.next_trial` includes `router_config_patch` and the
+comparable earlier attempt ID. Merge the provided fields into a copy
+of the current router config, including the individual fields under
+`tuning`. The patch selects one base rung and pitch with the recorded
+plane and pin-line modes. It disables other pitch candidates, probes
+and seed retries for this separate trial. Existing rules and any
+configured finishing steps still apply. A smaller pitch can cost more
+memory and search work. Run the usual router configuration as a control
+and compare saved-board KiCad findings. First-attempt winners and runs
+without a usable ledger omit `strategy_history`.
+
+On a panel with a native report, `panel_opens.by_piece` groups retained
+opens and reported DRC errors by physical board piece. Each row includes
+its bounds, the open count, errors by type, up to eight net samples with
+endpoint IDs and coordinates, and recorded pad access failures on its open
+nets. Errors spanning pieces and errors without a resolved piece have
+their own counts. Use a sample's `net` with `--net` to inspect the full
+route and the rules on those terminals.
+Review the named obstacle before rerouting a part with a recorded pad
+access failure. Known retained across-piece pairs, pairs without a
+unique physical location, and pairs stored as excluded across pieces
+in the run's report are counted separately. The inspection keeps the
+run's verdict. A zone requires a unique piece from its stored outline
+and UUID because KiCad reports its outline origin in place of the
+open island's position.
+
 Per net:
 - `components`: the groups of pads its copper joins, each pad with `ref`,
   `number`, `uuid` (the same on the source, result and reference board),
-  `at` (mm) and copper `layers`; the largest group marked. A net with a
-  zone (`pour_layers`) lists only the groups KiCad's pairs name
-  (`components_omitted` counts the others: its fill, which this command
-  does not model, joins them or not).
+  `at` (mm) and copper `layers`, with the largest group marked.
+  `pour_layers` lists ordinary copper zones. A net with a pour shows
+  the groups KiCad's pairs name, and `components_omitted` counts the
+  others. Supported polygons from saved teardrops are included in the
+  copper connectivity model and reported in `teardrop_layers`.
 - `counts`: the router's terminals and unconnected terminals (its
   search's state, pads it merged before routing as one), the groups and
   the links missing between them, KiCad's unconnected pairs, and an
@@ -1790,6 +3349,42 @@ Per net:
   items lie in: a pad by its uuid, a track, arc or via by the group of
   the copper it lies on (since 2026-10-25; `null` where it lies on copper
   that joins no pad).
+- `open_pad_findings` links KiCad short and clearance findings to the
+  same pad UUIDs and positions as retained native opens. Samples include
+  the open pad, the counterpart's saved item UUID, owner and reported
+  location, and KiCad's original finding. For two items on one footprint,
+  review its source land pattern and pad nets. For different footprints,
+  inspect their relative poses and the source geometry of the named
+  copper. These findings locate an existing electrical problem at the pad.
+- `zone_open_pad` is available with `--net NAME` when the native report
+  names two zones for the net's one open and the matching KiCad bindings
+  confirm exactly two refilled components, one with a single physical pad.
+  The field gives that pad's UUID, position and copper layers, and says
+  whether the footprint repeats its number. Inspect the pad and its local
+  filled copper at that location. The reported zone origins identify the
+  zone objects.
+- `footprint_copper_bridges` appears when a native finding at a selected
+  open pad leads to a verified same-footprint copper path. The probe uses
+  the matching KiCad PCB bindings on the saved board and checks each
+  consecutive contact at zero clearance. An active short on another pad
+  of the same footprint can supply the native witness when the selected
+  open pad touches the same copper path. For a witnessed plated pad the
+  probe also checks that the artwork intersects its copper ring outside
+  the hole. Each path names the native finding, the copper
+  layer, physical pad UUIDs, pin numbers and nets, plus the ordered
+  unassigned artwork UUIDs. The verified geometry describes the current
+  footprint. Review the intended electrical behavior against the schematic
+  before editing it. The probe covers supported planar copper graphics and
+  pads, leaves declared net ties to KiCad, and records any probe limits or
+  missing native bindings in `skipped`.
+- `translated_routed_match` identifies a unique two-pad counterpart on
+  the same board when KiCad reports a retained open between the two
+  identified pads. The counterpart has matching footprint IDs, pad
+  geometry, orientation and side at a common translation. Its copper
+  joins both pads and KiCad reports no open on its net. The field gives
+  the two pairs of endpoint poses and the translation in millimetres.
+  Compare the two pad escapes and neighboring copper to investigate
+  congestion around the open connection.
 - `rules`: track width, clearance and vias as the run's project resolves
   them, each with its source (the class, the board's minimum with its own
   source, a custom rule), the class's own value where it is below
@@ -1798,11 +3393,11 @@ Per net:
 - `reference` (with `--reference`): the designer's route of the net:
   `placement` (whose placement it is on, below), `connected`,
   `components`, segments, vias, layers, widths, length.
-  `connected` is `true` when its tracks, arcs and vias join every pad,
-  `false` when they do not and the net has no zone there, `null` (with
-  `connected_reason` and `pour_layers`) when a zone of the net may join
-  the groups: this command does not fill zones, KiCad's DRC of the
-  reference decides.
+  `connected` is `true` when its tracks, arcs, vias and stored
+  teardrop copper join every pad. When separate groups remain, it is
+  `false` if there is no ordinary pour and `null` if one may join them.
+  `connected_reason` and `pour_layers` explain that case. KiCad DRC
+  determines connectivity through ordinary pours.
 - `dead_pads` and `hot_spots_near` (hot spots within 3 mm of the net's
   pads, each with its index into the top-level `hot_spots` and the nets
   still in conflict there): observations from board-router.json.

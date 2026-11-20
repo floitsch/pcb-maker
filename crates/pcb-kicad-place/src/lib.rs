@@ -63,8 +63,9 @@ pub use board_placer::{
 pub use labels::KiCadLabelReport;
 pub use modules::describe_modules;
 pub use placement_constraints::{
-    KiCadConstraintStatus, KiCadConstraintsSource, KiCadPlacementConstraints, keepout_warnings,
-    overlap_warnings, placement_input_warnings, read_placement_constraints,
+    KiCadConstraintStatus, KiCadConstraintsSource, KiCadModuleNonoverlap, KiCadPadNearStatus,
+    KiCadPlacementConstraints, keepout_warnings, overlap_warnings, placement_input_warnings,
+    read_placement_constraints,
 };
 pub use placement_room::{KiCadRoom, TARGET_UTILIZATION, noted_room};
 pub use silk_fields::KiCadSilkscreenReport;

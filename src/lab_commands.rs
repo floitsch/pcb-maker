@@ -211,32 +211,33 @@ pub(crate) fn cmd_inspect_kicad_connections(mut arguments: Arguments) -> Result<
 
 /// `pad-exits-kicad-board`: checks that every pad has an exit.
 pub(crate) fn cmd_pad_exits_kicad_board(mut arguments: Arguments) -> Result<(), String> {
-    let usage = "usage: pcb-maker pad-exits-kicad-board <project-dir> <board-id> [router-config.json|auto] [--out <report.json>] [--repair]";
+    let usage = "usage: pcb-maker pad-exits-kicad-board <project-dir> <board-id> [router-config.json|auto] [--out <report.json>] [--repair | --repair-config <pad-exits.json>]";
     let source = arguments.next().ok_or_else(|| usage.to_string())?;
     let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
     pcb_kicad::check_board_id(&board_id)?;
     let mut router_path = None;
     let mut out = None;
-    let mut repair = false;
+    let mut repair = None;
     while let Some(argument) = arguments.next() {
-        if argument == "--repair" {
-            repair = true;
+        if argument == "--repair" && repair.is_none() {
+            repair = Some(pcb_kicad::KiCadPadExits::default());
+        } else if argument == "--repair-config" && repair.is_none() {
+            let path = arguments.next().ok_or_else(|| usage.to_string())?;
+            let config =
+                std::fs::read_to_string(&path).map_err(|error| format!("{path}: {error}"))?;
+            repair =
+                Some(serde_json::from_str(&config).map_err(|error| format!("{path}: {error}"))?);
         } else if argument == "--out" {
             out = Some(arguments.next().ok_or_else(|| usage.to_string())?);
-        } else if router_path.is_none() {
+        } else if router_path.is_none() && !argument.starts_with("--") {
             router_path = Some(argument);
         } else {
             return Err(usage.into());
         }
     }
     let router = board_router_config(router_path.as_deref(), &source, &board_id)?;
-    let settings = pcb_kicad::KiCadPadExits::default();
-    let census = pcb_kicad::pad_exits_kicad_board(
-        Path::new(&source),
-        &board_id,
-        &router,
-        repair.then_some(&settings),
-    )?;
+    let census =
+        pcb_kicad::pad_exits_kicad_board(Path::new(&source), &board_id, &router, repair.as_ref())?;
     for pad in &census.closed {
         println!("{} {} {}: {}", pad.pad, pad.net, pad.layer, pad.reason);
     }

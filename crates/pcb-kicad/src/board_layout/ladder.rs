@@ -6,7 +6,7 @@
 //! repaired on the board kept.
 
 use super::moves::FirstRouteJudgement;
-use super::placement::{Copper, write_placement_without_copper};
+use super::placement::Copper;
 use super::setup::{LayoutContext, WorkLedger};
 use super::*;
 
@@ -63,7 +63,7 @@ fn kept_standing(
 }
 
 /// The steps after the layout's own board (`routed`, of quality
-/// `current`, written from `pcb`): if something is still open (in KiCad's
+/// `current`): if something is still open (in KiCad's
 /// eyes too), the final placement routed with route mode's whole ladder
 /// (pours as tracks, finer pitches, more seeds) and the better board kept.
 /// If only thermals are starved (pads KiCad does not count as joined to
@@ -74,20 +74,30 @@ fn kept_standing(
 pub(super) fn final_steps(
     ctx: &LayoutContext,
     ledger: &mut WorkLedger,
-    pcb: &Expr,
     routed: KiCadBoardRouterResult,
     current: (usize, usize),
     judgement: &FirstRouteJudgement,
     copper: &Copper,
 ) -> Result<(KiCadBoardRouterResult, Option<f64>), String> {
     let router_config = &ctx.router_config;
+    let fill_reserve = ctx.fill_check_reserve(copper.has_pours);
+    let ladder_deadline = if routed
+        .native
+        .as_ref()
+        .is_some_and(|report| report.selected_net_unconnected_items == 0)
+    {
+        ctx.work_deadline - fill_reserve
+    } else {
+        ctx.work_deadline
+    };
+    let ladder_left = ledger.left(ladder_deadline);
     // Past the wall-clock guard the ladder would only lower the board and
     // ask KiCad again (link ended 106 s past it, 44 s before the
     // benchmark's limit).
     // A ladder needs a few minutes of wall clock for a probe, the board
     // and KiCad's check; started with less it runs past the harness's
     // limit (the laptop motherboard: killed at 1800 s without a board).
-    let past_guard = ledger.left(ctx.work_deadline) < 240.0 || !ctx.stop.allows(LayoutStep::Ladder);
+    let past_guard = ladder_left < 240.0 || !ctx.stop.allows(LayoutStep::Ladder);
     // A board far from complete where the narrow-signal step applies gets
     // only the step: one attempt with the first route's pours, signals at
     // the project's narrowest width (and its minimum clearance where the
@@ -120,7 +130,7 @@ pub(super) fn final_steps(
         solid_thermals_first(ctx, ledger, &mut board, current, thermals_only)?;
     let fallback_config = ladder_config(
         ctx,
-        ledger,
+        ledger.left(ladder_deadline),
         past_guard,
         direct_narrow,
         current,
@@ -128,20 +138,20 @@ pub(super) fn final_steps(
     );
     let final_ladder_budget_seconds = fallback_config
         .as_ref()
-        .map(|_| ledger.left(ctx.work_deadline).max(0.0));
+        .map(|_| ledger.left(ladder_deadline).max(0.0));
     if let Some(fallback_config) = fallback_config {
         run_final_ladder(
             ctx,
             ledger,
-            pcb,
             fallback_config,
             current,
             direct_narrow,
             &mut board,
+            ladder_deadline,
         )?;
     }
     board.routed.work_seconds += solid_first_work;
-    finish_kept_board(ctx, ledger, &mut board)?;
+    finish_kept_board(ctx, ledger, &mut board, fill_reserve)?;
     Ok((board.routed, final_ladder_budget_seconds))
 }
 
@@ -196,7 +206,7 @@ fn solid_thermals_first(
 /// thermals starved the pours as tracks.
 fn ladder_config(
     ctx: &LayoutContext,
-    ledger: &WorkLedger,
+    ladder_left: f64,
     past_guard: bool,
     direct_narrow: bool,
     current: (usize, usize),
@@ -206,7 +216,6 @@ fn ladder_config(
     if past_guard {
         None
     } else if direct_narrow {
-        let ladder_left = ledger.left(ctx.work_deadline);
         let mut narrow = crate::board_router::narrow_step_config(router_config);
         narrow.pours = if connect {
             KiCadPourMode::Connect
@@ -236,8 +245,8 @@ fn ladder_config(
     }
 }
 
-/// The final ladder from scratch on the final placement (`pcb` written to
-/// `placed/` without copper; the start from the router's state,
+/// The final ladder from scratch on the final placement in `placed/`
+/// (the start from the router's state,
 /// `final_route_from_state`, was removed on 2026-11-04): route mode's
 /// flow in `result-ladder/`, kept in `result/` where KiCad checked it and
 /// finds it better than `current`; after the narrow-signal attempt run
@@ -246,18 +255,16 @@ fn ladder_config(
 fn run_final_ladder(
     ctx: &LayoutContext,
     ledger: &mut WorkLedger,
-    pcb: &Expr,
     fallback_config: KiCadBoardRouterConfig,
     current: (usize, usize),
     direct_narrow: bool,
     board: &mut KeptBoard,
+    ladder_deadline: f64,
 ) -> Result<(), String> {
     let result_directory = ctx.output_directory.join("result");
     let fallback_directory = ctx.output_directory.join("result-ladder");
-    // The placement file already carries the final poses.
-    write_placement_without_copper(ctx, pcb)?;
     let mut fallback_config = fallback_config;
-    let left = (ctx.config.total_seconds - ledger.work).max(120.0);
+    let left = (ladder_deadline - ledger.work).max(120.0);
     // The work left, or less where the router config says so: until
     // 2026-10-21 at most route mode's default of 1200 s, so a layout
     // of 3000 s (the fence's two layers) ended its ladder with half
@@ -270,7 +277,7 @@ fn run_final_ladder(
     );
     // The ladder decides whether another attempt fits in work, up to
     // the layout's nominal end.
-    fallback_config.deadline_work = Some(ledger.left(ctx.work_deadline).max(0.0));
+    fallback_config.deadline_work = Some(ledger.left(ladder_deadline).max(0.0));
     // KiCad checks only the ladder's attempts that could beat the board
     // kept, at most the two best by the router's count, the board kept
     // among them (`CheckGate`).
@@ -353,7 +360,7 @@ fn run_continuation(
     board: &mut KeptBoard,
 ) -> Result<(), String> {
     let result_directory = ctx.output_directory.join("result");
-    let left = ledger.left(ctx.work_deadline) - *after_work;
+    let left = fallback_config.deadline_work.unwrap_or_default() - *after_work;
     let wall = !ctx.stop.allows(LayoutStep::Continuation);
     let continuation_config = if narrow_continuation_runs(left, best_quality.0, wall) {
         let mut other = fallback_config.clone();
@@ -445,6 +452,7 @@ fn finish_kept_board(
     ctx: &LayoutContext,
     ledger: &mut WorkLedger,
     board: &mut KeptBoard,
+    fill_reserve: f64,
 ) -> Result<(), String> {
     let router_config = &ctx.router_config;
     let routed = &mut board.routed;
@@ -475,7 +483,12 @@ fn finish_kept_board(
     if (routed.native.is_some() || router_config.skip_native_verification)
         && ctx.stop.allows(LayoutStep::NeckRepair)
     {
-        let left = ledger.left(ctx.work_deadline) - routed.work_seconds;
+        let reserved = routed
+            .native
+            .as_ref()
+            .filter(|report| report.selected_net_unconnected_items == 0)
+            .map_or(0.0, |_| fill_reserve);
+        let left = ledger.left(ctx.work_deadline) - routed.work_seconds - reserved;
         let checks = crate::board_router::repair_necks(
             routed,
             &result_directory,

@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "move_all": true,
+  "front": [
+    "J_SPK1",
+    "J_TOUCH1",
+    "J_USB1"
+  ],
+  "place": [
+    {
+      "part": "J_USB1",
+      "x": 104.0,
+      "y": 76.2,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J_TOUCH1",
+      "x": 76.0,
+      "y": 30.2,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J_SPK1",
+      "x": 75.5,
+      "y": 56.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    }
+  ],
+  "add": [
+    {
+      "part": "H1",
+      "from_board": true
+    },
+    {
+      "part": "H2",
+      "from_board": true
+    },
+    {
+      "part": "LS1",
+      "from_board": true
+    }
+  ],
+  "edge": [
+    {
+      "edge": "any",
+      "flush": true,
+      "overhang": {},
+      "part": "U2"
+    }
+  ]
+}

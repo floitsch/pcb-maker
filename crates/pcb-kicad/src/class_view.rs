@@ -16,6 +16,20 @@
 use super::*;
 use crate::project_rules::KiCadProjectRulesReport;
 
+mod wide_tracks;
+pub use wide_tracks::{KiCadClassTrackWidths, KiCadReferenceTrackWidths};
+pub(crate) use wide_tracks::{class_track_widths, wide_track_actions};
+
+fn reported_rules<'a>(
+    facts: &'a crate::KiCadRunFacts,
+    result: &'a crate::KiCadBoardRouterResult,
+) -> &'a KiCadProjectRulesReport {
+    facts
+        .saved_class_rules
+        .as_ref()
+        .unwrap_or(&result.rules.project)
+}
+
 /// The class a net is in as KiCad names it: its highest-priority class
 /// (`KiCadProjectRulesReport::net_classes`), "Default" for a net in none.
 pub(crate) fn net_class<'a>(report: &'a KiCadProjectRulesReport, net: &str) -> &'a str {
@@ -24,6 +38,43 @@ pub(crate) fn net_class<'a>(report: &'a KiCadProjectRulesReport, net: &str) -> &
         .get(net)
         .and_then(|classes| classes.first())
         .map_or("Default", String::as_str)
+}
+
+/// Every class assigned to a board net, including classes of lower priority.
+pub(crate) fn assigned_classes(report: &KiCadProjectRulesReport) -> BTreeSet<&str> {
+    report
+        .net_classes
+        .values()
+        .flatten()
+        .map(String::as_str)
+        .collect()
+}
+
+/// A unique unused project class whose name matches a net in Default.
+/// Ignore the root-sheet slash and ASCII case in the name comparison.
+pub(crate) fn matching_unused_class<'a>(
+    report: &'a KiCadProjectRulesReport,
+    assigned: &BTreeSet<&str>,
+    net: &str,
+) -> Option<(&'a str, [Option<f64>; 2])> {
+    if report
+        .net_classes
+        .get(net)
+        .is_some_and(|classes| classes.iter().any(|class| class != "Default"))
+    {
+        return None;
+    }
+    let name = unescape(net.trim_start_matches('/'));
+    let mut matching = report.class_values.iter().filter(|(class, _)| {
+        class.as_str() != "Default"
+            && class.eq_ignore_ascii_case(&name)
+            && !assigned.contains(class.as_str())
+    });
+    let (class, values) = matching.next()?;
+    matching
+        .next()
+        .is_none()
+        .then_some((class.as_str(), *values))
 }
 
 /// One class of the project (`describe-kicad-board`'s `classes`).
@@ -330,12 +381,27 @@ pub fn note_designer_class_layers(
     if facts.class_layers.is_empty() {
         return;
     }
-    if let Some(designer) = boards.iter().find_map(|path| {
-        let text = fs::read_to_string(path).ok()?;
-        let lengths = track_lengths(&parse(&text).ok()?);
-        (!lengths.is_empty()).then_some(lengths)
+    let Some(candidate) = facts
+        .outputs
+        .get("board")
+        .and_then(|path| fs::read_to_string(path).ok())
+        .and_then(|text| parse(&text).ok())
+    else {
+        return;
+    };
+    if let Some((reference, mut lengths)) = boards.iter().find_map(|path| {
+        let reference = parse(&fs::read_to_string(path).ok()?).ok()?;
+        let lengths = track_lengths(&reference);
+        (!lengths.is_empty()).then_some((reference, lengths))
     }) {
-        add_designer_layers(&result.rules.project, &mut facts.class_layers, &designer);
+        let matching = wide_tracks::matching_terminals(&candidate, &reference);
+        let keys = matching_class_net_keys(&candidate, &reference, matching.keys());
+        lengths.retain(|name, _| keys.contains(name.as_str()));
+        let rules = facts
+            .saved_class_rules
+            .as_ref()
+            .unwrap_or(&result.rules.project);
+        add_designer_layers(rules, &mut facts.class_layers, &lengths);
     }
 }
 
@@ -432,7 +498,7 @@ fn median_width(widths: &BTreeMap<i64, f64>) -> (f64, f64) {
     (0.0, total)
 }
 
-/// The nets `routed` runs at under half the width the designer's board
+/// The nets `routed` runs at most half the width the designer's board
 /// (`designer`) gives them, over 3 mm of the designer's tracks at least,
 /// the widest first (`KiCadDesignerWidth`).
 pub(crate) fn designer_widths(
@@ -440,10 +506,7 @@ pub(crate) fn designer_widths(
     designer: &BTreeMap<String, BTreeMap<i64, f64>>,
     routed: &BTreeMap<String, BTreeMap<i64, f64>>,
 ) -> Vec<KiCadDesignerWidth> {
-    let mut members: BTreeMap<&str, usize> = BTreeMap::new();
-    for net in report.net_classes.keys() {
-        *members.entry(net_class(report, net)).or_default() += 1;
-    }
+    let assigned = assigned_classes(report);
     let mut narrower: Vec<KiCadDesignerWidth> = Vec::new();
     for (net, theirs) in designer {
         let Some(ours) = routed.get(net) else {
@@ -458,25 +521,28 @@ pub(crate) fn designer_widths(
         {
             continue;
         }
-        let bare = net.trim_start_matches('/');
-        let unassigned = report
-            .class_values
-            .iter()
-            .find(|(class, _)| {
-                class.as_str() != "Default"
-                    && class.eq_ignore_ascii_case(bare)
-                    && !members.contains_key(class.as_str())
-            })
-            .map(|(class, values)| (class.clone(), values[0]));
+        let class = net_class(report, net);
+        let width_class =
+            crate::project_rules::width_class(report.net_classes.get(net), &report.class_values);
+        if width_class != "Default"
+            && report
+                .class_values
+                .get(width_class)
+                .and_then(|widths| widths[0])
+                .is_some_and(|width| width + 1.0e-6 >= designer_width)
+        {
+            continue;
+        }
+        let unassigned = matching_unused_class(report, &assigned, net);
         narrower.push(KiCadDesignerWidth {
             net: net.clone(),
-            class: net_class(report, net).to_string(),
+            class: class.to_string(),
             designer_width_mm: designer_width,
             designer_length_mm: (designer_length * 10.0).round() / 10.0,
             routed_width_mm: routed_width,
             routed_length_mm: (routed_length * 10.0).round() / 10.0,
-            unassigned_class_width_mm: unassigned.as_ref().and_then(|(_, width)| *width),
-            unassigned_class: unassigned.map(|(class, _)| class),
+            unassigned_class_width_mm: unassigned.and_then(|(_, values)| values[0]),
+            unassigned_class: unassigned.map(|(class, _)| class.to_string()),
         });
     }
     narrower.sort_by(|a, b| {
@@ -488,7 +554,7 @@ pub(crate) fn designer_widths(
 }
 
 /// Adds to `facts.designer_widths` the nets the board written
-/// (`written`) runs at under half the designer's width: the first of
+/// (`written`) runs at most half the designer's width: the first of
 /// `boards` (the reference's, then the input's) with tracks.
 pub fn note_designer_widths(
     facts: &mut crate::KiCadRunFacts,
@@ -496,20 +562,44 @@ pub fn note_designer_widths(
     boards: &[PathBuf],
     written: &Path,
 ) {
-    let Some(routed) = fs::read_to_string(written)
+    let Some(candidate) = fs::read_to_string(written)
         .ok()
         .and_then(|text| parse(&text).ok())
-        .map(|pcb| track_widths(&pcb))
     else {
         return;
     };
-    if let Some(designer) = boards.iter().find_map(|path| {
-        let text = fs::read_to_string(path).ok()?;
-        let widths = track_widths(&parse(&text).ok()?);
-        (!widths.is_empty()).then_some(widths)
+    let routed = track_widths(&candidate);
+    if let Some((path, reference, mut designer)) = boards.iter().find_map(|path| {
+        let reference = parse(&fs::read_to_string(path).ok()?).ok()?;
+        let widths = track_widths(&reference);
+        (!widths.is_empty()).then_some((path, reference, widths))
     }) {
-        facts.designer_widths = designer_widths(&result.rules.project, &designer, &routed);
+        let matching = wide_tracks::matching_terminals(&candidate, &reference);
+        let shared_keys = matching_class_net_keys(&candidate, &reference, matching.keys());
+        designer.retain(|name, _| shared_keys.contains(name.as_str()));
+        facts.designer_widths = designer_widths(reported_rules(facts, result), &designer, &routed);
+        wide_tracks::add_reference_track_widths(
+            &mut facts.class_track_widths,
+            path,
+            &reference,
+            &matching,
+        );
     }
+}
+
+fn matching_class_net_keys<'a>(
+    candidate: &Expr,
+    reference: &Expr,
+    matched_nets: impl Iterator<Item = &'a String>,
+) -> BTreeSet<&'a str> {
+    let candidate_names = NetNames::of(candidate);
+    let reference_names = NetNames::of(reference);
+    matched_nets
+        .filter_map(|name| {
+            let key = candidate_names.normalize(name);
+            (reference_names.normalize(name) == key).then_some(key)
+        })
+        .collect()
 }
 
 /// The verdict's next action for the nets run narrower than on the
@@ -572,7 +662,7 @@ pub(crate) fn designer_widths_action(widths: &[KiCadDesignerWidth]) -> Option<St
         )
     };
     Some(format!(
-        "nets run at under half the width the designer's board gives them, which KiCad's DRC does not check (a width above the minimum is no finding: likely a current to carry; verdict.designer_widths): {}. Give them their width with a class in the router config (\"net_classes\": [{}]; wider tracks take room, so compare the open connections){classes}",
+        "nets with matching terminals run at most half the designer's width (verdict.designer_widths): {}. To test the designer's preferred widths, assign classes in the router config (\"net_classes\": [{}]) and compare the native results{classes}",
         listed.join(", "),
         example.join(", ")
     ))
@@ -749,6 +839,44 @@ pub(crate) mod tests {
             .unwrap()
             .project_rules
             .unwrap()
+    }
+
+    #[test]
+    fn class_suggestions_require_an_unused_class_and_a_net_in_default() {
+        let report = KiCadProjectRulesReport {
+            class_values: ["Default", "VMOT", "VBAT", "CAN", "OUT", "out"]
+                .into_iter()
+                .map(|name| (name.to_string(), [Some(0.5), Some(0.2)]))
+                .collect(),
+            net_classes: [
+                ("VMOT", vec!["Default"]),
+                ("VBAT", vec!["Default"]),
+                ("VIN", vec!["Power", "VBAT"]),
+                ("CAN", vec!["Signal"]),
+                ("OUT", vec!["Default"]),
+            ]
+            .into_iter()
+            .map(|(net, classes)| {
+                (
+                    net.to_string(),
+                    classes.into_iter().map(str::to_string).collect(),
+                )
+            })
+            .collect(),
+            ..KiCadProjectRulesReport::default()
+        };
+        let assigned = assigned_classes(&report);
+        assert_eq!(
+            matching_unused_class(&report, &assigned, "VMOT"),
+            Some(("VMOT", [Some(0.5), Some(0.2)]))
+        );
+        for net in ["Default", "VBAT", "CAN", "OUT", "/A/VMOT", "VMOT_SENSE"] {
+            assert_eq!(
+                matching_unused_class(&report, &assigned, net),
+                None,
+                "{net}"
+            );
+        }
     }
 
     #[test]

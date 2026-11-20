@@ -180,7 +180,7 @@ pub fn pad_via_expr(via: &SupplementalVia) -> Expr {
     Expr::List(items)
 }
 
-pub fn supplemental_segment_expr(segment: &SupplementalSegment) -> Expr {
+pub fn supplemental_segment_id(segment: &SupplementalSegment) -> String {
     let identity = format!(
         "pcb-maker:supplemental:{}:{:.9}:{:.9}:{:.9}:{:.9}:{:.9}:{}",
         segment.connection,
@@ -191,6 +191,36 @@ pub fn supplemental_segment_expr(segment: &SupplementalSegment) -> Expr {
         segment.width,
         segment.layer
     );
+    deterministic_uuid_for(&identity)
+}
+
+/// Reads an unlocked generated segment whose geometry still matches its ID.
+/// Callers must also establish that the ID came from their own output stage.
+pub fn stored_supplemental_segment(
+    item: &Expr,
+    codes: &BTreeMap<String, String>,
+    names: &NetNames,
+) -> Option<SupplementalSegment> {
+    if item.head() != Some("segment")
+        || item
+            .children()
+            .iter()
+            .any(|part| part.head() == Some("locked") || part.atom() == Some("locked"))
+    {
+        return None;
+    }
+    let point = |name| Some([form_f64(item, name, 1).ok()?, form_f64(item, name, 2).ok()?]);
+    let segment = SupplementalSegment {
+        connection: names.normalize(item_net(item, codes)?).to_owned(),
+        start: point("start")?,
+        end: point("end")?,
+        width: form_f64(item, "width", 1).ok()?,
+        layer: form_atom(item, "layer", 1)?.to_owned(),
+    };
+    (form_atom(item, "uuid", 1)? == supplemental_segment_id(&segment)).then_some(segment)
+}
+
+pub fn supplemental_segment_expr(segment: &SupplementalSegment) -> Expr {
     Expr::List(vec![
         Expr::Atom("segment".into()),
         coordinate_form("start", segment.start),
@@ -203,7 +233,7 @@ pub fn supplemental_segment_expr(segment: &SupplementalSegment) -> Expr {
         net_expr(&written_net_name(&segment.connection)),
         Expr::List(vec![
             Expr::Atom("uuid".into()),
-            Expr::Atom(quote(&deterministic_uuid_for(&identity))),
+            Expr::Atom(quote(&supplemental_segment_id(segment))),
         ]),
     ])
 }

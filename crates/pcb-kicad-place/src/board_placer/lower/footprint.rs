@@ -22,6 +22,7 @@ pub(super) struct LoweredFootprint {
     pub pad_boxes: Vec<[f64; 4]>,
     pub keepout_box: Option<[f64; 4]>,
     pub mouth: Option<[f64; 2]>,
+    pub perimeter_contact_boxes: Option<Vec<[f64; 4]>>,
 }
 
 /// Lowers one footprint to a part: takes the board's facts from `context`
@@ -34,13 +35,24 @@ pub(super) fn lower_footprint(
     let config = context.config;
     let at = form_at(footprint)?;
     let reference = footprint_reference(footprint).unwrap_or_default();
+    let geometry = context
+        .courtyard_model
+        .with_geometry(footprint, &reference)?;
+    let declared_courtyard = matches!(geometry, std::borrow::Cow::Owned(_));
+    let footprint = geometry.as_ref();
     let (body_center, body_size, round) = local_body(footprint)?;
     let sides = FootprintSides::of(footprint);
     let SidedBody {
         body_center,
         body_size,
         far_courtyard,
-    } = two_sided_body(footprint, config, &sides, body_center, body_size)?;
+    } = two_sided_body(
+        footprint,
+        &sides,
+        body_center,
+        body_size,
+        declared_courtyard || config.tight_bodies != Some(true),
+    )?;
     let FootprintPads {
         pins,
         through,
@@ -82,7 +94,10 @@ pub(super) fn lower_footprint(
     };
     let far_graphics = !artwork && (!graphics.far.is_empty() || far_courtyard.is_some());
     let angle_options = angle_options(config, at[2]);
-    let copper_graphics = copper_graphic_boxes(footprint)?;
+    let CopperGraphicBoxes {
+        all: copper_graphics,
+        unassigned: unassigned_copper_graphics,
+    } = copper_graphic_boxes(footprint, sides.own_prefix, !artwork)?;
     let edge_inset = edge_inset(&own_pads, &copper_graphics, body_center, body_size);
     let shape = body_shape(
         context,
@@ -96,17 +111,14 @@ pub(super) fn lower_footprint(
             own_pads: &own_pads,
             pin_centers: &pin_centers,
             graphics: &graphics,
+            pad_only_hollow: declared_pad_only_hollow(context, footprint, &reference),
         },
     )?;
     let slots = footprint_slots(footprint)?;
     let connector = through && pins.len() >= 4;
-    let locked = footprint.child("locked").is_some()
-        || footprint
-            .children()
-            .iter()
-            .any(|child| child.atom() == Some("locked"));
+    let locked = crate::kicad_nets::footprint_locked(footprint);
     let halo = halo(config, &reference, pins.len());
-    let tight = if config.tight_bodies == Some(true) {
+    let tight = if config.tight_bodies == Some(true) && !declared_courtyard {
         tight_body(
             footprint,
             sides.both_courtyards().then_some(sides.other_prefix),
@@ -147,6 +159,7 @@ pub(super) fn lower_footprint(
         tight_hollow: Vec::new(),
         hole_rings,
         copper_graphics,
+        unassigned_copper_graphics,
         courtless: shape.courtless.into_iter().collect(),
         slots,
     };
@@ -173,6 +186,28 @@ pub(super) fn lower_footprint(
         pad_boxes: own_pads,
         keepout_box: footprint_keepout_box(footprint, at)?,
         mouth: connector_mouth(footprint)?,
+        perimeter_contact_boxes: shape.perimeter_contact_boxes,
+    })
+}
+
+/// A brief can declare a pad field hollow. When the footprint carries
+/// only pads and annotations, no physical body or courtyard justifies
+/// the solid-body inference from rows of pins.
+fn declared_pad_only_hollow(context: &LowerContext, footprint: &Expr, reference: &str) -> bool {
+    context.user_constraints.is_some_and(|brief| {
+        brief
+            .hollow
+            .iter()
+            .any(|pattern| glob_matches(pattern, reference))
+    }) && footprint.children().iter().all(|item| match item.head() {
+        None => item.atom().is_some(),
+        Some("fp_text" | "property") => form_atom(item, "layer", 1)
+            .is_none_or(|layer| layer.ends_with(".Fab") || layer.ends_with(".SilkS")),
+        Some(
+            "at" | "attr" | "descr" | "layer" | "locked" | "pad" | "path" | "sheetfile"
+            | "sheetname" | "tags" | "tstamp" | "uuid",
+        ) => true,
+        _ => false,
     })
 }
 
@@ -260,10 +295,10 @@ struct SidedBody {
 /// there. Takes the body `local_body` gave; returns the body and that box.
 fn two_sided_body(
     footprint: &Expr,
-    config: &KiCadBoardPlacerConfig,
     sides: &FootprintSides,
     mut body_center: [f64; 2],
     mut body_size: [f64; 2],
+    keep_far_courtyard: bool,
 ) -> Result<SidedBody, String> {
     // A footprint with a courtyard on each side (a hot-swap switch: the
     // socket's on the back, the switch's on the front; a reversible
@@ -303,7 +338,7 @@ fn two_sided_body(
             // Where the project lets courtyards overlap, KiCad does not
             // check the other side's either (ErgoSNM's diodes sit in
             // the keys' socket outlines on the back).
-            .filter(|_| config.tight_bodies != Some(true));
+            .filter(|_| keep_far_courtyard);
     }
     Ok(SidedBody {
         body_center,
@@ -323,8 +358,7 @@ struct FootprintPads {
     far_copper: Vec<[f64; 4]>,
     /// Every pad's box (with a non-plated hole's clearance ring).
     own_pads: Vec<[f64; 4]>,
-    /// The non-plated holes with the clearance ring they keep from
-    /// other copper (`keep_away`).
+    /// Holes whose required clearance reaches beyond the pad copper.
     hole_rings: Vec<[f64; 4]>,
     pin_centers: Vec<[f64; 2]>,
     /// Every pad by name (its first anchor), for constraints that point at
@@ -401,6 +435,18 @@ fn lower_pads(
         pads.own_pads.push(pad_box);
         if boxes.keep_away > 0.0 {
             pads.hole_rings.push(pad_box);
+        }
+        if pad_type == "thru_hole"
+            && let Some(ring) = plated_hole_ring(
+                pad,
+                pad_at,
+                at[2],
+                pad_box,
+                config.hole_clearance_mm.unwrap_or(0.0) - context.copper_clearance,
+            )
+        {
+            pads.hole_rings.push(ring);
+            pads.far_copper.push(ring);
         }
         pads.pin_centers.push([pad_at[0], pad_at[1]]);
         let on_other_side = pad.child("layers").is_some_and(|layers| {
@@ -484,6 +530,47 @@ fn lower_pads(
         });
     }
     Ok(pads)
+}
+
+/// Extra space around a plated drill when its annulus and the ordinary
+/// copper clearance together do not meet the hole-to-copper rule. A
+/// slotted drill is a capsule, centred on the anchor even for offset pads.
+pub(super) fn plated_hole_ring(
+    pad: &Expr,
+    pad_at: [f64; 3],
+    footprint_angle: f64,
+    copper: [f64; 4],
+    extra: f64,
+) -> Option<[f64; 4]> {
+    if extra <= 0.0 {
+        return None;
+    }
+    let drill = pad.child("drill")?;
+    let mut dimensions = drill.children().iter().skip(1).filter_map(|item| {
+        item.atom()?
+            .parse::<f64>()
+            .ok()
+            .filter(|v| v.is_finite() && *v > 0.0)
+    });
+    let width = dimensions.next()?;
+    let height = dimensions.next().unwrap_or(width);
+    let radius = 0.5 * width.min(height);
+    let (sin, cos) = quarter_sin_cos(-(pad_at[2] - footprint_angle));
+    let dx =
+        radius + extra + cos.abs() * (0.5 * width - radius) + sin.abs() * (0.5 * height - radius);
+    let dy =
+        radius + extra + sin.abs() * (0.5 * width - radius) + cos.abs() * (0.5 * height - radius);
+    let ring = [
+        pad_at[0] - dx,
+        pad_at[1] - dy,
+        pad_at[0] + dx,
+        pad_at[1] + dy,
+    ];
+    (ring[0] < copper[0] - 1.0e-9
+        || ring[1] < copper[1] - 1.0e-9
+        || ring[2] > copper[2] + 1.0e-9
+        || ring[3] > copper[3] + 1.0e-9)
+        .then_some(ring)
 }
 
 /// A pad's box in its footprint's frame (`pad_at` the pad's anchor and
@@ -653,26 +740,43 @@ pub(super) fn angle_options(config: &KiCadBoardPlacerConfig, angle: f64) -> Vec<
     }
 }
 
-/// The footprint's copper graphics on any copper layer (KiCad 9's
-/// `(layers "B.Cu" "B.Mask")` too): copper the edge and cutouts keep
-/// their clearance from (`Component::copper_graphics`).
-fn copper_graphic_boxes(footprint: &Expr) -> Result<Vec<[f64; 4]>, String> {
+struct CopperGraphicBoxes {
+    /// Copper on every layer for board-edge and cutout clearance.
+    all: Vec<[f64; 4]>,
+    /// Unassigned copper on the component's side for inter-part clearance.
+    unassigned: Vec<[f64; 4]>,
+}
+
+fn copper_graphic_boxes(
+    footprint: &Expr,
+    own_prefix: &str,
+    check_clearance: bool,
+) -> Result<CopperGraphicBoxes, String> {
     let mut copper_graphics = Vec::new();
+    let mut unassigned_copper_graphics = Vec::new();
+    let own_layer = format!("{own_prefix}Cu");
     for child in footprint.children() {
-        let on_copper = form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(".Cu"))
-            || child.child("layers").is_some_and(|layers| {
-                layers
-                    .children()
-                    .iter()
-                    .skip(1)
-                    .filter_map(Expr::atom)
-                    .any(|layer| layer.trim_matches('"').ends_with(".Cu"))
-            });
+        let mut layers = form_atom(child, "layer", 1).into_iter().chain(
+            child
+                .child("layers")
+                .into_iter()
+                .flat_map(|layers| layers.children().iter().skip(1).filter_map(Expr::atom)),
+        );
+        let on_copper = layers.clone().any(|layer| layer.ends_with(".Cu"));
         if on_copper && let Some(graphic) = graphic_box(child)? {
             copper_graphics.push(graphic);
+            if check_clearance
+                && matches!(form_atom(child, "net", 1), None | Some("" | "0"))
+                && layers.any(|layer| layer == own_layer)
+            {
+                unassigned_copper_graphics.push(graphic);
+            }
         }
     }
-    Ok(copper_graphics)
+    Ok(CopperGraphicBoxes {
+        all: copper_graphics,
+        unassigned: unassigned_copper_graphics,
+    })
 }
 
 /// The box around `boxes`, `[min x, min y, max x, max y]`; infinite and
@@ -737,6 +841,7 @@ struct BodyParts<'a> {
     own_pads: &'a [[f64; 4]],
     pin_centers: &'a [[f64; 2]],
     graphics: &'a OuterGraphics,
+    pad_only_hollow: bool,
 }
 
 /// How a footprint blocks beyond its body's box (`body_shape`).
@@ -749,6 +854,7 @@ struct BodyShape {
     hollow: Vec<[f64; 4]>,
     /// Without a courtyard, the body a courtyard would give it.
     courtless: Option<[f64; 4]>,
+    perimeter_contact_boxes: Option<Vec<[f64; 4]>>,
 }
 
 /// A footprint's courtyard pieces, the shape it blocks with where its
@@ -774,8 +880,20 @@ fn body_shape(
         && !parts.artwork;
     // Unless its pads stand in rows of pins: then a body fills their
     // box (`solid_pin_rows`), and the part blocks with that box.
-    let solid =
-        courtless && context.config.tuning.solid_pin_rows && pads_in_pin_rows(parts.pin_centers);
+    let solid = courtless
+        && context.config.tuning.solid_pin_rows
+        && !parts.pad_only_hollow
+        && pads_in_pin_rows(parts.pin_centers);
+    let perimeter_contact_boxes = (solid
+        && super::perimeter::perimeter_contacts(context, footprint, parts.own_pads))
+    .then(|| {
+        parts
+            .own_pads
+            .iter()
+            .chain(&parts.graphics.own)
+            .copied()
+            .collect()
+    });
     let hollow = hollow_shape(
         context,
         footprint,
@@ -795,6 +913,7 @@ fn body_shape(
         holes_inside: courtyard.1 || (courtless && !solid),
         hollow,
         courtless: courtless_body,
+        perimeter_contact_boxes,
     })
 }
 

@@ -10,6 +10,42 @@ pub fn file_sha256(path: &Path) -> Result<String, String> {
     Ok(format!("{:x}", Sha256::digest(contents)))
 }
 
+/// Snapshot authored rules, schematic and libraries for independent native checks.
+pub fn project_companion_hashes(project: &Path) -> Result<BTreeMap<PathBuf, String>, String> {
+    let mut inputs = BTreeMap::new();
+    let mut directories = vec![project.to_path_buf()];
+    while let Some(directory) = directories.pop() {
+        for child in fs::read_dir(directory).map_err(|error| error.to_string())? {
+            let child = child.map_err(|error| error.to_string())?;
+            let kind = child.file_type().map_err(|error| error.to_string())?;
+            let path = child.path();
+            if kind.is_dir() {
+                directories.push(path);
+                continue;
+            }
+            if kind.is_symlink() {
+                return Err(format!(
+                    "cannot verify a symlinked project input {}",
+                    path.display()
+                ));
+            }
+            if matches!(
+                path.extension().and_then(|kind| kind.to_str()),
+                Some("kicad_pro" | "kicad_dru" | "kicad_sch" | "sch" | "kicad_sym" | "kicad_mod")
+            ) || matches!(
+                path.file_name().and_then(|name| name.to_str()),
+                Some("fp-lib-table" | "sym-lib-table")
+            ) {
+                let relative = path
+                    .strip_prefix(project)
+                    .map_err(|error| error.to_string())?;
+                inputs.insert(relative.to_owned(), file_sha256(&path)?);
+            }
+        }
+    }
+    Ok(inputs)
+}
+
 pub fn write_typed_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
     let serialized = serde_json::to_string_pretty(value).map_err(|error| error.to_string())?;
     fs::write(path, format!("{serialized}\n"))

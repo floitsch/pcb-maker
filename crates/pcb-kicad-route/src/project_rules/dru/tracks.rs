@@ -118,3 +118,97 @@ pub(crate) fn track_rule(
         })
     })
 }
+
+/// Whether a custom coupling or length rule could hold for either member
+/// of a pair. A condition whose item geometry is unknown stays in scope.
+pub(crate) fn may_constrain_pair(rules: &[Rule], nets: [&NetFacts; 2], copper: &[String]) -> bool {
+    rules.iter().any(|rule| {
+        if rule.severity.as_deref() == Some("ignore")
+            || !rule.constraints.iter().any(|constraint| {
+                matches!(
+                    constraint.kind.as_str(),
+                    "diff_pair_gap" | "diff_pair_uncoupled" | "skew" | "length"
+                )
+            })
+        {
+            return false;
+        }
+        let layers = rule_layers(rule, copper);
+        if layers.is_empty() {
+            return false;
+        }
+        let Some(text) = rule.condition.as_deref() else {
+            return true;
+        };
+        let Ok(condition) = parse_condition(text) else {
+            return true;
+        };
+        for (index, net) in nets.iter().enumerate() {
+            for &layer in &layers {
+                for kind in [Kind::Track, Kind::Via] {
+                    let a = Item {
+                        kind,
+                        net: Some(net),
+                        layer,
+                    };
+                    let partner = |kind| {
+                        Some(Item {
+                            kind,
+                            net: Some(nets[1 - index]),
+                            ..a
+                        })
+                    };
+                    if [None, partner(Kind::Track), partner(Kind::Via)]
+                        .into_iter()
+                        .any(|b| {
+                            (Context {
+                                a,
+                                b,
+                                same_net: false,
+                            })
+                            .truth(&condition)
+                                != T3::False
+                        })
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn additive_pair_policy_checks_both_names_and_protects_unresolved_custom_scope() {
+        let names = ["/LINK+", "/LINK-"].map(|name| NetFacts {
+            name: name.into(),
+            classes: vec!["Default".into()],
+            diff_pair: Some(Some("/LINK".into())),
+        });
+        let layers = ["F.Cu".into(), "B.Cu".into()];
+        let check = |rule| {
+            let rules = super::super::parse_rules(rule).unwrap();
+            may_constrain_pair(&rules, [&names[0], &names[1]], &layers)
+        };
+        assert!(!check(
+            r#"(version 1) (rule "Other pair" (condition "A.NetName == '/OTHER+'") (constraint diff_pair_uncoupled (max 4mm)))"#
+        ));
+        assert!(check(
+            r#"(version 1) (rule "Companion gap" (condition "A.NetName == '/LINK+'") (constraint diff_pair_gap (max 0.5mm)))"#
+        ));
+        assert!(check(
+            r#"(version 1) (rule "Pair skew" (condition "A.inDiffPair('/LINK')") (constraint skew (max 0.1mm)))"#
+        ));
+        assert!(check(
+            r#"(version 1) (rule "Local length" (condition "A.intersectsArea('critical')") (constraint length (max 100mm)))"#
+        ));
+        assert!(!check(
+            r#"(version 1) (rule "Track width" (condition "A.NetName == '/LINK+'") (constraint track_width (min 0.4mm)))"#
+        ));
+    }
+}

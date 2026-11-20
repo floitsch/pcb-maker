@@ -26,6 +26,9 @@ use super::*;
 use crate::kicad_sexpr::{Expr, form_at};
 use pcb_router as core;
 
+mod native_scope;
+pub use native_scope::{NativeFindingLocation, NativePanelCounts, NativePanelScope};
+
 /// A panel of copies as the keepouts see it (`Pieces::copies_keepouts`):
 /// per copy its transform from the first copy (a turn by `angle`
 /// degrees, as `pcb_placer::problem::rotate` turns, then `offset`), its
@@ -117,6 +120,9 @@ const MOST_FRAME_SHARE: f64 = 0.5;
 /// (`Pieces::outline_frames`).
 const RAIL_SPAN: f64 = 0.9;
 const RAIL_AREA_SHARE: f64 = 0.2;
+/// The width of an exterior rail including its side of the breakaway
+/// tab. Larger exterior pieces can hold functional circuitry.
+const NARROW_RAIL_WIDTH_MM: f64 = 5.0;
 
 /// No piece: the cell's label where the opened area does not reach.
 const NONE: u16 = u16::MAX;
@@ -509,6 +515,30 @@ impl Pieces {
         cutouts: &[Vec<[f64; 2]>],
         cuts: &Cuts,
     ) -> Option<Pieces> {
+        Self::raster_pieces(loops, cutouts, cuts, None)
+    }
+
+    /// Exterior fabrication rails of a single-board outline. A rail has
+    /// a core separated from the main board across a perforation or score,
+    /// too small for `of_loops` to count as its own piece.
+    pub fn narrow_breakaway_rails(
+        loops: &[Vec<[f64; 2]>],
+        cutouts: &[Vec<[f64; 2]>],
+        cuts: &Cuts,
+    ) -> Vec<[f64; 4]> {
+        let mut rails = Vec::new();
+        if !cuts.holes.is_empty() || !cuts.lines.is_empty() {
+            Self::raster_pieces(loops, cutouts, cuts, Some(&mut rails));
+        }
+        rails
+    }
+
+    fn raster_pieces(
+        loops: &[Vec<[f64; 2]>],
+        cutouts: &[Vec<[f64; 2]>],
+        cuts: &Cuts,
+        rails: Option<&mut Vec<[f64; 4]>>,
+    ) -> Option<Pieces> {
         let mut all = [
             f64::INFINITY,
             f64::INFINITY,
@@ -678,7 +708,12 @@ impl Pieces {
                 pieces += 1;
             }
         }
-        if pieces < 2 {
+        let wanted = if rails.is_some() {
+            pieces == 1
+        } else {
+            pieces >= 2
+        };
+        if !wanted {
             return None;
         }
         // Grown back: each inside cell within the radius of a piece's core
@@ -721,6 +756,22 @@ impl Pieces {
                     b[3].max(y + cell),
                 ];
             }
+        }
+        if let Some(rails) = rails {
+            let raster = Self {
+                origin,
+                cell,
+                rows,
+                columns,
+                labels,
+                inside,
+                boxes,
+                tabs: Vec::new(),
+                areas: Vec::new(),
+                cut_by: Vec::new(),
+            };
+            *rails = raster.breakaway_boxes(all, &cut, &scored, &core_label);
+            return None;
         }
         // The tabs: components of the inside cells on no piece that touch
         // two pieces.
@@ -878,8 +929,104 @@ impl Pieces {
         })
     }
 
+    /// Components outside the main piece's grown core. An exterior
+    /// rail spans its side, lies outside the main stock, and has a
+    /// small eroded core beside an actual cut. Corners, notches and
+    /// outline necks alone do not identify removable stock.
+    fn breakaway_boxes(
+        &self,
+        outline: [f64; 4],
+        cut: &[bool],
+        scored: &[bool],
+        core_label: &[u16],
+    ) -> Vec<[f64; 4]> {
+        let main = self.boxes[0];
+        let (columns, rows, cell) = (self.columns, self.rows, self.cell);
+        let off = |at: usize| self.inside[at] && !scored[at] && self.labels[at] == NONE;
+        let mut seen = vec![false; columns * rows];
+        let mut stack = Vec::new();
+        let mut rails = Vec::new();
+        for start in 0..seen.len() {
+            if seen[start] || !off(start) {
+                continue;
+            }
+            let mut bounds = [usize::MAX, usize::MAX, 0, 0];
+            let mut core = 0;
+            let mut beside_cut = false;
+            seen[start] = true;
+            stack.push(start);
+            while let Some(at) = stack.pop() {
+                let (row, column) = (at / columns, at % columns);
+                bounds[0] = bounds[0].min(column);
+                bounds[1] = bounds[1].min(row);
+                bounds[2] = bounds[2].max(column + 1);
+                bounds[3] = bounds[3].max(row + 1);
+                core += usize::from(core_label[at] != NONE);
+                let mut visit = |next: usize| {
+                    beside_cut |= cut[next] || scored[next];
+                    if off(next) && !seen[next] {
+                        seen[next] = true;
+                        stack.push(next);
+                    }
+                };
+                if column > 0 {
+                    visit(at - 1);
+                }
+                if column + 1 < columns {
+                    visit(at + 1);
+                }
+                if row > 0 {
+                    visit(at - columns);
+                }
+                if row + 1 < rows {
+                    visit(at + columns);
+                }
+            }
+            if core == 0 || core as f64 * cell * cell >= MIN_CORE_MM2 || !beside_cut {
+                continue;
+            }
+            let mut bounds = std::array::from_fn(|i| self.origin[i % 2] + bounds[i] as f64 * cell);
+            let near_main = 2.0 * cell + 1.0e-9;
+            for axis in 0..2 {
+                let along = 1 - axis;
+                let width = bounds[axis + 2] - bounds[axis];
+                let span = bounds[along + 2] - bounds[along];
+                if width > NARROW_RAIL_WIDTH_MM
+                    || span < RAIL_SPAN * (outline[along + 2] - outline[along])
+                {
+                    continue;
+                }
+                if bounds[axis] <= outline[axis] + cell
+                    && bounds[axis + 2] <= main[axis] + near_main
+                {
+                    bounds[axis + 2] = bounds[axis + 2].min(main[axis]);
+                } else if bounds[axis + 2] >= outline[axis + 2] - cell
+                    && bounds[axis] >= main[axis + 2] - near_main
+                {
+                    bounds[axis] = bounds[axis].max(main[axis + 2]);
+                } else {
+                    continue;
+                }
+                if bounds[axis] < bounds[axis + 2] {
+                    rails.push(bounds);
+                }
+                break;
+            }
+        }
+        rails
+    }
+
     pub fn count(&self) -> usize {
         self.boxes.len()
+    }
+
+    /// A native zone item names its outline's first corner, not its
+    /// reported copper island. Use the zone's actual outline by UUID.
+    pub fn single_zone_piece(&self, pcb: &Expr, uuid: &str) -> Option<usize> {
+        match zone_end(pcb, self, uuid) {
+            End::On(piece) => Some(piece),
+            End::Among(_) | End::Unplaced => None,
+        }
     }
 
     /// Pieces that are boxes on a board of one outline piece: a panel's
@@ -1768,7 +1915,7 @@ const ZONE_REACH_MM: f64 = 25.0;
 /// escapes a quote and a backslash (`unescape`), and its text escapes `/`
 /// as `{slash}` and so on (KiCad's EscapeString); the DRC report does
 /// neither.
-fn unescaped(name: &str) -> String {
+pub fn unescaped(name: &str) -> String {
     let name = unescape(name);
     if !name.contains('{') {
         return name.into_owned();

@@ -1,0 +1,50 @@
+{
+  "source_commit": "ad408d17cba5fa4d87c53d4f0478f9313a3bce84",
+  "repository": "https://github.com/ajokela/giga-shield",
+  "board_id": "giga_shield_v04",
+  "copper_layers": [
+    "F.Cu",
+    "B.Cu"
+  ],
+  "expected": {
+    "footprints": 64,
+    "pads": 507,
+    "nets": 161,
+    "preplaced": 15,
+    "minimum_clearance_mm": 0.2
+  },
+  "starter": {
+    "giga_shield_v04.kicad_pcb": {
+      "path": "benchmark/placement/giga_shield_v04.kicad_pcb",
+      "sha256": "6500d95acbcc4dddafb57f6a01650a5ed5c5e31e6e3c99f0ff77d0ca60c77474",
+      "git_blob": "00378a173296b811668a2330714f6d64eb7f0d11",
+      "url": "https://raw.githubusercontent.com/ajokela/giga-shield/ad408d17cba5fa4d87c53d4f0478f9313a3bce84/benchmark/placement/giga_shield_v04.kicad_pcb"
+    },
+    "giga_shield_v04.kicad_pro": {
+      "path": "benchmark/placement/giga_shield_v04.kicad_pro",
+      "sha256": "a0aa87569a3595aba16b7ef5dab5e9b6791b59d8b2e2b349e5f3e275411eaf6c",
+      "git_blob": "82632a14827f171ef0bf41e01c284616ff37f499",
+      "url": "https://raw.githubusercontent.com/ajokela/giga-shield/ad408d17cba5fa4d87c53d4f0478f9313a3bce84/benchmark/placement/giga_shield_v04.kicad_pro"
+    },
+    "giga_shield_v04.kicad_sch": {
+      "path": "benchmark/placement/giga_shield_v04.kicad_sch",
+      "sha256": "321c9bb6963a2fd7afbc29d1b464ede20b87769ace44ffcd025829c0fcbea406",
+      "git_blob": "f81e87257db0c7d86f65d81d22742b096a300b70",
+      "url": "https://raw.githubusercontent.com/ajokela/giga-shield/ad408d17cba5fa4d87c53d4f0478f9313a3bce84/benchmark/placement/giga_shield_v04.kicad_sch"
+    }
+  },
+  "candidate": {
+    "giga_shield_v04.kicad_pcb": {
+      "path": "benchmark/quilter/Quilter_giga_shield_v04.kicad_pcb_Candidate_1/giga_shield_v04.kicad_pcb",
+      "sha256": "21a09f23ddf43dccf282bede63fc4526198e239c4016cfce65bb39eb2d2ec90a",
+      "git_blob": "0399980a22a4c3b7d74f52e9183c4a2c2c37e6b7",
+      "url": "https://raw.githubusercontent.com/ajokela/giga-shield/ad408d17cba5fa4d87c53d4f0478f9313a3bce84/benchmark/quilter/Quilter_giga_shield_v04.kicad_pcb_Candidate_1/giga_shield_v04.kicad_pcb"
+    },
+    "giga_shield_v04.kicad_pro": {
+      "path": "benchmark/quilter/Quilter_giga_shield_v04.kicad_pcb_Candidate_1/giga_shield_v04.kicad_pro",
+      "sha256": "442a22631c9becb76fd7243640594cc38ff8fbc4b49a16a80fb580aa4c6dd4d0",
+      "git_blob": "b8b11bfbdda0bf89dc284e62049a3739e3dec5d5",
+      "url": "https://raw.githubusercontent.com/ajokela/giga-shield/ad408d17cba5fa4d87c53d4f0478f9313a3bce84/benchmark/quilter/Quilter_giga_shield_v04.kicad_pcb_Candidate_1/giga_shield_v04.kicad_pro"
+    }
+  }
+}

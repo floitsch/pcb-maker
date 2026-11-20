@@ -35,8 +35,68 @@ pub(super) fn fixed_obstacle(name: &str, body_size: [f64; 2], side: core::Side) 
         tight_hollow: Vec::new(),
         hole_rings: Vec::new(),
         copper_graphics: Vec::new(),
+        unassigned_copper_graphics: Vec::new(),
         courtless: Vec::new(),
         slots: Vec::new(),
+    }
+}
+
+/// Do not place movable parts on stock that will break off the board.
+/// Explicit edge and overhang constraints may refer to that stock, as
+/// may a region or a connected part held there, so those take priority.
+pub(super) fn add_fabrication_rails(context: &LowerContext, builder: &mut ProblemBuilder) {
+    let constraints = &builder.problem.constraints;
+    if !constraints.edges.is_empty() || !constraints.overhangs.is_empty() {
+        return;
+    }
+    let loops = &context.loops;
+    let cuts = crate::outline_pieces::Cuts::of_board(context.pcb);
+    let rails = crate::outline_pieces::Pieces::narrow_breakaway_rails(
+        &loops.piece_loops,
+        &loops.cutouts,
+        &cuts,
+    );
+    for rail in rails {
+        let intersects = |bounds: [f64; 4]| {
+            bounds[0] < rail[2] && bounds[1] < rail[3] && bounds[2] > rail[0] && bounds[3] > rail[1]
+        };
+        let problem = &builder.problem;
+        if problem
+            .constraints
+            .regions
+            .iter()
+            .any(|(_, region)| intersects(*region))
+            || problem
+                .components
+                .iter()
+                .zip(&problem.poses)
+                .any(|(part, &pose)| {
+                    if !part.fixed || part.pins.is_empty() {
+                        return false;
+                    }
+                    // An oversized courtyard can touch a rail across
+                    // the outline gap without the part using that stock.
+                    let on_rail =
+                        |[x, y]: [f64; 2]| x > rail[0] && x < rail[2] && y > rail[1] && y < rail[3];
+                    on_rail(part.center(pose))
+                        || part.pins.iter().any(|pin| {
+                            let [x, y] = part.offset(pin.offset, pose.angle);
+                            on_rail([pose.position[0] + x, pose.position[1] + y])
+                        })
+                })
+        {
+            continue;
+        }
+        let component = fixed_obstacle(
+            "fabrication rail",
+            [rail[2] - rail[0], rail[3] - rail[1]],
+            core::Side::Both,
+        );
+        let pose = core::Pose {
+            position: [(rail[0] + rail[2]) / 2.0, (rail[1] + rail[3]) / 2.0],
+            angle: 0.0,
+        };
+        builder.push_obstacle(component, pose, "fabrication rail");
     }
 }
 
@@ -165,6 +225,7 @@ pub(super) fn add_board_rule_areas(
     // pads keeps copper out only (d20's back: KiCad flagged 27 of our pads
     // in it).
     let mut keepouts: Vec<pcb_router::geometry::Aabb> = Vec::new();
+    let copper = crate::board_router::LayerTable::from_pcb(context.pcb).ok();
     for item in context
         .pcb
         .children()
@@ -178,6 +239,36 @@ pub(super) fn add_board_rule_areas(
         if bodies && !form_atom(item, "name", 1).is_some_and(|name| name.starts_with(KEEPOUT_NAME))
         {
             keepouts.push(bounds);
+        }
+        if !bodies
+            && component.cutout_outline.len() >= 3
+            && item
+                .children()
+                .iter()
+                .filter(|child| child.head() == Some("polygon"))
+                .count()
+                == 1
+            && item
+                .child("polygon")
+                .and_then(|polygon| polygon.child("pts"))
+                .is_some_and(|points| {
+                    points
+                        .children()
+                        .iter()
+                        .skip(1)
+                        .all(|point| point.head() == Some("xy"))
+                })
+            && copper.as_ref().is_some_and(|stack| {
+                stack
+                    .mask_of_item(item)
+                    .is_ok_and(|mask| mask == stack.all())
+            })
+        {
+            builder
+                .problem
+                .constraints
+                .pad_rule_areas
+                .push(builder.problem.components.len());
         }
         builder.push_obstacle(component, pose, "keepout");
     }

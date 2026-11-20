@@ -1194,6 +1194,23 @@ pub(super) fn rule_area_obstacle(
     }))
 }
 
+/// Authored board areas that keep both tracks and vias out. Footprint
+/// areas move with their footprint and are outside this list.
+pub fn board_track_via_keepouts(pcb: &Expr) -> Result<Vec<core::Obstacle>, String> {
+    let layers = LayerTable::from_pcb(pcb)?;
+    pcb.children()
+        .iter()
+        .filter(|item| item.head() == Some("zone") && is_rule_area(item))
+        .filter_map(
+            |item| match rule_area_obstacle(item, &layers, "unnamed rule area") {
+                Ok(Some(area)) if area.blocks_tracks && area.blocks_vias => Some(Ok(area)),
+                Err(error) => Some(Err(error)),
+                _ => None,
+            },
+        )
+        .collect()
+}
+
 fn rule_area_like_points(item: &Expr) -> Result<Vec<[f64; 2]>, String> {
     let points = outline::pts_points(item)?;
     if points.len() < 3 {
@@ -1329,6 +1346,6 @@ pub fn pours(pcb: &Expr, layers: &LayerTable) -> Result<Vec<Pour>, String> {
     Ok(result)
 }
 
-pub(super) fn nanometres(point: [f64; 2]) -> [f64; 2] {
+pub(crate) fn nanometres(point: [f64; 2]) -> [f64; 2] {
     point.map(|value| (value * 1.0e6).round() / 1.0e6)
 }

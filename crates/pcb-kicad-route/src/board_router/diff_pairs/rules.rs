@@ -25,7 +25,9 @@ pub fn with_pairs(config: &KiCadBoardRouterConfig) -> KiCadBoardRouterConfig {
             // The narrow-signal step keeps it (KiCad checks it).
             copy.ruled_widths.insert(net.clone());
         }
-        used.extend(rule.rules.iter().cloned());
+        if !config.excludes_diff_pair(net, &rule.partner) {
+            used.extend(rule.rules.iter().cloned());
+        }
     }
     if let Some(report) = copy.project_rules.as_mut() {
         for entry in &mut report.custom_rules {

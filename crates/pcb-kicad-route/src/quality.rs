@@ -92,10 +92,18 @@ pub struct KiCadDecoupling {
     pub capacitor_median_mm: Option<f64>,
     pub capacitors_within_3mm: Option<f64>,
     /// For each of `worst`, the capacitors that count for it (1 uF or less
-    /// on its rail; a regulator's pin also its rail's bulk ones): the
-    /// verdict names only pins one of these could still serve.
+    /// on its rail, plus the rail's bulk capacitors for a regulator pin).
     #[serde(skip)]
     pub worst_capacitors: Vec<Vec<String>>,
+}
+
+/// A schematic-informed near constraint and its current body-to-pin gap.
+#[derive(Clone, Debug, Serialize)]
+pub struct KiCadDecouplingTarget {
+    pub part: String,
+    pub pin_of: String,
+    pub max_mm: f64,
+    pub distance_mm: f64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -668,7 +676,14 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
     let (tracks, board_vias) = tracks_and_vias_of(&pcb, &names)?;
     let vias: Vec<([f64; 2], f64)> = board_vias.iter().map(|via| (via.at, via.drill)).collect();
 
-    let economy = economy_of(&parts, &tracks, &vias, outline, layers.len());
+    let economy = economy_of(
+        &parts,
+        &tracks,
+        &vias,
+        outline,
+        layers.len(),
+        pcb_kicad_file::board_stats::saved_copper(&pcb)?.track_length_mm,
+    );
     let rails = supply_rails(&parts);
     let decoupling = decoupling_of(&parts, &rails);
     let crystals = crystals_of(&parts, &rails);
@@ -762,6 +777,7 @@ fn economy_of(
     vias: &[([f64; 2], f64)],
     outline: Option<[f64; 4]>,
     copper_layers: usize,
+    track_length_mm: f64,
 ) -> KiCadEconomy {
     let mut unique = BTreeSet::new();
     let mut smd_sides = BTreeSet::new();
@@ -796,12 +812,7 @@ fn economy_of(
             .map(|track| track.width)
             .filter(|width| *width > 0.0)
             .reduce(f64::min),
-        track_length_mm: round(
-            tracks
-                .iter()
-                .map(|track| distance(track.start, track.end))
-                .sum(),
-        ),
+        track_length_mm: round(track_length_mm),
     }
 }
 

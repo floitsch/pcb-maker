@@ -251,6 +251,12 @@ pub(crate) fn net_expr(name: &str) -> Expr {
     ])
 }
 
+/// The value field of a legacy `fp_text` form. Before the value KiCad
+/// accepts a bare `locked` marker. A quoted "locked" is the value.
+pub fn fp_text_value_index(fields: &[Expr]) -> usize {
+    2 + usize::from(matches!(fields.get(2), Some(Expr::Atom(raw)) if raw == "locked"))
+}
+
 /// A footprint's reference: KiCad 8 and later write it as a property,
 /// KiCad 6 and 7 as `(fp_text reference "R1" ...)`.
 pub fn footprint_reference(node: &Expr) -> Option<String> {
@@ -258,7 +264,10 @@ pub fn footprint_reference(node: &Expr) -> Option<String> {
         let kind = item.children().get(1)?.atom()?;
         match item.head()? {
             "property" if kind == "Reference" => Some(item.children().get(2)?.atom()?.to_string()),
-            "fp_text" if kind == "reference" => Some(item.children().get(2)?.atom()?.to_string()),
+            "fp_text" if kind == "reference" => {
+                let fields = item.children();
+                Some(fields.get(fp_text_value_index(fields))?.atom()?.to_string())
+            }
             _ => None,
         }
     })
@@ -272,6 +281,17 @@ pub fn footprint_uuid(node: &Expr) -> Option<String> {
         "uuid" | "tstamp" => Some(item.children().get(1)?.atom()?.to_string()),
         _ => None,
     })
+}
+
+/// A modern footprint lock or the bare marker in older PCB files.
+pub fn footprint_locked(footprint: &Expr) -> bool {
+    footprint.child("locked").is_some_and(|form| {
+        form.children().len() == 1 || form.children().get(1).and_then(Expr::atom) == Some("yes")
+    }) || footprint
+        .children()
+        .iter()
+        .skip(2)
+        .any(|field| matches!(field, Expr::Atom(raw) if raw == "locked"))
 }
 
 pub(crate) fn net_name_from_form(node: &Expr) -> Option<&str> {
@@ -371,6 +391,41 @@ pub fn glob_matches(pattern: &str, text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_legacy_reference_skips_the_bare_lock_but_preserves_quoted_text() {
+        for (source, expected) in [
+            (r#"(fp_text reference locked "C2" (at 0 0))"#, Some("C2")),
+            (r#"(fp_text reference "locked" (at 0 0))"#, Some("locked")),
+            (
+                r#"(fp_text reference locked "locked" (at 0 0))"#,
+                Some("locked"),
+            ),
+            (r#"(property "Reference" "locked")"#, Some("locked")),
+            (r#"(fp_text reference locked (at 0 0))"#, None),
+        ] {
+            let node = parse(&format!("(footprint X {source})")).unwrap();
+            assert_eq!(footprint_reference(&node).as_deref(), expected, "{source}");
+        }
+    }
+
+    #[test]
+    fn a_footprint_lock_reads_legacy_and_current_native_forms() {
+        for (source, expected) in [
+            (r#"(footprint "Test:Part" locked)"#, true),
+            (r#"(footprint "Test:Part" (locked))"#, true),
+            (r#"(footprint "Test:Part" (locked yes))"#, true),
+            (r#"(footprint "Test:Part" (locked no))"#, false),
+            (r#"(footprint "locked")"#, false),
+            (r#"(footprint "Test:Part" "locked")"#, false),
+        ] {
+            assert_eq!(
+                footprint_locked(&parse(source).unwrap()),
+                expected,
+                "{source}"
+            );
+        }
+    }
 
     #[test]
     fn a_net_form_of_four_fields_names_the_third() {

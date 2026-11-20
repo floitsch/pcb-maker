@@ -31,6 +31,15 @@ use super::*;
 use crate::board_router::{KiCadBoardRouterConfig, LayerTable};
 use pcb_router as core;
 
+mod hatch;
+pub use hatch::{HatchedNeckRepair, hatched_neck_target, prepare_kicad_hatched_neck_repair};
+mod round_contact;
+pub use round_contact::RoundContactBridge;
+mod supplemental;
+pub use supplemental::{
+    SupplementalNeckRepair, widen_kicad_neck_tracks, widen_recorded_neck_tracks,
+};
+
 /// Raster pitch, mm.
 const PIXEL: f64 = 0.004;
 /// Tile side in pixels, and the overlap kept around a tile's core.
@@ -43,7 +52,8 @@ const SLACK: f64 = 0.003;
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct NeckRepair {
-    /// KiCad's connection_width errors before and after.
+    /// KiCad's connection-width errors, or the selected round contact warning,
+    /// before and after the applicable repair.
     pub before: usize,
     pub after: usize,
     /// Necks the raster found on the nets and layers KiCad named.
@@ -51,6 +61,10 @@ pub struct NeckRepair {
     /// Repair tracks that kept every clearance (added), and whether the
     /// board with them was kept.
     pub tracks: usize,
+    /// Identity of each new track this repair kept, for an explicit later
+    /// widening pass. Empty when this repair kept nothing.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub track_ids: Vec<String>,
     pub kept: bool,
     /// The kept repair tracks' total length, mm.
     pub track_mm: f64,
@@ -59,7 +73,21 @@ pub struct NeckRepair {
     /// each counts a check's work in a layout, as the DRC checks do.
     pub kicad_fills: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub round_contact: Option<RoundContactBridge>,
+    /// Fresh all-track DRC and partition reads used for the round contact,
+    /// apart from the normal final verification.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub round_contact_native_checks: usize,
+    /// The number of checks the remaining work could pay for, only when
+    /// that bound prevented the repair from starting.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget_checks_available: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+}
+
+fn is_zero(value: &usize) -> bool {
+    *value == 0
 }
 
 /// One connection_width error of KiCad's report.
@@ -1167,7 +1195,19 @@ pub(crate) fn repair_connection_width(
     };
     let before = findings(&report);
     if before.is_empty() {
-        return Ok(None);
+        let Some(repair) =
+            round_contact::repair(directory, board_id, &report, max_checks, config.deadline)?
+        else {
+            return Ok(None);
+        };
+        if repair.kept {
+            fs::write(
+                &marker,
+                serde_json::to_string_pretty(&repair).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| format!("failed to write {}: {error}", marker.display()))?;
+        }
+        return Ok(Some(repair));
     }
     let started = std::time::Instant::now();
     let mut repair = NeckRepair {
@@ -1183,6 +1223,7 @@ pub(crate) fn repair_connection_width(
         None => NECK_TRIALS + NECK_PRUNE_TRIALS,
         Some(checks) if checks >= NECK_MIN_CHECKS => checks - 2,
         Some(checks) => {
+            repair.budget_checks_available = Some(checks);
             repair.note = Some(format!(
                 "not run: the work left pays for {checks} KiCad checks, the repair needs {NECK_MIN_CHECKS} (a fill, a trial, the board as chosen)"
             ));
@@ -1209,6 +1250,7 @@ pub(crate) fn repair_connection_width(
         // were (the report of the board the directory holds).
         saved.restore()?;
         repair.tracks = 0;
+        repair.track_ids.clear();
         repair.track_mm = 0.0;
         repair.kept = false;
         repair.after = repair.before;
@@ -1636,6 +1678,11 @@ fn repair_with(
         }
     }
     repair.tracks = kept.iter().map(|&index| tracks[index].len()).sum();
+    repair.track_ids = kept
+        .iter()
+        .flat_map(|&index| &tracks[index])
+        .map(supplemental_segment_id)
+        .collect();
     repair.track_mm = kept
         .iter()
         .flat_map(|&index| &tracks[index])
@@ -1886,6 +1933,7 @@ mod tests {
     #[test]
     fn a_repair_track_keeps_its_clearances() {
         let mut board = core::Board {
+            fixed_pad_route_clearance: Default::default(),
             layer_count: 2,
             outline: rectangle(-5.0, -5.0, 5.0, 5.0),
             edge_clearance: 0.3,
@@ -1994,6 +2042,7 @@ mod tests {
             .unwrap();
         assert_eq!((repair.before, repair.after, repair.kept), (1, 1, false));
         assert_eq!(repair.kicad_fills, 0);
+        assert_eq!(repair.budget_checks_available, Some(NECK_MIN_CHECKS - 1));
         assert!(
             repair
                 .note

@@ -4,6 +4,7 @@
 //! project's rules taken, the outline, keepout and side constraints
 //! applied and the board lowered (`prepare_board`).
 
+use super::outline_anchors::{OutlineSourcePoses, place_outline_anchors};
 use super::*;
 
 /// A board read, its constraints resolved and its project's rules taken,
@@ -89,6 +90,16 @@ pub fn prepare_board(
     config: &KiCadBoardPlacerConfig,
     poses_from: Option<&Expr>,
 ) -> Result<PreparedBoard, String> {
+    prepare_board_with_front_retry(source_directory, board_id, config, poses_from, None)
+}
+
+pub(super) fn prepare_board_with_front_retry(
+    source_directory: &Path,
+    board_id: &str,
+    config: &KiCadBoardPlacerConfig,
+    poses_from: Option<&Expr>,
+    exclude_from_automatic_back: Option<&str>,
+) -> Result<PreparedBoard, String> {
     let source_board = source_directory.join(format!("{board_id}.kicad_pcb"));
     // Errors up to the lowering are the input's (`input_error`).
     let source = fs::read_to_string(&source_board).map_err(|error| {
@@ -111,8 +122,31 @@ pub fn prepare_board(
     take_project_rules(&mut config, source_directory, board_id, &source_board);
     let edges_chosen = choose_any_edges(source_directory, board_id, &mut config)
         .map_err(crate::exit::input_error)?;
-    let (outline_size, keepout_warnings) = apply_board_constraints(&mut pcb, &config)?;
+    let AppliedBoardConstraints {
+        outline_size,
+        keepout_warnings,
+        outline_sources,
+    } = apply_board_constraints(&mut pcb, &config)?;
     let mut lowered = lower_placement(&pcb, &config).map_err(crate::exit::input_error)?;
+    let moved = super::alternate_side::move_to_back(
+        &mut pcb,
+        &lowered,
+        &config.allow_back,
+        exclude_from_automatic_back,
+    )?;
+    if !moved.is_empty() {
+        lowered = lower_placement(&pcb, &config).map_err(crate::exit::input_error)?;
+        eprintln!(
+            "placer: selected the back side for {} permitted SMD footprints (board-placer.json back_side_assignments)",
+            moved.len(),
+        );
+        lowered.back_side_assignments = moved;
+    }
+    // The outline and pad poses had to be established before lowering.
+    // Keep the original origins for the placement report.
+    for (index, source_at) in outline_sources {
+        lowered.source_at[index] = source_at;
+    }
     lowered.constraint_warnings.extend(keepout_warnings);
     Ok(PreparedBoard {
         pcb,
@@ -184,12 +218,17 @@ fn take_project_rules(
     }
 }
 
-/// Applies the outline, keepout and side constraints to the board: the
-/// outline's size where one is drawn, and the keepouts' warnings.
+struct AppliedBoardConstraints {
+    outline_size: Option<[f64; 2]>,
+    keepout_warnings: Vec<String>,
+    outline_sources: OutlineSourcePoses,
+}
+
+/// Applies outline, keepout and side constraints to the board.
 fn apply_board_constraints(
     pcb: &mut Expr,
     config: &KiCadBoardPlacerConfig,
-) -> Result<(Option<[f64; 2]>, Vec<String>), String> {
+) -> Result<AppliedBoardConstraints, String> {
     let mut outline_size = None;
     if let Some(KiCadConstraintsSource::Inline(constraints)) = &config.constraints
         && let Some(outline) = &constraints.outline
@@ -208,7 +247,10 @@ fn apply_board_constraints(
             Some(apply_outline(pcb, outline, part_area).map_err(crate::exit::input_error)?);
     }
     let mut keepout_warnings = Vec::new();
+    let mut outline_sources = BTreeMap::new();
     if let Some(KiCadConstraintsSource::Inline(constraints)) = &config.constraints {
+        outline_sources =
+            place_outline_anchors(pcb, constraints).map_err(crate::exit::input_error)?;
         let held = if constraints.keepout.is_empty() {
             HeldParts::default()
         } else {
@@ -218,5 +260,9 @@ fn apply_board_constraints(
             apply_keepouts(pcb, &constraints.keepout, &held).map_err(crate::exit::input_error)?;
         apply_sides(pcb, constraints).map_err(crate::exit::input_error)?;
     }
-    Ok((outline_size, keepout_warnings))
+    Ok(AppliedBoardConstraints {
+        outline_size,
+        keepout_warnings,
+        outline_sources,
+    })
 }

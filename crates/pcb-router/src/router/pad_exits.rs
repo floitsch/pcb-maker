@@ -136,9 +136,7 @@ pub struct ProbeCounts {
     /// Nodes the pockets took, and obstacles measured at their rims.
     pub pocket_nodes: u64,
     pub measures: u64,
-    /// Pads tested, and of them those without a legal node of their own
-    /// (the router leaves them by its escape stubs, which the probe does
-    /// not judge: never reported closed).
+    /// Pads tested, and of them those left to the router's escape stubs.
     pub pads: u64,
     pub escape_pads: u64,
 }
@@ -249,9 +247,8 @@ impl ExitProbe {
 
     /// The pads of the part `part` (a reference) without a way out (see
     /// the module): single-layer pads of nets with another pad that no
-    /// connected pour carries, with legal nodes of their own (a pad
-    /// without one takes the router's escape stubs, which this does not
-    /// judge).
+    /// connected pour carries. Pads without legal nodes are left to the
+    /// escape stubs unless a rule area rules out all track and via access.
     pub fn closed_pads(&mut self, part: &str) -> Vec<ClosedPad> {
         let Some(terminals) = self.terminals.get(part).cloned() else {
             return Vec::new();
@@ -418,7 +415,47 @@ impl ExitProbe {
                 }
             }
             counts.pads += 1;
+            let pad_box = pad.shape.aabb();
             if queue.is_empty() {
+                // Use the whole pad's bounds so even an off-grid escape
+                // cannot get past the blocking area. A pad that could join
+                // another same-net pad directly needs no escape of its own.
+                let center = [
+                    (pad_box.minimum[0] + pad_box.maximum[0]) / 2.0,
+                    (pad_box.minimum[1] + pad_box.maximum[1]) / 2.0,
+                ];
+                let radius = crate::geometry::distance(center, pad_box.minimum);
+                if !others.iter().any(|shape| pad_box.intersects(shape.aabb()))
+                    && let Some(index) = near.iter().copied().find(|&index| {
+                        let obstacle = &board.obstacles[index];
+                        if obstacle.kind != crate::board::ObstacleKind::Keepout
+                            || obstacle.layers & (1 << layer) == 0
+                            || obstacle.net == Some(net)
+                            || !obstacle.blocks_tracks
+                            || !obstacle.blocks_vias
+                        {
+                            return false;
+                        }
+                        counts.measures += 1;
+                        obstacle.shape.contains_disc(center, radius)
+                    })
+                {
+                    let label = &board.obstacles[index].label;
+                    closed.push(ClosedPad {
+                        label: terminal.label.clone(),
+                        net: description.name.clone(),
+                        layer,
+                        pitch: description_pitch(board, net, terminal, layer),
+                        pocket: 0,
+                        blockers: vec![ExitBlocker {
+                            label: label.clone(),
+                            obstacle: Some(index),
+                            own: label_part(label) == label_part(&terminal.label),
+                            nodes: 0,
+                        }],
+                    });
+                    continue;
+                }
                 counts.escape_pads += 1;
                 if std::env::var_os("PCB_PAD_EXITS_WHY").is_some() {
                     eprintln!(
@@ -428,7 +465,6 @@ impl ExitProbe {
                 }
                 continue;
             }
-            let pad_box = pad.shape.aabb();
             let out_box = pad_box.inflated(ESCAPE);
             reached.fill(false);
             for &cell in &queue {
@@ -745,6 +781,7 @@ mod tests {
             });
         }
         Board {
+            fixed_pad_route_clearance: Default::default(),
             layer_count: 1,
             outline: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]],
             edge_clearance: 0.1,
@@ -857,6 +894,34 @@ mod tests {
         let closed = probe.closed_pads("U1");
         assert_eq!(closed.len(), 1);
         assert!(closed[0].own_only());
+    }
+
+    #[test]
+    fn a_rule_area_over_the_entire_pad_blocks_even_an_off_grid_escape() {
+        let mut board = board(false);
+        let mut keepout = obstacle(rectangle(3.9, 4.4, 5.1, 5.6), None, "perimeter keepout");
+        keepout.kind = ObstacleKind::Keepout;
+        board.obstacles.push(keepout);
+
+        let mut probe = ExitProbe::new(&board, &config());
+        let covered = probe
+            .closed_pads("U1")
+            .into_iter()
+            .find(|pad| pad.label == "U1.1")
+            .unwrap();
+        assert_eq!(covered.blocked_by(), ["perimeter keepout"]);
+        assert_eq!(covered.pocket, 0);
+        assert!(!covered.own_only());
+
+        board.obstacles.last_mut().unwrap().blocks_vias = false;
+        let mut probe = ExitProbe::new(&board, &config());
+        assert!(
+            probe
+                .closed_pads("U1")
+                .iter()
+                .all(|pad| pad.label != "U1.1")
+        );
+        assert!(probe.counts().escape_pads > 0);
     }
 
     #[test]

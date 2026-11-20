@@ -1,0 +1,36 @@
+{
+  "add_pours": [
+    {
+      "net": "GND",
+      "layers": [
+        "In1.Cu"
+      ]
+    },
+    {
+      "net": "+3V3",
+      "layers": [
+        "In4.Cu"
+      ]
+    },
+    {
+      "net": "H_PWR-IN--PREFUSE",
+      "layers": [
+        "In2.Cu"
+      ],
+      "clearance_mm": 0.5,
+      "thermal_bridge_width_mm": 0.5,
+      "region": {
+        "pads": [
+          "J201:1",
+          "J201:2",
+          "J201:3",
+          "J201:4",
+          "J201:5",
+          "J201:6",
+          "HC202:1"
+        ],
+        "margin_mm": 2
+      }
+    }
+  ]
+}

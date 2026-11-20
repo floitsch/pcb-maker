@@ -8,6 +8,10 @@ use pcb_placer as core;
 #[derive(Clone, Debug, Serialize)]
 pub struct KiCadPlacedFootprint {
     pub reference: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    /// Mounting face as written in the board's footprint layer.
+    pub side: &'static str,
     pub fixed: bool,
     /// Halo requested for this footprint, before fitting to the board.
     pub halo_mm: f64,
@@ -16,6 +20,58 @@ pub struct KiCadPlacedFootprint {
     pub body_half: [f64; 2],
     pub source_at: [f64; 3],
     pub at: [f64; 3],
+}
+
+/// Solver metrics attached to one seed's placement before any layout moves.
+#[derive(Clone, Debug)]
+pub struct KiCadPlacementSeedMetrics {
+    pub seed: u64,
+    pub global_iterations: usize,
+    pub global_overflow: f64,
+    pub wirelength_source_mm: f64,
+    pub wirelength_global_mm: f64,
+    pub wirelength_legal_mm: f64,
+    pub skeleton_race: Option<KiCadSkeletonRaceReport>,
+    pub panel_copies: Option<KiCadPanelCopiesReport>,
+    pub pad_objective_composition: Option<KiCadPadObjectiveComposition>,
+    pub sparse_legalization: Option<KiCadSparseLegalization>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct KiCadSparseLegalization {
+    pub seated: usize,
+    pub work_seconds: f64,
+    #[serde(skip_serializing_if = "zero_usize")]
+    pub moved_others: usize,
+}
+
+fn zero_usize(value: &usize) -> bool {
+    *value == 0
+}
+
+impl From<core::SparseLegalization> for KiCadSparseLegalization {
+    fn from(recovery: core::SparseLegalization) -> Self {
+        Self {
+            seated: recovery.seated,
+            work_seconds: recovery.work as f64 / core::work_per_second(),
+            moved_others: recovery.moved_others,
+        }
+    }
+}
+
+/// Provenance of a placement candidate made by combining legal seed poses.
+#[derive(Clone, Debug, Serialize)]
+pub struct KiCadPadObjectiveComposition {
+    pub parent_search: &'static str,
+    pub parent_seed: u64,
+    pub transfers: Vec<KiCadPadObjectiveTransfer>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct KiCadPadObjectiveTransfer {
+    pub part: String,
+    pub anchor: String,
+    pub donor_seed: u64,
 }
 
 /// A movable part the placement found no legal place for, said so that
@@ -44,6 +100,95 @@ pub struct KiCadUnplacedPart {
     /// courtyard) with SW15`, `outline or hard constraint`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Geometry and legality tests at the retained pose and relaxation.
+    pub local_diagnosis: KiCadPlacementLocalDiagnostic,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct KiCadPlacementLocalDiagnostic {
+    pub side: &'static str,
+    /// [min x, min y, max x, max y] without the routing halo.
+    pub body_bounds_mm: [f64; 4],
+    /// Pair conflicts at the retained pose, including other unplaced parts.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub conflicts: Vec<KiCadPlacementLocalConflict>,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub more_conflicts: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outside_outline_mm: Option<[f64; 4]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hard_constraint_violation_mm: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<KiCadPlacementRegionDiagnostic>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_action: Option<String>,
+}
+
+fn is_zero(count: &usize) -> bool {
+    *count == 0
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct KiCadPlacementLocalConflict {
+    pub kind: &'static str,
+    pub other: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    pub fixed: bool,
+    pub side: &'static str,
+    pub at: [f64; 3],
+    /// The neighbour's bounding box without its halo, for locating it.
+    pub body_bounds_mm: [f64; 4],
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct KiCadPlacementRegionDiagnostic {
+    pub bounds_mm: [f64; 4],
+    pub automatic: bool,
+    pub origin: KiCadPlacementRegionOrigin,
+    pub by_rotation: Vec<KiCadPlacementRegionRotation>,
+    /// This footprint box blocks every feasible window at its retained pose.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocked_by: Option<String>,
+    /// Held footprints whose combined bodies cover the entire centre domain.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub fixed_region_cover: Vec<KiCadPlacementFixedBlocker>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub packing_conflict: Option<KiCadPlacementRegionPackingConflict>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct KiCadPlacementFixedBlocker {
+    pub part: String,
+    pub uuid: String,
+    pub at: [f64; 3],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KiCadPlacementRegionOrigin {
+    Authored,
+    BreakawayModule,
+    BoardPiece,
+}
+
+/// An optimistic fit against the board bounds at the permitted angles.
+#[derive(Clone, Debug, Serialize)]
+pub struct KiCadPlacementRegionPackingConflict {
+    pub other: String,
+    /// Largest possible body widths to the left, above, right and below.
+    pub available_mm: [f64; 4],
+    /// Lower bounds on the other footprint's projected width and height.
+    pub other_minimum_mm: [f64; 2],
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct KiCadPlacementRegionRotation {
+    pub angle_deg: f64,
+    pub body_size_mm: [f64; 2],
+    /// [min x, min y, max x, max y] of centres admitted by the region.
+    /// Null when the body does not fit at this angle.
+    pub center_bounds_mm: Option<[f64; 4]>,
 }
 
 /// The bus groups of a placement (`bus_groups` in the placer's
@@ -126,8 +271,80 @@ pub struct KiCadLengthRuleReport {
     pub note: String,
 }
 
+/// Optional rear-placement permissions suggested by a failed placement.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct KiCadRearPlacementRecovery {
+    /// Exact references to append to `placer.allow_back` only when the
+    /// assembly permits rear mounting. No individual fit has been proven.
+    pub allow_back_additions: Vec<String>,
+    /// Movable footprints without a legal place, on either face.
+    pub affected_movable: usize,
+    /// Estimated spare rear area at the placement's utilization target.
+    pub rear_headroom_mm2: f64,
+}
+
+/// Candidate permissions for rerouting a legally placed, crowded board.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct KiCadRearRoutingCandidates {
+    pub allow_back_additions: Vec<String>,
+    /// Modeled area of the candidates' bodies with placement spacing.
+    pub front_body_area_mm2: f64,
+    pub rear_headroom_mm2: f64,
+}
+
+/// Result of excluding one stranded automatic rear assignment and retrying
+/// placement from the failed run's poses.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct KiCadAutoRearRetry {
+    /// Add this exact reference to the placement brief's `front` list to
+    /// request the same side choice on a fresh run.
+    pub front_part: String,
+    pub status: KiCadAutoRearRetryStatus,
+    pub work_seconds: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KiCadAutoRearRetryStatus {
+    Skipped,
+    Rejected,
+    Accepted,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct KiCadSignalAnchorSeed {
+    pub seed: u64,
+    pub reference: String,
+    pub estimated_xy_mm: [f64; 2],
+    pub projected_xy_mm: [f64; 2],
+    pub projected_angle_deg: f64,
+    pub work_seconds: f64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct KiCadPerimeterContactRecovery {
+    pub reference: String,
+    pub status: &'static str,
+    pub misplaced_before: usize,
+    pub misplaced_after: usize,
+    pub work_seconds: f64,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct KiCadBoardPlacerResult {
+    /// Initial pose offered to one seed. The reported final pose may differ.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signal_anchor_seed: Option<KiCadSignalAnchorSeed>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub perimeter_contact_recovery: Option<KiCadPerimeterContactRecovery>,
+    /// How a compact parent and local pad poses were combined, when kept.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pad_objective_composition: Option<KiCadPadObjectiveComposition>,
+    /// Work spent seating the remaining parts on a sparse grid within the seed's budget.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sparse_legalization: Option<KiCadSparseLegalization>,
     pub board_id: String,
     pub components: usize,
     pub movable: usize,
@@ -147,6 +364,19 @@ pub struct KiCadBoardPlacerResult {
     /// Every placement constraint with whether the placement keeps it.
     pub constraints: Vec<KiCadConstraintStatus>,
     pub constraint_warnings: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub placement_courtyard: Vec<crate::placement_constraints::KiCadPlacementCourtyard>,
+    /// References put on the back using the optional `allow_back` setting.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub back_side_assignments: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rear_placement_recovery: Option<KiCadRearPlacementRecovery>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rear_routing_candidates: Option<KiCadRearRoutingCandidates>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub automatic_rear_retry: Option<KiCadAutoRearRetry>,
+    /// The placement kept the edge geometry of the input PCB.
+    pub outline_from_input: bool,
     /// The board size a constraints outline set (automatic or given).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outline_mm: Option<[f64; 2]>,
@@ -205,6 +435,9 @@ pub struct KiCadBoardPlacerResult {
     /// The same, as (the mark's place among the board's marks, the part).
     #[serde(skip)]
     pub attached_mark_pairs: Vec<(usize, usize)>,
+    /// The exact pair-row definitions used to place the board.
+    #[serde(skip)]
+    pub placed_pair_rows: Vec<super::PairRow>,
     /// Per footprint, the halo the placement gave it where the skeleton
     /// race merged the halos (`core::Relaxation::halos`).
     #[serde(skip)]
@@ -213,6 +446,9 @@ pub struct KiCadBoardPlacerResult {
     /// they miss the constraints in all), next best first.
     #[serde(skip)]
     pub alternatives: Vec<(Vec<core::Pose>, core::Relaxation, f64)>,
+    /// The solver metrics for the corresponding alternatives.
+    #[serde(skip)]
+    pub alternative_seed_metrics: Vec<KiCadPlacementSeedMetrics>,
     /// Per alternative, its pads without a way out (`pad_exits`; `None`
     /// off).
     #[serde(skip)]
@@ -236,7 +472,7 @@ pub struct KiCadBoardPlacerResult {
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub edges_chosen: BTreeMap<String, String>,
     pub seconds: f64,
-    /// The most placement work a seed did, in seconds of an idle machine.
+    /// The longest seed plus any additional serial placement work.
     #[serde(default)]
     pub work_seconds: f64,
     /// The kept seeds' work as the clock sees it: as the reference machine
@@ -245,11 +481,13 @@ pub struct KiCadBoardPlacerResult {
     /// alone, not on the threads or the load.
     #[serde(default)]
     pub pool_work_seconds: f64,
+    /// Modeled work of the extra pad objective search, included in work_seconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pad_objective_search_work_seconds: Option<f64>,
     /// The kept seeds' work in all (as one after the other).
     #[serde(default)]
     pub seeds_work_seconds: f64,
-    /// How many seeds ran: the kept ones and those a batch ran past the
-    /// budget (they count for nothing).
+    /// Seeds attempted, including work-limit overflow and experimental drafts.
     #[serde(default)]
     pub seeds_run: usize,
     /// The seed of the placement kept (`seed` plus its offset).

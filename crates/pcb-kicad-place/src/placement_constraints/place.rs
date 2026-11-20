@@ -143,6 +143,7 @@ pub(super) fn apply_places(
     // parts put at a pose stay there.
     let mut pinned = Vec::new();
     let mut used = BTreeMap::new();
+    let mut exact: BTreeMap<usize, (usize, bool)> = BTreeMap::new();
     for entry in &constraints.place {
         let index = parts.instance(&entry.part, entry.uuid.as_deref(), &mut used)?;
         match (&entry.at, entry.x, entry.y) {
@@ -158,8 +159,45 @@ pub(super) fn apply_places(
                 constrained.insert(index);
             }
             (None, Some(x), Some(y)) => {
-                place_at(problem, index, entry, [x, y], bounds)?;
-                pinned.push(index);
+                let pose = exact_pose(entry, [x, y], bounds, problem.poses[index].angle)?;
+                let explicit = entry.angle.is_some();
+                if let Some((kept_index, previous_explicit)) = exact.get_mut(&index) {
+                    let previous = problem.poses[index];
+                    let turn = (previous.angle - pose.angle).abs();
+                    if distance_squared(previous.position, pose.position) > 1.0e-12
+                        || (*previous_explicit && explicit && turn.min(360.0 - turn) > 1.0e-6)
+                    {
+                        let instance = parts
+                            .uuids
+                            .get(index)
+                            .and_then(Option::as_ref)
+                            .map_or_else(String::new, |uuid| format!(" ({uuid})"));
+                        return Err(format!(
+                            "conflicting place entries for {}{instance}: ({:.6}, {:.6}) mm at {:.6} degrees and ({:.6}, {:.6}) mm at {:.6} degrees. Give this footprint one exact pose. For repeated references, identify each footprint by uuid.",
+                            entry.part,
+                            previous.position[0],
+                            previous.position[1],
+                            previous.angle,
+                            pose.position[0],
+                            pose.position[1],
+                            pose.angle,
+                        ));
+                    }
+                    // A second entry can supply an angle the first omitted.
+                    *previous_explicit |= explicit;
+                    problem.constraints.kept[*kept_index].angles[0] = pose.angle;
+                } else {
+                    exact.insert(index, (problem.constraints.kept.len(), explicit));
+                    problem.constraints.kept.push(core::constraints::Kept {
+                        kind: "place",
+                        part: index,
+                        side: None,
+                        angles: vec![pose.angle],
+                        position: Some(pose.position),
+                    });
+                    pinned.push(index);
+                }
+                problem.poses[index] = pose;
             }
             _ => {
                 return Err(format!(
@@ -234,15 +272,13 @@ fn place_in_words(
     Ok(())
 }
 
-/// A part put at a pose (`x`, `y`, `angle`): it goes there and is kept
-/// there by construction.
-fn place_at(
-    problem: &mut core::Problem,
-    index: usize,
+/// Coordinates and angle of an exact placement in KiCad's frame.
+fn exact_pose(
     entry: &KiCadPlaceConstraint,
     [x, y]: [f64; 2],
     bounds: [f64; 4],
-) -> Result<(), String> {
+    current_angle: f64,
+) -> Result<core::Pose, String> {
     let offset = match entry.origin.as_deref() {
         None | Some("board") => [bounds[0], bounds[1]],
         Some("absolute") => [0.0, 0.0],
@@ -252,21 +288,9 @@ fn place_at(
             ));
         }
     };
-    let angle = entry
-        .angle
-        .unwrap_or(problem.poses[index].angle)
-        .rem_euclid(360.0);
-    problem.poses[index] = core::Pose {
+    let angle = entry.angle.unwrap_or(current_angle).rem_euclid(360.0);
+    Ok(core::Pose {
         position: [offset[0] + x, offset[1] + y],
         angle,
-    };
-    // Kept by construction, and listed with the others.
-    problem.constraints.kept.push(core::constraints::Kept {
-        kind: "place",
-        part: index,
-        side: None,
-        angles: vec![angle],
-        position: Some([offset[0] + x, offset[1] + y]),
-    });
-    Ok(())
+    })
 }

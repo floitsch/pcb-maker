@@ -57,6 +57,42 @@ impl LayoutContext<'_> {
         router.config_mut().deadline_work = Some(own + (self.work_deadline - work).max(0.0));
     }
 
+    /// A fresh native refill and a check of the reopened board.
+    pub(super) fn fill_check_reserve(&self, has_pours: bool) -> f64 {
+        if has_pours
+            && self.config.save_zone_fills
+            && !self.config.stop_after_first_route
+            && !self.router_config.skip_native_verification
+        {
+            2.0 * self.check_seconds
+        } else {
+            0.0
+        }
+    }
+
+    /// Work after an optional improvement to the layout's own routes.
+    /// Along with publishing the fills, the first routes still need a
+    /// native check, a thermal recheck if enabled, and pair finishing.
+    pub(super) fn native_finish_reserve(&self, has_pours: bool) -> f64 {
+        let fill = self.fill_check_reserve(has_pours);
+        if fill == 0.0 || self.config.plane_escape_budget.unwrap_or(0.0) > 0.0 {
+            return 0.0;
+        }
+        let thermal = if self.router_config.solid_starved_thermals == Some(false) {
+            0.0
+        } else {
+            self.check_seconds
+        };
+        let pairs = if crate::board_router::pairs_planned(&self.router_config) {
+            // Repairing pair launches and routing the unlinked pairs each
+            // have at least the fallback's minimum search allowance.
+            2.0 * crate::board_router::pairs_fallback_work(0.0)
+        } else {
+            0.0
+        };
+        fill + self.check_seconds + thermal + pairs
+    }
+
     /// The project file beside the source board.
     pub(super) fn project_file(&self) -> PathBuf {
         self.source_directory
@@ -70,8 +106,8 @@ pub(super) struct WorkLedger {
     /// The budget counts work (placement work and search expansions), so
     /// that a busy or a slower machine lays the board out the same way.
     pub work: f64,
-    /// The placement's work counts its longest seed (the budget's
-    /// measure); its seeds run in a pool, and the clock sees them as the
+    /// The placement's work counts its longest seed and serial work. Its
+    /// seeds run in a pool, and the clock sees them as the
     /// reference machine runs them (`pool_work_seconds`, from the seeds'
     /// work alone): the difference counts toward the deadline in work
     /// (`work_deadline`), not toward the budgets (video: 193 s of placement
@@ -120,23 +156,13 @@ pub(super) fn prepare<'a>(
         ));
     }
     crate::congestion_rank::check_score(&config.tuning.congestion_score)?;
+    let board_settings = router_config.with_board_settings(source_directory, board_id)?;
+    let router_config = board_settings.as_ref();
     fs::create_dir_all(output_directory)
         .map_err(|error| format!("failed to create {}: {error}", output_directory.display()))?;
     // The budget counts work (`WorkLedger`); the wall clock only guards
     // against running far past it.
     let started = Instant::now();
-    // Requested net classes set their nets' rules (and the spacing).
-    let with_classes;
-    let router_config = if router_config.net_classes.is_empty() {
-        router_config
-    } else {
-        let board = source_directory.join(format!("{board_id}.kicad_pcb"));
-        let text = fs::read_to_string(&board)
-            .map_err(|error| format!("failed to read {}: {error}", board.display()))?;
-        with_classes = crate::net_classes::with_net_classes(router_config, &parse(&text)?)
-            .map_err(crate::exit::input_error)?;
-        &with_classes
-    };
     let check_seconds = kicad_check_seconds(source_directory, board_id, router_config)?;
     let checks = crate::check_work::CheckTally::new(check_seconds);
     // Every route of the layout ends by a wall-clock guard past its total
@@ -145,8 +171,12 @@ pub(super) fn prepare<'a>(
     // (None under `PCB_ROUTER_NO_WALL_GUARD`: the work alone decides.)
     // Stretched where a pinned rate is faster than the machine
     // (`KiCadWorkRate::wall_stretch`, the search's or the placer's).
-    let guard_seconds = wall_guard_seconds(config.total_seconds, config.wall_guard)?
-        * crate::work_rate::work_rate().wall_stretch(true);
+    let guard_seconds = wall_guard_seconds(
+        config.total_seconds
+            + config.plane_escape_budget.unwrap_or(0.0)
+            + config.terminal_launch_budget.unwrap_or(0.0),
+        config.wall_guard,
+    )? * crate::work_rate::work_rate().wall_stretch(true);
     let with_deadline = KiCadBoardRouterConfig {
         deadline: router_config.deadline.or(core::router::wall_guard()
             .then(|| started + std::time::Duration::from_secs_f64(guard_seconds))),

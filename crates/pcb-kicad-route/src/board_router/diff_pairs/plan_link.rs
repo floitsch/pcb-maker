@@ -19,16 +19,19 @@ pub(super) struct PairSite<'a> {
     pub pair: &'a Pair,
     pub class: core::ClassId,
     pub envelope: core::RuleClass,
+    pub clearance: Option<&'a core::rules::Resolved>,
+    pub has_uncoupled_limit: bool,
     pub neighbours: Vec<Neighbour>,
 }
 
 /// A link's launches as chosen (`choose_launches`): per end, the side of
 /// the run the positive net takes, and whether the pads' order crosses the
 /// run's at one end.
-struct Chosen {
-    launches: [Launch; 2],
-    side: f64,
-    crossed: bool,
+pub(super) struct Chosen {
+    pub launches: [Launch; 2],
+    pub side: f64,
+    pub crossed: bool,
+    pub run_class: Option<core::RuleClass>,
 }
 
 /// Plans link `link` of the pair at `site`: its launches, then, where they
@@ -57,7 +60,33 @@ pub(super) fn plan_link(
             terminal(pair.negative, point_b.1),
         ),
     ];
-    let chosen = match choose_launches(board, site, (link, [a, b]), &ends) {
+    let alternative = site
+        .has_uncoupled_limit
+        .then(|| super::transition::choose(board, site, &ends, false))
+        .flatten();
+    let separated = [a, b]
+        .into_iter()
+        .any(|point| pair.kinds[point] == PointKind::Plated);
+    let chosen = alternative.map(Ok).unwrap_or_else(|| {
+        if separated {
+            Err(format!(
+                "link {}: no paired launch from the separated plated pads fits",
+                link + 1
+            ))
+        } else {
+            choose_launches(board, site, (link, [a, b]), &ends)
+        }
+    });
+    // Try the proven mate-pad clearance when the first choices would
+    // leave an escape to be routed independently or no launch at all.
+    let needs_escape = chosen.as_ref().map_or(true, |choice| {
+        choice.launches.iter().any(|launch| !launch.fixed)
+    });
+    let fixed_approach = (site.has_uncoupled_limit && needs_escape)
+        .then(|| super::transition::choose(board, site, &ends, true))
+        .flatten();
+    let plated_gap = fixed_approach.is_some();
+    let chosen = match fixed_approach.map(Ok).unwrap_or(chosen) {
         Ok(chosen) => chosen,
         Err(why) => {
             entry.why.push(why);
@@ -68,6 +97,7 @@ pub(super) fn plan_link(
         launches: [launch_a, launch_b],
         side,
         crossed,
+        run_class,
     } = chosen;
     let id = board.nets.len() as core::NetId;
     let mut copper = LinkBuild {
@@ -101,13 +131,25 @@ pub(super) fn plan_link(
         runs,
         ..
     } = copper;
+    let class = if let Some(settings) = run_class {
+        board
+            .classes
+            .iter()
+            .position(|class| *class == settings)
+            .unwrap_or_else(|| {
+                board.classes.push(settings);
+                board.classes.len() - 1
+            })
+    } else {
+        site.class
+    };
     board.nets.push(core::Net {
         name: link_name(
             &board.nets[pair.positive as usize].name,
             &board.nets[pair.negative as usize].name,
             link + 1,
         ),
-        class: site.class,
+        class,
         terminals,
     });
     join_link_ends(board, pair, [point_a, point_b], fixed, parents);
@@ -130,6 +172,8 @@ pub(super) fn plan_link(
         ],
         side,
         crossed,
+        scoped_clearance: run_class.is_some(),
+        plated_gap,
         fixed,
         stubs: [launch_a.stubs, launch_b.stubs],
         crossovers: [launch_a.crossover, launch_b.crossover],
@@ -262,6 +306,7 @@ fn choose_launches(
         launches: [launch_a, launch_b],
         side,
         crossed,
+        run_class: None,
     })
 }
 
@@ -362,7 +407,7 @@ impl LinkBuild {
                         end: self.stub_ends[end][polarity],
                         radius: pair.width / 2.0,
                     },
-                    found.layers,
+                    found.stub_layer(),
                     core::ObstacleKind::Copper,
                     net,
                     format!("pair stub {}{}", link + 1, ["a", "b"][end]),
@@ -400,7 +445,7 @@ impl LinkBuild {
             self.stub_ends[end][polarity] = at;
             let run = core::Terminal {
                 anchor: at,
-                layers: found.layers,
+                layers: found.stub_layer(),
                 pad: board.obstacles.len(),
                 contact: Some(core::Shape::Circle {
                     center: at,
@@ -416,7 +461,7 @@ impl LinkBuild {
                     end: add(at, reach),
                     radius: pair.width / 2.0,
                 },
-                found.layers,
+                found.stub_layer(),
                 core::ObstacleKind::Copper,
                 net,
                 format!("pair run {}{}", link + 1, ["a", "b"][end]),

@@ -5,6 +5,12 @@
 
 use super::*;
 
+mod stored_zones;
+pub use stored_zones::{
+    KiCadStoredZoneFills, KiCadStoredZoneLayer, copper_zone_definitions,
+    inspect_kicad_stored_zone_fills, stored_zone_fills,
+};
+
 /// Cheap structural measurements read directly from a KiCad board. These are
 /// suitable for benchmark provenance and cold-input checks. The length is the
 /// sum of stored straight segments, not canonical physical-copper union.
@@ -99,6 +105,49 @@ pub struct KiCadConnectionSummary {
     /// Omitted when identical to geometric centers, including historical journals.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub electrical_terminal_count: Option<usize>,
+}
+
+/// Top-level routed copper stored in a KiCad board. Length sums straight and
+/// circular track centrelines and counts each saved item once. Via barrels,
+/// pads, zones and copper graphics have no track-centreline length here.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct KiCadSavedCopper {
+    pub track_length_mm: f64,
+    pub segments: usize,
+    pub arcs: usize,
+    pub vias: usize,
+}
+
+pub fn saved_copper(pcb: &Expr) -> Result<KiCadSavedCopper, String> {
+    let mut copper = KiCadSavedCopper::default();
+    for item in pcb.children() {
+        match item.head() {
+            Some("segment") => {
+                let [x, y] = form_xy(item, "start")?;
+                let [to_x, to_y] = form_xy(item, "end")?;
+                copper.track_length_mm += (to_x - x).hypot(to_y - y);
+                copper.segments += 1;
+            }
+            Some("arc") => {
+                copper.track_length_mm += track_arc_length(item)?;
+                copper.arcs += 1;
+            }
+            Some("via") => copper.vias += 1,
+            _ => {}
+        }
+    }
+    Ok(copper)
+}
+
+pub fn inspect_kicad_saved_copper(path: &Path) -> Result<KiCadSavedCopper, String> {
+    let source = fs::read_to_string(path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    let pcb =
+        parse(&source).map_err(|error| format!("failed to parse {}: {error}", path.display()))?;
+    if pcb.head() != Some("kicad_pcb") {
+        return Err(format!("{} is not a kicad_pcb document", path.display()));
+    }
+    saved_copper(&pcb)
 }
 
 pub fn inspect_kicad_board(path: &Path) -> Result<KiCadBoardStatistics, String> {
@@ -441,7 +490,7 @@ fn physical_copper_statistics(
                 .or_else(|| form_atom(zone, "layer", 1))
                 .ok_or_else(|| "filled zone polygon has no layer".to_string())?
                 .to_string();
-            let area = polygon_area(polygon)?;
+            let area = filled_polygon_area(polygon)?;
             filled_zone_area_mm2 += area;
             layers.entry(layer).or_default().filled_zone_area_mm2 += area;
         }
@@ -613,50 +662,45 @@ fn via_spanned_layers(item: &Expr, copper_layers: &[String]) -> Result<Vec<Strin
         .collect()
 }
 
-fn track_arc_length(item: &Expr) -> Result<f64, String> {
+/// Circular centerline length of one serialized KiCad track arc.
+pub fn track_arc_length(item: &Expr) -> Result<f64, String> {
     let start = form_xy(item, "start")?;
-    let middle = form_xy(item, "mid")?;
-    let end = form_xy(item, "end")?;
-    let denominator = 2.0
-        * (start[0] * (middle[1] - end[1])
-            + middle[0] * (end[1] - start[1])
-            + end[0] * (start[1] - middle[1]));
+    let relative = |[x, y]: [f64; 2]| [x - start[0], y - start[1]];
+    let middle = relative(form_xy(item, "mid")?);
+    let end = relative(form_xy(item, "end")?);
+    let cross = |a: [f64; 2], b: [f64; 2]| a[0] * b[1] - a[1] * b[0];
+    let denominator = 2.0 * cross(middle, end);
     if !denominator.is_finite() {
         return Err("track arc has non-finite points".into());
     }
     if denominator.abs() <= 1.0e-12 {
         // A degenerate arc (its three points on a line, as some boards
         // carry) is the straight track KiCad draws for it.
-        return Ok(distance_squared(start, middle).sqrt() + distance_squared(middle, end).sqrt());
+        return Ok(middle[0].hypot(middle[1]) + distance_squared(middle, end).sqrt());
     }
-    let start_norm = start[0] * start[0] + start[1] * start[1];
-    let middle_norm = middle[0] * middle[0] + middle[1] * middle[1];
-    let end_norm = end[0] * end[0] + end[1] * end[1];
+    let middle_norm = distance_squared(middle, [0.0, 0.0]);
+    let end_norm = distance_squared(end, [0.0, 0.0]);
     let center = [
-        (start_norm * (middle[1] - end[1])
-            + middle_norm * (end[1] - start[1])
-            + end_norm * (start[1] - middle[1]))
-            / denominator,
-        (start_norm * (end[0] - middle[0])
-            + middle_norm * (start[0] - end[0])
-            + end_norm * (middle[0] - start[0]))
-            / denominator,
+        (middle_norm * end[1] - end_norm * middle[1]) / denominator,
+        (end_norm * middle[0] - middle_norm * end[0]) / denominator,
     ];
-    let radius = distance_squared(start, center).sqrt();
+    let radius = center[0].hypot(center[1]);
     if !radius.is_finite() || radius <= 0.0 {
         return Err("arc has invalid radius".into());
     }
-    let angle = |left: [f64; 2], right: [f64; 2]| {
-        let left = [left[0] - center[0], left[1] - center[1]];
-        let right = [right[0] - center[0], right[1] - center[1]];
-        ((left[0] * right[0] + left[1] * right[1]) / (radius * radius))
-            .clamp(-1.0, 1.0)
-            .acos()
-    };
-    Ok(radius * (angle(start, middle) + angle(middle, end)))
+    let start_radius = [-center[0], -center[1]];
+    let end_radius = [end[0] - center[0], end[1] - center[1]];
+    let dot = start_radius[0] * end_radius[0] + start_radius[1] * end_radius[1];
+    // The three points' turn determines which arc from start to end
+    // passes through the stored mid, including sweeps beyond 180°.
+    let sweep = (cross(start_radius, end_radius) * denominator.signum())
+        .atan2(dot)
+        .rem_euclid(std::f64::consts::TAU);
+    Ok(radius * sweep)
 }
 
-fn polygon_area(polygon: &Expr) -> Result<f64, String> {
+/// Shoelace area of one stored zone fill contour in square millimetres.
+pub fn filled_polygon_area(polygon: &Expr) -> Result<f64, String> {
     if polygon.child("pts").is_none() {
         return Err("filled polygon has no pts".into());
     }
@@ -962,6 +1006,25 @@ mod tests {
             ]
         );
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn saved_copper_counts_exported_items_and_circular_arc_length() {
+        let pcb = parse(
+            r#"(kicad_pcb
+                (segment (start 0 0) (end 3 4))
+                (segment (start 0 0) (end 3 4))
+                (arc (start 100001 200000) (mid 99999 200000) (end 100000 200001))
+                (via (at 3 4))
+                (via blind (at 2 2))
+                (footprint "test" (pad "1" thru_hole circle))
+                (zone (filled_polygon))
+                (gr_arc (start 0 0) (mid 1 1) (end 2 2) (layer "F.Cu")))"#,
+        )
+        .unwrap();
+        let copper = saved_copper(&pcb).unwrap();
+        assert_eq!((copper.segments, copper.arcs, copper.vias), (2, 1, 2));
+        assert!((copper.track_length_mm - (10.0 + 1.5 * std::f64::consts::PI)).abs() < 1.0e-9);
     }
 
     #[test]

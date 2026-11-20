@@ -98,9 +98,16 @@ impl Builder {
             .transpose()?;
         // A positive pad or footprint override replaces the net class's
         // clearance in KiCad, also when smaller.
-        let clearance_override =
-            Some(local_clearance::pad_clearance(pad, item)?).filter(|value| *value > 0.0);
-        let mut clearance = 0.0;
+        let scoped_floor = ctx
+            .config
+            .footprint_pad_clearance
+            .get(&footprint.reference)
+            .copied()
+            .unwrap_or(0.0);
+        let clearance_override = Some(local_clearance::pad_clearance(pad, item)?)
+            .filter(|value| *value > 0.0)
+            .map(|value| value.max(scoped_floor));
+        let mut clearance = scoped_floor;
         if net.is_none() {
             // A pad the router never connects (single-pin net, unconnected
             // pin, no net) still keeps its net class's clearance in KiCad's
@@ -109,7 +116,7 @@ impl Builder {
                 .and_then(|name| ctx.config.connection_rules.get(name))
                 .or(ctx.config.default_rules.as_ref());
             if let Some(rules) = rules {
-                clearance = rules.clearance_mm;
+                clearance = clearance.max(rules.clearance_mm);
             }
         }
         let pad = Pad {

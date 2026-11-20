@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "move_all": true,
+  "front": [
+    "H1",
+    "H2",
+    "H3",
+    "H4",
+    "J1",
+    "J2",
+    "J3",
+    "J4",
+    "J5",
+    "J6",
+    "U1"
+  ],
+  "back": [
+    "SW1",
+    "SW2"
+  ],
+  "place": [
+    {
+      "part": "H1",
+      "origin": "absolute",
+      "angle": 0.0,
+      "x": 119.5,
+      "y": 93.5
+    },
+    {
+      "part": "H2",
+      "origin": "absolute",
+      "angle": 0.0,
+      "x": 177.5,
+      "y": 93.5
+    },
+    {
+      "part": "H3",
+      "origin": "absolute",
+      "angle": 0.0,
+      "x": 119.5,
+      "y": 116.5
+    },
+    {
+      "part": "H4",
+      "origin": "absolute",
+      "angle": 0.0,
+      "x": 177.5,
+      "y": 116.5
+    },
+    {
+      "part": "J1",
+      "origin": "absolute",
+      "angle": 90.0,
+      "x": 124.375,
+      "y": 94.775
+    },
+    {
+      "part": "J2",
+      "origin": "absolute",
+      "angle": 0.0,
+      "x": 128.4,
+      "y": 114.35
+    },
+    {
+      "part": "J3",
+      "origin": "absolute",
+      "angle": 0.0,
+      "x": 156.5,
+      "y": 117.75
+    },
+    {
+      "part": "J4",
+      "origin": "absolute",
+      "angle": 0.0,
+      "x": 169.0,
+      "y": 117.75
+    },
+    {
+      "part": "J5",
+      "origin": "absolute",
+      "angle": 0.0,
+      "x": 144.0,
+      "y": 117.75
+    },
+    {
+      "part": "J6",
+      "origin": "absolute",
+      "angle": -90.0,
+      "x": 118.52,
+      "y": 102.55
+    },
+    {
+      "part": "SW1",
+      "origin": "absolute",
+      "angle": 0.0,
+      "x": 162.4,
+      "y": 101.15
+    },
+    {
+      "part": "SW2",
+      "origin": "absolute",
+      "angle": 0.0,
+      "x": 162.4,
+      "y": 104.55
+    }
+  ]
+}

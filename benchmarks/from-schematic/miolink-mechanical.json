@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "move_all": true,
+  "front": [
+    "J2",
+    "J3",
+    "J4",
+    "SW1"
+  ],
+  "back": [],
+  "place": [
+    {
+      "part": "J2",
+      "origin": "absolute",
+      "x": 169.5,
+      "y": 107.4,
+      "angle": 90.0
+    },
+    {
+      "part": "J3",
+      "origin": "absolute",
+      "x": 179.0025,
+      "y": 100.925,
+      "angle": 0.0
+    },
+    {
+      "part": "J4",
+      "origin": "absolute",
+      "x": 179.0025,
+      "y": 82.92,
+      "angle": 0.0
+    },
+    {
+      "part": "SW1",
+      "origin": "absolute",
+      "x": 155.6,
+      "y": 95.6,
+      "angle": 180.0
+    }
+  ],
+  "add": [
+    {
+      "part": "G1",
+      "from_board": true
+    },
+    {
+      "part": "REF1",
+      "from_board": true
+    },
+    {
+      "part": "REF2",
+      "from_board": true
+    },
+    {
+      "part": "REF3",
+      "from_board": true
+    },
+    {
+      "part": "REF4",
+      "from_board": true
+    },
+    {
+      "part": "REF5",
+      "from_board": true
+    }
+  ]
+}

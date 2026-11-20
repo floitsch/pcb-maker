@@ -1,10 +1,11 @@
 # What makes a layout good: computable measures
 
-pcb-maker's boards beat the designers' on track length and via count, but
-those measure economy, not quality. This page collects the objective,
-computable measures we use instead: to report them for any KiCad board, to
-compare our boards with human ones, and to turn into placer and router
-terms. Survey of 2026-09-29; sources are linked per row.
+Track length and via count measure routing economy. Results vary by design.
+For example, the connected Caribou diagnostic used 313 vias and 10,250 mm
+of track. The designer used 1,619 vias and 4,652 mm of track, with
+substantially more copper in zones. This page describes measures for
+comparing layouts and for guiding the placer and router.
+[Caribou copper comparison](benchmarks.md#caribou-copper-distribution)
 
 ## Ground rules
 
@@ -128,6 +129,41 @@ quality.py reports them beside the other measures, designer-numbers.json
 holds the designer's, and compare.py's normalised line gives our bends
 per connection over the designer's and our stair-steps and crossings
 less the designer's (medians over the boards).
+
+## Comparing pours against a reference
+
+`route-kicad-board` and `layout-kicad-board` add `designer_pours` to the
+verdict when given `--reference <project-dir>`. Use the same comparison
+on an existing result without routing it again.
+
+```sh
+pcb-maker score-kicad-board result myboard --reference designer-project
+```
+
+Each entry identifies a net with the same footprint references and pad
+numbers on both boards. It gives the area of the reference's stored fill
+on each layer, the reference and candidate track lengths and via counts,
+and the candidate's track widths and lengths by layer. The report includes
+nets with reference fill and no candidate copper zone. A zone present on
+the candidate is eligible for refill, regardless of its stored fill state.
+The comparison describes copper geometry and leaves the native verdict
+unchanged.
+
+Use `--stored` for a quick read of a saved board while retaining the
+ordinary file-based quality measurements and optional reference comparison.
+
+```sh
+pcb-maker score-kicad-board result myboard --stored --reference designer-project
+```
+
+This mode reads the PCB directly and skips the routing lattice. Its
+`stored_zone_fills` field records the provenance `pcb_file_filled_polygons`
+and groups copper zones by exact net name and layer. Each row gives the
+number of zone definitions, the number of stored polygons, and their summed
+area. An unfilled zone has a definition and zero polygons. Keepouts and
+teardrops are excluded. Legacy segment fills and any polygons whose net,
+layer or contour could not be resolved have separate counts. The default
+command retains the router's model-based `pours` field.
 
 ## Validation
 

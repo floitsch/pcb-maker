@@ -15,6 +15,7 @@ pub fn route_kicad_board(
     output_directory: &Path,
     config: &KiCadBoardRouterConfig,
 ) -> Result<KiCadBoardRouterResult, String> {
+    check_route_output(output_directory)?;
     let with_deadline;
     let config = match (config.deadline, config.deadline_seconds) {
         (None, Some(seconds)) => {
@@ -32,23 +33,30 @@ pub fn route_kicad_board(
         }
         _ => config,
     };
-    // Requested net classes set their nets' rules.
-    let with_classes;
-    let config = if config.net_classes.is_empty() {
-        config
-    } else {
-        let board = source_directory.join(format!("{board_id}.kicad_pcb"));
-        let text = fs::read_to_string(&board)
-            .map_err(|error| format!("failed to read {}: {error}", board.display()))?;
-        with_classes = crate::net_classes::with_net_classes(
-            config,
-            &parse(&text).map_err(crate::exit::input_error)?,
-        )
-        .map_err(crate::exit::input_error)?;
-        &with_classes
-    };
+    let board_settings = config.with_board_settings(source_directory, board_id)?;
+    let config = board_settings.as_ref();
+    let row_escape = !config.prepared_row_escape_pads.is_empty();
+    if row_escape
+        && (config.skip_native_verification
+            || config.tuning.engine.as_deref() == Some("topological")
+            || config.pin_swaps.is_some()
+            || !config.retained_pad_tips.is_empty())
+    {
+        return Err(crate::exit::input_error(
+            "prepared_row_escape_pads needs the detailed native-verified router, without pin swaps or existing retained pad tips",
+        ));
+    }
     // The minimum connection width floors every width, also those of a
     // configuration file or of requested net classes.
+    if !config.retained_pad_tips.is_empty()
+        && (config.existing_tracks == KiCadExistingTracks::Strip
+            || config.skip_native_verification
+            || config.tuning.engine.as_deref() == Some("topological"))
+    {
+        return Err(crate::exit::input_error(
+            "retained_pad_tips needs kept copper, the detailed router and native verification",
+        ));
+    }
     let floored;
     let config = if config.width_floor() > 0.0 {
         let mut copy = config.clone();
@@ -87,7 +95,8 @@ pub fn route_kicad_board(
                 .join("; ")
         );
     }
-    let prepared = !planned.is_empty() || !config.net_classes.is_empty() || strip;
+    let prepared = !planned.is_empty() || !config.net_classes.is_empty() || strip || row_escape;
+    let mut prepared_escape_work = 0.0;
     let source_directory = if !prepared {
         source_directory
     } else {
@@ -106,6 +115,32 @@ pub fn route_kicad_board(
             );
         }
         add_pour_zones(&mut pcb, &planned).map_err(crate::exit::input_error)?;
+        if row_escape {
+            if count_tracks(&pcb) != [0, 0, 0] {
+                return Err(crate::exit::input_error(
+                    "prepared_row_escape_pads needs a copper-free placement or --strip",
+                ));
+            }
+            let started = std::time::Instant::now();
+            let planned = crate::open_repair::plan_row_escapes(
+                &pcb,
+                config,
+                &config.prepared_row_escape_pads,
+            )
+            .map_err(crate::exit::input_error)?;
+            let Expr::List(items) = &mut pcb else {
+                return Err("prepared row escape PCB is not a board list".into());
+            };
+            for (escape, segment) in planned {
+                eprintln!(
+                    "prepared row escape: {} on {} at {:.3} mm width",
+                    escape.pad, escape.layer, escape.width_mm,
+                );
+                items.push(segment);
+            }
+            prepared_escape_work =
+                started.elapsed().as_secs_f64() * core::router::reference_time_scale();
+        }
         fs::write(&board, format!("{}\n", encode(&pcb)))
             .map_err(|error| format!("failed to write {}: {error}", board.display()))?;
         if !config.net_classes.is_empty() {
@@ -117,6 +152,17 @@ pub fn route_kicad_board(
             )?;
         }
         poured_directory.as_path()
+    };
+    let with_row_escapes;
+    let config = if row_escape {
+        with_row_escapes = KiCadBoardRouterConfig {
+            existing_tracks: KiCadExistingTracks::Keep,
+            retained_pad_tips: config.prepared_row_escape_pads.clone(),
+            ..config.clone()
+        };
+        &with_row_escapes
+    } else {
+        config
     };
     let swapped_directory = output_directory.with_extension("swapped");
     let (source_directory, pin_swaps) = match &config.pin_swaps {
@@ -169,6 +215,12 @@ pub fn route_kicad_board(
             route_kicad_board_once(source_directory, board_id, output_directory, config, false)?;
         report.pin_swaps = pin_swaps;
         report.pours = "topological (pour nets as tracks)".into();
+        if let Some(excluded) = KiCadDiffPairs::exclusions_without_plan(
+            config,
+            "the topological router does not plan differential pairs",
+        ) {
+            report.diff_pairs = Some(excluded);
+        }
         return Ok(report);
     }
     let source_board = source_directory.join(format!("{board_id}.kicad_pcb"));
@@ -177,6 +229,62 @@ pub fn route_kicad_board(
     crate::mem_profile::phase("parse");
     let parsed = crate::canonical_order::parse_board(&source)?;
     crate::mem_profile::phase("parsed");
+    let mut input_checks = 0;
+    // The provisional reroute's input has already been checked by its
+    // caller. Its few generated launch tracks are normal retained copper,
+    // with no authored routes for the protected-plane comparison.
+    let mut native_input =
+        if !prepared && pin_swaps.is_none() && config.provisional_native_check_limit.is_none() {
+            super::native_kept::probe_input(
+                &parsed,
+                &source,
+                source_directory,
+                board_id,
+                output_directory,
+                config,
+                &mut input_checks,
+            )
+        } else {
+            None
+        };
+    if native_input.as_ref().is_some_and(|input| input.complete()) {
+        let input = native_input.take().expect("complete native input");
+        match input.original_result(&parsed, output_directory, config, &mut input_checks, None) {
+            Ok(mut unchanged) => {
+                if let Some(excluded) = KiCadDiffPairs::exclusions_without_plan(
+                    config,
+                    "existing copper was kept without routing",
+                ) {
+                    unchanged.diff_pairs = Some(excluded);
+                }
+                input.publish_original(output_directory, &mut unchanged, None)?;
+                eprintln!(
+                    "existing copper: kept the input PCB byte for byte after KiCad's refilled check"
+                );
+                return Ok(unchanged);
+            }
+            Err(error) => eprintln!("existing copper: could not publish unchanged input ({error})"),
+        }
+    }
+    let protected_config;
+    let config = if let Some(input) = &native_input {
+        protected_config = KiCadBoardRouterConfig {
+            native_closed_planes: input.protected_planes.clone(),
+            ..config.clone()
+        };
+        eprintln!(
+            "existing copper: KiCad found connected plane nets on {}",
+            input
+                .protected_planes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        &protected_config
+    } else {
+        config
+    };
     let layer_table = LayerTable::from_pcb(&parsed)?;
     let pour_nets: Vec<String> = pours(&parsed, &layer_table)?
         .into_iter()
@@ -215,7 +323,7 @@ pub fn route_kicad_board(
         );
     }
     let kept_tracks = count_tracks(&parsed);
-    if kept_tracks != [0, 0, 0] {
+    if kept_tracks != [0, 0, 0] || !config.retained_pad_tips.is_empty() {
         eprintln!(
             "existing tracks: {} segments, {} arcs and {} vias kept; the router routes what they leave open (--strip routes from nothing)",
             kept_tracks[0], kept_tracks[1], kept_tracks[2]
@@ -229,6 +337,9 @@ pub fn route_kicad_board(
         source_directory,
         board_id,
         memory_mb: config.memory_mb,
+        shared_reuse_check: config.route_reuse_preserve_input_layers,
+        capture_reuse_refill: config.route_reuse_capture_refill,
+        attempted_partial_reuse_check: std::sync::atomic::AtomicBool::new(false),
     };
     // The ladder publishes each best attempt into a staging directory
     // beside the output, which becomes the output only when the run is done
@@ -237,10 +348,7 @@ pub fn route_kicad_board(
     // so that its best attempt so far cannot pass for a result (review
     // 2026-10-21, H1: three such rows had `exit: -9` and a result).
     let final_directory = output_directory;
-    let staging = output_directory.with_extension("partial");
-    if staging.exists() {
-        fs::remove_dir_all(&staging).map_err(|error| error.to_string())?;
-    }
+    let staging = temporary_next_to(output_directory);
     let output_directory = staging.as_path();
     let mut ladder = Ladder::new(
         config,
@@ -251,6 +359,9 @@ pub fn route_kicad_board(
         memory_total_mb(),
     );
     ladder.panic_at = TestPanic::from_env();
+    ladder.work += prepared_escape_work;
+    ladder.charged.lowering_seconds += prepared_escape_work;
+    ladder.charge_checks(input_checks);
     ladder.run(&runner)?;
     let Some((final_open, mut result)) = ladder.best.take() else {
         return Err(if ladder.failed.is_empty() {
@@ -284,13 +395,14 @@ pub fn route_kicad_board(
     }
     // Why the pairs were coupled or not (route mode reports it either way).
     let choice = config.diff_pairs_choice();
-    if config.diff_pairs_by_need || choice.on {
+    if config.diff_pairs_by_need || choice.on || !config.diff_pair_exclusions.is_empty() {
         let report = result
             .diff_pairs
             .get_or_insert_with(KiCadDiffPairs::default);
         report.on = choice.on;
         report.default = choice.default.to_string();
         report.reason = choice.reason;
+        report.record_exclusions(config);
         eprintln!(
             "diff pairs: {} ({}: {})",
             if report.on { "on" } else { "off" },
@@ -337,14 +449,73 @@ pub fn route_kicad_board(
     // R14.1, U2.42, U2.43 and U11.61 on In1.Cu and In2.Cu, four starved
     // thermals to none, nothing else changed).
     if config.solid_starved_thermals != Some(false) && !config.skip_native_verification {
-        let checks = solidify_starved_thermals(&mut result, output_directory, board_id)?;
+        let rounds = config
+            .provisional_native_check_limit
+            .map_or(SOLID_ROUNDS, |limit| {
+                SOLID_ROUNDS.min(limit.saturating_sub(ladder.checks_charged.checks))
+            });
+        let checks =
+            solidify_starved_thermals_in_rounds(&mut result, output_directory, board_id, rounds)?;
         ladder.charge_checks(checks);
     }
     // The neck repair improves a checked board; past the deadline it is
     // skipped (up to six more KiCad checks, uncounted as work).
     if result.native.is_some() && !ladder.past_deadline() {
-        let checks = repair_necks(&mut result, output_directory, board_id, config, None)?;
+        let remaining = config
+            .provisional_native_check_limit
+            .map(|limit| limit.saturating_sub(ladder.checks_charged.checks));
+        let checks = repair_necks(&mut result, output_directory, board_id, config, remaining)?;
         ladder.charge_checks(checks);
+    }
+    if let Some(input) = &native_input {
+        let before = input_checks;
+        let started = std::time::Instant::now();
+        let trial = input.confirm_trial(
+            &parsed,
+            output_directory,
+            final_directory,
+            config,
+            &mut input_checks,
+        );
+        let verification_seconds = started.elapsed().as_secs_f64();
+        match trial {
+            Ok(evidence) => {
+                result.native_verification_seconds += input.check_seconds + verification_seconds;
+                result.input_connectivity = Some(evidence);
+            }
+            Err(rejection) => {
+                eprintln!(
+                    "existing copper: kept the input after protected-plane trial ({})",
+                    rejection.reason
+                );
+                let mut original = input.original_result(
+                    &parsed,
+                    final_directory,
+                    config,
+                    &mut input_checks,
+                    Some(rejection),
+                )?;
+                ladder.charge_checks(input_checks - before);
+                original.work_seconds = ladder.work;
+                original.kicad_checks_charged = ladder.checks_charged.checks;
+                original.kicad_check_work_seconds = ladder.checks_charged.work();
+                original.attempts = ladder.attempt_ledger();
+                original.work_bound_seconds = ladder.work_bound;
+                original.native_verification_seconds +=
+                    result.native_verification_seconds + verification_seconds;
+                original.wall_accounting = Some(KiCadWallAccounting::now(
+                    ladder.started.elapsed().as_secs_f64(),
+                    ladder.work,
+                    ladder.charged,
+                ));
+                let published =
+                    input.publish_original(final_directory, &mut original, Some(output_directory));
+                let _ = fs::remove_dir_all(output_directory);
+                published?;
+                return Ok(original);
+            }
+        }
+        ladder.charge_checks(input_checks - before);
     }
     result.cut = core::router::wall_cuts();
     result.work_seconds = ladder.work;
@@ -408,18 +579,109 @@ pub fn route_kicad_board(
             .map_err(|error| error.to_string())?
             .as_bytes(),
     )?;
-    // The finished project takes the output's place in one rename.
-    if final_directory.exists() {
-        fs::remove_dir_all(final_directory).map_err(|error| error.to_string())?;
+    let published = publish_new_route(output_directory, final_directory);
+    if published.is_err() {
+        let _ = fs::remove_dir_all(output_directory);
     }
-    fs::rename(output_directory, final_directory).map_err(|error| {
-        format!(
-            "failed to move {} to {}: {error}",
-            output_directory.display(),
-            final_directory.display()
-        )
-    })?;
+    published?;
     Ok(result)
+}
+
+fn occupied_route_output(output: &Path) -> String {
+    crate::exit::input_error(format!(
+        "output directory {} already exists; give a new one",
+        output.display()
+    ))
+}
+
+fn check_route_output(output: &Path) -> Result<(), String> {
+    match fs::symlink_metadata(output) {
+        Ok(_) => Err(occupied_route_output(output)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("failed to inspect {}: {error}", output.display())),
+    }
+}
+
+pub(super) fn publish_new_route(stage: &Path, output: &Path) -> Result<(), String> {
+    // Reserve the destination with one exclusive mkdir. If another writer
+    // already published (or made a reservation), neither route touches it.
+    fs::create_dir(output).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::AlreadyExists {
+            occupied_route_output(output)
+        } else {
+            format!("failed to reserve {}: {error}", output.display())
+        }
+    })?;
+    if let Err(error) = fs::rename(stage, output) {
+        let _ = fs::remove_dir(output);
+        return Err(format!("failed to publish {}: {error}", output.display()));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod output_tests {
+    use super::*;
+
+    #[test]
+    fn routing_refuses_an_existing_directory_even_when_it_is_the_source() {
+        let root = temporary_next_to(&std::env::temp_dir().join("pcb-maker-route-output"));
+        let source = root.join("source");
+        let occupied = root.join("occupied");
+        for directory in [&source, &occupied] {
+            fs::create_dir_all(directory).unwrap();
+            fs::write(directory.join("marker"), directory.display().to_string()).unwrap();
+        }
+        for directory in [&source, &occupied] {
+            let error =
+                route_kicad_board(&source, "board", directory, &Default::default()).unwrap_err();
+            assert!(crate::exit::is_input_error(&error), "{error}");
+            assert!(error.contains("already exists"));
+            assert_eq!(
+                fs::read_to_string(directory.join("marker")).unwrap(),
+                directory.display().to_string()
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn concurrent_route_publications_have_one_winner() {
+        let root = temporary_next_to(&std::env::temp_dir().join("pcb-maker-route-race"));
+        let stages = [root.join("stage-a"), root.join("stage-b")];
+        let output = root.join("output");
+        for stage in &stages {
+            fs::create_dir_all(stage).unwrap();
+            fs::write(stage.join("marker"), stage.display().to_string()).unwrap();
+        }
+        let barrier = std::sync::Barrier::new(2);
+        let results = std::thread::scope(|scope| {
+            stages
+                .each_ref()
+                .map(|stage| {
+                    let barrier = &barrier;
+                    let output = &output;
+                    scope.spawn(move || {
+                        barrier.wait();
+                        publish_new_route(stage, output)
+                    })
+                })
+                .map(|run| run.join().unwrap())
+        });
+        let winner = results.iter().position(Result::is_ok).unwrap();
+        assert!(
+            results[1 - winner]
+                .as_ref()
+                .unwrap_err()
+                .contains("already exists")
+        );
+        assert_eq!(
+            fs::read_to_string(output.join("marker")).unwrap(),
+            stages[winner].display().to_string()
+        );
+        assert!(stages[1 - winner].join("marker").is_file());
+        fs::remove_dir_all(root).unwrap();
+    }
 }
 
 /// The ladder's runner on a KiCad board (`LadderRunner`): the rungs'
@@ -434,6 +696,9 @@ struct KiCadRunner<'a> {
     source_directory: &'a Path,
     board_id: &'a str,
     memory_mb: Option<f64>,
+    shared_reuse_check: bool,
+    capture_reuse_refill: bool,
+    attempted_partial_reuse_check: std::sync::atomic::AtomicBool,
     /// The work of one lowering of `parsed` (`lowering_work`).
     lowering_work: f64,
 }
@@ -451,7 +716,8 @@ impl LadderRunner for KiCadRunner<'_> {
     ) -> Result<core::Board, String> {
         let mut board = lower(self.parsed, attempt, connect)?.board;
         // The board's own tracks and vias: what they join is connected.
-        let kept = keep_existing_copper(&mut board, false);
+        let kept = super::kept::keep_for_route(&mut board, self.parsed, attempt);
+        super::native_kept::protect_planes(&mut board, attempt);
         let _ = self.kept.set(kept);
         if attempt.diff_pairs_on() {
             plan_pairs(&mut board, attempt);
@@ -537,6 +803,7 @@ impl LadderRunner for KiCadRunner<'_> {
     fn work(&self, router: &core::router::Router) -> RouterWork {
         RouterWork {
             expansions: router.expansions(),
+            first_iteration_expansions: router.first_iteration_expansions(),
             pour: router.pour_work(),
             build: router.build_work(),
             shared: router.shared_build(),
@@ -621,8 +888,24 @@ impl LadderRunner for KiCadRunner<'_> {
         )
     }
 
-    fn check(&self, result: &mut KiCadBoardRouterResult, directory: &Path) -> Result<(), String> {
-        check_attempt(result, directory, self.board_id)
+    fn check(
+        &self,
+        result: &mut KiCadBoardRouterResult,
+        directory: &Path,
+    ) -> Result<usize, String> {
+        let partial = self.shared_reuse_check
+            && router_open(result) == 0
+            && !self
+                .attempted_partial_reuse_check
+                .swap(true, std::sync::atomic::Ordering::Relaxed);
+        check_attempt(
+            result,
+            directory,
+            self.board_id,
+            self.shared_reuse_check,
+            partial,
+            partial && self.capture_reuse_refill && result.routable_connections == 0,
+        )
     }
 
     fn starved(&self, directory: &Path) -> usize {
@@ -852,26 +1135,25 @@ pub fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     router_config
 }
 
-/// The router's check of the emitted copper (`core::verify`: the classes'
-/// clearances), and where the custom rules give some net widths per layer
-/// the rules beyond the classes too: each track at least its layer's
-/// minimum and the pair clearances per layer (`verify_with_rules` on the
-/// router's split classes).
+/// The final model check of the emitted copper keeps scoped clearances
+/// and layer width floors. Copper between tracks of the two conductors of
+/// a kept pair uses their gap for the base clearance.
 pub(crate) fn check_copper(
     board: &core::Board,
     routes: &[core::NetRoute],
     config: &KiCadBoardRouterConfig,
 ) -> Vec<core::Violation> {
+    let track_gaps = &board.attachment.verified_pair_track_gaps;
     match config
         .net_rules
         .as_deref()
-        .filter(|rules| !rules.layer_widths.is_empty())
+        .filter(|rules| !rules.layer_widths.is_empty() || !rules.clearances.is_empty())
     {
         Some(rules) => {
             let (split, class_rules) = core::rules::ClassRules::split(board, rules);
-            core::verify::verify_with_rules(&split, routes, Some(&class_rules))
+            core::verify::verify_with_track_gaps(&split, routes, Some(&class_rules), track_gaps)
         }
-        None => core::verify(board, routes),
+        None => core::verify::verify_with_track_gaps(board, routes, None, track_gaps),
     }
 }
 
@@ -889,6 +1171,7 @@ pub fn finish_routed_board(
     output_directory: &Path,
     config: &KiCadBoardRouterConfig,
     timings: [f64; 2],
+    capture_layout_refill: bool,
 ) -> Result<KiCadBoardRouterResult, String> {
     let verify_started = std::time::Instant::now();
     let violations = check_copper(board, &result.routes, config);
@@ -904,10 +1187,18 @@ pub fn finish_routed_board(
     fs::write(&output_board, format!("{}\n", encode(pcb)))
         .map_err(|error| format!("failed to write {}: {error}", output_board.display()))?;
     let native_started = std::time::Instant::now();
-    let native = if config.skip_native_verification {
-        None
+    let (native, checked_layout_refill, checks) = if config.skip_native_verification {
+        (None, None, 0)
+    } else if capture_layout_refill {
+        let (report, refill, checks) =
+            verification::verify_layout_rung(output_directory, board_id)?;
+        (Some(report), refill, checks)
     } else {
-        Some(verify_materialized_rung(output_directory, board_id)?)
+        (
+            Some(verify_materialized_rung(output_directory, board_id)?),
+            None,
+            0,
+        )
     };
     let native_verification_seconds = native_started.elapsed().as_secs_f64();
     let drc_cache = crate::drc_cache_counts();
@@ -928,11 +1219,23 @@ pub fn finish_routed_board(
     let routable: Vec<_> = nets.iter().filter(|net| net.terminals >= 2).collect();
     let report = KiCadBoardRouterResult {
         board_id: board_id.into(),
+        route_reuse: None,
+        closed_reuse_drc: None,
+        checked_layout_refill,
+        generated_pad_leaf_ids: crate::dangling_repair::generated_pad_leaf_ids(
+            pcb,
+            board,
+            result,
+            layer_names,
+            &source_directory.join(format!("{board_id}.kicad_pcb")),
+        ),
         routable_connections: routable.len(),
         routed_connections: routable.iter().filter(|net| net.status == "routed").count(),
         unconnected_terminals: nets.iter().map(|net| net.unconnected_terminals).sum(),
         vias: nets.iter().map(|net| net.vias).sum(),
         length_mm: nets.iter().map(|net| net.length_mm).sum(),
+        saved_copper: Some(pcb_kicad_file::board_stats::saved_copper(pcb)?),
+        input_connectivity: None,
         grid_pitch_mm: result.grid.pitch,
         grid_nodes: [result.grid.nx, result.grid.ny],
         iterations: result.iterations,
@@ -954,6 +1257,10 @@ pub fn finish_routed_board(
             })
             .collect(),
         native,
+        native_candidate_errors: None,
+        model_precedes_additive_repair: false,
+        model_precedes_generated_pad_via_repair: false,
+        model_precedes_body_near_grid_retry: false,
         pours: String::new(),
         nets,
         congestion: result.congestion.clone(),
@@ -966,7 +1273,7 @@ pub fn finish_routed_board(
         cut: Vec::new(),
         work_seconds: 0.0,
         kicad_check_work_seconds: 0.0,
-        kicad_checks_charged: 0,
+        kicad_checks_charged: checks,
         skipped: Vec::new(),
         neck_repair: None,
         rules: KiCadRulesSummary::of(board, config),
@@ -1038,9 +1345,16 @@ pub fn repair_necks(
     if let Some(repair) =
         crate::necks::repair_connection_width(directory, board_id, config, max_checks)?
     {
-        fills = repair.kicad_fills;
+        fills = repair.kicad_fills + repair.round_contact_native_checks;
         if repair.kept {
-            result.native = Some(verify_materialized_rung(directory, board_id)?);
+            result.saved_copper = Some(pcb_kicad_file::board_stats::inspect_kicad_saved_copper(
+                &directory.join(format!("{board_id}.kicad_pcb")),
+            )?);
+            result.native = Some(if repair.round_contact.is_some() {
+                read_typed_json(&directory.join("verification.json"))?
+            } else {
+                verify_materialized_rung(directory, board_id)?
+            });
             result.diagnostics.starved_thermals = starved_thermal_diagnostics(directory);
         }
         result.neck_repair = Some(repair);
@@ -1372,7 +1686,16 @@ pub fn solidify_starved_thermals(
     output_directory: &Path,
     board_id: &str,
 ) -> Result<usize, String> {
-    if solid_pads_of_findings(&result.diagnostics.starved_thermals).is_empty() {
+    solidify_starved_thermals_in_rounds(result, output_directory, board_id, SOLID_ROUNDS)
+}
+
+fn solidify_starved_thermals_in_rounds(
+    result: &mut KiCadBoardRouterResult,
+    output_directory: &Path,
+    board_id: &str,
+    rounds: usize,
+) -> Result<usize, String> {
+    if rounds == 0 || solid_pads_of_findings(&result.diagnostics.starved_thermals).is_empty() {
         return Ok(0);
     }
     let board_path = output_directory.join(format!("{board_id}.kicad_pcb"));
@@ -1384,7 +1707,7 @@ pub fn solidify_starved_thermals(
         board_id,
         kept: Vec::new(),
     };
-    solid_rounds(result, &mut pcb, &mut files, SOLID_ROUNDS)
+    solid_rounds(result, &mut pcb, &mut files, rounds)
 }
 
 /// The solid step's rounds on `pcb`, the board `result` describes. Each

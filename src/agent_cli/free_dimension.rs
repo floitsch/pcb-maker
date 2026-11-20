@@ -445,13 +445,16 @@ pub(super) fn layout(run: FreeDimensionLayout) -> Result<KiCadRunStatus, Failure
             write_value(&config_path, &config).map_err(Failure::Internal)?;
             let layout_directory = directory.join("layout");
             let mut process = Command::new(&executable);
+            // Every size uses the outer layout's seed, including a CLI override.
             process
                 .arg("layout-kicad-board")
                 .arg(&input)
                 .arg(run.board_id)
                 .arg(&layout_directory)
                 .arg(&router_argument)
-                .arg(&config_path);
+                .arg(&config_path)
+                .arg("--placement-seed")
+                .arg(run.config.placer.tuning.seed.to_string());
             match (&reference, run.reference) {
                 (Some(moved), _) => {
                     let directory = moved

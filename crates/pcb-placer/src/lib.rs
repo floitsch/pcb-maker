@@ -36,6 +36,8 @@ pub struct Config {
     /// Passes of the wirelength-reducing local search on the legal
     /// placement (`legal::refine`), also after each relation repair.
     pub refine_passes: usize,
+    /// Move explicit pad-near sources closer after the grid placement.
+    pub refine_pad_near: bool,
     /// Halos shrink until bodies plus margins fit into this share of the
     /// free board area.
     pub maximum_utilization: f64,
@@ -119,6 +121,7 @@ impl Config {
             global: GlobalConfig::default(),
             anneal: anneal::AnnealConfig::default(),
             refine_passes: 8,
+            refine_pad_near: false,
             maximum_utilization: 0.6,
             overlap_far_side_pads: false,
             work_limit: None,
@@ -154,6 +157,8 @@ pub struct Placement {
     pub relaxation: Relaxation,
     /// The placement work done (see `work`).
     pub work: u64,
+    /// A wider grid search that seated the remaining parts of this placement.
+    pub sparse_legalization: Option<SparseLegalization>,
     /// The poses after each stage (the global placement's start, global,
     /// annealed, legal, final; under the race over skeletons the kept
     /// skeleton's before them, `skeleton_` and the stage), for the
@@ -179,6 +184,13 @@ pub struct Placement {
     /// (`PCB_PLACER_TRACE`: what walks a placement to its level, and what
     /// each level cost).
     pub walk: Vec<(usize, Vec<usize>, u64)>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct SparseLegalization {
+    pub seated: usize,
+    pub work: u64,
+    pub moved_others: usize,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -805,9 +817,99 @@ pub fn first_fitting_level(problem: &Problem, config: &Config) -> usize {
 /// has room, then the refinement of the best level's placement (the stages
 /// in `place/`).
 pub fn place(problem: &Problem, config: &Config) -> Placement {
+    place_with_panel_edges(problem, config, None)
+}
+
+/// A placement seed that computes joint module seats before arranging
+/// the other components. The held seats are private to this seed.
+pub fn place_with_module_seed(problem: &Problem, config: &Config) -> Placement {
+    if config
+        .work_limit
+        .is_some_and(|limit| limit < (3.0 * work_per_second()) as u64)
+    {
+        return place(problem, config);
+    }
+    let start = work();
+    let (levels, courtyard_level) = relaxation_levels(problem);
+    let relaxed = relax_level(
+        problem,
+        config,
+        courtyard_level,
+        courtyard_level,
+        levels[courtyard_level],
+    );
+    let mut poses = global::global_place(problem, &config.global).poses;
+    let mut held = problem
+        .components
+        .iter()
+        .enumerate()
+        .filter_map(|(part, component)| component.fixed.then_some(part))
+        .collect::<Vec<_>>();
+    let originally_held = held.len();
+    let stop = config.work_limit.map(|limit| start.saturating_add(limit));
+    legal::seat_pairs(&relaxed, &mut poses, &mut held, stop, 3.0);
+    let chosen = &held[originally_held..];
+    let mut settings = config.clone();
+    let planning = work() - start;
+    settings.work_limit = config
+        .work_limit
+        .map(|limit| limit.saturating_sub(planning));
+    if chosen.is_empty() {
+        let mut placement = place(problem, &settings);
+        placement.work += planning;
+        return placement;
+    }
+    let mut anchored = problem.clone();
+    for &part in chosen {
+        anchored.components[part].fixed = true;
+        anchored.poses[part] = poses[part];
+    }
+    let origins = chosen
+        .iter()
+        .map(|&part| {
+            let Pose {
+                position: [x, y],
+                angle,
+            } = poses[part];
+            format!(
+                "{} at ({x:.3}, {y:.3}, {angle:.1}°)",
+                problem.components[part].name
+            )
+        })
+        .collect::<Vec<_>>();
+    eprintln!(
+        "placer: seed {} uses jointly planned module seats: {}",
+        config.global.seed,
+        origins.join(", ")
+    );
+    settings.first_level = courtyard_level;
+    let mut placement = place(&anchored, &settings);
+    placement.illegal = legal::illegal_components(&relaxed, &placement.poses);
+    placement.wirelength_initial = problem.wirelength(&problem.poses);
+    placement.work = work() - start;
+    placement
+}
+
+/// Places the remainder of a single-piece panel after replication.
+/// `regions` names the indices and owners of inferred cell rectangles.
+/// Authored regions retain their ordinary hard semantics.
+pub fn place_panel_remainder(
+    problem: &Problem,
+    config: &Config,
+    regions: &[(usize, usize)],
+) -> Placement {
+    place_with_panel_edges(problem, config, Some(regions))
+}
+
+fn place_with_panel_edges(
+    problem: &Problem,
+    config: &Config,
+    regions: Option<&[(usize, usize)]>,
+) -> Placement {
     let fitted = place::prepare(problem, config);
     let wirelength_initial = fitted.wirelength_initial;
-    let placing = place::Placing::new(&fitted, config);
+    let mut placing = place::Placing::new(&fitted, config);
+    placing.panel_edge_regions = regions;
     // The passes check the budget inside too (a part without room
     // searched the whole board at every level: urchin on 80 x 40 mm took
     // 11, 10 and 8 s of a 10 s budget in its first level's passes).
@@ -990,6 +1092,7 @@ mod start_tests {
             tight_hollow: Vec::new(),
             hole_rings: Vec::new(),
             copper_graphics: Vec::new(),
+            unassigned_copper_graphics: Vec::new(),
             courtless: Vec::new(),
             slots: Vec::new(),
         }

@@ -5,6 +5,19 @@
 
 use super::*;
 
+type ScoreNativeCandidate =
+    dyn Fn(&serde_json::Value, &Path, Option<std::time::Instant>) -> (usize, usize) + Send + Sync;
+
+/// Score a fully checked rung against the caller's DRC scope and reference.
+#[derive(Clone)]
+pub struct KiCadNativeCandidateRanker(pub std::sync::Arc<ScoreNativeCandidate>);
+
+impl std::fmt::Debug for KiCadNativeCandidateRanker {
+    fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        output.write_str("KiCadNativeCandidateRanker")
+    }
+}
+
 /// The router settings: the keys an agent sets at the top level, the
 /// tuning of the machinery in `tuning` (docs/architecture.md, "Settings").
 /// A top-level key that moved into `tuning` is refused with where it lives
@@ -28,6 +41,31 @@ pub struct KiCadBoardRouterConfig {
     /// Geometry for connections without an explicit entry.
     #[serde(default)]
     pub default_rules: Option<KiCadConnectionRoutingRules>,
+    /// Resolved pad clearance floors from footprint reference rules.
+    #[serde(skip)]
+    pub footprint_pad_clearance: BTreeMap<String, f64>,
+    /// Authored plane nets proved closed on the existing input by KiCad.
+    #[serde(skip)]
+    pub native_closed_planes: BTreeSet<String>,
+    /// Optional in-process candidate scorer. Returns hard errors and any
+    /// additional native checks performed to establish the reference.
+    #[serde(skip)]
+    pub native_candidate_ranker: Option<KiCadNativeCandidateRanker>,
+    /// Winning literal footprint rules for routed tracks and vias at fixed pads.
+    #[serde(skip)]
+    pub fixed_pad_route_clearance: BTreeMap<String, f64>,
+    /// The config file supplies clearances the current KiCad DRC cannot
+    /// prove for retained copper.
+    #[serde(skip)]
+    pub route_reuse_clearance_unverified: bool,
+    /// Keep named input layers exactly when the reuse baseline has already
+    /// passed KiCad loading. The enabled layer table can omit valid
+    /// auxiliary layers used by footprint artwork.
+    #[serde(skip)]
+    pub route_reuse_preserve_input_layers: bool,
+    /// Collect a verified native fill while checking the closed reuse rung.
+    #[serde(skip)]
+    pub route_reuse_capture_refill: bool,
     /// Copper-to-edge clearance from the board outline.
     #[serde(default)]
     pub edge_clearance_mm: f64,
@@ -83,6 +121,15 @@ pub struct KiCadBoardRouterConfig {
     /// otherwise keep them off.
     #[serde(default)]
     pub diff_pairs: Option<bool>,
+    /// Skip coupled routing and inferred series rows for these pairs of
+    /// exact KiCad pad net names (docs/router.md, "Differential pairs").
+    /// Each entry must name both complementary nets. KiCad still checks
+    /// the board against its own rules.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diff_pair_exclusions: Vec<[String; 2]>,
+    /// The excluded pairs as connection IDs, resolved against the board.
+    #[serde(skip)]
+    pub excluded_pair_connections: Vec<[String; 2]>,
     /// Differential pairs: a return via of the reference net beside each
     /// via of a coupled run, where one fits (docs/router.md, "Return
     /// vias"). Unset: `PCB_ROUTER_DIFF_PAIRS_RETURN_VIAS` (`0` or `1`),
@@ -228,6 +275,11 @@ pub struct KiCadBoardRouterConfig {
     /// Set by the layout, not read from a file; none in route mode.
     #[serde(skip)]
     pub kicad_check_work: Option<f64>,
+    /// A native check limit for a reroute of already-checked provisional
+    /// copper, where the caller reserves and charges the native work.
+    #[doc(hidden)]
+    #[serde(skip)]
+    pub provisional_native_check_limit: Option<usize>,
     /// How many seeds of one attempt route at once (memory; the number of
     /// seeds, and so the result, does not depend on it).
     #[serde(skip)]
@@ -257,6 +309,10 @@ pub struct KiCadBoardRouterConfig {
     /// 50 min in three pour rungs with their seed retries.
     #[serde(default)]
     pub ladder_budget_seconds: Option<f64>,
+    /// A caller's reserved work limits the route ladder without switching
+    /// it into layout continuation mode. The nominal recipe is unchanged.
+    #[serde(skip)]
+    pub ladder_work_ceiling: Option<f64>,
     /// A limit on this process's memory in megabytes (resident), beside
     /// `PCB_MAKER_MEMORY_MB` and the limits the process can read itself
     /// (RLIMIT_AS, the cgroup's memory.max): the ladder runs as many
@@ -309,6 +365,12 @@ pub struct KiCadBoardRouterConfig {
     /// 2026-11-04).
     #[serde(default)]
     pub bga_fanout: Option<bool>,
+    /// Prepare additional BGA dog-bones for second-ring balls whose external
+    /// terminals all need a layer change, on arrays with one surface channel
+    /// between adjacent balls. Uses the existing project via and clearance
+    /// rules. Off by default. Requires prepared BGA fan-outs to be enabled.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub bga_fanout_second_ring: bool,
     /// Blind, buried and micro vias (board_router/via_spans.rs;
     /// docs/router.md, "Blind, buried and micro vias"): the
     /// router routes each via as the shortest span the board allows that
@@ -411,6 +473,16 @@ pub struct KiCadBoardRouterConfig {
     /// them always (its placement moves the parts).
     #[serde(default)]
     pub existing_tracks: KiCadExistingTracks,
+    /// Start a kept route at the free end of a selected pad's existing
+    /// short straight track. Each entry is an exact `REF:PAD`. The source
+    /// track must be the only retained item of an unmerged surface pad's
+    /// copper component and start at its center on the same layer.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retained_pad_tips: Vec<String>,
+    /// Generate compatible planar launches for consecutive, explicitly
+    /// named surface pads on a copper-free fixed placement.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prepared_row_escape_pads: Vec<String>,
     /// Skip the final native KiCad verification (for timing the router).
     #[serde(default)]
     pub skip_native_verification: bool,
@@ -836,6 +908,79 @@ pub struct KiCadDiffPairsChoice {
 }
 
 impl KiCadBoardRouterConfig {
+    pub fn ladder_budget(&self) -> f64 {
+        self.ladder_budget_seconds.unwrap_or(1200.0)
+    }
+    /// Resolve exact net identities and requested net-class overrides
+    /// before the layout or routing starts.
+    pub fn with_board_settings<'a>(
+        &'a self,
+        source_directory: &Path,
+        board_id: &str,
+    ) -> Result<std::borrow::Cow<'a, Self>, String> {
+        use std::borrow::Cow;
+
+        if self.diff_pair_exclusions.is_empty() && self.net_classes.is_empty() {
+            return Ok(Cow::Borrowed(self));
+        }
+        let board = source_directory.join(format!("{board_id}.kicad_pcb"));
+        let text = fs::read_to_string(&board)
+            .map_err(|error| format!("failed to read {}: {error}", board.display()))?;
+        let pcb = parse(&text).map_err(crate::exit::input_error)?;
+        let mut config = if self.net_classes.is_empty() {
+            self.clone()
+        } else {
+            crate::net_classes::with_net_classes(self, &pcb).map_err(crate::exit::input_error)?
+        };
+        config.excluded_pair_connections = config
+            .resolve_pair_exclusions(&pcb)
+            .map_err(crate::exit::input_error)?;
+        Ok(Cow::Owned(config))
+    }
+
+    pub(super) fn resolve_pair_exclusions(&self, pcb: &Expr) -> Result<Vec<[String; 2]>, String> {
+        if self.diff_pair_exclusions.is_empty() {
+            return Ok(Vec::new());
+        }
+        let nets = NetNames::of(pcb);
+        let pad_nets = crate::kicad_nets::unambiguous_pad_net_names(pcb)?;
+        let mut resolved = Vec::new();
+        for [first, second] in &self.diff_pair_exclusions {
+            for raw in [first, second] {
+                let exact = pad_nets.get(nets.normalize(raw)).and_then(Expr::atom);
+                if !nets.routable(raw) || exact != Some(raw.as_str()) {
+                    return Err(format!(
+                        "diff_pair_exclusions: {raw:?} is not an exact KiCad net name on a pad"
+                    ));
+                }
+            }
+            let a = nets.normalize(first);
+            let b = nets.normalize(second);
+            let Some((_, _, positive)) =
+                crate::project_rules::diff_pair_of(a).filter(|(partner, _, _)| partner == b)
+            else {
+                return Err(format!(
+                    "diff_pair_exclusions: {first:?} and {second:?} are not complementary net names"
+                ));
+            };
+            let names = (if positive { [a, b] } else { [b, a] }).map(str::to_owned);
+            if resolved.contains(&names) {
+                return Err(format!(
+                    "diff_pair_exclusions: {first:?} and {second:?} are listed twice"
+                ));
+            }
+            resolved.push(names);
+        }
+        Ok(resolved)
+    }
+
+    /// Whether these two normalized connection IDs are an excluded pair.
+    pub fn excludes_diff_pair(&self, first: &str, second: &str) -> bool {
+        self.excluded_pair_connections
+            .iter()
+            .any(|[a, b]| (a == first && b == second) || (b == first && a == second))
+    }
+
     /// Whether the length and skew rules are kept (`length_matching`):
     /// the settings' value, else `PCB_ROUTER_LENGTH_MATCHING` (`0` off),
     /// else on.
@@ -903,6 +1048,7 @@ impl KiCadBoardRouterConfig {
             && let Some((net, asked)) = self
                 .diff_pair_rules
                 .iter()
+                .filter(|(net, rule)| !self.excludes_diff_pair(net, &rule.partner))
                 .find_map(|(net, rule)| rule.asked.as_ref().map(|asked| (net, asked)))
         {
             return KiCadDiffPairsChoice {

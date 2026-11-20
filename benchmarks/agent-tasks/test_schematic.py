@@ -54,6 +54,34 @@ class EdgeCuts(unittest.TestCase):
         self.assertIn('(uuid "5c4e0000-0000-4000-8000-000000000001")', shapes[1])
 
 
+class FootprintMatching(unittest.TestCase):
+    def test_copied_symbol_path_keeps_both_reannotated_parts_at_their_own_positions(self):
+        def footprint(reference, uuid, path):
+            return (
+                f'(footprint "S" (uuid "{uuid}") (path "/{path}") '
+                f'(property "Reference" "{reference}"))'
+            )
+
+        first = "11111111-0000-4000-8000-000000000001"
+        second = "22222222-0000-4000-8000-000000000002"
+        # The old board's copy kept the original switch's schematic path.
+        designer = footprint("SW60", first, "original") + footprint("SW8", second, "original")
+        imported = footprint("SW8", first, "original") + footprint("SW60", second, "copy")
+        description = {"footprints": [
+            {"reference": "SW60", "uuid": first, "at": [5.0, 20.0, 0.0], "pads": [["1", "A"]]},
+            {"reference": "SW8", "uuid": second, "at": [5.0, 10.0, 0.0], "pads": [["1", "B"]]},
+        ]}
+        constraints, facts, _ = schematic.constraints_for_import(
+            {"fixed": ["SW*"]}, description, designer, imported
+        )
+        self.assertEqual(
+            [(entry["part"], entry["y"]) for entry in constraints["place"]],
+            [("SW60", 20.0), ("SW8", 10.0)],
+        )
+        self.assertEqual(facts["matched"], 2)
+        self.assertEqual(facts["schematic_only"], [])
+
+
 class Zones(unittest.TestCase):
     def test_pours_and_rule_areas_in_kicad_10_syntax_on_the_imported_nets(self):
         zones = schematic.zones(DESIGNER, DESIGNER, IMPORTED)
