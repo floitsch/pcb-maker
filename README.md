@@ -403,10 +403,10 @@ quick tier (30 boards, full budget), and the schematic
 tier (12 boards laid out from the designer's schematic, as an agent
 would). In the latest November 20 cold run, 7 of 12 met the schematic acceptance
 gate, which checks the saved board, schematic parity, and placement
-constraints. Eleven passed the historical strict routing check. USB Keypad
-gained both passes with the hatch repair. A subsequent cold run with
-the mechanical import and pad escape changes reproduced all twelve PCBs
-byte for byte. See the
+constraints. All 12 passed the strict routing check with zero native opens.
+SLAB left closed its last connection and a second cold run reproduced its
+PCB byte for byte. Its six schematic parity findings remain. The other
+eleven PCBs matched the preceding run byte for byte. See the
 [per-board failure analysis](docs/benchmarks.md#the-tiers).
 The tiers run 2 search threads a board and physical cores / 2
 boards at once (8 x 2 on a 16-core machine); several run side by side,
