@@ -112,6 +112,7 @@ fn fill_open_witnesses(
     ours: &FindingCounts,
     theirs: &FindingCounts,
     membership: &Membership<'_>,
+    units: &str,
 ) -> Option<String> {
     let mut shown = Vec::new();
     let mut omitted = 0;
@@ -149,7 +150,7 @@ fn fill_open_witnesses(
                 .unwrap_or("Unknown native item");
             let id = item["uuid"].as_str().unwrap_or("no UUID");
             match item["pos"]["x"].as_f64().zip(item["pos"]["y"].as_f64()) {
-                Some((x, y)) => format!("{description} ({id}, {x:.6}, {y:.6} mm)"),
+                Some((x, y)) => format!("{description} ({id}, {x:.6}, {y:.6} {units})"),
                 None => format!("{description} ({id})"),
             }
         };
@@ -173,9 +174,12 @@ fn compare_fill_witnesses(
     compare_witnesses(membership, membership, refilled_report, stored_report).map_err(|reason| {
         let refilled = keys(refilled_report, "unconnected_items");
         let stored = keys(stored_report, "unconnected_items");
+        let units = refilled_report["coordinate_units"]
+            .as_str()
+            .unwrap_or("native units");
         let evidence: Vec<_> = [
-            ("Refilled check", fill_open_witnesses(&refilled, &stored, membership)),
-            ("Stored check", fill_open_witnesses(&stored, &refilled, membership)),
+            ("Refilled check", fill_open_witnesses(&refilled, &stored, membership, units)),
+            ("Stored check", fill_open_witnesses(&stored, &refilled, membership, units)),
         ]
         .into_iter()
         .filter_map(|(scope, evidence)| evidence.map(|text| format!("{scope} named {text}.")))
@@ -184,7 +188,7 @@ fn compare_fill_witnesses(
             return reason;
         }
         format!(
-            "Native pad, track and via connectivity matched. The changed open witnesses include zone or teardrop copper that the partition cannot identify. {} Inspect the named nets and locations in a private KiCad copy, including the filled islands and their pad or via attachments. Resolve any real breaks, check the saved board and a fresh refill, then retry --save-filled.",
+            "Native pad, track and via connectivity matched. The changed open witnesses include zone or teardrop copper that the partition cannot identify. {} Inspect the named nets and locations in a private KiCad copy, including the filled islands and their pad or via attachments. Resolve any real breaks, check the saved board and a fresh refill, then retry --save-filled",
             evidence.join(" "),
         )
     })
@@ -294,6 +298,7 @@ mod tests {
     fn report(a: &str, b: &str) -> Value {
         json!({
             "kicad_version": "10.0.8",
+            "coordinate_units": "mm",
             "violations": [],
             "unconnected_items": [witness(a, b)],
             "schematic_parity": [],

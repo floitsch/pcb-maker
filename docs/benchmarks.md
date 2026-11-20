@@ -201,8 +201,46 @@ model. KiCad's STEP export and an independent solid intersection check
 found zero overlaps between the 138 socket solids and 72 resistor and
 capacitor solids, and zero against the 14 IC and diode solids. Those
 measurements used the archived model files for these component groups.
-The evidence is under
-`build/schematic-corpus-screen-20261120/katia/solid-study/`.
+The 400-second layout used 414.239 modeled seconds. All 114 explicit
+piece assignments passed and all 230 PCB footprints kept their placed
+pose in the routed board. Independent KiCad checks reported 56 stored
+and 29 refilled unconnected items, zero active rule errors, and zero
+schematic parity findings. The layout counted 25 refilled opens after
+identifying four expected cross-piece findings. It had insufficient
+budget to publish the fill. See `courtyard-final/` for the outcome and
+`solid-study/declared-final-placed-assembly/` for the STEP measurements
+under `build/schematic-corpus-screen-20261120/katia/`.
+
+On the returned board, all 138 socket solids also cleared the 230
+LED solids and 48 solids from the four connectors that have STEP
+models. The archived placement passed the same checks. The exports
+and intersection counts are under `solid-study/all-components-{returned,author}/`.
+
+The earlier 34-open placement tested whether turning on differential
+pair routing would help. All 230 placement poses matched between trials.
+The planner found both USB data links and declined both because their
+stubs would block the middle pin on U5 or U9. The paired run also ended
+with 34 opens and 454 vias. A reduced board containing J7, U5 and R20
+retained the connector notch and the original net classes. Coupling
+closed its last USB open, with 39 native clearance warnings compared
+with 26 when routed independently. Six pad-to-pad warnings already
+existed on the bare board. When clearance was set to error, both trials
+left five native opens and retained the six input clearance findings.
+The full and reduced trials are under `pair-comparison/` and
+`usb-launch-coupon/`.
+
+On the separate Katia trial with the measured courtyard drawn into
+a private copy of the socket footprints, the stored and refilled
+native partitions agree for all 5,893
+ordinary copper objects in 204 groups. Some changed open witnesses name
+zone or teardrop copper, including +3V3 teardrops on F.Cu and B.Cu.
+The partition does not establish whether those filled items still
+connect. The public fill handoff refuses the copy and reports the
+affected witnesses' UUIDs, layers and coordinates for inspection. The
+original PCB bytes match after the refusal. July's independent stored
+fill control still delivered with zero opens, errors and parity
+findings. See `solid-study/{partition-study,zone-witness-public,zone-witness-original-public/july-control}`
+in the Katia benchmark tree.
 
 0xCB-Static had clean parity and a historical strict pass. Its layout
 exited 1 with two solder-mask bridge errors. KiCad locates both on the

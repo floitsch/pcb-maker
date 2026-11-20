@@ -2523,6 +2523,13 @@ remaining modeled budget covers the two additional native checks. If
 footprint library warnings reach a report cap, install the project's
 libraries and retry with `PCB_MAKER_KICAD_USER_LIBS=1`.
 
+When changed open witnesses name zone or teardrop copper outside that
+proof, the refusal identifies the affected net, layer, coordinates
+and item UUIDs for each native mode it can diagnose. Inspect the filled
+islands and their pad or via attachments in a private KiCad copy.
+Resolve any real breaks and check the saved board and a fresh refill
+before retrying `--save-filled`.
+
 The requested report captures the refill. The output contains `drc.json`
 for the saved board, `drc-before-fill.json` for the source as stored, and
 `fill-handoff.json` with both board hashes, counts, inherited findings and
