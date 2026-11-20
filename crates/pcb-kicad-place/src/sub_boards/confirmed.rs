@@ -120,7 +120,7 @@ impl Confirmed {
     }
 }
 
-fn pin_centers_on(
+pub(super) fn pin_centers_on(
     pieces: &Pieces,
     piece: usize,
     component: &pcb_placer::Component,

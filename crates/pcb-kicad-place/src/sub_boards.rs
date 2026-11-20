@@ -1718,6 +1718,25 @@ pub(crate) fn place_sub_boards(
             );
         }
     }
+    // Exclude poses that leave an explicitly confirmed piece before
+    // ranking placement seeds or admitting a placement into the routing
+    // race. The report separately names the exact failed assignment.
+    if !sub.confirmed_parts.is_empty() {
+        placed
+            .illegal
+            .extend(sub.confirmed_parts.iter().copied().filter(|&part| {
+                sub.part_piece[part].is_some_and(|piece| {
+                    !confirmed::pin_centers_on(
+                        &sub.pieces,
+                        piece,
+                        &problem.components[part],
+                        placed.poses[part],
+                    )
+                })
+            }));
+        placed.illegal.sort_unstable();
+        placed.illegal.dedup();
+    }
     placed.frames.push(pcb_placer::global::Frame {
         iteration: global_iterations + 1,
         overflow: global_overflow,
