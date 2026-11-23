@@ -231,10 +231,10 @@ an off switch; a fresh-agent trial every few days.
    KiCad finds the board better for it, in one round only. Pads the model
    calls connected and KiCad does not (`experiments/pour-fidelity/agreement.py`,
    router.md "Thermal spokes as KiCad counts them"): 4 on the night of
-   2026-11-11's 215 sweep and designer results, 0 since the per-pad zone
-   connection and the via spoke rules; the reverse 389 to 387, 290 of them on the
-   four slab-pcb results (a shredded F.Cu pour joined by tracks, which the
-   dump chains only roughly).
+   2026-11-18's 215 sweep and designer results, 0 since the per-pad zone
+   connection and the via spoke rules; the reverse 393 to 391, most of them
+   on the four slab-pcb results (a shredded F.Cu pour joined by tracks, which
+   the dump chains only roughly).
 10. **The near misses.** Of the 38 boards the November 18 sweep fails, 19 are within
     five connections and five errors of clean. The list changes nightly;
     a diagnosis takes the night's list (`summary.md`, `diff-sweep.txt`).
