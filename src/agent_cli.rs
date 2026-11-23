@@ -175,6 +175,12 @@ fn announce(verdict: &KiCadVerdict, report: &Path) {
     if let Some(why) = &verdict.pin_lines {
         println!("pin lines: {why} (verdict.pin_lines)");
     }
+    for pad in &verdict.walled_pads {
+        println!(
+            "walled pad: {} (verdict.walled_pads)",
+            pcb_kicad::walled_pad_line(pad)
+        );
+    }
     println!(
         "verdict: {} (exit {}): {}",
         serde_json::to_value(verdict.status)
@@ -783,6 +789,8 @@ fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         let _ = fs::remove_file(output.join("drc.json"));
     }
     let mut facts = pcb_kicad::route_facts(command, &result, output).map_err(Failure::Internal)?;
+    facts.walled_pads =
+        pcb_kicad::walled_pads_of_file(&output.join(format!("{board_id}.kicad_pcb")), &config);
     facts.source_project = Some(PathBuf::from(source));
     facts.work_seconds = Some(result.work_seconds);
     if let Some(accounting) = &result.wall_accounting {
@@ -1637,6 +1645,10 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     };
     let mut facts = pcb_kicad::route_facts(command, &result.routed, &result_directory)
         .map_err(Failure::Internal)?;
+    facts.walled_pads = pcb_kicad::walled_pads_of_file(
+        &result_directory.join(format!("{board_id}.kicad_pcb")),
+        &router,
+    );
     facts.source_project = Some(PathBuf::from(source));
     facts.fill_publication = result.fill_publication.clone();
     facts.plane_escape = result.plane_escape.clone();

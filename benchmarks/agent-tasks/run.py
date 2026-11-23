@@ -22,8 +22,10 @@ designer's board's count of its type (`pass`). The strict rule
 designer's board has at the same place: KiCad's DRC of the designer's board
 with its tracks, vias and small zones stripped (what the fixed geometry
 brings on its own; `strict_findings`), of a type it has at KiCad's cap only
-those at the same place, and since rule 4 every finding between items of
-one footprint (`footprint_own`); since rule 2 (`strict_rule`) neither a solder mask bridge between one
+those at the same place, since rule 4 every finding between items of
+one footprint (`footprint_own`), and since rule 5 a track or via against a
+footprint's own copper graphic that walls in a pad of its net
+(`forced_by_footprint`); since rule 2 (`strict_rule`) neither a solder mask bridge between one
 of our tracks and a designer's mask opening that bridges on the stripped
 or the designer's own board already (`strict_mask_openings`, README.md
 "How to measure"). `clean_without_subtraction` says the result has no error that counts
@@ -596,8 +598,14 @@ SAME_PLACE_MM = 0.05
 # at the same place is the reference's also of a type the reference has at
 # KiCad's cap; a copper_edge_clearance is at the same place by its copper
 # item, whichever piece of the outline KiCad names beside it (2026-10-23,
-# Batch_1's mounting holes and GND ring).
-STRICT_RULE = 4
+# Batch_1's mounting holes and GND ring). 5: a finding between a
+# footprint's copper graphic of no net and a track or via of net N is the
+# reference's when the reference pairs that graphic (its uuid) with a pad of
+# net N of the same footprint, or pairs it with another pad of it and the
+# run's verdict lists a pad of net N wired through it (`graphic_walls`,
+# `forced_by_footprint`, 2026-11-11: a pad its own footprint's copper walls
+# in cannot be connected without it).
+STRICT_RULE = 5
 # The designer's own board's solder mask bridges, kept in a task's work
 # directory by designer_findings for the strict rule.
 DESIGNER_BRIDGES = "designer-mask-bridges.json"
@@ -630,6 +638,15 @@ def counting_findings(drc):
             items.append((item.get("uuid"), at, description, violation.get("description") or ""))
         findings.append((violation["type"], items))
     return findings
+
+
+def all_findings(drc):
+    """Every finding of a DRC report, excluded and of any severity, in
+    counting_findings' form: the evidence of what the designer's board
+    holds, not what counts (`graphic_walls`: a pad-graphic pairing the
+    designer excluded is one they accepted)."""
+    return counting_findings({"violations": [dict(violation, severity="error", excluded=False)
+                                             for violation in drc.get("violations", [])]})
 
 
 def zone_item(item):
@@ -716,6 +733,65 @@ def footprint_own(finding):
     return len(finding[1]) > 1 and len(owners) == 1
 
 
+# A footprint's copper graphic of no net, as KiCad names it ("Polygon
+# [<no net>] of AE1 on F.Cu", "Segment [<no net>] of AE1 on F.Cu").
+OWN_GRAPHIC = re.compile(r"^(?:Polygon|Segment|Arc|Circle|Rectangle|Bezier|Line) \[<no net>\] "
+                         r"of (\S+)(?: on [^ ]+)?$")
+# A pad of a footprint and its net ("Pad 2 [GND] of AE1 on F.Cu", "PTH pad
+# 1 [/ANT] of J1").
+PAD_OF = re.compile(r"^(?:N?PTH )?[Pp]ad \S* ?\[(.*)\] of (\S+)(?: on [^ ]+)?$")
+# A track or a via and its net ("Track [GND] on F.Cu, length 0.1 mm",
+# "Via [GND] on F.Cu - B.Cu").
+ROUTED_ITEM = re.compile(r"^(?:Track|Via|Arc track) \[(.*)\] on ")
+
+
+def graphic_walls(reference, walled=None):
+    """The (graphic uuid, net) pairs the reference has a finding between:
+    a footprint's copper graphic of no net and a pad of that net of the
+    same footprint (the pad walled in by its own footprint's copper). KiCad
+    names one pair per item at most, so where the reference pairs the
+    graphic with another pad of that footprint only (osprey's polygon with
+    its ground pad, not its feed), the run's own record of the pads it
+    wired through that graphic (`walled`: verdict.json's `walled_pads`)
+    adds the pad's net: the designer's board shows the graphic over its own
+    pads, the run shows which pad of which net it walls."""
+    pairs = set()
+    paired = set()
+    for _, items in reference or []:
+        graphics = [(item[0], OWN_GRAPHIC.match(item[2] if len(item) > 2 else "")) for item in items]
+        pads = [PAD_OF.match(item[2] if len(item) > 2 else "") for item in items]
+        for uuid, graphic in graphics:
+            if graphic is None or uuid is None:
+                continue
+            for pad in pads:
+                if pad is not None and pad.group(2) == graphic.group(1):
+                    pairs.add((uuid, pad.group(1)))
+                    paired.add((uuid, graphic.group(1)))
+    for pad in walled or []:
+        for graphic in pad.get("graphics", []):
+            if (graphic.get("uuid"), pad.get("part")) in paired:
+                pairs.add((graphic["uuid"], pad.get("net")))
+    return pairs
+
+
+def forced_by_footprint(finding, walls):
+    """Whether a finding is a track or via of net N against a footprint's
+    copper graphic of no net that the reference pairs with a pad of net N of
+    that footprint (`graphic_walls`): the connection of a pad its own
+    footprint's copper walls in, which KiCad reports whatever the route
+    (docs/router.md, "A pad walled by its own footprint's copper"). Another
+    net's track on the graphic, or a contact the reference does not pair,
+    stays counted."""
+    if len(finding[1]) != 2:
+        return False
+    graphic = [item for item in finding[1] if OWN_GRAPHIC.match(item[2] if len(item) > 2 else "")]
+    routed = [ROUTED_ITEM.match(item[2] if len(item) > 2 else "") for item in finding[1]]
+    routed = [match for match in routed if match is not None]
+    if len(graphic) != 1 or len(routed) != 1 or graphic[0][0] is None:
+        return False
+    return (graphic[0][0], routed[0].group(1)) in walls
+
+
 def outline_item(item):
     """Whether a finding's item is a piece of the board outline (KiCad's
     description: "Segment on Edge.Cuts", "Arc of REF** on Edge.Cuts")."""
@@ -788,13 +864,15 @@ def _distance(a, b):
     return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
 
 
-def strict_findings(ours, reference, designer=None):
+def strict_findings(ours, reference, designer=None, walled=None, pairings=None):
     """Splits our findings (counting_findings) into the reference's at the
     same place and our own: {"new": {type: n}, "preexisting": {type: n},
     "unknown": [types the reference has at KiCad's cap], "mask_openings":
     n}. A finding of one footprint's own items (`footprint_own`) is the
     reference's: the footprint is there too, whether KiCad's capped report
-    names it or not. A finding the reference has at the same place is the
+    names it or not; so is a track or via against a footprint's own copper
+    graphic that walls a pad of its net (`forced_by_footprint`). A finding
+    the reference has at the same place is the
     reference's even of a type at KiCad's cap; every other finding of such
     a type is new (its type in "unknown"). `reference` None: no
     baseline, all are new. A solder mask bridge that is not the
@@ -802,18 +880,21 @@ def strict_findings(ours, reference, designer=None):
     reference (the stripped designer board) or on `designer` (the
     designer's own board, tracks and all: shipped bridged) and the other
     item is a track or a zone (`prebridged`); those are counted in
-    "mask_openings", in neither "new" nor "preexisting"."""
+    "mask_openings", in neither "new" nor "preexisting". `pairings`: the
+    baseline report's every finding, excluded ones too (`all_findings`),
+    which `graphic_walls` reads beside `reference`."""
     if reference is None:
-        reference, designer = [], None
+        reference, designer, pairings = [], None, None
     counts = {}
     for kind, _ in reference:
         counts[kind] = counts.get(kind, 0) + 1
     openings = bridged_openings(reference) + bridged_openings(designer)
+    walls = graphic_walls(list(reference) + list(pairings or []), walled)
     new, preexisting, unknown, mask_openings = {}, {}, [], 0
     used = [False] * len(reference)
     for finding in ours:
         kind = finding[0]
-        if footprint_own(finding):
+        if footprint_own(finding) or forced_by_footprint(finding, walls):
             preexisting[kind] = preexisting.get(kind, 0) + 1
             continue
         for index, theirs in enumerate(reference):
@@ -877,6 +958,14 @@ class StrictBaseline:
             shutil.rmtree(project, ignore_errors=True)
         return self.result
 
+    def pairings(self):
+        """Every finding of the stored baseline report, excluded ones too
+        (`all_findings`), for `graphic_walls`; None without the report."""
+        try:
+            return all_findings(json.loads((self.work / "baseline-drc.json").read_text()))
+        except (OSError, ValueError):
+            return None
+
     def designer(self):
         """The designer's own board's solder mask bridges (designer_findings
         keeps them as `designer-mask-bridges.json`): counting_findings, or
@@ -900,7 +989,13 @@ def strict_native(result_directory, baseline):
     reference = baseline.findings() if (ours and baseline is not None) else None
     designer = baseline.designer() if (reference is not None and any(
         kind == "solder_mask_bridge" for kind, _ in ours)) else None
-    split = strict_findings(ours, reference, designer)
+    walled = None
+    try:
+        walled = json.loads((result_directory / "verdict.json").read_text()).get("walled_pads")
+    except (OSError, ValueError):
+        pass
+    pairings = baseline.pairings() if reference is not None else None
+    split = strict_findings(ours, reference, designer, walled, pairings)
     split["clean"] = not ours and not drc.get("unconnected_items")
     if ours and baseline is not None and baseline.enabled and reference is None:
         split["baseline_error"] = baseline.error or "no baseline"

@@ -329,6 +329,56 @@ class StrictRule(unittest.TestCase):
         split = run.strict_findings(own + other, reference)
         self.assertEqual((split["new"], split["preexisting"]), ({"clearance": 2}, {"clearance": 2}))
 
+    def test_a_track_crossing_a_graphic_that_walls_its_pad_is_the_references(self):
+        def between(kind, first, second, at=(5.0, 5.0)):
+            return (kind, [(first[0], at, first[1], "f"), (second[0], (at[0] + 1.0, at[1]), second[1], "f")])
+        polygon = ("g1", "Polygon [<no net>] of AE1 on F.Cu")
+        # The stripped designer board: the polygon over AE1's feed pad (net
+        # A) and its ground pad, as the footprint draws it.
+        reference = [between("clearance", ("p1", "Pad 1 [Net-(AE1-A)] of AE1 on F.Cu"), polygon),
+                     between("shorting_items", polygon, ("p2", "PTH pad 2 [GND] of AE1"))]
+        feed = between("shorting_items", polygon, ("t1", "Track [Net-(AE1-A)] on F.Cu, length 0.3048 mm"),
+                       (40.0, 40.0))
+        ground_via = between("clearance", ("v1", "Via [GND] on F.Cu - B.Cu"), polygon, (60.0, 60.0))
+        self.assertEqual(run.graphic_walls(reference), {("g1", "Net-(AE1-A)"), ("g1", "GND")})
+        split = run.strict_findings([feed, ground_via], reference)
+        self.assertEqual((split["new"], split["preexisting"]), ({}, {"shorting_items": 1, "clearance": 1}))
+        # Another net's track on the graphic stays counted.
+        other = between("shorting_items", polygon, ("t2", "Track [VCC] on F.Cu, length 1.0000 mm"), (70.0, 70.0))
+        # So does another graphic (another uuid) of the footprint, which the
+        # reference does not pair with a pad.
+        line = between("shorting_items", ("g2", "Segment [<no net>] of AE1 on F.Cu"),
+                       ("t3", "Track [Net-(AE1-A)] on F.Cu, length 1.0000 mm"), (80.0, 80.0))
+        # And the same contact with no reference finding at all.
+        split = run.strict_findings([other, line], reference)
+        self.assertEqual(split["new"], {"shorting_items": 2})
+        split = run.strict_findings([feed], [between("clearance", ("p9", "Pad 1 [VCC] of R1 on F.Cu"),
+                                                     ("t9", "Track [GND] on F.Cu, length 1 mm"))])
+        self.assertEqual(split["new"], {"shorting_items": 1})
+        self.assertEqual(run.strict_findings([feed], None)["new"], {"shorting_items": 1})
+        # KiCad pairs the graphic with the ground pad only (osprey): the
+        # run's own record of the feed pad it wired through it adds its net,
+        # and nothing else.
+        ground_only = reference[1:]
+        walled = [{"part": "AE1", "pad": "1", "net": "Net-(AE1-A)",
+                   "graphics": [{"uuid": "g1", "kind": "fp_poly"}], "crossings": ["t1"]}]
+        self.assertEqual(run.strict_findings([feed], ground_only)["new"], {"shorting_items": 1})
+        split = run.strict_findings([feed, other], ground_only, None, walled)
+        self.assertEqual((split["new"], split["preexisting"]), ({"shorting_items": 1}, {"shorting_items": 1}))
+        # The designer excluded the pairings in the project (nrf24_remote):
+        # the excluded findings still show the graphic over its pads.
+        excluded = {"violations": [
+            {"type": "clearance", "severity": "error", "excluded": True, "description": "c",
+             "items": [{"uuid": "p1", "description": "Pad 1 [Net-(AE1-A)] of AE1 on F.Cu", "pos": {"x": 5, "y": 5}},
+                       {"uuid": "g1", "description": "Polygon [<no net>] of AE1 on F.Cu", "pos": {"x": 6, "y": 5}}]}]}
+        self.assertEqual(run.counting_findings(excluded), [])
+        split = run.strict_findings([feed], [], None, None, run.all_findings(excluded))
+        self.assertEqual((split["new"], split["preexisting"]), ({}, {"shorting_items": 1}))
+        self.assertEqual(run.strict_findings([feed], None, None, None, run.all_findings(excluded))["new"],
+                         {"shorting_items": 1})
+        # Without the designer's pairing, the run's record alone is no evidence.
+        self.assertEqual(run.strict_findings([feed], [], None, walled)["new"], {"shorting_items": 1})
+
     def test_a_copper_edge_finding_is_at_the_same_place_by_its_copper(self):
         def edge(outline, uuid, x, ring=("ring", (17.55, 125.0))):
             return ("copper_edge_clearance", [(uuid, (x, 125.0), outline, "edge"),

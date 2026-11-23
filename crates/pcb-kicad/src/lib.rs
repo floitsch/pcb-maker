@@ -88,9 +88,10 @@ pub use board_router::{
     KiCadClosedPads, KiCadDiffPair, KiCadDiffPairRule, KiCadDiffPairs, KiCadExistingTracks,
     KiCadKeepWhole, KiCadKeptCopper, KiCadNetLength, KiCadPourMode, KiCadPourQuality,
     KiCadRouterTuning, KiCadViaInPad, KiCadViaInPadEntry, KiCadViaInPadFootprint,
-    KiCadViaInPadReport, KiCadViaSpanEntry, admit_length_rule_layers, admit_reference_via_spans,
-    admit_reference_vias_in_pads, bga_second_ring_open_pads, blind_vias_override,
-    dump_kicad_pour_map, keep_whole_input_warnings, measure_pours, route_kicad_board,
+    KiCadViaInPadReport, KiCadViaSpanEntry, KiCadWalledGraphic, KiCadWalledPad,
+    admit_length_rule_layers, admit_reference_via_spans, admit_reference_vias_in_pads,
+    bga_second_ring_open_pads, blind_vias_override, dump_kicad_pour_map, keep_whole_input_warnings,
+    measure_pours, route_kicad_board, walled_pads_of, walled_pads_of_file,
     write_kicad_board_without_tracks, write_kicad_board_without_tracks_except,
 };
 pub use board_router::{
@@ -238,7 +239,8 @@ pub use verdict::{
     footprint_own_unreferenced, input_findings_note, input_items, input_own, is_cosmetic, judge,
     kept_parts_actions, kicad_drc_report, load_drc_tally, read_drc_tally, reference_findings,
     room_action, route_candidate_ranker, route_facts, set_build_version, split_findings, tally_drc,
-    unassigned_mask_action, unreferenced_apart, wall_cuts, with_input_observations,
+    unassigned_mask_action, unreferenced_apart, wall_cuts, walled_pad_finding, walled_pad_line,
+    walled_pads_actions, with_input_observations,
 };
 pub use zone_island::{
     KiCadZoneIslandRecovery, KiCadZoneIslandRepair, KiCadZoneIslandTrial, stitch_zone_island,

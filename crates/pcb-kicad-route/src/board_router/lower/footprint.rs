@@ -4,6 +4,7 @@
 //! and mask, its pads (pad.rs), and what its pads give together (pin-row
 //! gaps, a fan-out's part, the pads closed to vias, a net tie's copper).
 
+use super::own_copper::OwnCopper;
 use super::*;
 use pcb_router as core;
 
@@ -30,6 +31,15 @@ pub(super) struct Footprint<'a> {
     pub tie_copper: Vec<TieCopper>,
     /// Its net tie's pads of a net: centre, copper layers, net.
     pub tie_pads: Vec<([f64; 2], core::LayerMask, core::NetId)>,
+    /// Its other copper graphics, copper of no net, by obstacle index: cut
+    /// back where they wall its pads once those are known (own_copper.rs).
+    pub own_copper: Vec<usize>,
+    /// Per graphic of `own_copper`, the graphic's uuid (KiCad's DRC names
+    /// it by that) and its kind (`fp_poly`).
+    pub own_copper_ids: Vec<(Option<String>, String)>,
+    /// The mask openings its graphics queued, by index into
+    /// `Builder::mask_openings`: cut back with `own_copper`.
+    pub graphic_openings: std::ops::Range<usize>,
     /// KiCad 9's `(duplicate_pad_numbers_are_jumpers yes)`.
     pub duplicates_are_jumpers: bool,
     /// KiCad 9's `(jumper_pad_groups ("1" "2") ...)`, by pad number.
@@ -78,6 +88,9 @@ impl<'a> Footprint<'a> {
             tie_groups,
             tie_copper: Vec::new(),
             tie_pads: Vec::new(),
+            own_copper: Vec::new(),
+            own_copper_ids: Vec::new(),
+            graphic_openings: 0..0,
             duplicates_are_jumpers,
             pad_groups,
             pads: Vec::new(),
@@ -97,11 +110,14 @@ impl<'a> Footprint<'a> {
 impl Builder {
     /// A footprint: its rule areas, graphics, texts and pads, then what its
     /// pads give together (pin-row gaps, a fan-out's part, the pads closed
-    /// to vias) and its net tie's copper.
+    /// to vias), its own copper queued (own_copper.rs) and its net tie's
+    /// copper.
     pub(super) fn footprint(&mut self, ctx: &Context, item: &Expr) -> Result<(), String> {
         let mut footprint = Footprint::new(ctx, item)?;
         self.footprint_rule_areas(ctx, item, &footprint.reference)?;
+        let openings = self.mask_openings.len();
         self.footprint_graphics(ctx, &mut footprint)?;
+        footprint.graphic_openings = openings..self.mask_openings.len();
         self.footprint_texts(ctx, &footprint)?;
         self.footprint_ordinal += 1;
         for pad in item
@@ -114,12 +130,14 @@ impl Builder {
         self.footprint_pin_row_gaps(&footprint);
         self.fanout_part(ctx, &footprint);
         self.footprint_no_via_pads(ctx, &footprint);
+        self.own_copper.extend(OwnCopper::of(&footprint));
         self.net_tie_copper(ctx, footprint);
         Ok(())
     }
 
     /// The footprint's graphics: mask openings (queued), Margin keepouts,
-    /// and copper of no net (a net tie's held in `tie_copper`).
+    /// and copper of no net (a net tie's held in `tie_copper`, the others
+    /// listed in `own_copper`).
     fn footprint_graphics(
         &mut self,
         ctx: &Context,
@@ -127,8 +145,8 @@ impl Builder {
     ) -> Result<(), String> {
         let item = footprint.item;
         let reference = &footprint.reference;
-        // Copper drawn inside the footprint (a logo, a net tie's bridge)
-        // belongs to no net.
+        // Copper drawn inside the footprint (a logo, a net tie's bridge, an
+        // antenna) belongs to no net (own_copper.rs has KiCad's rule).
         for graphic in item.children().iter().filter(|child| {
             matches!(
                 child.head(),
@@ -185,7 +203,10 @@ impl Builder {
             // 10.0.7 too: no pad or track connects to it, its own net's
             // copper keeps the clearance from it (kicad-cli: an antenna
             // polygon of net A against its own pad and an A track,
-            // clearance findings at 0 mm and the pad unconnected).
+            // clearance findings at 0 mm and the pad unconnected). Where it
+            // walls a pad of the footprint, `own_copper_exits` cuts the
+            // pad's exits through it once the pads are known; it keeps its
+            // place among the obstacles here.
             for shape in footprint.placed_shapes(graphic)? {
                 let label = format!("{reference} copper {}", graphic.head().unwrap_or("graphic"));
                 // A net tie's copper waits for its pads (`net_tie_copper`).
@@ -193,6 +214,13 @@ impl Builder {
                     footprint.tie_copper.push((shape, copper, label));
                     continue;
                 }
+                footprint.own_copper.push(self.obstacles.len());
+                footprint.own_copper_ids.push((
+                    form_atom(graphic, "uuid", 1)
+                        .or_else(|| form_atom(graphic, "tstamp", 1))
+                        .map(|uuid| uuid.trim_matches('"').to_string()),
+                    graphic.head().unwrap_or("graphic").to_string(),
+                ));
                 self.obstacles.push(core::Obstacle {
                     shape,
                     layers: copper,

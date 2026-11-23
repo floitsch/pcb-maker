@@ -266,6 +266,59 @@ points of its contact (`contact_starts`; Hub 12 to 4 open).
 best point, or what blocks stubs from there; it changes no route and is
 written as `diagnostics.dead_pads[].wall`.
 
+**A pad walled by its own footprint's copper.** To KiCad 10.0.7 a copper
+graphic of a footprint that is not a net tie is copper of no net, also
+where it touches or covers a pad of that footprint: it never conducts
+(two pads joined only by it stay unconnected), the pad it touches has a
+clearance finding against it from the start (the footprint's own), and any
+track or via that touches it is a `shorting_items` or a `clearance` at
+0 mm (kicad-cli on hand-made boards; `board_router/lower/own_copper.rs`
+has the rule in full). An inverted-F antenna's feed inside its polygon
+(osprey, WLED_Matrix, Batch_1, nrf24_remote) or a microphone's ground pads
+on its ring (reCamera's MIC1) therefore cannot be connected without a
+finding, and the designers' boards carry it. The lowering keeps the
+graphic copper of no net and gives a pad it walls (no point of the pad
+keeps a track's clearance from it, on every copper layer of the pad) up
+to four straight exits from the pad's centre through it
+(`own_copper_exits`): corridors of the pad's net wide enough for its
+class's track, fenced so that the track crosses along the axis, the
+graphic and the footprint's own mask opening over it cut back around
+them, every via kept off the whole graphic, the net's pours kept out of
+the corridors. A graphic over pads of two nets gives each walled pad exits
+of its own net, never one near the other net's pad, and stays no net's
+between them. Pads with a free point change nothing, nor does a pad
+another item's copper of its net already joins: another part's pad (the
+keyboard's C10.2 over its antenna's feed) or a board graphic of its net
+(Batch_1's feed and ground rectangles on its antenna's pads, at the
+designer's placement: wired anyway, the redundant crossings and corridors
+cost it 0 to 3 connections over four router seeds). `walled_pad_exits: false` leaves walled pads unwired
+(dead pads, as before 2026-11-11).
+
+What KiCad then reports there is the footprint's, not the route's: the
+verdict lowers the written board again without its routed copper
+(`walled_pads_of`), takes each walled pad's corridors and the written
+tracks and vias of its net in them, and sets apart exactly the findings
+between such a graphic (by uuid) and such a crossing (by uuid); any other
+contact with the graphic stays the run's. They are listed in
+`verdict.walled_pads` with the pad, its net and the graphic, on stdout's
+`walled pad: ...` lines, and in a next action that offers to accept them
+or to rework the footprint: a net tie of the pads the graphic touches
+(`net_tie_pad_groups`), or the graphic as a custom pad's primitive where
+it touches one pad (kicad-cli 10.0.7 accepts both cleanly; a net tie
+group of one pad does not). run.py's strict rule (rule 5) takes such a
+finding as the designer's when the designer's board pairs the graphic
+with a pad of the track's net, or with another pad of that footprint while
+the run's verdict lists the track's pad as wired through it; an excluded
+pairing in the designer's project counts too (nrf24_remote). Route reuse
+(`--reuse-routes`) admits copper only when the seeded trial adds no KiCad
+finding, so a board whose walled pads are wired keeps none of its copper
+by reuse and is routed afresh. The open repairs lower the routed board: a
+walled pad its route reached is joined by that track and gets no second
+corridor, one still open gets its corridors, and a repair track in one is
+set apart like any crossing; the same-footprint pad bridge never crosses the graphic (its
+own clearance check against the graphic's copper, and its native check,
+which refuses any new finding).
+
 ## The negotiated search
 
 ### Costs

@@ -13,8 +13,9 @@
 //!   pad.rs), kept tracks and vias (tracks.rs), graphics (graphics.rs) and
 //!   rule areas (areas.rs). What needs every pad's net first is queued.
 //! - Then, once every pad's net is known: pads of one item merged into one
-//!   terminal (merge.rs), the queued copper graphics (graphics.rs) and
-//!   mask openings (mask.rs), cutouts and keep-whole regions (areas.rs),
+//!   terminal (merge.rs), the queued copper graphics (graphics.rs), the
+//!   exits of the pads their own footprint's copper walls (own_copper.rs),
+//!   the mask openings (mask.rs), cutouts and keep-whole regions (areas.rs),
 //!   the planes (planes.rs), the prepared fan-outs (fanout.rs), and the
 //!   board assembled and split by sub-board (`Builder::finish`,
 //!   `split_sub_board_nets`).
@@ -31,6 +32,7 @@ mod graphics;
 mod layers;
 mod mask;
 mod merge;
+mod own_copper;
 mod pad;
 mod pin_rows;
 mod planes;
@@ -38,6 +40,8 @@ mod tracks;
 mod warnings;
 
 pub use self::layers::LayerTable;
+pub(crate) use self::layers::item_layer_names;
+pub use self::own_copper::WalledPad;
 use self::{context::*, graphics::*, layers::*, mask::*, planes::limit_exclusive_planes};
 pub(crate) use self::{
     exposed_pad::{PadBox, exposed_pad},
@@ -57,6 +61,9 @@ pub struct Lowered {
     /// The prepared fan-outs' plan work (`bga_fanout::plan`), in
     /// expressions of the same cost: charged with the lowering.
     pub fanout_work: u64,
+    /// The pads wired through their own footprint's copper
+    /// (own_copper.rs), for the verdict.
+    pub walled_pads: Vec<WalledPad>,
 }
 
 static LOWER_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -161,6 +168,9 @@ fn lower_board(
     builder.merge_pads();
     builder.join_padstack_copper();
     builder.place_copper_graphics();
+    // After the board's copper graphics: one of a net that touches a
+    // walled pad joins it already (`joined_elsewhere`).
+    builder.place_own_copper_exits(&ctx);
     let pours = pours(pcb, &ctx.layers)?;
     builder.place_mask_openings(&ctx, &pours);
     builder.board_cutouts(&ctx);
@@ -244,6 +254,7 @@ impl Builder {
             pin_row_gaps,
             pad_spokes,
             merged_pads,
+            walled_pads,
             ..
         } = self;
         let config = ctx.config;
@@ -295,6 +306,7 @@ impl Builder {
             },
             expressions: 0,
             fanout_work,
+            walled_pads,
         }
     }
 }

@@ -142,7 +142,7 @@ impl LayerTable {
 }
 
 /// The layer names of an item with either a `layer` or a `layers` form.
-pub(super) fn item_layer_names(item: &Expr) -> Vec<&str> {
+pub(crate) fn item_layer_names(item: &Expr) -> Vec<&str> {
     match form_atom(item, "layer", 1) {
         Some(name) => vec![name],
         None => item

@@ -237,6 +237,11 @@ pub(super) struct Builder {
     /// Board copper graphics, with the net they carry, placed once the nets
     /// of the pads are known.
     pub copper_graphics: Vec<CopperGraphic>,
+    /// Footprints with copper graphics of their own, given their walled
+    /// pads' exits once every footprint is lowered (own_copper.rs).
+    pub own_copper: Vec<super::own_copper::OwnCopper>,
+    /// The pads wired through their own footprint's copper (own_copper.rs).
+    pub walled_pads: Vec<super::own_copper::WalledPad>,
     /// `solid_pads` and `isolated_pads` per pad, by obstacle index.
     pub solid_pad_obstacles: Vec<usize>,
     pub isolated_pad_obstacles: Vec<usize>,

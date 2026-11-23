@@ -365,6 +365,17 @@ pub struct KiCadBoardRouterConfig {
     /// 2026-11-04).
     #[serde(default)]
     pub bga_fanout: Option<bool>,
+    /// Pads walled in by their own footprint's copper (an inverted-F
+    /// antenna's feed inside its polygon, a microphone's ground pads on
+    /// its ring; docs/router.md, "A pad walled by its own footprint's
+    /// copper"): KiCad keeps such a graphic copper of no net, so no track
+    /// reaches the pad without touching it. Unset or true: the router
+    /// wires each such pad through a corridor cut for it, and the verdict
+    /// lists the finding KiCad shows there under `walled_pads`, apart from
+    /// the run's errors (accept it, or rework the footprint: a net tie or a
+    /// custom pad). False: such pads stay unwired, dead pads as before.
+    #[serde(default)]
+    pub walled_pad_exits: Option<bool>,
     /// Prepare additional BGA dog-bones for second-ring balls whose external
     /// terminals all need a layer change, on arrays with one surface channel
     /// between adjacent balls. Uses the existing project via and clearance
