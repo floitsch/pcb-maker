@@ -158,6 +158,7 @@ fn one_net_board(obstacles: Vec<Obstacle>, terminals: Vec<Terminal>, plane: Plan
         terminal_copper: Vec::new(),
         attachment: Default::default(),
         via_spans: Vec::new(),
+        fixed_pad_route_clearance: Default::default(),
     }
 }
 
