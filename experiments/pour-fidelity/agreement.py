@@ -1,4 +1,4 @@
-# Copyright (C) 2026 Toit contributors.
+# Copyright (C) 2026 Florian Loitsch.
 """The pour model's connected pads against KiCad's, over many routed boards.
 
     python3 -I agreement.py [--jobs N] [--kicad-cache DIR] <binary> <out-directory> <result-directory>...

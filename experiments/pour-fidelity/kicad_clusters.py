@@ -1,4 +1,4 @@
-# Copyright (C) 2026 Toit contributors.
+# Copyright (C) 2026 Florian Loitsch.
 """KiCad's connectivity of the pads of some nets, after its own refill.
 
     python3 -I kicad_clusters.py <board.kicad_pcb> <out.json> <net>...
