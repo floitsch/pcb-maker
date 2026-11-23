@@ -308,7 +308,16 @@ it touches one pad (kicad-cli 10.0.7 accepts both cleanly; a net tie
 group of one pad does not). run.py's strict rule (rule 5) takes such a
 finding as the designer's when the designer's board pairs the graphic
 with a pad of the track's net, or with another pad of that footprint while
-the run's verdict lists the track's pad as wired through it.
+the run's verdict lists the track's pad as wired through it; an excluded
+pairing in the designer's project counts too (nrf24_remote). Route reuse
+(`--reuse-routes`) admits copper only when the seeded trial adds no KiCad
+finding, so a board whose walled pads are wired keeps none of its copper
+by reuse and is routed afresh. The open repairs lower the routed board: a
+walled pad its route reached is joined by that track and gets no second
+corridor, one still open gets its corridors, and a repair track in one is
+set apart like any crossing; the same-footprint pad bridge never crosses the graphic (its
+own clearance check against the graphic's copper, and its native check,
+which refuses any new finding).
 
 ## The negotiated search
 
