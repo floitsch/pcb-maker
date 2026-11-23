@@ -50,7 +50,8 @@ mod tests {
 
     #[test]
     fn hatch_advice_requires_a_new_error_naming_a_unique_eligible_zone() {
-        let path = crate::fs_util::temporary_next_to(Path::new("/tmp/pcb-hatch-advice"));
+        let path =
+            crate::fs_util::temporary_next_to(&std::env::temp_dir().join("pcb-hatch-advice"));
         fs::create_dir(&path).unwrap();
         let board = path.join("test board.kicad_pcb");
         let drc = path.join("drc.json");

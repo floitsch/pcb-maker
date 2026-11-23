@@ -208,6 +208,20 @@ if ! flock -n 9; then
   exit 1
 fi
 
+# The night's temporary files go to disk, under build/nightly/tmp, emptied
+# at each start. /tmp may be a RAM-backed tmpfs with a user quota that
+# other work fills; writes there then fail with "Disk quota exceeded", and
+# kicad-cli leaves an empty report while exiting 0. PCB_NIGHTLY_TMPDIR
+# names another place; set it empty to keep the caller's TMPDIR.
+if [ "${PCB_NIGHTLY_TMPDIR-unset}" = unset ]; then
+  export TMPDIR="$nights/tmp"
+  mkdir -p "$TMPDIR"
+  find "$TMPDIR" -mindepth 1 -delete 2> /dev/null || true
+elif [ -n "$PCB_NIGHTLY_TMPDIR" ]; then
+  export TMPDIR="$PCB_NIGHTLY_TMPDIR"
+  mkdir -p "$TMPDIR"
+fi
+
 # The sweep's days.
 weekday="$(date -d "${PCB_NIGHTLY_DATE:-today}" +%u 2> /dev/null || date +%u)"
 sweep_today=0
