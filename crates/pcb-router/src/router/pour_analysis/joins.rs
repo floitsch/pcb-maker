@@ -50,27 +50,29 @@ pub(super) struct PourPads<'a> {
 }
 
 impl PourPads<'_> {
+    /// KiCad's zone connection of `terminal`'s own pad.
+    fn connection(&self, terminal: usize) -> ZoneConnection {
+        let terminal = &self.description.terminals[terminal];
+        zone_connection(self.board, &terminal.label, terminal.pad)
+    }
+
     /// Whether KiCad's own zone connection of `terminal`'s pad is none.
     pub(super) fn isolated(&self, terminal: usize) -> bool {
-        self.board
-            .isolated_pads
-            .binary_search(&self.description.terminals[terminal].label)
-            .is_ok()
+        self.connection(terminal) == ZoneConnection::None
     }
 
     /// Whether KiCad's own zone connection of `terminal`'s pad is solid.
     pub(super) fn solid_pad(&self, terminal: usize) -> bool {
-        self.board
-            .solid_pads
-            .binary_search(&self.description.terminals[terminal].label)
-            .is_ok()
+        self.connection(terminal) == ZoneConnection::Solid
     }
 }
 
 impl Router {
     /// Joins each solidly connected pad (a solid pour's, or one KiCad
     /// connects solidly) to the pieces whose fill reaches its copper;
-    /// returns those pieces.
+    /// returns those pieces, and apart the pieces each solid merged pad
+    /// joins (`join_solid_merged_pads`: each an item of its piece to
+    /// KiCad's island test).
     pub(super) fn join_solid_pads(
         &self,
         pads: &PourPads,
@@ -78,7 +80,7 @@ impl Router {
         joins: &mut Joins,
         rings: &[Vec<(usize, f64)>],
         reclaimed: Vec<Vec<bool>>,
-    ) -> Vec<usize> {
+    ) -> (Vec<usize>, Vec<u32>) {
         let layers = self.board.layer_count;
         let (state, description) = (pads.state, pads.description);
         let reach = (0.8 / self.grid.steps().0).ceil() as usize;
@@ -145,8 +147,87 @@ impl Router {
                 }
             }
         }
+        let merged = self.join_solid_merged_pads(pads, pours, joins, &probe, &mut touched);
         probe.charge();
-        touched
+        (touched, merged)
+    }
+
+    /// Joins the pads merged into a terminal (`Board::merged_pads`, not a
+    /// padstack's shapes) that connect solidly to the pieces whose fill
+    /// reaches their own copper, as `join_solid_pads` joins the terminal's
+    /// pad: they are one item with it to KiCad's connectivity, and the fill
+    /// that touches any of them joins them all (capybully's SW39.3, two
+    /// overlapping 12.5 mm strips on B.Cu set to solid: the fill touches
+    /// only the second, 2.4 mm beyond the first's end). A merged pad is
+    /// solid where the net's pour on the layer is, or, in the measurement,
+    /// by its own setting (`merged_pad_thermal`); the routing model keeps
+    /// its thermal relief (`thermal_ring_pads`). Returns the pieces joined,
+    /// once per merged pad.
+    fn join_solid_merged_pads(
+        &self,
+        pads: &PourPads,
+        pours: &crate::pour::PourMap,
+        joins: &mut Joins,
+        probe: &fill::FillProbe,
+        touched: &mut Vec<usize>,
+    ) -> Vec<u32> {
+        let mut joined: Vec<u32> = Vec::new();
+        let terminals = pads.state.terminal_nodes.len();
+        for merged in
+            self.board.merged_pads.iter().filter(|merged| {
+                merged.net == pads.net && !merged.padstack && merged.host < terminals
+            })
+        {
+            if pads.isolated(merged.host) {
+                continue;
+            }
+            let connection = zone_connection(
+                &self.board,
+                &pads.description.terminals[merged.host].label,
+                merged.pad,
+            );
+            if connection == ZoneConnection::None {
+                continue;
+            }
+            let own_solid = self.config.measured_thermals && !self.merged_pad_thermal(merged);
+            let shape = &self.board.obstacles[merged.pad].shape;
+            for layer in (0..self.board.layer_count).filter(|layer| {
+                merged.layers & (1 << layer) != 0
+                    && !pours.label[*layer].is_empty()
+                    && (pads.solid[*layer] || own_solid)
+            }) {
+                let reach = probe.brush_half(layer) + 2.0 * self.grid.pitch;
+                let Some((x0, y0, x1, y1)) = self.grid.node_range(shape.aabb().inflated(reach))
+                else {
+                    continue;
+                };
+                // Per piece, its node nearest the pad's copper.
+                let mut nearest: Vec<(u32, usize, f64)> = Vec::new();
+                for y in y0..=y1 {
+                    for x in x0..=x1 {
+                        let cell = self.grid.index(x, y);
+                        let piece = pours.label[layer][cell];
+                        if piece == 0 {
+                            continue;
+                        }
+                        let distance = shape.distance_to_point(self.grid.center(x, y));
+                        match nearest.iter_mut().find(|(other, _, _)| *other == piece) {
+                            Some(entry) if distance < entry.2 => *entry = (piece, cell, distance),
+                            Some(_) => {}
+                            None => nearest.push((piece, cell, distance)),
+                        }
+                    }
+                }
+                for (piece, cell, distance) in nearest {
+                    if self.solid_fill_reaches(probe, layer, shape, merged.anchor, cell, distance) {
+                        joins.union(joins.terminal_base + merged.host, piece as usize);
+                        touched.push(piece as usize);
+                        joined.push(piece);
+                    }
+                }
+            }
+        }
+        joined
     }
 
     /// Joins each branch but those `skip` names to the pieces it lies in

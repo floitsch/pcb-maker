@@ -483,6 +483,31 @@ and counts where its end lies in fill (tested off the lattice by
 Spokes into an island touching nothing but this pad do not count; hatched
 zones, merged pads, zone priority, reclaimed fill and island removal are
 modelled. Required spokes come from the project's `min_resolved_spokes`.
+
+Three rules of KiCad's fill that decide whether a pad joins at all:
+
+- A pad's zone connection is its own (else its footprint's, else the
+  zone's), not its label's (`zone_connection`, `pour_analysis/mod.rs`): a
+  label can name pads of both kinds (split72_left's H5.1, a thermal 6 mm
+  pad and eight solid ones around its hole; read as solid, the fill ran
+  over the large pad and joined C2_29.2, whose spoke ends in its relief).
+- In a hatched zone a via's spoke is kept, as a pad's, only where its end
+  lies in the fill before spokes or inside another item's spoke
+  (`cut_via_reliefs`, `manual_spokes.rs`; zone_filler.cpp's two tests): a
+  dropped spoke's corridor joins nothing (capybully's SW48.3, a 0.4 mm
+  solid strip whose tip pokes out of its footprint's keepout beside a GND
+  via whose spoke towards it ends in the keepout). A via that another
+  item's thermal ring overlaps keeps every corridor: KiCad adds the rings
+  after the reliefs, and the lattice holds no rings (le_chiffre's vias
+  beside their capacitors' pads).
+- A pad merged into its terminal that connects solidly (in a solid pour,
+  or in the measurement by its own setting) joins the pieces its own copper
+  touches, an item of each (`join_solid_merged_pads`; capybully's SW39.3,
+  two overlapping strips of which the fill touches only the second).
+
+`experiments/pour-fidelity/agreement.py` compares the model's connected
+pads (`dump-pour-map`'s `<net>.terminals`) with KiCad's connectivity after
+its refill, per pour-net pad, over routed boards.
 The model's starved count equals KiCad's on the expansion tier, the
 fingerprints and the dense boards. Repairs, all on:
 

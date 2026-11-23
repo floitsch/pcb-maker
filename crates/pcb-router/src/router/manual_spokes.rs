@@ -622,19 +622,14 @@ impl Router {
                 continue;
             };
             let reach = gap + self.board.classes[state.plane_class[layer]].trace_width / 2.0;
-            let thermal = |label: &str| {
-                self.board
-                    .isolated_pads
-                    .binary_search(&label.to_string())
-                    .is_err()
-                    && self
-                        .board
-                        .solid_pads
-                        .binary_search(&label.to_string())
-                        .is_err()
+            // A terminal's own pad by its own zone connection
+            // (`zone_connection`: split72_left's H5.1).
+            let thermal = |terminal: &crate::board::Terminal| {
+                super::pour_analysis::zone_connection(&self.board, &terminal.label, terminal.pad)
+                    == super::pour_analysis::ZoneConnection::Thermal
             };
             for terminal in &description.terminals {
-                if !thermal(&terminal.label) {
+                if !thermal(terminal) {
                     continue;
                 }
                 if self.board.obstacles[terminal.pad].layers & (1 << layer) == 0 {
@@ -659,7 +654,7 @@ impl Router {
                 // cuts no relief around a via set to solid).
                 if description.terminals.get(merged.host).is_some_and(|host| {
                     if merged.padstack {
-                        thermal(&host.label)
+                        thermal(host)
                     } else if self.config.measured_thermals {
                         self.merged_pad_thermal(merged)
                     } else {
@@ -733,14 +728,35 @@ impl Router {
 
     /// Clears the nodes of `free` inside the thermal reliefs KiCad cuts
     /// around the net's vias in a hatched zone (`FillProbe::relieved_vias`:
-    /// the via's radius, the gap and half the minimum width), but for its
-    /// four spokes along the axes (the brush's centres within half a spoke
-    /// less half the minimum width of them), which join the via to the
-    /// fill. IotThermalCamera's Tgnd: a via of the net beside TU8 held the
-    /// lattice's diagonal neck between two pieces that KiCad's relief
-    /// keeps apart.
-    pub(super) fn cut_via_reliefs(&self, net: NetId, free: &mut [Vec<bool>]) {
+    /// the via's radius, the gap and half the minimum width), but for those
+    /// of its four spokes along the axes that KiCad keeps (the brush's
+    /// centres within half a spoke less half the minimum width of them),
+    /// which join the via to the fill. IotThermalCamera's Tgnd: a via of
+    /// the net beside TU8 held the lattice's diagonal neck between two
+    /// pieces that KiCad's relief keeps apart.
+    ///
+    /// KiCad keeps a spoke, a via's as a pad's, only where its end lies in
+    /// the fill before spokes (zone_filler.cpp, fillCopperZone: the end
+    /// tested against `testAreas`; `FillProbe::spoke_end_lands`, as the
+    /// pads' spokes are landed). A spoke whose end lies in a rule area, in
+    /// another net's clearance or in no fill at all is not drawn, and its
+    /// corridor joins nothing: capybully's SW48.3, a 0.4 mm strip set to
+    /// solid on B.Cu, whose tip pokes 0.25 mm out of its footprint's
+    /// keepout beside a GND via; the via's spoke towards the strip ends in
+    /// the keepout, KiCad drops it, and the model's corridor joined the
+    /// strip to the via and the main piece (KiCad: the strip unconnected).
+    pub(super) fn cut_via_reliefs(
+        &self,
+        net: NetId,
+        free: &mut [Vec<bool>],
+        rings: &[Vec<(usize, f64)>],
+        reclaimed: &[Vec<bool>],
+    ) {
         let vias = fill::FillProbe::relieved_vias(self, net);
+        if vias.iter().all(|vias| vias.is_empty()) {
+            return;
+        }
+        let probe = fill::FillProbe::new(self, net, rings).with_reclaimed(reclaimed.to_vec());
         for (layer, vias) in vias.iter().enumerate() {
             if free[layer].is_empty() || vias.is_empty() {
                 continue;
@@ -759,7 +775,103 @@ impl Router {
                 .fold(0.0f64, f64::max);
             let half =
                 self.board.classes[self.nets[net as usize].plane_class[layer]].trace_width / 2.0;
+            // Which spokes KiCad keeps, decided on the fill before any
+            // relief's nodes are cleared (the probe measures the reliefs
+            // itself): +x, -x, +y, -y.
+            let tip_beyond = gap + fill::KICAD_MAX_ERROR + probe.spoke_half_width(layer);
+            // Every spoke KiCad draws on the layer before it tests their
+            // ends (its `thermalSpokes`): the thermal pads' (`rings`) and
+            // the vias', each as (anchor, direction, tip, half width).
+            let mut drawn: Vec<(crate::geometry::Point, crate::geometry::Point, f64, f64)> =
+                Vec::new();
+            for (pad, _) in &rings[layer] {
+                let anchor = self.board.nets[net as usize]
+                    .terminals
+                    .iter()
+                    .find(|terminal| terminal.pad == *pad)
+                    .map(|terminal| terminal.anchor)
+                    .or_else(|| {
+                        self.board
+                            .merged_pads
+                            .iter()
+                            .find(|merged| merged.pad == *pad)
+                            .map(|merged| merged.anchor)
+                    });
+                let Some(anchor) = anchor else {
+                    continue;
+                };
+                let (_, from, geometry, minor) = self.spoke_geometry(*pad, anchor, tip_beyond);
+                let width = bridge.min(minor);
+                if width + 1.0e-9 < 2.0 * half {
+                    continue;
+                }
+                for (direction, _, tip) in geometry {
+                    drawn.push((from, direction, tip, width / 2.0));
+                }
+            }
+            const AXES: [crate::geometry::Point; 4] =
+                [[1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]];
             for (at, radius) in vias {
+                let width = bridge.min(2.0 * radius);
+                if width + 1.0e-9 >= 2.0 * half {
+                    for direction in AXES {
+                        drawn.push((*at, direction, radius + tip_beyond, width / 2.0));
+                    }
+                }
+            }
+            // Whether `end`, a spoke's of the via at `at`, lies in another
+            // item's spoke (KiCad's second test: `PointInside` of any other
+            // spoke; capybully's neighbour le_chiffre: a via's spoke ending
+            // in C7.2's spoke towards it).
+            let in_other_spoke = |at: crate::geometry::Point, end: crate::geometry::Point| {
+                drawn.iter().any(|(from, direction, tip, half_width)| {
+                    if crate::geometry::distance(*from, at) < 1.0e-6 {
+                        return false;
+                    }
+                    let offset = [end[0] - from[0], end[1] - from[1]];
+                    let along = offset[0] * direction[0] + offset[1] * direction[1];
+                    let across = (offset[0] * direction[1] - offset[1] * direction[0]).abs();
+                    along >= -1.0e-6 && along <= tip + 1.0e-6 && across <= half_width + 1.0e-6
+                })
+            };
+            let kept: Vec<[bool; 4]> = vias
+                .iter()
+                .map(|(at, radius)| {
+                    // A via whose copper another thermal item's ring
+                    // overlaps is joined by that ring: KiCad adds the rings
+                    // after the reliefs (fillCopperZone, "plus-thermal-
+                    // rings"), so a pad's ring refills a via's relief beside
+                    // it whatever the via's spokes (le_chiffre's GND vias
+                    // beside their capacitors' pads on B.Cu: C4.2's track
+                    // ends on such a via, which KiCad fills up to). The
+                    // lattice holds no rings: the via keeps its corridors.
+                    let ringed = (0..16).any(|step| {
+                        let angle = std::f64::consts::TAU * step as f64 / 16.0;
+                        let rim = radius + 0.01;
+                        probe.in_ring(
+                            layer,
+                            [at[0] + rim * angle.cos(), at[1] + rim * angle.sin()],
+                        )
+                    });
+                    if ringed {
+                        return [true; 4];
+                    }
+                    let width = bridge.min(2.0 * radius);
+                    let mut kept = [false; 4];
+                    // No spoke narrower than the minimum width.
+                    if width + 1.0e-9 < 2.0 * half {
+                        return kept;
+                    }
+                    for (slot, direction) in AXES.into_iter().enumerate() {
+                        let along = radius + tip_beyond;
+                        let end = [at[0] + direction[0] * along, at[1] + direction[1] * along];
+                        kept[slot] = probe.spoke_end_lands(layer, end, direction)
+                            || in_other_spoke(*at, end);
+                    }
+                    kept
+                })
+                .collect();
+            for ((at, radius), kept) in vias.iter().zip(kept) {
                 let reach = radius + gap + half;
                 let corridor = ((bridge.min(2.0 * radius)) / 2.0 - half).max(0.0) + 1.0e-6;
                 let bounds = crate::geometry::Aabb {
@@ -773,17 +885,21 @@ impl Router {
                 for y in y0..=y1 {
                     for x in x0..=x1 {
                         let centre = self.grid.center(x, y);
-                        let (dx, dy) = ((centre[0] - at[0]).abs(), (centre[1] - at[1]).abs());
-                        if crate::geometry::distance(centre, *at) < reach
-                            && dx > corridor
-                            && dy > corridor
-                        {
+                        let (sx, sy) = (centre[0] - at[0], centre[1] - at[1]);
+                        let (dx, dy) = (sx.abs(), sy.abs());
+                        // The via's own copper, then the corridors of the
+                        // spokes KiCad keeps.
+                        let open = (dx <= corridor && dy <= corridor)
+                            || (dy <= corridor && kept[if sx > 0.0 { 0 } else { 1 }])
+                            || (dx <= corridor && kept[if sy > 0.0 { 2 } else { 3 }]);
+                        if crate::geometry::distance(centre, *at) < reach && !open {
                             free[layer][self.grid.index(x, y)] = false;
                         }
                     }
                 }
             }
         }
+        probe.charge();
     }
 
     pub(super) fn cut_thermal_rings(&self, rings: &[Vec<(usize, f64)>], free: &mut [Vec<bool>]) {
