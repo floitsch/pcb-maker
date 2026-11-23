@@ -113,7 +113,10 @@ pub struct Component {
     /// part's pads keep the copper clearance from them at every level,
     /// also where the bodies may come closer than the hole clearance (a
     /// mouse bite's 0.5 mm holes in a 0.7 mm courtyard: OpenRX's pad came
-    /// 0.19 mm to a hole where the project asks 0.2).
+    /// 0.19 mm to a hole where the project asks 0.2). Also a pad's mask
+    /// opening on the part's side where its own margin reaches past the
+    /// copper clearance (KiCad's solder_mask_bridge: vaio_re's mounting
+    /// hole opens the mask 1.625 mm around).
     pub hole_rings: Vec<[f64; 4]>,
     /// The footprint's copper graphics (own frame, boxes with their
     /// stroke): an antenna's meander, a logo on copper. KiCad 10.0.7's
