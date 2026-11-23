@@ -2830,7 +2830,9 @@ pub struct KiCadVerdict {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub walled_pads: Vec<crate::KiCadWalledPad>,
     /// KiCad checked the result and finds no unconnected item and no error
-    /// that counts, with nothing subtracted.
+    /// that counts, with nothing subtracted: not even a walled pad's
+    /// crossing (`walled_pads`), so a board with walled pads is complete
+    /// but not clean in this sense.
     pub clean_without_subtraction: bool,
     /// The project whose board the pre-existing findings come from, or
     /// `null` when there was none or none was needed.
@@ -5913,6 +5915,8 @@ pub(crate) fn judge_at(
     // The findings forced by a walled pad's footprint go first: they count
     // nowhere, and the verdict lists them with their pads.
     let (apart, walled_pads) = set_walled_apart(facts);
+    // What KiCad itself reports, before anything is set apart.
+    let reported = facts;
     let facts = apart.as_ref().unwrap_or(facts);
     let errors = facts
         .native
@@ -6136,7 +6140,7 @@ pub(crate) fn judge_at(
         invalid_padstacks: padstacks.examples,
         input_findings,
         walled_pads,
-        clean_without_subtraction: facts.native.as_ref().is_some_and(|native| {
+        clean_without_subtraction: reported.native.as_ref().is_some_and(|native| {
             native.unconnected == 0
                 && native.errors.is_empty()
                 && native.missing_schematic_footprints.is_empty()
@@ -10917,10 +10921,13 @@ mod tests {
             action.contains("accept them as forced by the footprint"),
             "{action}"
         );
-        // Alone, the crossing leaves the run complete.
+        // Alone, the crossing leaves the run complete, but not clean
+        // without subtraction: KiCad itself reports it.
         let mut alone = routed(tally_drc(&report(vec![crossing.clone()])));
         alone.walled_pads = vec![walled_feed()];
-        assert_eq!(judge(&alone).status, KiCadRunStatus::Complete);
+        let verdict = judge(&alone);
+        assert_eq!(verdict.status, KiCadRunStatus::Complete);
+        assert!(!verdict.clean_without_subtraction);
         // Without the walled pad it is the run's error.
         let counted = routed(tally_drc(&report(vec![crossing])));
         let verdict = judge(&counted);
