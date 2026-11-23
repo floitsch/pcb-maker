@@ -51,7 +51,7 @@ the nightly are in [docs/benchmarks.md](../../docs/benchmarks.md).
 | --- | --- |
 | `hierarchy-from-netlist` | KiCad's complex-hierarchy demo from a netlist: a 100 × 80 mm board, power connectors on the left edge, signal connectors on the right, a decoupling capacitor at its amplifier, a ground plane on the top. |
 | `esp32-dut-from-netlist` | An ESP32-C3 test board from a netlist: 65 × 56 mm, the controller module on the left edge, the device under test on the right, service headers on the top edge, the system header flush along the bottom, the power header on the left, decoupling within 4 mm of each module. |
-| `esp-usb-corner` | The breadboard fence's USB/ESP corner: an ESP32-C3 module flush in the corner, its antenna keepout beyond the top edge; a USB-C receptacle below it, opening outwards; the regulator between them; capacitors at their pins. Two distance limits there are impossible (a pad 8.4 mm inside the module's courtyard) and are expected to be missed. |
+| `esp-usb-corner` | An ESP32-C3 module sits flush in the corner with its antenna beyond the board edge. A USB-C receptacle opens outwards below it, with the regulator between them. At that module pose, two front-side capacitors have an 8.4 mm lower bound to pin 3 and are expected to miss their 6 mm limits. |
 
 A task that stacks its footprints (`unplace`) also takes off the board
 the texts and silkscreen graphics that label a stacked part (by the
@@ -263,12 +263,36 @@ import, the libraries and the constraints are measured with the layout:
 `--import-near` also adds the import's decoupling `near` entries
 (`--near-decoupling`); off by default.
 
-**Pass rule:** the layout's, and the import found every footprint. KiCad's
-schematic parity findings (`parity`) are recorded, not judged. A row adds
-`stopped` and `why` (the first stage that fell short: `import`,
-`constraints`, `placement`, `routing` or `drc`), the import's report, the
-footprints taken from the board and the parts matched, copied and added;
-the run ends with the stages' counts (`stopped at: ...`).
+The historical `pass` and `pass_strict` scores apply the layout's
+copper rules and require every footprint to be found. The `parity`
+count and `parity_by_type` retain KiCad's schematic parity findings.
+
+`pass_schematic` requires a strict pass, a completed layout with exit
+code 0, every authored placement constraint satisfied, zero KiCad
+schematic parity findings, and native verification of the board as stored.
+`parity_checked` records whether the paired native ERC and DRC,
+verification receipt, and checked verdict agree for the same project.
+`stored_copper` reports the delivered PCB's SHA-256, KiCad's open and
+parity counts without refill, and their source. The runner uses the
+layout's saved-fill verification when its digest matches the board. It
+otherwise checks an otherwise passing PCB without refill and counts
+additional errors under the strict rule. `routed` is the router model's
+count and `native.unconnected` is the refilled count that supplies the
+historical scoring. `pass_schematic` is `false` for a known failure and
+`null` when evidence is missing or conflicting.
+
+`summary.json.schematic_acceptance` gives the row, passed, failed, and
+unknown counts plus `parity_unverified` and `stored_copper_unverified`.
+Use `rejudge.py --check-stored` to add a fresh as-stored check when an
+archived candidate lacks saved-fill evidence. Ordinary rejudging and
+splicing use existing artifacts. For example, archived MokyaLora had
+261/262 model connections and zero opens after refill. KiCad finds 160
+opens when it checks the archived PCB as stored, so that artifact fails
+schematic acceptance.
+
+A row adds `stopped` and `why` for the first stage that fell short under
+the historical scoring, the import's report, and the parts matched,
+copied and added. The run ends with the stages' counts (`stopped at: ...`).
 
 ```sh
 benchmarks/agent-tasks/run.py build/sch-xNNNN --tier schematic \

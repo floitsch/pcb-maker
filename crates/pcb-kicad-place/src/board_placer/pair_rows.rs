@@ -16,6 +16,7 @@
 //! two ends (`pcb_placer::facing`).
 
 use super::PairGeometry;
+use crate::board_router::KiCadBoardRouterConfig;
 use crate::placement_constraints::KiCadRowConstraint;
 use pcb_placer as core;
 use std::collections::BTreeMap;
@@ -24,14 +25,15 @@ use std::collections::BTreeMap;
 /// geometry from the router's configuration, as `diff_pairs::find_pairs`
 /// takes it (the rules' width and gap on the first layer they allow the
 /// pair, else the net's width and its clearance).
-pub fn pair_geometry(
-    config: &crate::board_router::KiCadBoardRouterConfig,
-) -> BTreeMap<String, PairGeometry> {
+pub fn pair_geometry(config: &KiCadBoardRouterConfig) -> BTreeMap<String, PairGeometry> {
     let mut out = BTreeMap::new();
     for (name, rules) in &config.connection_rules {
         let Some((partner, _, true)) = crate::project_rules::diff_pair_of(name) else {
             continue;
         };
+        if config.excludes_diff_pair(name, &partner) {
+            continue;
+        }
         let Some(other) = config.connection_rules.get(&partner) else {
             continue;
         };
@@ -60,10 +62,10 @@ pub fn pair_geometry(
 /// positive first, then the nets of the parts' other pads) and what its
 /// pitch is (`constraints[]`'s detail).
 #[derive(Clone, Debug)]
-pub(crate) struct PairRow {
-    pub row: KiCadRowConstraint,
-    pub nets: [[String; 2]; 2],
-    pub detail: String,
+pub struct PairRow {
+    pub(crate) row: KiCadRowConstraint,
+    pub(crate) nets: [[String; 2]; 2],
+    pub(crate) detail: String,
 }
 
 /// A pair row as the lowered placement keeps it: its parts (first,
@@ -74,7 +76,9 @@ pub struct LoweredPairRow {
     pub first: usize,
     pub other: usize,
     pub facing: Option<core::facing::Facing>,
-    pub detail: String,
+    pub(crate) plan: PairRow,
+    /// The follower's offset in the leader's frame.
+    offset: [f64; 2],
 }
 
 /// A footprint as the pair rows see it.
@@ -86,14 +90,14 @@ pub(crate) struct PairCandidate {
     /// Its pads with a net: number, net, centre and copper's box ([min x,
     /// min y, max x, max y]) in the footprint's frame.
     pub pads: Vec<PadNet>,
-    /// The body's size in the footprint's frame (its courtyard).
+    /// The body's full geometry in the footprint's frame, including its
+    /// courtyard. Its own row should leave that clearance even on a
+    /// board where the placer may tighten unrelated bodies.
+    pub body_center: [f64; 2],
     pub body_size: [f64; 2],
-    /// The body without the courtyard's margin, where the project lets
-    /// courtyards overlap (`Component::tight`).
-    pub tight: Option<[f64; 4]>,
     pub angle: f64,
     pub side: core::Side,
-    /// Not fixed, named by no constraint, in no row.
+    /// Movable and free of authored position or rotation constraints.
     pub free: bool,
 }
 
@@ -103,22 +107,30 @@ pub(crate) type PadNet = (String, String, [f64; 2], [f64; 4]);
 
 /// The pair rows of a lowered board's footprints (`references`, with
 /// their library names and pads with nets): its free parts are those not
-/// fixed and named by no entry of `constraints` (a reference, a glob, a
-/// `pin_of`'s part), so that no constraint lands on a row's second part.
+/// fixed or named by an authored relation (a reference, a glob, a
+/// `pin_of`'s part), so that no such constraint lands on a row's second
+/// part. Face assignments have already taken effect. Both row parts must
+/// share a face.
 /// `geometry`: the pairs' widths and gaps (`pair_geometry`; empty: the
 /// rows at the bodies' width).
 pub(crate) fn implicit_pair_rows(
     problem: &core::Problem,
     references: &[String],
-    library_names: &[String],
-    pad_nets: &[Vec<PadNet>],
+    (library_names, pad_nets): (&[String], &[Vec<PadNet>]),
+    explicitly_held: &[bool],
     constraints: Option<&crate::placement_constraints::KiCadPlacementConstraints>,
     geometry: &BTreeMap<String, PairGeometry>,
+    router_rules: Option<&KiCadBoardRouterConfig>,
 ) -> Vec<PairRow> {
     let mut named: Vec<String> = Vec::new();
-    if let Some(value) = constraints.and_then(|constraints| serde_json::to_value(constraints).ok())
+    if let Some(serde_json::Value::Object(brief)) =
+        constraints.and_then(|constraints| serde_json::to_value(constraints).ok())
     {
-        strings_of(&value, &mut named);
+        for (kind, value) in &brief {
+            if !matches!(kind.as_str(), "front" | "back") {
+                strings_of(value, &mut named);
+            }
+        }
     }
     let candidates: Vec<PairCandidate> = references
         .iter()
@@ -127,11 +139,12 @@ pub(crate) fn implicit_pair_rows(
             reference: reference.clone(),
             footprint: library_names.get(index).cloned().unwrap_or_default(),
             pads: pad_nets.get(index).cloned().unwrap_or_default(),
+            body_center: problem.components[index].body_center,
             body_size: problem.components[index].body_size,
-            tight: problem.components[index].tight,
             angle: problem.poses[index].angle,
             side: problem.components[index].side,
             free: !problem.components[index].fixed
+                && !explicitly_held[index]
                 && !named
                     .iter()
                     .any(|name| crate::kicad_nets::glob_matches(name, reference)),
@@ -150,7 +163,7 @@ pub(crate) fn implicit_pair_rows(
             candidate
         })
         .collect();
-    let rows = pair_rows(&candidates, geometry);
+    let rows = pair_rows(&candidates, geometry, router_rules);
     if !rows.is_empty() {
         eprintln!(
             "placer: pair rows: {} pairs' series parts as rows of two ({})",
@@ -168,6 +181,7 @@ pub(crate) fn implicit_pair_rows(
 /// leaders' facings (by the nets' ids of `net_ids`).
 pub(crate) fn lowered_pair_rows(
     rows: &[PairRow],
+    problem: &core::Problem,
     references: &[String],
     net_ids: &BTreeMap<String, usize>,
 ) -> Vec<LoweredPairRow> {
@@ -178,6 +192,12 @@ pub(crate) fn lowered_pair_rows(
                 index(&pair_row.row.parts[0])?,
                 index(&pair_row.row.parts[1])?,
             );
+            let offset = problem
+                .constraints
+                .followers
+                .iter()
+                .find(|follower| follower.leader == first && follower.part == other)?
+                .offset;
             let side = |nets: &[String; 2]| -> Option<Vec<usize>> {
                 nets.iter().map(|net| net_ids.get(net).copied()).collect()
             };
@@ -191,15 +211,15 @@ pub(crate) fn lowered_pair_rows(
                 first,
                 other,
                 facing,
-                detail: pair_row.detail.clone(),
+                plan: pair_row.clone(),
+                offset,
             })
         })
         .collect()
 }
 
-/// The pair rows as `constraints[]` reports them: `pair_row`, the first
-/// part and the other, kept (a row is one part), with the pitch's detail
-/// and how the row faces the pair's ends at `poses`.
+/// Measure each row against the supplied poses. A caller checking a saved
+/// board must use its actual poses, before lowering syncs its followers.
 pub fn pair_row_statuses(
     pair_rows: &[LoweredPairRow],
     problem: &core::Problem,
@@ -209,6 +229,16 @@ pub fn pair_row_statuses(
     pair_rows
         .iter()
         .map(|row| {
+            let (first, other) = (poses[row.first], poses[row.other]);
+            let actual = [
+                other.position[0] - first.position[0],
+                other.position[1] - first.position[1],
+            ];
+            let expected = core::problem::rotate(row.offset, -first.angle);
+            let distance = actual[0].hypot(actual[1]);
+            let offset_error = (actual[0] - expected[0]).hypot(actual[1] - expected[1]);
+            let angle_error = ((other.angle - first.angle + 180.0).rem_euclid(360.0) - 180.0).abs();
+            let satisfied = offset_error <= 1.0e-5 && angle_error <= 1.0e-5;
             let faced = row
                 .facing
                 .as_ref()
@@ -227,9 +257,20 @@ pub fn pair_row_statuses(
                 kind: "pair_row".into(),
                 part: references[row.first].clone(),
                 other: Some(references[row.other].clone()),
-                satisfied: true,
-                violation_mm: 0.0,
-                detail: Some(format!("{}{facing}", row.detail)),
+                satisfied,
+                violation_mm: if satisfied { 0.0 } else { offset_error },
+                distance_mm: Some(distance),
+                pad_near: None,
+                body_near_pin: None,
+                near_geometry: None,
+                detail: Some(if satisfied {
+                    format!("{}{facing}", row.plan.detail)
+                } else {
+                    format!(
+                        "{}; actual origin separation {distance:.3} mm, row offset error {offset_error:.3} mm, relative angle {angle_error:.3} degrees",
+                        row.plan.detail
+                    )
+                }),
             }
         })
         .collect()
@@ -266,7 +307,11 @@ const PAIR_ROW_MARGIN_MM: f64 = 0.01;
 pub(crate) fn pair_rows(
     candidates: &[PairCandidate],
     geometry: &BTreeMap<String, PairGeometry>,
+    router_rules: Option<&KiCadBoardRouterConfig>,
 ) -> Vec<PairRow> {
+    let excluded = |first: &str, second: &str| {
+        router_rules.is_some_and(|rules| rules.excludes_diff_pair(first, second))
+    };
     let two_pads = |candidate: &PairCandidate| {
         candidate.free
             && candidate.pads.len() == 2
@@ -290,6 +335,9 @@ pub(crate) fn pair_rows(
             let Some((complement, _, true)) = crate::project_rules::diff_pair_of(net) else {
                 continue;
             };
+            if excluded(net, &complement) {
+                continue;
+            }
             // The one other part of the footprint with the same pad on the
             // pair's other net; two such parts: no row (which is meant is
             // not told).
@@ -325,7 +373,7 @@ pub(crate) fn pair_rows(
             else {
                 continue;
             };
-            if far_positive == far_negative {
+            if far_positive == far_negative || excluded(&far_positive, &far_negative) {
                 continue;
             }
             let Some((row, detail)) = pair_row(part, &candidates[negative], *at, geometry.get(net))
@@ -396,32 +444,22 @@ fn hundredths_up(value: f64) -> f64 {
 /// The pitch of a pair row across its parts' frame axis `size` (0: x, 1:
 /// y) and what it is: the pair's track width plus gap (the coupled run's
 /// tracks' centres apart, so that the stubs run straight from the pads to
-/// it), at least the courtyards' width (touching courtyards are legal;
-/// the tight bodies where the project lets courtyards overlap) and the
-/// pads' extent plus the pair's clearance; without the pair's geometry the
-/// bodies' width.
+/// it), at least the courtyards' width and the pads' extent plus the
+/// pair's clearance. A row can turn either way, so cover both signs.
 fn pair_pitch(
     positive: &PairCandidate,
     negative: &PairCandidate,
     size: usize,
     geometry: Option<&PairGeometry>,
 ) -> (f64, String) {
-    let body = |part: &PairCandidate| match part.tight {
-        Some(tight) => tight[size + 2] - tight[size],
-        None => part.body_size[size],
-    };
-    let courtyards = body(positive).max(body(negative));
+    let courtyards = (positive.body_size[size] + negative.body_size[size]) / 2.0
+        + (positive.body_center[size] - negative.body_center[size]).abs();
     let courtyard_bound = hundredths_up(courtyards + PAIR_ROW_MARGIN_MM);
-    let what = if positive.tight.is_some() {
-        "bodies"
-    } else {
-        "courtyards"
-    };
     let Some(geometry) = geometry else {
         return (
             courtyard_bound,
             format!(
-                "pitch {courtyard_bound} mm, the {what}' {courtyards:.2} mm across (the pair's track width and gap unknown)"
+                "pitch {courtyard_bound} mm, the courtyards' {courtyards:.2} mm across (the pair's track width and gap unknown)"
             ),
         );
     };
@@ -436,9 +474,11 @@ fn pair_pitch(
             .iter()
             .map(|pad| pad.3[size + 2])
             .fold(f64::NEG_INFINITY, f64::max);
-        (high - low).max(0.0)
+        (low, high)
     };
-    let pads = extent(positive).max(extent(negative));
+    let a = extent(positive);
+    let b = extent(negative);
+    let pads = (a.1 - b.0).max(b.1 - a.0);
     let copper_bound = hundredths_up(pads + geometry.clearance);
     let wanted = geometry.width + geometry.gap;
     let pitch = hundredths_up(wanted).max(courtyard_bound).max(copper_bound);
@@ -450,7 +490,7 @@ fn pair_pitch(
         format!("pitch {pitch} mm, {pair}: the pads in line with the coupled run's tracks")
     } else if courtyard_bound >= copper_bound {
         format!(
-            "pitch {pitch} mm, the {what}' {courtyards:.2} mm across: {pair} cannot be met by the footprint, the stubs narrow to the run"
+            "pitch {pitch} mm, the courtyards' {courtyards:.2} mm across: {pair} cannot be met by the footprint, the stubs narrow to the run"
         )
     } else {
         format!(
@@ -476,8 +516,8 @@ mod tests {
                 ("1".into(), nets[0].into(), [-0.48, 0.0], pad(-0.48)),
                 ("2".into(), nets[1].into(), [0.48, 0.0], pad(0.48)),
             ],
+            body_center: [0.0, 0.0],
             body_size: [1.82, 0.92],
-            tight: None,
             angle,
             side: core::Side::Front,
             free: true,
@@ -485,7 +525,7 @@ mod tests {
     }
 
     fn rows_of(parts: &[PairCandidate]) -> Vec<KiCadRowConstraint> {
-        pair_rows(parts, &BTreeMap::new())
+        pair_rows(parts, &BTreeMap::new(), None)
             .into_iter()
             .map(|row| row.row)
             .collect()
@@ -502,7 +542,7 @@ mod tests {
             capacitor("C153", ["/TCP2_TX1_N", "/HDMI/D1_N"], 90.0),
             capacitor("C152", ["/TCP2_TX1_P", "/HDMI/D1_P"], 90.0),
         ];
-        let pair_rows = pair_rows(&parts, &BTreeMap::new());
+        let pair_rows = pair_rows(&parts, &BTreeMap::new(), None);
         let rows: Vec<_> = pair_rows.iter().map(|row| row.row.clone()).collect();
         assert_eq!(rows.len(), 2, "{rows:?}");
         assert_eq!(rows[0].parts, vec!["C150", "C151"]);
@@ -521,6 +561,23 @@ mod tests {
         // The positive part leads; turned a quarter, across is x.
         assert_eq!(rows[1].parts, vec!["C152", "C153"]);
         assert_eq!(rows[1].axis.as_deref(), Some("x"));
+    }
+
+    #[test]
+    fn an_excluded_pair_does_not_make_a_series_row() {
+        let parts = [
+            capacitor("C1", ["Power+", "Output_P"], 0.0),
+            capacitor("C2", ["Power-", "Output_N"], 0.0),
+            capacitor("C3", ["TX_P", "Junction_P"], 0.0),
+            capacitor("C4", ["TX_N", "Junction_N"], 0.0),
+        ];
+        let router = KiCadBoardRouterConfig {
+            excluded_pair_connections: vec![["Power+".into(), "Power-".into()]],
+            ..Default::default()
+        };
+        let rows = pair_rows(&parts, &BTreeMap::new(), Some(&router));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].row.parts, ["C3", "C4"]);
     }
 
     #[test]
@@ -546,6 +603,7 @@ mod tests {
         let rows = pair_rows(
             &pair("TX", "HDMI", capacitor),
             &geometry(0.1521, 0.254, 0.15),
+            None,
         );
         assert_eq!(rows[0].row.pitch_mm, 0.93);
         assert!(
@@ -569,7 +627,7 @@ mod tests {
             }
             part
         }
-        let rows = pair_rows(&pair("TX", "Y", small), &geometry(0.3, 0.5, 0.2));
+        let rows = pair_rows(&pair("TX", "Y", small), &geometry(0.3, 0.5, 0.2), None);
         assert_eq!(rows[0].row.pitch_mm, 0.8);
         assert!(
             rows[0]
@@ -578,23 +636,20 @@ mod tests {
             "{}",
             rows[0].detail
         );
-        // The pads' clearance bounds it where the courtyards would allow
-        // less (a project that lets courtyards overlap: the tight bodies,
-        // 0.62 mm across, and a clearance of 0.25 mm).
-        fn tight(reference: &str, nets: [&str; 2], angle: f64) -> PairCandidate {
-            let mut part = capacitor(reference, nets, angle);
-            part.tight = Some([-0.76, -0.31, 0.76, 0.31]);
-            part
-        }
-        let rows = pair_rows(&pair("TX", "Y", tight), &geometry(0.15, 0.2, 0.25));
-        assert_eq!(rows[0].row.pitch_mm, 0.87);
+        // The pads' clearance can require more than the courtyard width.
+        let rows = pair_rows(
+            &pair("TX", "Y", capacitor),
+            &geometry(0.15, 0.2, 0.37),
+            None,
+        );
+        assert_eq!(rows[0].row.pitch_mm, 0.99);
         assert!(
             rows[0].detail.contains("the pads' 0.62 mm across"),
             "{}",
             rows[0].detail
         );
         // Without the pair's geometry: the courtyards.
-        let rows = pair_rows(&pair("TX", "Y", capacitor), &BTreeMap::new());
+        let rows = pair_rows(&pair("TX", "Y", capacitor), &BTreeMap::new(), None);
         assert_eq!(rows[0].row.pitch_mm, 0.93);
         assert!(rows[0].detail.contains("unknown"), "{}", rows[0].detail);
     }

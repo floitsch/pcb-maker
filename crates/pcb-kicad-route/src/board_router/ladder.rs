@@ -47,6 +47,7 @@ pub(crate) struct ResumeLimits {
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct RouterWork {
     pub expansions: u64,
+    pub first_iteration_expansions: u64,
     pub pour: f64,
     pub build: f64,
     pub shared: core::router::SharedBuild,
@@ -128,8 +129,10 @@ pub(crate) trait LadderRunner: Sync {
         connect: bool,
         board: Self::Board,
     ) -> Result<KiCadBoardRouterResult, String>;
-    /// KiCad's check of an attempt routed without it (`check_attempt`).
-    fn check(&self, result: &mut KiCadBoardRouterResult, directory: &Path) -> Result<(), String>;
+    /// KiCad's check of an attempt routed without it (`check_attempt`),
+    /// returning the number of DRC checks to charge.
+    fn check(&self, result: &mut KiCadBoardRouterResult, directory: &Path)
+    -> Result<usize, String>;
     /// KiCad's starved thermals in `directory`'s report.
     fn starved(&self, directory: &Path) -> usize;
     /// The memory limits now (how many routers run side by side).
@@ -496,6 +499,7 @@ fn attempt_record(
         open: opens.0,
         starved: opens.1,
         counted_by: if judged.is_some() { "kicad" } else { "router" }.into(),
+        native_candidate_errors: result.native_candidate_errors,
         vias: result.vias,
         iterations: result.iterations,
         work_seconds: work,
@@ -707,7 +711,7 @@ impl<'a> Ladder<'a> {
         } else {
             0.0
         };
-        let ladder_budget = config.ladder_budget_seconds.unwrap_or(1200.0);
+        let ladder_budget = config.ladder_budget();
         // Route mode (no work deadline): the ladder's whole work (its probes,
         // rungs, seeds, the probed rung's continuation and the steps after,
         // each router's clean-up and polish included) stays within its budget
@@ -719,10 +723,12 @@ impl<'a> Ladder<'a> {
         // probed ones 120 s, and 279 runs were cut by the wall guard. A
         // layout's ladder (`deadline_work`) is bounded by the layout's end as
         // before.
-        let work_bound = config
-            .deadline_work
-            .is_none()
-            .then(|| ladder_work_bound(ladder_budget));
+        let work_bound = config.deadline_work.is_none().then(|| {
+            let normal = ladder_work_bound(ladder_budget);
+            config
+                .ladder_work_ceiling
+                .map_or(normal, |ceiling| normal.min(ceiling))
+        });
         let mut ladder = Self {
             config,
             // On two layers (`pcb_router`'s `integrity`): inner planes stay
@@ -874,9 +880,16 @@ impl<'a> Ladder<'a> {
             );
         }
         if let Some(bound) = work_bound {
+            let cap = if config.ladder_work_ceiling.is_some() {
+                format!("capped at {bound:.0} s of work")
+            } else {
+                format!(
+                    "at most {bound:.0} s with its tolerance ({:.0} %)",
+                    LADDER_WORK_TOLERANCE * 100.0
+                )
+            };
             eprintln!(
-                "ladder: a budget of {ladder_budget:.0} s of work, at most {bound:.0} s with its tolerance ({:.0} %); wall guard {}",
-                LADDER_WORK_TOLERANCE * 100.0,
+                "ladder: a budget of {ladder_budget:.0} s of work, {cap}; wall guard {}",
                 match config.deadline_seconds {
                     Some(seconds) if config.deadline.is_some() => {
                         let stretch = crate::work_rate::work_rate().wall_stretch(false);
@@ -1221,22 +1234,36 @@ impl<'a> Ladder<'a> {
         attempt
     }
 
-    /// What attempts are ranked by: open (and starved), then the pours
-    /// (`pour_rank`, 0 unless `ranks_pours`), then vias and copper.
-    fn rank(opens: Opens, result: &KiCadBoardRouterResult) -> (Opens, u32, usize, f64) {
+    /// The opens and starved thermals, then new severity-error findings,
+    /// the pours (`pour_rank`), vias and copper. A missing score sorts
+    /// after a measured one on a tie in opens and starved thermals.
+    fn rank(opens: Opens, result: &KiCadBoardRouterResult) -> (Opens, usize, u32, usize, f64) {
         (
             opens,
+            result.native_candidate_errors.unwrap_or(usize::MAX),
             pour_rank(result.pour_loss),
             result.vias,
             result.length_mm,
         )
     }
 
+    fn complete(opens: Opens, result: &KiCadBoardRouterResult) -> bool {
+        opens.0 == 0
+            && result
+                .native_candidate_errors
+                .map_or(result.native.is_none(), |errors| errors == 0)
+    }
+
     /// The best board's quality as the check gate compares attempts.
     fn quality(&self) -> Option<CheckedQuality> {
-        self.best
-            .as_ref()
-            .map(|(opens, result)| (*opens, result.vias, result.length_mm))
+        self.best.as_ref().map(|(opens, result)| {
+            (
+                *opens,
+                result.native_candidate_errors,
+                result.vias,
+                result.length_mm,
+            )
+        })
     }
 
     /// Unconnected items as the router and, when asked, KiCad see them,
@@ -1285,7 +1312,16 @@ impl<'a> Ladder<'a> {
             }
         }
         if !self.checking {
+            self.score_checked(result, directory);
             return Ok(Some(Self::open(runner, result, directory)));
+        }
+        if self
+            .config
+            .provisional_native_check_limit
+            .is_some_and(|limit| self.checks_charged.checks >= limit)
+        {
+            self.gate.skipped += 1;
+            return Ok(None);
         }
         let count = router_open(result);
         // Past the deadline no further attempt starts: only whether this
@@ -1293,7 +1329,7 @@ impl<'a> Ladder<'a> {
         let finishing = self.past_deadline();
         // An attempt as open as the best by the router's count but with
         // better pours can win whatever its vias (`rank`).
-        let pours_better = best.is_some_and(|((open, _), _, _)| count == open)
+        let pours_better = best.is_some_and(|((open, _), _, _, _)| count == open)
             && self
                 .best
                 .as_ref()
@@ -1315,17 +1351,42 @@ impl<'a> Ladder<'a> {
                     "cannot win"
                 },
                 result.vias,
-                best.map_or("none".to_string(), |((open, starved), vias, _)| format!(
+                best.map_or("none".to_string(), |((open, starved), _, vias, _)| format!(
                     "{open} open, {starved} starved, {vias} vias"
                 )),
                 if finishing { ", past the deadline" } else { "" }
             );
             return Ok(None);
         }
-        runner.check(result, directory)?;
-        self.charge_checks(1);
+        self.charge_checks(runner.check(result, directory)?);
+        self.score_checked(result, directory);
         self.gate.record((count, result.vias, result.length_mm));
         Ok(Some(Self::open(runner, result, directory)))
+    }
+
+    fn score_checked(&mut self, result: &mut KiCadBoardRouterResult, directory: &Path) {
+        if result.native.is_none() {
+            return;
+        }
+        let Ok(report) = crate::native_report::read_kicad_report(&directory.join("drc.json"))
+        else {
+            return;
+        };
+        let Some(raw) = crate::native_report::count_scoped_drc_errors(&report) else {
+            return;
+        };
+        let wall = if self.work_left() < self.check_charge {
+            Some(std::time::Instant::now())
+        } else {
+            self.config.deadline
+        };
+        let (errors, checks) = self
+            .config
+            .native_candidate_ranker
+            .as_ref()
+            .map_or((raw, 0), |ranker| (ranker.0)(&report, directory, wall));
+        result.native_candidate_errors = Some(errors);
+        self.charge_checks(checks);
     }
 
     /// `judge`, isolated: None when judging panicked (recorded as `name`'s
@@ -1729,8 +1790,10 @@ impl<'a> Ladder<'a> {
             }
             rungs.push((mode, board, attempt));
         }
-        // Route mode: the probes together take at most `PROBE_SHARE` of
-        // the budget (in a layout, `probe_seconds` each as before).
+        // Route mode: the probes target `PROBE_SHARE` of the budget (in a
+        // layout, `probe_seconds` each). Every probe completes its first
+        // pass before it can stop, so the actual search can be longer.
+        let route_probe_budget = self.work_bound.map(|_| PROBE_SHARE * self.ladder_budget);
         let probe_work = if self.work_bound.is_some() && !rungs.is_empty() {
             let each = bounded_probe_seconds(probe_seconds, self.ladder_budget, rungs.len());
             if each < probe_seconds {
@@ -1773,13 +1836,15 @@ impl<'a> Ladder<'a> {
         // at once as fit half the memory available (the first router
         // tells its size). The outcome is the one of probing one rung
         // after the other: the fewest unfinished nets lead, a tie goes to
-        // the earlier rung, a rung that finishes everything ends the
-        // probing, and only the probes up to it count as work. A probe's
-        // budget is work, so its outcome does not depend on what runs
-        // beside it.
+        // the earlier rung, and a complete rung ends the probing. Route
+        // mode charges all admitted probes' work, including those in the
+        // same wave as a complete rung.
         let mut first: Option<(R::Probe, f64)> = None;
         // The first router's lattice maps (its memory report).
         let mut router_mb_estimate: Option<f64> = None;
+        let mut probe_search = 0.0;
+        let mut expected_search = probe_work;
+        let mut expected_overhead: f64 = 0.0;
         let mut next = 0;
         while next < rungs.len() {
             // A probe takes its seconds (more on a busy machine), the
@@ -1791,6 +1856,33 @@ impl<'a> Ladder<'a> {
                 && (self.past_deadline() || self.work_left() < probe_seconds * 2.0 + 120.0)
             {
                 break;
+            }
+            let mut admitted = rungs.len() - next;
+            if let Some(budget) = route_probe_budget {
+                // Take a measurement from one router before building or
+                // running any alternatives. Keep the same search limit
+                // for each admitted probe so their rankings remain comparable.
+                if leader.is_none() {
+                    admitted = 1;
+                } else {
+                    let left = self.bound_left().unwrap_or(0.0) - self.check_charge;
+                    // Search checks the limit between batches. Allow the
+                    // same tolerance as the overall work ledger for these
+                    // small overruns in otherwise routine probes.
+                    let share_left = budget * (1.0 + LADDER_WORK_TOLERANCE) - probe_search;
+                    let by_share = share_left / expected_search.max(f64::EPSILON);
+                    let by_bound = left / (expected_search + expected_overhead).max(f64::EPSILON);
+                    admitted = admitted.min(by_share.min(by_bound).max(0.0) as usize);
+                    if admitted == 0 {
+                        let reason = format!(
+                            "further rung probes did not run: another probe is estimated to need {expected_search:.1} s of search, with {:.1} s left in the search share and {left:.1} s left under the work bound after reserving the check",
+                            (budget - probe_search).max(0.0),
+                        );
+                        eprintln!("ladder: {reason}");
+                        self.skipped.push(reason);
+                        break;
+                    }
+                }
             }
             if router_mb_estimate.is_none() {
                 let started = std::time::Instant::now();
@@ -1834,23 +1926,22 @@ impl<'a> Ladder<'a> {
                     rungs.clear();
                     break;
                 }
-                held = rungs
-                    .iter()
-                    .map(|(_, board, attempt)| {
-                        let hold = runner.hold(board, attempt);
-                        (runner.hold_key(&hold), hold)
-                    })
-                    .collect();
+                if route_probe_budget.is_none() {
+                    held = rungs
+                        .iter()
+                        .map(|(_, board, attempt)| {
+                            let hold = runner.hold(board, attempt);
+                            (runner.hold_key(&hold), hold)
+                        })
+                        .collect();
+                }
                 first = Some((router, started.elapsed().as_secs_f64()));
                 router_mb_estimate = Some(megabytes);
             }
             // The search scratches and the via reduction's copy come on
             // top of the maps a new router holds (`router_peak_mb`).
-            let (fitting, why) = Self::side_by_side_for(
-                runner,
-                router_mb_estimate.unwrap_or(1.0),
-                rungs.len() - next,
-            );
+            let (fitting, why) =
+                Self::side_by_side_for(runner, router_mb_estimate.unwrap_or(1.0), admitted);
             let side_by_side = fitting
                 // A cap for experiments (1: one after the other).
                 .min(
@@ -1864,6 +1955,15 @@ impl<'a> Ladder<'a> {
                 rungs.len() - next
             );
             let wave = &rungs[next..next + side_by_side];
+            if route_probe_budget.is_some() {
+                for (_, board, attempt) in wave {
+                    let key = runner.statics_key(board, attempt);
+                    if key.is_none() || !held.iter().any(|(held, _)| *held == key) {
+                        let hold = runner.hold(board, attempt);
+                        held.push((runner.hold_key(&hold), hold));
+                    }
+                }
+            }
             let hooks: Vec<bool> = wave.iter().map(|_| self.panic_due("probe")).collect();
             let first_router = first.take();
             let probed: Vec<Result<(usize, usize, R::Probe, f64), String>> =
@@ -1908,10 +2008,12 @@ impl<'a> Ladder<'a> {
                 });
             let mut out_of_work = false;
             for (outcome, (wave_mode, board, attempt)) in probed.into_iter().zip(wave) {
-                // As one probe after the other: a probe the work left would
-                // not have started counts for nothing, however many ran side
-                // by side (that number follows the memory available).
-                if leader.is_some() && self.work_left() < probe_seconds * 2.0 + 120.0 {
+                // Layout mode counts as if the probes ran one at a time,
+                // omitting any probes its deadline would have prevented.
+                if route_probe_budget.is_none()
+                    && leader.is_some()
+                    && self.work_left() < probe_seconds * 2.0 + 120.0
+                {
                     out_of_work = true;
                     break;
                 }
@@ -1921,16 +2023,20 @@ impl<'a> Ladder<'a> {
                     continue;
                 };
                 let probed = runner.work(&router);
+                let search = work_of(probed.expansions);
                 let lattice = if self.charges_all {
                     let lattice = self.lattice_charge(probed.build, probed.shared, 1.0);
-                    self.charge(work_of(probed.expansions), probed.pour, lattice, 0.0);
+                    self.charge(search, probed.pour, lattice, 0.0);
                     lattice
                 } else {
-                    self.charge(work_of(probed.expansions), 0.0, 0.0, 0.0);
+                    self.charge(search, 0.0, 0.0, 0.0);
                     0.0
                 };
+                probe_search += search;
+                expected_search = expected_search.max(work_of(probed.first_iteration_expansions));
+                expected_overhead = expected_overhead.max(probed.pour + lattice);
                 eprintln!(
-                    "probe {}: {unfinished} nets unfinished after {:.0} s{} (work: search {:.2} s, pour {:.2} s, lattice {:.2} s)",
+                    "probe {}: {unfinished} nets unfinished after {:.0} s{} (work: search {search:.2} s, pour {:.2} s, lattice {:.2} s)",
                     self.probe_name(mode),
                     seconds,
                     if side_by_side > 1 {
@@ -1938,7 +2044,6 @@ impl<'a> Ladder<'a> {
                     } else {
                         String::new()
                     },
-                    work_of(probed.expansions),
                     probed.pour,
                     lattice
                 );
@@ -1947,9 +2052,10 @@ impl<'a> Ladder<'a> {
                     runner.speak(&mut router, attempt);
                     leader = Some((unfinished, mode, router, board.clone(), attempt.clone()));
                 }
-                // A rung that already finishes everything needs no rival
-                // (the probes beside it after it count for nothing).
-                if leader.as_ref().is_some_and(|(best, ..)| *best == 0) {
+                // Layout mode counts through the first complete rung.
+                if route_probe_budget.is_none()
+                    && leader.as_ref().is_some_and(|(best, ..)| *best == 0)
+                {
                     break;
                 }
             }
@@ -2152,7 +2258,7 @@ impl<'a> Ladder<'a> {
         self.last_attempt_work = attempt_work;
         self.last_attempt_pitch = result.grid_pitch_mm;
         self.keep_reserves(opens, attempt_work, probe_seconds + resumed);
-        self.probe_complete = opens.0 == 0;
+        self.probe_complete = Self::complete(opens, &result);
         self.best = Some((opens, result));
         self.best_attempt = Some((attempt.clone(), connect));
         self.best_mode = Some(mode);
@@ -2219,7 +2325,7 @@ impl<'a> Ladder<'a> {
         } else if self.pitch(runner, regular, &all, all.len(), 0, false)? == Flow::Stop {
             return Ok(());
         }
-        if !self.open_best() {
+        if !self.incomplete_best() {
             return Ok(());
         }
         let Some(leader) = self.probed_mode.or(self.best_mode) else {
@@ -2290,7 +2396,7 @@ impl<'a> Ladder<'a> {
         crate::mem_profile::phase("rungs");
         let mut finer_run = 0;
         for pitch in finer {
-            if !self.open_best() {
+            if !self.incomplete_best() {
                 return Ok(());
             }
             if self.pitch_skipped(pitch) {
@@ -2307,7 +2413,7 @@ impl<'a> Ladder<'a> {
         }
         // (C) The rungs the gate admits, on the regular pitch.
         if probed {
-            if !self.open_best() {
+            if !self.incomplete_best() {
                 return Ok(());
             }
             if self.pitch(runner, regular, &admitted, admitted.len(), 0, false)? == Flow::Stop {
@@ -2316,7 +2422,7 @@ impl<'a> Ladder<'a> {
         }
         // (D) Those rungs on the finer pitches the leader ran on.
         for pitch in &finer[..finer_run] {
-            if !self.open_best() || self.pitch_skipped(pitch) {
+            if !self.incomplete_best() || self.pitch_skipped(pitch) {
                 break;
             }
             if self.pitch(runner, pitch, &admitted, admitted.len(), 0, false)? == Flow::Stop {
@@ -2572,10 +2678,17 @@ impl<'a> Ladder<'a> {
                         self.work_bound.unwrap_or(0.0),
                         self.route_reserve
                     );
+                    let source = if config.ladder_work_ceiling.is_some() {
+                        "reserved work limit".into()
+                    } else {
+                        format!(
+                            "ladder_budget_seconds and {:.0} %",
+                            LADDER_WORK_TOLERANCE * 100.0
+                        )
+                    };
                     self.skipped.push(format!(
-                        "further rungs of the attempt ladder did not run: its work bound ({:.0} s, ladder_budget_seconds and {:.0} %) was reached",
-                        self.work_bound.unwrap_or(0.0),
-                        LADDER_WORK_TOLERANCE * 100.0
+                        "further rungs of the attempt ladder did not run: its work bound ({:.0} s, {source}) was reached",
+                        self.work_bound.unwrap_or(0.0)
                     ));
                 } else {
                     eprintln!("deadline reached: no further attempts");
@@ -2760,8 +2873,8 @@ impl<'a> Ladder<'a> {
             if self.slowest.is_none_or(|(seconds, _)| used.0 > seconds) {
                 self.slowest = Some(used);
             }
-            // Equally open boards: fewer vias, then less copper. A board
-            // KiCad did not check cannot beat the best (`CheckGate`).
+            // A board KiCad did not check cannot beat the best (`CheckGate`).
+            let attempt_complete = Self::complete(opens, &result);
             let better = self.best.as_ref().is_none_or(|(best_opens, best_result)| {
                 judged.is_some()
                     && Self::rank(opens, &result)
@@ -2783,7 +2896,10 @@ impl<'a> Ladder<'a> {
             }
             // A complete board needs no narrow-signal step: what was kept
             // for it is the next rung's again (a clean skeleton rung).
-            let complete = self.best.as_ref().is_some_and(|(opens, _)| opens.0 == 0);
+            let complete = self
+                .best
+                .as_ref()
+                .is_some_and(|(opens, result)| Self::complete(*opens, result));
             if complete && self.reserve > 0.0 {
                 eprintln!(
                     "ladder: the board is complete: the {:.0} s kept for the narrow-signal step are released",
@@ -2804,12 +2920,12 @@ impl<'a> Ladder<'a> {
             // limits). A clean board from the plane skeleton still gets the
             // next rung when time allows: the fixed tree often costs many
             // vias that routing the pour nets as tracks does not.
-            let skeleton_clean = opens.0 == 0 && connect && skeleton && !self.extra_rung_tried;
+            let skeleton_clean = attempt_complete && connect && skeleton && !self.extra_rung_tried;
             if skeleton_clean && mode + 1 < modes.len() && seconds <= budget / 2.0 {
                 self.extra_rung_tried = true;
                 continue;
             }
-            if opens.0 == 0 || self.extra_rung_tried {
+            if attempt_complete || self.extra_rung_tried {
                 return Ok(Flow::Stop);
             }
             if self.spent(self.work) > ladder_budget {
@@ -3116,7 +3232,7 @@ impl<'a> Ladder<'a> {
                 affordable = affordable.min((share / cost).floor().max(0.0) as usize);
             }
             let retry = config.tuning.retry_seeds.unwrap_or(4).min(affordable);
-            if opens.0 == 0
+            if Self::complete(opens, best_result)
                 || self.best_seeded
                 || retry == 0
                 || self.past_deadline()
@@ -3208,14 +3324,12 @@ impl<'a> Ladder<'a> {
                 other.vias,
                 other.routing_seconds
             );
-            let (best_pours, best_vias, best_length) =
-                self.best.as_ref().map_or((0, 0, 0.0), |(_, best)| {
-                    (pour_rank(best.pour_loss), best.vias, best.length_mm)
-                });
             let better = other_judged.is_some()
-                && Self::rank(other_opens, &other)
-                    .partial_cmp(&(opens, best_pours, best_vias, best_length))
-                    .is_some_and(|order| order.is_lt());
+                && self.best.as_ref().is_some_and(|(opens, best)| {
+                    Self::rank(other_opens, &other)
+                        .partial_cmp(&Self::rank(*opens, best))
+                        .is_some_and(|order| order.is_lt())
+                });
             if better {
                 fs::remove_dir_all(output_directory).map_err(|error| error.to_string())?;
                 fs::rename(&scratch, output_directory).map_err(|error| error.to_string())?;
@@ -3316,6 +3430,15 @@ impl<'a> Ladder<'a> {
     /// (`step_cost_fits`).
     fn step_cost_fits(&self, left: f64) -> bool {
         step_cost_fits(left, self.first_attempt_work)
+    }
+
+    /// Further ordinary rungs can improve a checked board with errors.
+    fn incomplete_best(&self) -> bool {
+        self.best_attempt.is_some()
+            && self
+                .best
+                .as_ref()
+                .is_some_and(|(opens, result)| !Self::complete(*opens, result))
     }
 
     /// Whether the best board is still open (and a best attempt is known).

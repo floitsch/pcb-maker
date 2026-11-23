@@ -528,6 +528,7 @@ fn canned_board() -> core::Board {
         }],
         neck_width: 0.2,
         obstacles,
+        fixed_pad_route_clearance: Default::default(),
         nets,
         planes: Vec::new(),
         solid_pads: Vec::new(),
@@ -578,6 +579,7 @@ fn canned_placement() -> placer::Problem {
         tight_hollow: Vec::new(),
         hole_rings: Vec::new(),
         copper_graphics: Vec::new(),
+        unassigned_copper_graphics: Vec::new(),
         courtless: Vec::new(),
         slots: Vec::new(),
     };

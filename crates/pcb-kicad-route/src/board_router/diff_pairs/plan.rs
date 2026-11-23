@@ -33,6 +33,10 @@ pub(super) struct LinkPlan {
     /// Whether the pads' order at one end crosses the run's (the stubs
     /// cross there, routed by the router).
     pub crossed: bool,
+    /// Whether the synthetic run inherits its conductors' scoped clearances.
+    pub scoped_clearance: bool,
+    /// Whether this fixed launch uses the gap at a mated plated pad.
+    pub plated_gap: bool,
     /// Per end: whether the link carries the stubs there, straight from
     /// the pads to the stubs' ends (`stubs_clear`; the pads are of the
     /// run's terminal), or the router routes them.
@@ -110,6 +114,11 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
         work_seconds: 0.0,
     };
     let class_of = pair_classes(board, &pairs, &mut entries);
+    let clearance = config
+        .net_rules
+        .as_deref()
+        .filter(|rules| !rules.clearances.is_empty())
+        .map(|rules| core::rules::Resolved::new(rules, board));
     // With crossovers: every link end's launch on the board as lowered (no
     // link's copper yet), the room a crossover leaves its neighbours
     // (`neighbour_room`).
@@ -130,6 +139,13 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
             pair,
             class,
             envelope: board.classes[class],
+            clearance: clearance.as_ref(),
+            has_uncoupled_limit: [pair.positive, pair.negative].into_iter().any(|id| {
+                config
+                    .diff_pair_rules
+                    .get(&board.nets[id as usize].name)
+                    .is_some_and(|rule| rule.max_uncoupled.is_some())
+            }),
             neighbours: launches_before
                 .iter()
                 .filter(|neighbour| neighbour.pair != index)
@@ -173,9 +189,20 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
         plan_reach_check(board, &plan, config);
     }
     let plan = std::sync::Arc::new(plan);
+    let clearance_aliases = plan
+        .links
+        .iter()
+        .filter(|link| link.scoped_clearance)
+        .map(|link| {
+            let pair = &plan.pairs[link.pair];
+            (link.net, [pair.positive, pair.negative])
+        })
+        .collect();
     board.attachment = core::Attachment {
         data: Some(plan.clone()),
         give_up: give_up_links(config).then_some(plan),
+        clearance_aliases,
+        ..core::Attachment::default()
     };
 }
 
@@ -191,6 +218,7 @@ fn pair_entries(board: &core::Board, pairs: &[Pair]) -> Vec<KiCadDiffPair> {
             gap_mm: pair.gap,
             source: pair.source.clone(),
             links: pair.links.len(),
+            unmatched_end: unmatched_end_spacing(board, pair),
             why: if pair.links.is_empty() {
                 vec!["fewer than two parts with the pair's pads side by side".into()]
             } else {
@@ -367,6 +395,43 @@ pub(super) fn plan_of(board: &core::Board) -> Option<std::sync::Arc<PairPlan>> {
         .and_then(|any| any.clone().downcast::<PairPlan>().ok())
 }
 
+/// Explain an isolated pair for which planning produced no route link.
+pub(crate) fn isolated_pair_plan_failure(
+    board: &core::Board,
+) -> Option<(&'static str, Option<KiCadPairEndpointSpacing>)> {
+    let plan = plan_of(board)?;
+    let [pair] = plan.pairs.as_slice() else {
+        return None;
+    };
+    if !pair.links.is_empty() {
+        return Some(("coupled_launch_unavailable", None));
+    }
+    Some((
+        "coupled_endpoints_not_recognized",
+        unmatched_end_spacing(board, pair),
+    ))
+}
+
+fn unmatched_end_spacing(board: &core::Board, pair: &Pair) -> Option<KiCadPairEndpointSpacing> {
+    let &[(positive, negative)] = pair.points.as_slice() else {
+        return None;
+    };
+    let [Some(a), Some(b)] =
+        [(pair.positive, positive), (pair.negative, negative)].map(|(net, used)| {
+            let terminals = &board.nets[net as usize].terminals;
+            (terminals.len() == 2 && used < 2).then(|| &terminals[1 - used])
+        })
+    else {
+        return None;
+    };
+    let separation = core::geometry::distance(a.anchor, b.anchor);
+    (separation > PAIR_POINT_SPAN).then(|| KiCadPairEndpointSpacing {
+        pad_labels: [a.label.clone(), b.label.clone()],
+        separation_mm: separation,
+        ordinary_span_mm: PAIR_POINT_SPAN,
+    })
+}
+
 /// A layout's lowering for a stage that routes the board: `lower`, and
 /// where the router plans the pairs (`pairs_planned`) their plan, so that
 /// every route of a layout (the first route, the placement race's probes,
@@ -378,11 +443,39 @@ pub fn lower_for_route(
     config: &KiCadBoardRouterConfig,
     connect: bool,
 ) -> Result<(core::Board, f64), String> {
-    let mut board = lower(pcb, config, connect)?.board;
+    let started = std::time::Instant::now();
+    let prepared = if config.prepared_row_escape_pads.is_empty() {
+        None
+    } else {
+        if config.skip_native_verification
+            || config.tuning.engine.as_deref() == Some("topological")
+            || !config.retained_pad_tips.is_empty()
+        {
+            return Err(crate::exit::input_error(
+                "prepared_row_escape_pads needs the detailed native-verified router without retained pad tips",
+            ));
+        }
+        match super::super::row_escapes::lower(pcb, config, connect) {
+            Ok(board) => Some(board),
+            Err(reason) => {
+                eprintln!("prepared row escapes unavailable on this placement: {reason}");
+                None
+            }
+        }
+    };
+    let escape_work = if config.prepared_row_escape_pads.is_empty() {
+        0.0
+    } else {
+        started.elapsed().as_secs_f64() * core::router::reference_time_scale()
+    };
+    let mut board = match prepared {
+        Some(board) => board,
+        None => lower(pcb, config, connect)?.board,
+    };
     if !pairs_planned(config) {
-        return Ok((board, 0.0));
+        return Ok((board, escape_work));
     }
     plan_pairs(&mut board, config);
-    let work = planned_work(&board);
+    let work = escape_work + planned_work(&board);
     Ok((board, work))
 }

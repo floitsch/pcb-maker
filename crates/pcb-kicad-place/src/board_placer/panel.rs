@@ -1228,6 +1228,7 @@ fn make_inert(component: &mut core::Component) {
     component.tight_hollow.clear();
     component.hole_rings.clear();
     component.copper_graphics.clear();
+    component.unassigned_copper_graphics.clear();
     component.copper_only = false;
     component.cutout_outline.clear();
     component.halo = 0.0;
@@ -1578,6 +1579,12 @@ fn carried_relations(
                 Anchor::Area(leader, member, ..) => vec![*part, *leader, *member],
                 other => vec![*part, other.part()],
             },
+            Relation::PadNear { source, anchor, .. } => vec![
+                source.part(),
+                source.reported_part(),
+                anchor.part(),
+                anchor.reported_part(),
+            ],
             Relation::Beside { part, anchor, .. } | Relation::Apart { part, anchor, .. } => {
                 vec![*part, *anchor]
             }
@@ -1595,17 +1602,29 @@ fn carried_relations(
             continue;
         }
         let to = |part: usize| copies.members[copy][place[&part].1];
+        let anchor_to = |anchor: Anchor| match anchor {
+            Anchor::Body(index) => Anchor::Body(to(index)),
+            Anchor::Point(index, point) => Anchor::Point(to(index), point),
+            Anchor::Area(leader, member, centre, half) => {
+                Anchor::Area(to(leader), to(member), centre, half)
+            }
+        };
         let mapped = match relation {
             Relation::Near { part, anchor, max } => Relation::Near {
                 part: to(*part),
-                anchor: match anchor {
-                    Anchor::Body(index) => Anchor::Body(to(*index)),
-                    Anchor::Point(index, point) => Anchor::Point(to(*index), *point),
-                    Anchor::Area(leader, member, centre, half) => {
-                        Anchor::Area(to(*leader), to(*member), *centre, *half)
-                    }
-                },
+                anchor: anchor_to(*anchor),
                 max: *max,
+            },
+            Relation::PadNear {
+                source,
+                anchor,
+                max,
+                pad_numbers,
+            } => Relation::PadNear {
+                source: anchor_to(*source),
+                anchor: anchor_to(*anchor),
+                max: *max,
+                pad_numbers: pad_numbers.clone(),
             },
             Relation::Beside {
                 part,
@@ -1833,6 +1852,9 @@ pub(crate) fn place_copies(
             let illegal_set: BTreeSet<usize> = illegal.iter().copied().collect();
             let mut rest = problem.clone();
             rest.poses = replicated.clone();
+            let mut rest_config = config.clone();
+            let single_piece = problem.pieces.len() < 2;
+            let mut edge_regions = Vec::new();
             for part in copies.movable(problem) {
                 if !illegal_set.contains(&part) {
                     rest.components[part].fixed = true;
@@ -1847,18 +1869,24 @@ pub(crate) fn place_copies(
                 // constraints; else free (a part held at an edge its
                 // copy's region stops short of).
                 if holds_in(problem, part, copies.regions[copy]) {
+                    if single_piece && rest.constraints.edges.iter().any(|row| row.0 == part) {
+                        edge_regions.push((rest.constraints.regions.len(), part));
+                    }
                     rest.constraints.regions.push((part, copies.regions[copy]));
                 }
                 let centre = rest.components[part].center(replicated[part]);
                 rest.constraints.starts.push((part, centre));
             }
-            let mut rest_config = config.clone();
             let used = core::work() - started;
             rest_config.work_limit = config
                 .work_limit
                 .map(|limit| limit.saturating_sub(used).max(limit / 10));
             let mark = core::work();
-            let placed = core::place(&rest, &rest_config);
+            let placed = if single_piece {
+                core::place_panel_remainder(&rest, &rest_config, &edge_regions)
+            } else {
+                core::place(&rest, &rest_config)
+            };
             let relaxation = loosest(&first_relaxation, &placed.relaxation);
             let unplaced = placed.unplaced.clone();
             (
@@ -1928,6 +1956,7 @@ pub(crate) fn place_copies(
         constraints,
         relaxation,
         work: core::work() - started,
+        sparse_legalization: None,
         stage_poses: vec![
             (
                 if by_classes {
@@ -2123,6 +2152,7 @@ mod tests {
                 tight_hollow: Vec::new(),
                 hole_rings: Vec::new(),
                 copper_graphics: Vec::new(),
+                unassigned_copper_graphics: Vec::new(),
                 courtless: Vec::new(),
                 slots: Vec::new(),
             },

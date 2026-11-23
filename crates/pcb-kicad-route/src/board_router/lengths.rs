@@ -526,8 +526,15 @@ pub fn match_lengths(
                     let bounds = [target, min.unwrap_or(0.0), max.unwrap_or(f64::INFINITY)];
                     let counted = counted_of(member);
                     let routed = result.routes[id as usize].clone();
-                    let (added, made) =
-                        meander_net(board, &mut result.routes, id, need, &counted, bounds);
+                    let (added, made) = meander_net(
+                        board,
+                        config.net_rules.as_deref(),
+                        &mut result.routes,
+                        id,
+                        need,
+                        &counted,
+                        bounds,
+                    );
                     entry.meander_mm = added;
                     patterns.extend(made);
                     if need - added > ENOUGH {
@@ -768,6 +775,7 @@ fn reroute_shorts(
         let (more, more_made) = if need > ENOUGH {
             meander_net(
                 board,
+                config.net_rules.as_deref(),
                 &mut routes,
                 short.net,
                 need,
@@ -874,6 +882,7 @@ fn reroute_each(
         let (more, made) = if need > ENOUGH {
             meander_net(
                 board,
+                config.net_rules.as_deref(),
                 &mut result.routes,
                 short.net,
                 need,
@@ -1143,6 +1152,7 @@ fn reroute_with_room(
 /// longest first; returns what they add and the patterns.
 fn meander_net(
     board: &core::Board,
+    rules: Option<&core::NetRules>,
     routes: &mut [core::NetRoute],
     net: core::NetId,
     need: f64,
@@ -1184,15 +1194,43 @@ fn meander_net(
     if candidates.is_empty() {
         return (0.0, patterns);
     }
-    let reach = MAX_AMPLITUDE.max(3.0 * candidates[0].width) + CHECK_REACH;
-    let bounds = bounds.inflated(reach);
-    let mut near = board.clone();
-    near.obstacles = board
-        .obstacles
+    // Tuning moves copper after the search. Use the same scoped clearances
+    // and width floors the router used for its original tracks.
+    let (mut near, rules) = match rules.filter(|rules| !rules.is_empty()) {
+        Some(rules) => {
+            let (split, rules) = core::rules::ClassRules::split(board, rules);
+            (split, Some(rules))
+        }
+        None => (board.clone(), None),
+    };
+    let largest_rule = rules.as_ref().map_or(0.0, |rules| rules.resolved.largest());
+    let largest_clearance = board
+        .classes
         .iter()
-        .filter(|obstacle| obstacle.shape.aabb().intersects(bounds))
-        .cloned()
-        .collect();
+        .map(|class| class.clearance)
+        .chain(board.fixed_pad_route_clearance.values().copied())
+        .chain(
+            board
+                .obstacles
+                .iter()
+                .map(|obstacle| obstacle.clearance_override.unwrap_or(obstacle.clearance)),
+        )
+        .fold(largest_rule.max(board.hole_clearance), f64::max);
+    let largest_copper = routes
+        .iter()
+        .flat_map(|route| {
+            route
+                .segments
+                .iter()
+                .map(|track| track.width)
+                .chain(route.vias.iter().map(|via| via.diameter))
+        })
+        .fold(0.0, f64::max);
+    let check_reach = CHECK_REACH.max(largest_clearance + largest_copper);
+    let reach = MAX_AMPLITUDE.max(3.0 * largest_copper) + check_reach;
+    let bounds = bounds.inflated(reach);
+    near.obstacles
+        .retain(|obstacle| obstacle.shape.aabb().intersects(bounds));
     // A work list: what is left of a track a meander split is tried again.
     let mut tries = 0;
     while let Some(segment) = (!candidates.is_empty()).then(|| candidates.remove(0)) {
@@ -1248,7 +1286,15 @@ fn meander_net(
                         }
                         let pieces: Vec<(Point, Point)> =
                             points.windows(2).map(|pair| (pair[0], pair[1])).collect();
-                        if refused(&near, routes, net, segment.layer, w, &pieces) {
+                        if refused(
+                            (&near, rules.as_ref()),
+                            routes,
+                            net,
+                            segment.layer,
+                            w,
+                            &pieces,
+                            check_reach,
+                        ) {
                             continue;
                         }
                         placed = Some((points, height));
@@ -1334,12 +1380,13 @@ fn joined_between(
 /// `net`) come closer than a clearance to anything (`core::verify` on the
 /// board near the net and the routes near the meander).
 fn refused(
-    near: &core::Board,
+    (near, rules): (&core::Board, Option<&core::rules::ClassRules>),
     routes: &[core::NetRoute],
     net: core::NetId,
     layer: usize,
     width: f64,
     pieces: &[(Point, Point)],
+    check_reach: f64,
 ) -> bool {
     let mut bounds = core::geometry::Aabb {
         minimum: [f64::INFINITY; 2],
@@ -1357,7 +1404,7 @@ fn refused(
             ];
         }
     }
-    let bounds = bounds.inflated(CHECK_REACH);
+    let bounds = bounds.inflated(check_reach);
     let close = |a: Point, b: Point| {
         core::geometry::Aabb {
             minimum: [a[0].min(b[0]), a[1].min(b[1])],
@@ -1389,13 +1436,15 @@ fn refused(
             end,
             width,
         }));
-    core::verify(near, &nearby).iter().any(|violation| {
-        violation.actual + 1.0e-6 < violation.required
-            && ((violation.net == net && violation.segment.is_some_and(|index| index >= base))
-                || violation
-                    .other_segment
-                    .is_some_and(|(other, index)| other == net && index >= base))
-    })
+    core::verify::verify_with_rules(near, &nearby, rules)
+        .iter()
+        .any(|violation| {
+            violation.actual + 1.0e-6 < violation.required
+                && ((violation.net == net && violation.segment.is_some_and(|index| index >= base))
+                    || violation
+                        .other_segment
+                        .is_some_and(|(other, index)| other == net && index >= base))
+        })
 }
 
 /// `match_lengths` for a board written outside an attempt (the layout's
@@ -1824,6 +1873,7 @@ mod tests {
         routes[a].segments = vec![leg([4.0, 5.0], [14.0, 5.0]), leg([14.0, 5.0], [14.0, 15.0])];
         let (added, patterns) = meander_net(
             &board,
+            None,
             &mut routes,
             a as core::NetId,
             30.0,
@@ -1848,6 +1898,75 @@ mod tests {
         let total: f64 = patterns.iter().map(|pattern| pattern.added).sum();
         assert!((total - added).abs() < 1.0e-6);
         assert!(core::verify(&board, &routes).is_empty());
+    }
+
+    #[test]
+    fn generated_tuning_keeps_the_scoped_pad_clearance() {
+        use pcb_router::rules::{ClassRules, PAD, TRACK, kind_bit};
+
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&parse(BOARD).unwrap(), &config, true).unwrap().board;
+        let a = board.nets.iter().position(|net| net.name == "A").unwrap() as core::NetId;
+        let routes = vec![core::NetRoute::default(); board.nets.len()];
+        let pieces = [([18.0, 13.75], [20.0, 13.75])];
+        let mut project = core::NetRules {
+            clearances: vec![core::ClearanceRule {
+                first: Some(vec!["A".into()]),
+                second: Some(vec!["B".into()]),
+                kinds: kind_bit(TRACK, PAD),
+                layers: 1,
+                clearance: 0.6,
+                except_pads: BTreeSet::new(),
+            }],
+            ..core::NetRules::default()
+        };
+        assert!(!refused(
+            (&board, None),
+            &routes,
+            a,
+            0,
+            0.2,
+            &pieces,
+            CHECK_REACH
+        ));
+        let (split, rules) = ClassRules::split(&board, &project);
+        assert!(refused(
+            (&split, Some(&rules)),
+            &routes,
+            a,
+            0,
+            0.2,
+            &pieces,
+            CHECK_REACH
+        ));
+        assert!(!refused(
+            (&split, Some(&rules)),
+            &routes,
+            a,
+            1,
+            0.2,
+            &pieces,
+            CHECK_REACH
+        ));
+        project.clearances[0].except_pads.insert("U2.1".into());
+        let (split, rules) = ClassRules::split(&board, &project);
+        assert!(!refused(
+            (&split, Some(&rules)),
+            &routes,
+            a,
+            0,
+            0.2,
+            &pieces,
+            CHECK_REACH
+        ));
     }
 
     /// Three nets side by side at 0.5 mm from J1 to U1, /A in the middle:

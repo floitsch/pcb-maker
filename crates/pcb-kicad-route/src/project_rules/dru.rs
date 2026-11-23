@@ -35,7 +35,9 @@ pub(crate) use condition::{Kind, NetFacts};
 pub(crate) use lower::{
     BoardFacts, Lowered, NamedArea, finding_severity, lower, rule_copper_layers,
 };
-pub(crate) use tracks::{Picked, track_constraint, track_disallowed, track_rule};
+pub(crate) use tracks::{
+    Picked, may_constrain_pair, track_constraint, track_disallowed, track_rule,
+};
 
 /// One `(rule ...)` of a `.kicad_dru`.
 #[derive(Clone, Debug, PartialEq)]

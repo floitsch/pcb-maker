@@ -1,0 +1,231 @@
+{
+  "version": 1,
+  "move_all": true,
+  "place": [
+    {
+      "part": "H1",
+      "x": 44.0,
+      "y": 68.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "H2",
+      "x": 110.0,
+      "y": 97.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "H3",
+      "x": 135.0,
+      "y": 68.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "H4",
+      "x": 44.0,
+      "y": 99.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "H5",
+      "x": 42.0,
+      "y": 28.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "H6",
+      "x": 138.0,
+      "y": 28.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "H7",
+      "x": 42.0,
+      "y": 124.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "H8",
+      "x": 138.0,
+      "y": 124.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J1",
+      "x": 83.5,
+      "y": 108.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J10",
+      "x": 54.5,
+      "y": 40.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J11",
+      "x": 54.5,
+      "y": 40.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J12",
+      "x": 43.96,
+      "y": 77.15,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J13",
+      "x": 58.2,
+      "y": 95.73,
+      "angle": 90.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J2",
+      "x": 50.5,
+      "y": 108.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J3",
+      "x": 125.5,
+      "y": 112.0,
+      "angle": 180.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J4",
+      "x": 129.5,
+      "y": 40.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J5",
+      "x": 129.5,
+      "y": 40.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J6",
+      "x": 104.5,
+      "y": 40.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J7",
+      "x": 104.5,
+      "y": 40.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J8",
+      "x": 79.5,
+      "y": 40.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J9",
+      "x": 79.5,
+      "y": 40.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "SW1",
+      "x": 78.3,
+      "y": 109.0,
+      "angle": 90.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "SW2",
+      "x": 88.7,
+      "y": 109.0,
+      "angle": 90.0,
+      "origin": "absolute"
+    }
+  ],
+  "back": [
+    "TP1",
+    "TP10",
+    "TP11",
+    "TP12",
+    "TP13",
+    "TP14",
+    "TP15",
+    "TP16",
+    "TP17",
+    "TP18",
+    "TP19",
+    "TP2",
+    "TP20",
+    "TP21",
+    "TP22",
+    "TP23",
+    "TP24",
+    "TP25",
+    "TP26",
+    "TP27",
+    "TP28",
+    "TP29",
+    "TP3",
+    "TP30",
+    "TP31",
+    "TP32",
+    "TP33",
+    "TP34",
+    "TP35",
+    "TP36",
+    "TP37",
+    "TP38",
+    "TP39",
+    "TP4",
+    "TP40",
+    "TP41",
+    "TP42",
+    "TP43",
+    "TP44",
+    "TP45",
+    "TP46",
+    "TP47",
+    "TP48",
+    "TP49",
+    "TP5",
+    "TP50",
+    "TP51",
+    "TP52",
+    "TP53",
+    "TP54",
+    "TP55",
+    "TP56",
+    "TP57",
+    "TP58",
+    "TP59",
+    "TP6",
+    "TP60",
+    "TP61",
+    "TP62",
+    "TP7",
+    "TP8",
+    "TP9"
+  ]
+}

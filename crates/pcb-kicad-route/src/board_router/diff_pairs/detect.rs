@@ -55,6 +55,10 @@ pub(super) enum PointKind {
     /// pair point only for a pair that has no link otherwise. The launch
     /// keeps the pin clear; the router routes the stubs round it.
     Pin,
+    /// The two plated pads of a single link with an authored limit on
+    /// uncoupled length. Its other end is a surface pad pair. The plated
+    /// pads feed a shared run only if a paired transition fits.
+    Plated,
 }
 
 /// Whether pairs without a link get pair points across a pin
@@ -182,6 +186,9 @@ pub(super) fn find_pairs(board: &core::Board, config: &KiCadBoardRouterConfig) -
         let Some((partner, _, true)) = crate::project_rules::diff_pair_of(&net.name) else {
             continue;
         };
+        if config.excludes_diff_pair(&net.name, &partner) {
+            continue;
+        }
         let Some(&negative) = ids.get(partner.as_str()) else {
             continue;
         };
@@ -202,7 +209,12 @@ pub(super) fn find_pairs(board: &core::Board, config: &KiCadBoardRouterConfig) -
             .map_or((None, None), |rule| (rule.max_skew, rule.length));
         let (width, gap, layers, source) =
             pair_geometry(board, config, &net.name, class_p.trace_width, clearance);
-        let (points, kinds, links) = pair_points(board, &parts, [positive, negative]);
+        let uncoupled_limit = config
+            .diff_pair_rules
+            .get(&net.name)
+            .and_then(|rule| rule.max_uncoupled);
+        let (points, kinds, links) =
+            pair_points(board, &parts, [positive, negative], uncoupled_limit);
         pairs.push(Pair {
             positive,
             negative,
@@ -312,6 +324,7 @@ fn pair_points(
     board: &core::Board,
     parts: &BTreeMap<String, Vec<Point>>,
     nets: [core::NetId; 2],
+    uncoupled_limit: Option<f64>,
 ) -> PairPoints {
     let (p, n) = (&board.nets[nets[0] as usize], &board.nets[nets[1] as usize]);
     let (mut used_p, mut used_n) = (BTreeSet::new(), BTreeSet::new());
@@ -319,15 +332,23 @@ fn pair_points(
     points.sort();
     let mut kinds = vec![PointKind::Side; points.len()];
     let mut links = spanning_links(p, n, &points);
-    // A pair with no link (fewer than two parts with its pads side by
-    // side): its pads of one part with another net's pin between them
-    // are a pair point too (docs/router.md, "A pair point across a
-    // pin").
-    if links.is_empty() && extended_points() {
+    // A pair with no link can use pads across a pin. A component with
+    // the same pair on opposing rows can also have an unused endpoint
+    // across a pin even after planning the link on its other side.
+    if extended_points() && (links.is_empty() || opposing_rows(p, n, &points)) {
         for point in pin_points(board, nets, (&mut used_p, &mut used_n)) {
             points.push(point);
             kinds.push(PointKind::Pin);
         }
+        links = spanning_links(p, n, &points);
+    }
+    if links.is_empty()
+        && let [point] = points.as_slice()
+        && let Some(limit) = uncoupled_limit
+        && let Some(far) = separated_plated_point(board, (p, n), *point, limit)
+    {
+        points.push(far);
+        kinds.push(PointKind::Plated);
         links = spanning_links(p, n, &points);
     }
     if links.is_empty() && pairs_why() {
@@ -337,6 +358,74 @@ fn pair_points(
         points_why(p, n, &points, &kinds, links.len());
     }
     (points, kinds, links)
+}
+
+fn opposing_rows(p: &core::Net, n: &core::Net, points: &[(usize, usize)]) -> bool {
+    for (index, &(a, b)) in points.iter().enumerate() {
+        let (a, b) = (&p.terminals[a], &n.terminals[b]);
+        let part = part_reference(&a.label);
+        if part_reference(&b.label) != part {
+            continue;
+        }
+        let across = sub(b.anchor, a.anchor);
+        let center = scale(add(a.anchor, b.anchor), 0.5);
+        for &(c, d) in &points[index + 1..] {
+            let (c, d) = (&p.terminals[c], &n.terminals[d]);
+            if part_reference(&c.label) != part || part_reference(&d.label) != part {
+                continue;
+            }
+            let offset = sub(scale(add(c.anchor, d.anchor), 0.5), center);
+            let second = sub(d.anchor, c.anchor);
+            let cross = |u: Point, v: Point| u[0] * v[1] - u[1] * v[0];
+            if core::geometry::distance([0.0, 0.0], offset) <= PAIR_POINT_SPAN
+                && dot(across, offset).abs() < cross(across, offset).abs()
+                && dot(second, offset).abs() < cross(second, offset).abs()
+                && dot(across, second) > cross(across, second).abs()
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// A short shared run can leave two plated pads whose separation is too
+/// large to identify them from a local row alone. Each net has only one
+/// other pad, and those two are already a surface pair point.
+fn separated_plated_point(
+    board: &core::Board,
+    (p, n): (&core::Net, &core::Net),
+    (a, b): (usize, usize),
+    limit: f64,
+) -> Option<(usize, usize)> {
+    if p.terminals.len() != 2 || n.terminals.len() != 2 {
+        return None;
+    }
+    let (surface_p, surface_n) = (&p.terminals[a], &n.terminals[b]);
+    let (p, n) = (&p.terminals[1 - a], &n.terminals[1 - b]);
+    let surface = surface_p.layers;
+    let outer = 1 | 1 << (board.layer_count.saturating_sub(1));
+    let far_layers = p.layers & n.layers & outer & !surface;
+    if surface.count_ones() != 1
+        || surface & outer == 0
+        || surface != surface_n.layers
+        || board.obstacles[surface_p.pad].plated
+        || board.obstacles[surface_n.pad].plated
+        || far_layers == 0
+        || !board.obstacles[p.pad].plated
+        || !board.obstacles[n.pad].plated
+    {
+        return None;
+    }
+    let source = part_reference(&surface_p.label);
+    let target = part_reference(&p.label);
+    let span = core::geometry::distance(p.anchor, n.anchor);
+    (source == part_reference(&surface_n.label)
+        && target != source
+        && target == part_reference(&n.label)
+        && span > PAIR_POINT_SPAN
+        && span < limit)
+        .then_some((1 - a, 1 - b))
 }
 
 /// Pair points: a positive and a negative pad of one part, nearest first,

@@ -1,0 +1,6 @@
+{
+  "add_pours": [
+    {"net": "GND", "layers": ["F.Cu"], "clearance_mm": 0.5, "thermal_bridge_width_mm": 0.5},
+    {"net": "+3V3", "layers": ["B.Cu"], "clearance_mm": 0.5, "thermal_bridge_width_mm": 0.5}
+  ]
+}

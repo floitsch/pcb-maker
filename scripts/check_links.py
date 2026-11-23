@@ -17,6 +17,7 @@ links are still counted on the last line. Exit 1 when a judged link is broken.
 """
 
 import argparse
+import os
 import re
 import sys
 import unicodedata
@@ -122,8 +123,12 @@ def check(path):
 def default_files():
     files = [ROOT / "README.md"]
     for folder in ("docs", "benchmarks"):
-        files.extend(sorted((ROOT / folder).rglob("*.md")))
-    return [f for f in files if "external" not in f.relative_to(ROOT).parts]
+        for directory, subdirs, names in os.walk(ROOT / folder):
+            path = Path(directory)
+            subdirs[:] = [name for name in subdirs if name not in ("external", "node_modules")
+                          and path / name != ROOT / "benchmarks/expansion/data"]
+            files.extend(path / name for name in names if name.endswith(".md"))
+    return sorted(files)
 
 
 def main():

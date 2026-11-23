@@ -22,24 +22,24 @@ Not finished, but already useful.
   harvest](benchmarks/github/README.md)). Reduced to what an agent
   starts from - parts stacked, the designer's placement gone, a
   `constraints.json` of fixed connectors and edges - pcb-maker places
-  and routes **70 of 109** to a clean KiCad verdict under the strict
+  and routes **71 of 109** to a clean KiCad verdict under the strict
   rule (0 unconnected, no copper error beyond what the designer's board
-  has at the same place; 69 under the per-type rule) within 1500 s of
-  work each, every board placed from stacked parts (sweep v38, the
-  nightly of 2026-11-11). Per board against the designer's own board
-  (medians): 0.65 times the vias, 0.98 times the track length, 1.01
+  has at the same place; 70 under the per-type rule) within 1500 s of
+  work each, every board placed from stacked parts (sweep v45, the
+  nightly of 2026-11-18). Per board against the designer's own board
+  (medians): 0.65 times the vias, 0.98 times the track length, 0.99
   times the bends per connection, nothing left open on more than half
-  the boards (6 % of the connections open on average), no via in a small
-  SMD pad. Of the 39 that fail, 18 are within five connections and five
-  errors of clean, 11 leave more than 20 connections open, and 3 have no
+  the boards (5 % of the connections open on average), no via in a small
+  SMD pad. Of the 38 that fail, 19 are within five connections and five
+  errors of clean, 10 leave more than 20 connections open, and 3 have no
   result (2 without a legal place for every part; 1 the panel's 2
   boards' parts are mixed: 392 movable parts belong to no sub-board).
   Routed by the same binary on the designer's own placement at the
   layout's routing budget, on all 100 target boards our placement
-  accounts for 67 % of the open connections and our router for 33 %
-  (75 % and 25 % without MegaDrive, whose designer placement leaves as
+  accounts for 61 % of the open connections and our router for 39 %
+  (69 % and 31 % without MegaDrive, whose designer placement leaves as
   much open as ours or more)
-  ([results](docs/benchmarks.md#layout-sweep-v38-2026-11-11)).
+  ([results](docs/benchmarks.md#layout-sweep-v45-2026-11-18)).
 - **What a layout handles** besides parts and nets: panels of copies
   (one copy placed and replicated) and panels of different boards, whose
   pieces are found by their necks, mouse-bite rows and V-cuts, each
@@ -63,6 +63,34 @@ Not finished, but already useful.
   pass the designer-relative rule, 4 528 are complete at 300 s; the clean
   boards take a median 3.4 s
   ([details and caveats](docs/benchmarks.md)).
+- **From schematic to checked layout.** On GigaShield, pcb-maker placed
+  64 components on two layers, held all 79 mechanical constraints and
+  routed all 155 multi-pad nets from the schematic. KiCad reopened the
+  filled board with zero errors, unconnected items or schematic parity
+  findings. [Reproduce the schematic run](benchmarks/from-schematic/README.md#gigashield-archived-two-layer-comparison).
+- **Placement and routing against published Quilter layouts.** On the
+  two-layer GigaShield, pcb-maker held 15 connector and mounting-hole
+  poses and routed all 161 nets. After refilling the zones, KiCad found
+  zero opens on pcb-maker's layout and one on the archived candidate.
+  Both had zero DRC errors. The archived board and its schematic disagree
+  on pin assignments, including a connector pin tied to +5V only on the
+  board. This comparison measures routing of the archived board netlist.
+  On the four-layer powder-doser board, pcb-maker placed all 15 parts
+  from the schematic and routed all 22 nets in 1,116.6 mm of track with
+  zero vias. The designer's preferred candidate used 1,363.1 mm and 25
+  vias, and placed the three capacitors 0.07–0.12 mm closer to their
+  assigned supply pins. Adding a 71.43 mm back-layer feed to pcb-maker's
+  layout reduced its worst simulated +12 V drop from 81.53 to 39.53 mV.
+  The preferred candidate scored 71.19 mV under the same published load
+  model. The revised layout kept all 15 poses and passed KiCad's saved
+  and refilled checks. [Reproduce the electrical comparison](benchmarks/from-schematic/README.md#july-14-powder-doser-comparison).
+  On the four-layer QPlayer audio shield, both boards had zero opens
+  after refill. KiCad reported 68 raw DRC errors on pcb-maker's board
+  and 109 on the published return. The archive supplies only board
+  files and project settings. [QPlayer replay](benchmarks/from-schematic/README.md#qplayer-standalone-board-comparison).
+  [GigaShield results](benchmarks/from-schematic/README.md#gigashield-archived-two-layer-comparison) ·
+  [Four-layer placement measurements](benchmarks/from-schematic/README.md#july-14-powder-doser-comparison) ·
+  [Two-layer powder-doser comparison](docs/benchmarks.md#published-quilter-placement-and-routing-comparison).
 - **Against Freerouting and KiCadRoutingTools** (measured 2026-10-21 to
   23; our side is x1367, main has moved on since): the same 109
   placements, all results judged by KiCad's DRC with the same rules.
@@ -105,9 +133,10 @@ Not finished, but already useful.
   - Features: differential pairs are routed coupled by default only in
     route mode, and only where the project's rules ask for them (a
     layout couples them with the router's `diff_pairs`, at a cost in
-    connections on dense boards); the placer does not
-    choose sides by itself (constraints put parts on the back); pin
-    swapping is opt-in.
+    connections on dense boards). The placer can move eligible surface-mount
+    parts to the rear when the layout settings permit it. The mechanical
+    brief can require a particular side for any footprint. Pin swapping is
+    opt-in. [Rear-side placement settings](docs/constraints.md#allow-additional-parts-on-the-back)
 
 Take a look at the [benchmarks](docs/benchmarks.md) before trusting any
 number here; they are re-run and rewritten as the code changes.
@@ -147,6 +176,20 @@ cargo build --release          # target/release/pcb-maker
 
 ### From a schematic to fab files
 
+With a mechanical brief already written, place and route the schematic in one command.
+Pass a fresh output directory and, if available, the board that defines the enclosure.
+
+```sh
+pcb-maker layout-kicad-schematic myproject/myboard.kicad_sch myboard run \
+  --constraints constraints.json --mechanical-from enclosure.kicad_pcb
+```
+
+`run/workflow.json` gives the stage, exit code, next actions and output paths.
+Read `outputs.result` relative to `run` to find the selected PCB project.
+A successful recovery can select a different directory from the first layout.
+To generate a starter brief and edit it before placement, use the individual
+commands below.
+
 ```sh
 pcb-maker import-kicad-netlist myproject/myboard.kicad_sch board myboard
 pcb-maker layout-kicad-board board myboard layout auto board/layout.json
@@ -167,6 +210,32 @@ pcb-maker fab-kicad-board layout/result myboard release
    and `fab-manifest.json` with a sha256 per file (`--profile jlcpcb` for
    JLCPCB's BOM and placement columns). `export-kicad-fab` writes the fab
    files without the gate, with the estimated price at six fabs.
+
+If a KiCad board already defines the enclosure, use it as the mechanical
+input. The importer carries over its board outline and rule areas and holds
+matching locked components at their original positions, angles and sides.
+
+```sh
+pcb-maker import-kicad-netlist myproject/myboard.kicad_sch board myboard --mechanical-from enclosure.kicad_pcb
+pcb-maker layout-kicad-board board myboard layout auto board/layout.json
+```
+
+Add `--footprints-from` when the source PCB supplies custom footprints
+missing from the libraries, or `--stackup-from` to carry its fabrication
+stack. The import report lists the locks it applied and any it could not
+match. [Schematic and mechanical brief examples](benchmarks/from-schematic/README.md#supplied-schematic-and-mechanical-constraints)
+
+After importing a schematic edit, pass the previous routed board to the
+next layout. The placer checks the old poses against the revised brief,
+and the router checks which copper it can keep.
+
+```sh
+pcb-maker layout-kicad-board board myboard revised-layout auto board/layout.json \
+  --reuse-routes layout/result/myboard.kicad_pcb
+```
+
+For measured examples of adding a capacitor and changing a pin, see the
+[incremental schematic benchmarks](benchmarks/from-schematic/README.md#incremental-schematic-edits).
 
 ### Route a board
 
@@ -300,21 +369,22 @@ best. The **layout loop** ([docs/router.md](docs/router.md)) then
 routes, and tries footprint moves where the router's congestion history
 says nets fought for room, kept when open connections fall.
 
-**Verification** is never skipped. Both the router and the placer keep their
-own exact checks, and every board that leaves the tool has been through
-native KiCad ERC, DRC and connectivity. `pcb-maker` reports what KiCad says,
-not what it hopes.
+**Verification.** The placer checks footprint legality and the mechanical
+brief. Route and layout runs use KiCad to check the resulting board. Read
+`verdict.json` for the native check status, open connections and remaining
+findings. A run that skips KiCad verification returns an incomplete verdict.
 
 ## Benchmarks
 
-Everything is measured by KiCad's own DRC and connectivity on the result,
-with the designer's own findings subtracted. The harvested GitHub boards are
-the main corpus ([docs/benchmarks.md](docs/benchmarks.md)):
+The harvested GitHub benchmark uses native KiCad DRC and connectivity and
+compares findings with the designer's board. The standalone schematic
+comparisons also publish raw errors and opens for the saved and refilled
+boards. [Corpus protocol](docs/benchmarks.md) · [Schematic and mechanical comparisons](benchmarks/from-schematic/README.md)
 
 | Sweep | Boards | pcb-maker | Freerouting |
 | --- | --- | --- | --- |
-| Layout from stacked parts and constraints, 1500 s of work (v38, nightly 2026-11-11, main c0e40c3) | 109 | 70 clean (strict rule 4; 69 per type), 1552 connections open in all (1552 on the 106 boards with a result in v37 too, which left 1552 there), no row cut or killed | - |
-| Routing the designer's placement at the layout's routing budget, 919.5 s of work (matched designer tier, nightly 2026-11-11) | 109 | 76 clean (strict rule 4; 75 per type), 233 open on the 100 target boards, against 706 of the v38 layout there | - |
+| Layout from stacked parts and constraints, 1500 s of work (v45, nightly 2026-11-18, main 3b27f2d) | 109 | 71 clean (strict rule 4; 70 per type), 1451 connections open in all (1451 on the 106 boards with a result in v44 too, which left 1451 there), no row cut or killed | - |
+| Routing the designer's placement at the layout's routing budget, 892.5 s of work (matched designer tier, nightly 2026-11-18) | 109 | 76 clean (strict rule 4; 75 per type), 238 open on the 100 target boards, against 605 of the v45 layout there | - |
 | Layout from stacked parts and constraints, 1500 s of work (v21, x1832, 2026-10-26) | 109 | 56 clean (strict rule 4; 56 per type), 2444 connections open in all (1672 on the 100 boards with a result in the nightly of 2026-10-25 too, which left 1788 there), no row cut or killed | - |
 | Routing the designer's placement at the layout's routing budget, 1143 s of work (matched designer tier x1832, 2026-10-26) | 109 | 62 clean (strict rule 4; 66 per type), 742 open on the 100 target boards, against 1740 of the v21 layout there | - |
 | Layout from stacked parts and constraints, 1500 s of work (v20, x1725, 2026-10-23) | 109 | 53 clean (strict rule 4; 53 per type), 1848 connections open in all (1568 on the 99 boards with a result in v19 too), no row cut or killed | - |
@@ -331,7 +401,14 @@ Smaller tiers of the same boards judge a change in minutes
 tier (12 boards that flip, a third of the budget) for iterating, the
 quick tier (30 boards, full budget), and the schematic
 tier (12 boards laid out from the designer's schematic, as an agent
-would). The tiers run 2 search threads a board and physical cores / 2
+would). In the latest November 20 cold run, 7 of 12 met the schematic acceptance
+gate, which checks the saved board, schematic parity, and placement
+constraints. All 12 passed the strict routing check with zero native opens.
+SLAB left closed its last connection and a second cold run reproduced its
+PCB byte for byte. Its six schematic parity findings remain. The other
+eleven PCBs matched the preceding run byte for byte. See the
+[per-board failure analysis](docs/benchmarks.md#the-tiers).
+The tiers run 2 search threads a board and physical cores / 2
 boards at once (8 x 2 on a 16-core machine); several run side by side,
 each board admitted by a memory ledger the binaries reserve in too
 (`--lock` runs one tier at a time). The nightly runs the sweep, the

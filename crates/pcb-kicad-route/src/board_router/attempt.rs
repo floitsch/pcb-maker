@@ -5,6 +5,9 @@
 use super::*;
 use pcb_router as core;
 
+mod retained_segments;
+use self::retained_segments::RetainedSegments;
+
 /// Writes a routing result as copper into `pcb` and reports per net.
 /// `keep_existing`: the board's own tracks and vias stay as they are
 /// (route mode, `kept`); otherwise they are replaced.
@@ -15,17 +18,52 @@ pub fn emit_routes(
     layer_names: &[String],
     keep_existing: bool,
 ) -> Result<Vec<KiCadBoardRouterNet>, String> {
+    emit_routes_preserving_tuning(
+        pcb,
+        board,
+        result,
+        layer_names,
+        keep_existing,
+        &BTreeSet::new(),
+        &BTreeSet::new(),
+    )
+}
+
+fn emit_routes_preserving_tuning(
+    pcb: &mut Expr,
+    board: &core::Board,
+    result: &core::RoutingResult,
+    layer_names: &[String],
+    keep_existing: bool,
+    tuned: &BTreeSet<&str>,
+    native_closed_planes: &BTreeSet<String>,
+) -> Result<Vec<KiCadBoardRouterNet>, String> {
     let copper_net_names = unambiguous_pad_net_names(pcb)?;
+    let mut retained = if keep_existing {
+        RetainedSegments::of(pcb)
+    } else {
+        RetainedSegments::default()
+    };
     let Expr::List(items) = pcb else {
         return Err("PCB root is not a list".into());
     };
     if !keep_existing {
         items.retain(|item| !matches!(item.head(), Some("segment" | "arc" | "via")));
     }
+    let reusable_net = |connection: &str| {
+        if tuned.contains(connection) {
+            None
+        } else {
+            copper_net_names.get(connection).and_then(Expr::atom)
+        }
+    };
     // The vias the via-in-pad rule put in pads, fixed copper of their net
     // that the routes join: written with them, filled and capped.
     let mut pad_vias = vec![0usize; board.nets.len()];
     for (net, at, diameter, drill) in pad_vias_of(board) {
+        if native_closed_planes.contains(&board.nets[net as usize].name) {
+            continue;
+        }
         pad_vias[net as usize] += 1;
         items.push(pad_via_expr(&SupplementalVia {
             connection: board.nets[net as usize].name.clone(),
@@ -40,6 +78,9 @@ pub fn emit_routes(
     // written as the net's copper; one not used is dropped.
     for fanout in fanouts_of(board) {
         let net = fanout.net as usize;
+        if native_closed_planes.contains(&board.nets[net].name) {
+            continue;
+        }
         if !result
             .routes
             .get(net)
@@ -48,13 +89,18 @@ pub fn emit_routes(
             continue;
         }
         pad_vias[net] += 1;
-        items.push(supplemental_segment_expr(&SupplementalSegment {
-            connection: board.nets[net].name.clone(),
-            start: nanometres(fanout.start),
-            end: nanometres(fanout.end),
-            width: fanout.width,
-            layer: layer_names[fanout.layer].clone(),
-        }));
+        let connection = &board.nets[net].name;
+        retained.emit(
+            items,
+            reusable_net(connection),
+            SupplementalSegment {
+                connection: connection.clone(),
+                start: nanometres(fanout.start),
+                end: nanometres(fanout.end),
+                width: fanout.width,
+                layer: layer_names[fanout.layer].clone(),
+            },
+        );
         let (layers, kind) = via_layers_and_kind(fanout.span, board.layer_count, layer_names);
         items.push(supplemental_via_expr(&SupplementalVia {
             connection: board.nets[net].name.clone(),
@@ -68,20 +114,29 @@ pub fn emit_routes(
     let mut nets = Vec::new();
     for (net, route) in result.routes.iter().enumerate() {
         let description = &board.nets[net];
+        if native_closed_planes.contains(&description.name) {
+            continue;
+        }
+        let native_net = reusable_net(&description.name);
         let dropped = graphic_stubs(board, net, route);
+        let mut covered_length = 0.0;
         for (_, segment) in route
             .segments
             .iter()
             .enumerate()
             .filter(|(index, _)| !dropped.contains(index))
         {
-            items.push(supplemental_segment_expr(&SupplementalSegment {
-                connection: description.name.clone(),
-                start: nanometres(segment.start),
-                end: nanometres(segment.end),
-                width: segment.width,
-                layer: layer_names[segment.layer].clone(),
-            }));
+            covered_length += retained.emit(
+                items,
+                native_net,
+                SupplementalSegment {
+                    connection: description.name.clone(),
+                    start: nanometres(segment.start),
+                    end: nanometres(segment.end),
+                    width: segment.width,
+                    layer: layer_names[segment.layer].clone(),
+                },
+            );
         }
         for via in &route.vias {
             // A via of a span (blind, buried, micro) on its layers.
@@ -111,11 +166,13 @@ pub fn emit_routes(
             status: status.into(),
             unconnected_terminals,
             vias: route.vias.len() + pad_vias[net],
-            length_mm: route
+            length_mm: (route
                 .segments
                 .iter()
                 .map(|segment| distance_squared(segment.start, segment.end).sqrt())
-                .sum(),
+                .sum::<f64>()
+                - covered_length)
+                .max(0.0),
         });
     }
     canonicalize_copper_net_names(pcb, &copper_net_names);
@@ -261,7 +318,8 @@ pub(super) fn route_kicad_board_lowered(
                 expressions,
                 ..
             } = lower(&pcb, config, connect_pours)?;
-            let kept = keep_existing_copper(&mut board, false);
+            let kept = super::kept::keep_for_route(&mut board, &pcb, config);
+            super::native_kept::protect_planes(&mut board, config);
             if config.diff_pairs_on() && config.tuning.engine.as_deref() != Some("topological") {
                 plan_pairs(&mut board, config);
             }
@@ -335,7 +393,7 @@ pub(super) fn route_kicad_board_lowered(
     )?;
     written.maps_mb = maps_mb;
     written.lowering_work_seconds = lowering_work;
-    if !kept.nets.is_empty() {
+    if !kept.nets.is_empty() || kept.retained_pad_tips.is_some() {
         written.kept_copper = Some(kept);
     }
     Ok(written)
@@ -353,13 +411,11 @@ pub(super) fn route_measured(
     (router.run(), maps_mb)
 }
 
-/// Moves every `(layer "X")` that names a layer the board's layer table
-/// does not define to `Cmts.User`. Some boards carry such items (a
-/// `Rescue` layer from an old KiCad, a user layer removed later); KiCad's
-/// editor asks what to do with them and kicad-cli refuses the board.
-/// Returns how many were moved.
+/// Moves items on layers KiCad cannot resolve to `Cmts.User`. The usual
+/// case is a `Rescue` layer from an old KiCad. Declared names and KiCad's
+/// implicit numbered user layers are retained. Returns how many moved.
 pub(super) fn move_undefined_layers(pcb: &mut Expr) -> usize {
-    let defined: std::collections::HashSet<String> = pcb
+    let mut defined: std::collections::HashSet<String> = pcb
         .child("layers")
         .map(|layers| {
             layers
@@ -381,6 +437,9 @@ pub(super) fn move_undefined_layers(pcb: &mut Expr) -> usize {
     if defined.is_empty() {
         return 0;
     }
+    // KiCad 10 also resolves these canonical names when the layer table
+    // omits them, including in footprints copied from a library.
+    defined.extend((1..=45).map(|index| format!("User.{index}")));
     fn walk(node: &mut Expr, defined: &std::collections::HashSet<String>, top: bool) -> usize {
         let Expr::List(items) = node else {
             return 0;
@@ -432,11 +491,13 @@ pub(super) fn write_attempt(
     let [lowering_seconds, mut routing_seconds] = seconds;
     // Read before the items on undefined layers move away.
     let warnings = input_warnings(&pcb);
-    let moved = move_undefined_layers(&mut pcb);
-    if moved > 0 {
-        eprintln!(
-            "{moved} items on layers the board does not define moved to Cmts.User (KiCad would not load the board)"
-        );
+    if !config.route_reuse_preserve_input_layers {
+        let moved = move_undefined_layers(&mut pcb);
+        if moved > 0 {
+            eprintln!(
+                "{moved} items on unresolved layers moved to Cmts.User (KiCad would not load the board)"
+            );
+        }
     }
     let mut result = result;
     if config.tuning.tighten && config.tuning.engine.as_deref() != Some("topological") {
@@ -476,7 +537,22 @@ pub(super) fn write_attempt(
         .collect();
     let (patterns, lengths) =
         match_lengths(board, &mut result, config, &heights, layer_names, &coupled);
-    let nets = emit_routes(&mut pcb, board, &result, layer_names, true)?;
+    // Tuning patterns refer to emitted segment UUIDs. Their routed geometry
+    // also feeds the length report, so preserve those nets' emission.
+    let tuned: BTreeSet<&str> = lengths
+        .iter()
+        .map(|length| length.net.as_str())
+        .chain(coupled.iter().map(String::as_str))
+        .collect();
+    let nets = emit_routes_preserving_tuning(
+        &mut pcb,
+        board,
+        &result,
+        layer_names,
+        true,
+        &tuned,
+        &config.native_closed_planes,
+    )?;
     write_length_patterns(&mut pcb, board, &patterns, layer_names)?;
     let mut report = finish_routed_board(
         &pcb,
@@ -489,9 +565,47 @@ pub(super) fn write_attempt(
         output_directory,
         config,
         [lowering_seconds, routing_seconds],
+        false,
     )?;
     report.warnings = warnings;
     report.diff_pairs = paired.map(|(_, _, pairs)| pairs);
     report.lengths = lengths;
     Ok(report)
+}
+
+#[cfg(test)]
+mod layer_tests {
+    use super::*;
+
+    #[test]
+    fn implicit_kicad_user_layers_keep_footprint_artwork() {
+        let mut board = parse(
+            r#"(kicad_pcb
+                (layers (0 "F.Cu" signal) (19 "Cmts.User" user))
+                (footprint "Library:Part" (layer "F.Cu") (at 1 1)
+                    (fp_poly (layer "User.1"))
+                    (fp_poly (layer "User.45")))
+                (gr_line (layer "Rescue"))
+                (gr_line (layer "User.46"))
+                (gr_line (layer "User.01")))"#,
+        )
+        .unwrap();
+
+        assert_eq!(move_undefined_layers(&mut board), 3);
+        let footprint = board.child("footprint").unwrap();
+        let artwork: Vec<_> = footprint
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("fp_poly"))
+            .map(|item| form_atom(item, "layer", 1).unwrap())
+            .collect();
+        assert_eq!(artwork, ["User.1", "User.45"]);
+        assert!(
+            board
+                .children()
+                .iter()
+                .filter(|item| item.head() == Some("gr_line"))
+                .all(|item| form_atom(item, "layer", 1) == Some("Cmts.User"))
+        );
+    }
 }

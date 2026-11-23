@@ -405,9 +405,9 @@ impl Router {
             rerouted = true;
             stalled = 0;
             let mut target: Vec<Vec<bool>> = Vec::new();
-            for layer in 0..layers {
+            for labels in &pours.label[..layers] {
                 target.push(
-                    pours.label[layer]
+                    labels
                         .iter()
                         .map(|piece| *piece != 0 && find(&mut parent, *piece as usize) == main)
                         .collect(),
@@ -438,12 +438,12 @@ impl Router {
         let (pours, mut parent, main) = self.analyze_pours(net);
         let terminal_base = pours.pieces + 1;
         let mut complete = true;
-        for terminal in 0..terminal_count {
-            let connected = find(&mut parent, terminal_base + terminal) == main;
-            self.nets[net as usize].connected[terminal] = connected;
-            complete &= connected;
+        let state = &mut self.nets[net as usize];
+        for (terminal, connected) in state.connected[..terminal_count].iter_mut().enumerate() {
+            *connected = find(&mut parent, terminal_base + terminal) == main;
+            complete &= *connected;
         }
-        self.nets[net as usize].complete = complete;
+        state.complete = complete;
         stitches
     }
 }

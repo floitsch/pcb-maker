@@ -282,6 +282,19 @@ fn kicad_5_arcs_become_three_points() {
 }
 
 #[test]
+fn legacy_text_conversion_keeps_the_lock_and_the_actual_text() {
+    let mut forms = [
+        parse(r#"(fp_text reference locked "C2" (at 0 0) (layer "B.SilkS"))"#).unwrap(),
+        parse(r#"(fp_text value "locked" (at 0 1) (layer "B.Fab"))"#).unwrap(),
+    ];
+    legacy_texts_to_properties(&mut forms, "C2").unwrap();
+    assert_eq!(forms[0].children()[2].atom(), Some("C2"));
+    assert_eq!(form_atom(&forms[0], "locked", 1), Some("yes"));
+    assert_eq!(forms[1].children()[2].atom(), Some("locked"));
+    assert!(forms[1].child("locked").is_none());
+}
+
+#[test]
 fn kicad_5_library_footprints_become_footprints_of_today() {
     let directory = std::env::temp_dir().join(format!(
         "pcb-maker-netlist-import-k5-{}-{}",
@@ -470,6 +483,12 @@ fn netlist_becomes_a_board_with_nets_fields_and_symbol_links() {
         report.substituted,
         vec!["R3: other:R_Test -> parts:R_Test".to_string()]
     );
+    let [changed] = report.footprint_id_changes.as_slice() else {
+        panic!("expected one emitted footprint with a different ID");
+    };
+    assert_eq!(changed.part, "R3");
+    assert_eq!(changed.source_footprint.as_deref(), Some("other:R_Test"));
+    assert_eq!(changed.imported_footprint, "parts:R_Test");
 
     let board = parse(&fs::read_to_string(&report.board).unwrap()).unwrap();
     let layers = board.child("layers").unwrap().children();
@@ -616,6 +635,132 @@ fn the_footprints_board_gives_the_copper_layers_unless_layers_does() {
         import_kicad_netlist_with(&netlist, &directory.join("c"), "test", None, None).unwrap();
     assert_eq!(report.copper_layers, 2);
     fs::remove_dir_all(&directory).unwrap();
+}
+
+#[test]
+fn a_missing_legacy_library_keeps_the_donor_id_only_in_a_safe_output_table() {
+    let root = temporary_next_to(&std::env::temp_dir().join("legacy-donor"));
+    let source = root.join("source");
+    fs::create_dir_all(&source).unwrap();
+    let netlist = source.join("test.net");
+    fs::write(
+        &netlist,
+        r#"(export (version "E") (components (comp (ref "U1") (value "Old")
+            (footprint "Archive:Chip") (sheetpath (names "/") (tstamps "/")) (tstamps "1111"))) (nets))"#,
+    )
+    .unwrap();
+    let donor = root.join("donor.kicad_pcb");
+    fs::write(
+        &donor,
+        r#"(kicad_pcb (version 20221018) (generator pcbnew)
+            (footprint "Archive:Chip" (layer "F.Cu") (at 10 20) (path "/1111")
+                (fp_text reference "U1" (at 0 1) (layer "F.SilkS"))
+                (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu" "F.Mask"))))"#,
+    )
+    .unwrap();
+    let table = source.join("fp-lib-table");
+    let row = |uri: &str| {
+        format!(
+            r#"(lib (name "Archive") (type "Legacy") (uri "{uri}") (options "") (descr "original"))"#
+        )
+    };
+    let unresolved = row("${PCB_MAKER_TEST_UNKNOWN_LIBRARY_PATH}/Archive.mod");
+    let missing = row("${KIPRJMOD}/missing/Archive.mod");
+    let external = root.join("external.mod");
+    fs::write(&external, "external legacy contents").unwrap();
+    let external_row = row(external.to_str().unwrap());
+    let unrelated = r#"(lib (name "Other") (type "KiCad") (uri "${KIPRJMOD}/Other.pretty") (options "") (descr "user-owned"))"#;
+    for (name, source_rows, output_rows, keep_id) in [
+        ("missing", missing.clone(), missing.clone(), true),
+        (
+            "external",
+            external_row.clone(),
+            external_row.clone(),
+            false,
+        ),
+        ("unresolved", unresolved.clone(), unresolved, false),
+        ("conflict", missing.clone(), external_row.clone(), false),
+        ("duplicate", format!("{missing} {missing}"), missing, false),
+    ] {
+        let input_contents = format!("(fp_lib_table {source_rows})\n");
+        fs::write(&table, &input_contents).unwrap();
+        let output = root.join(name);
+        let existing = output.join("Archive.pretty");
+        fs::create_dir_all(&existing).unwrap();
+        let sentinel = existing.join("Custom.kicad_mod");
+        fs::write(&sentinel, "user's model").unwrap();
+        let copied = output.join("fp-lib-table");
+        fs::write(
+            &copied,
+            format!("(fp_lib_table {output_rows} {unrelated})\n"),
+        )
+        .unwrap();
+        let report = import_kicad_netlist_with_options(
+            &netlist,
+            &output,
+            "test",
+            KiCadNetlistImportOptions {
+                footprints_from: Some(&donor),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(report.missing.is_empty(), "{name}: {:?}", report.missing);
+        let expected = if keep_id {
+            "Archive:Chip"
+        } else {
+            "from_board:Chip"
+        };
+        let board =
+            crate::board_footprints::BoardFootprints::read(&output.join("test.kicad_pcb")).unwrap();
+        assert_eq!(board.footprints[0].id, expected, "{name}");
+        let copied = fs::read_to_string(copied).unwrap();
+        assert_eq!(copied.matches(r#"(name "Archive")"#).count(), 1, "{name}");
+        assert!(copied.contains(r#"(descr "user-owned")"#));
+        assert_eq!(copied.contains(r#"(type "Legacy")"#), !keep_id, "{name}");
+        assert_eq!(fs::read_to_string(&sentinel).unwrap(), "user's model");
+        assert_eq!(fs::read_to_string(&table).unwrap(), input_contents);
+        let generated = if keep_id {
+            "Archive-2.pretty"
+        } else {
+            "from_board.pretty"
+        };
+        assert!(
+            output.join(generated).join("Chip.kicad_mod").is_file(),
+            "{name}"
+        );
+        if keep_id {
+            assert_eq!(
+                fs::read_to_string(output.join(generated).join("Custom.kicad_mod")).unwrap(),
+                "user's model"
+            );
+            assert!(copied.contains("${KIPRJMOD}/Archive-2.pretty"));
+        }
+    }
+    assert_eq!(
+        fs::read_to_string(external).unwrap(),
+        "external legacy contents"
+    );
+    let contents = fs::read_to_string(&table).unwrap();
+    let without_donor = root.join("without-donor");
+    let report = import_kicad_netlist(&netlist, &without_donor, "test", 2).unwrap();
+    assert_eq!(report.missing_parts, 1);
+    assert!(report.missing[0].contains("Convert it to a KiCad .pretty library"));
+    assert!(!without_donor.join("Archive.pretty").exists());
+    let error = import_kicad_netlist_with_options(
+        &netlist,
+        &source,
+        "test",
+        KiCadNetlistImportOptions {
+            footprints_from: Some(&donor),
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
+    assert!(error.contains("separate output directory"), "{error}");
+    assert_eq!(fs::read_to_string(table).unwrap(), contents);
+    assert!(!source.join("test.kicad_pcb").exists());
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -839,8 +984,8 @@ fn footprints_from_the_board_keep_their_ids_for_the_drc_exclusions() {
             .unwrap()
             .as_nanos()
     ));
-    // A KiCad 6 library footprint: its ids are `tstamp`s, one set for
-    // every instance.
+    // A KiCad 6 library footprint: some pads lack IDs, and `tstamp`s in
+    // the library otherwise start out identical for each instance.
     let library = directory.join("parts.pretty");
     fs::create_dir_all(&library).unwrap();
     fs::write(
@@ -848,7 +993,9 @@ fn footprints_from_the_board_keep_their_ids_for_the_drc_exclusions() {
         r#"(footprint "C_Old" (layer "F.Cu") (tstamp 22222222-0000-4000-8000-000000000000)
             (fp_rect (start -1 -0.5) (end 1 0.5) (layer "F.CrtYd") (width 0.05) (tstamp 22222222-0000-4000-8000-000000000001))
             (pad "1" smd rect (at -0.5 0) (size 0.5 0.5) (layers "F.Cu" "F.Mask") (tstamp 22222222-0000-4000-8000-000000000002))
-            (pad "2" smd rect (at 0.5 0) (size 0.5 0.5) (layers "F.Cu" "F.Mask") (tstamp 22222222-0000-4000-8000-000000000003)))"#,
+            (pad "2" smd rect (at 0.5 0) (size 0.5 0.5) (layers "F.Cu" "F.Mask"))
+            (pad "2" smd rect (at 0.5 1) (size 0.5 0.5) (layers "F.Cu" "F.Mask"))
+            (pad "" np_thru_hole circle (at 0 2) (size 0.5 0.5) (drill 0.5) (layers "*.Cu" "*.Mask")))"#,
     )
     .unwrap();
     // The designer's board: U1 (its own footprint, from a library
@@ -862,10 +1009,12 @@ fn footprints_from_the_board_keep_their_ids_for_the_drc_exclusions() {
             (property "Reference" "U1" (at 0 -2 180) (layer "F.SilkS") (uuid "11111111-0000-4000-8000-0000000000a0") (effects (font (size 1 1) (thickness 0.15))))
             (fp_rect (start -1.5 -1.5) (end 1.5 1.5) (layer "F.CrtYd") (stroke (width 0.05) (type solid)) (uuid "11111111-0000-4000-8000-0000000000a1"))
             (pad "1" smd rect (at -1 1 180) (size 0.6 0.8) (layers "F.Cu" "F.Mask") (net 2 "GND") (uuid "11111111-0000-4000-8000-0000000000a2"))
-            (pad "2" smd rect (at 1 1 180) (size 0.6 0.8) (layers "F.Cu" "F.Mask") (net 1 "/VIN") (uuid "11111111-0000-4000-8000-0000000000a3")))
+            (pad "2" smd rect (at 1 1 180) (size 0.6 0.8) (layers "F.Cu" "F.Mask") (net 1 "/VIN") (uuid "11111111-0000-4000-8000-0000000000a3"))
+            (pad "2" smd rect (at 1 2 180) (size 0.6 0.8) (layers "F.Cu" "F.Mask") (net 1 "/VIN")))
           (footprint "MountingHole:Hole_Pad" (layer "F.Cu") (uuid "11111111-0000-4000-8000-000000000003") (at 3 3)
             (property "Reference" "H1" (at 0 -3 0) (layer "F.SilkS") (uuid "11111111-0000-4000-8000-0000000000b0") (effects (font (size 1 1) (thickness 0.15))))
-            (pad "1" thru_hole circle (at 0 0) (size 5 5) (drill 3) (layers "*.Cu" "*.Mask") (net 2 "GND") (uuid "11111111-0000-4000-8000-0000000000b1"))))"#,
+            (pad "1" thru_hole circle (at 0 0) (size 5 5) (drill 3) (layers "*.Cu" "*.Mask") (net 2 "GND") (uuid "11111111-0000-4000-8000-0000000000b1"))
+            (pad "" np_thru_hole circle (at 0 3) (size 0.5 0.5) (drill 0.5) (layers "*.Cu" "*.Mask"))))"#,
     )
     .unwrap();
     // U2 has U1's footprint, which the board has only as U1's: a copy.
@@ -892,7 +1041,36 @@ fn footprints_from_the_board_keep_their_ids_for_the_drc_exclusions() {
     .unwrap();
     let report = import_kicad_netlist_from(&netlist, &output, "test", 2, Some(&board)).unwrap();
     assert!(report.missing.is_empty(), "{:?}", report.missing);
-    let imported = parse(&fs::read_to_string(&report.board).unwrap()).unwrap();
+    let initial = fs::read_to_string(&report.board).unwrap();
+    let imported = parse(&initial).unwrap();
+    let other = directory.join("out-again");
+    fs::create_dir_all(&other).unwrap();
+    fs::copy(
+        output.join("constraints.json"),
+        other.join("constraints.json"),
+    )
+    .unwrap();
+    let repeated = import_kicad_netlist_from(&netlist, &other, "test", 2, Some(&board)).unwrap();
+    assert_eq!(initial, fs::read_to_string(&repeated.board).unwrap());
+    for footprint in imported
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+    {
+        for pad in footprint
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("pad"))
+        {
+            assert!(
+                form_atom(pad, "uuid", 1)
+                    .or_else(|| form_atom(pad, "tstamp", 1))
+                    .is_some(),
+                "pad in {:?} lacks an ID: {pad:?}",
+                footprint_reference(footprint)
+            );
+        }
+    }
     let ids = |reference: &str| -> Vec<String> {
         fn collect(item: &Expr, into: &mut Vec<String>) {
             if matches!(item.head(), Some("uuid" | "tstamp")) {
@@ -982,6 +1160,263 @@ fn scratch(name: &str) -> PathBuf {
     ));
     fs::create_dir_all(&directory).unwrap();
     directory
+}
+
+#[test]
+fn schematic_import_copies_the_matching_rules_under_the_board_name() {
+    if crate::native_report::check_kicad_cli().is_err() {
+        return;
+    }
+    let directory = scratch("schematic-rules");
+    let source = directory.join("source");
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/urchin");
+    copy_directory_tree(&fixture, &source).unwrap();
+    let input = source.join("main.kicad_sch");
+    let schematic = fs::read(&input).unwrap();
+    let rules =
+        "(version 1)\n(rule \"Copper track floor\" (constraint track_width (min 0.22mm)))\n";
+    fs::write(source.join("main.kicad_dru"), rules).unwrap();
+    fs::write(source.join("other.kicad_dru"), "(version 1)").unwrap();
+
+    let output = directory.join("import");
+    import_kicad_netlist(&input, &output, "renamed", 2).unwrap();
+    assert_eq!(
+        fs::read_to_string(output.join("renamed.kicad_dru")).unwrap(),
+        rules
+    );
+    assert!(!output.join("main.kicad_dru").exists());
+    assert!(!output.join("other.kicad_dru").exists());
+
+    // In the source project, a rule already supplied for the output
+    // board takes precedence and its original schematic is left intact.
+    let caller_rules = "(version 1)\n# caller rules\n";
+    fs::write(source.join("renamed.kicad_dru"), caller_rules).unwrap();
+    import_kicad_netlist(&input, &source, "renamed", 2).unwrap();
+    assert_eq!(
+        fs::read_to_string(source.join("renamed.kicad_dru")).unwrap(),
+        caller_rules
+    );
+    assert_eq!(
+        fs::read_to_string(source.join("main.kicad_dru")).unwrap(),
+        rules
+    );
+    assert_eq!(fs::read(&input).unwrap(), schematic);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn netlist_import_relaxes_netclass_gaps_and_reports_board_and_custom_minima() {
+    if crate::native_report::check_kicad_cli().is_err() {
+        return;
+    }
+    let directory = scratch("pad-rules");
+    let library = directory.join("lib.pretty");
+    fs::create_dir_all(&library).unwrap();
+    fs::write(
+        library.join("Jumper.kicad_mod"),
+        r#"(footprint "Jumper" (version 20260206) (layer "F.Cu")
+            (property "Reference" "REF**" (at 0 -1 0) (layer "F.SilkS")
+                (effects (font (size 1 1) (thickness 0.15))))
+            (attr smd)
+            (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu" "F.Mask"))
+            (pad "2" smd rect (at 0.72 0) (size 0.6 0.6) (layers "F.Cu" "F.Mask")))"#,
+    )
+    .unwrap();
+    let netlist = directory.join("transport.net");
+    fs::write(
+        &netlist,
+        r#"(export (version "E") (design (source "schematic/design.kicad_sch"))
+            (components (comp (ref "J1") (value "Jumper") (footprint "lib:Jumper")
+                (sheetpath (names "/") (tstamps "/")) (tstamps "1111")))
+            (nets (net (code "1") (name "A") (node (ref "J1") (pin "1") (pintype "passive")))
+                  (net (code "2") (name "B") (node (ref "J1") (pin "2") (pintype "passive")))))"#,
+    )
+    .unwrap();
+    let import = |name: &str, minimum: f64, keep_footprint_clearances: bool| {
+        let output = directory.join(name);
+        fs::create_dir(&output).unwrap();
+        let project = output.join("new.kicad_pro");
+        fs::write(
+            &project,
+            format!(
+                r#"{{"board": {{"design_settings": {{"rules": {{"min_clearance": {minimum}}}}}}},
+                    "net_settings": {{"meta": {{"version": 3}}, "classes":
+                    [{{"name": "Default", "clearance": 0.2, "track_width": 0.2}}]}}}}"#,
+            ),
+        )
+        .unwrap();
+        let report = import_kicad_netlist_with_options(
+            &netlist,
+            &output,
+            "new",
+            KiCadNetlistImportOptions {
+                layers: Some(2),
+                keep_footprint_clearances,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(report.missing.is_empty(), "{:?}", report.missing);
+        (report, project)
+    };
+    let native_pad_findings = |report: &KiCadNetlistImport| {
+        let path = report.board.with_extension("drc.json");
+        crate::native_report::run_kicad_report(
+            &[
+                "pcb",
+                "drc",
+                "--format",
+                "json",
+                "--severity-all",
+                "--output",
+            ],
+            &path,
+            &report.board,
+        )
+        .unwrap();
+        let drc = read_json(&path).unwrap();
+        drc["violations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|finding| finding["type"] == "clearance" && finding["severity"] == "error")
+            .filter_map(|finding| finding["description"].as_str().map(str::to_string))
+            .collect::<Vec<_>>()
+    };
+    let supplied_project = r#"{
+        "board": {"design_settings": {"rules": {"min_clearance": 0.05}}},
+        "net_settings": {"meta": {"version": 3}, "classes":
+            [{"name": "Default", "clearance": 0.25, "track_width": 0.30}]}
+    }"#;
+    let companion = netlist.with_extension("kicad_pro");
+    fs::write(&companion, supplied_project).unwrap();
+    for (output, board_id) in [
+        (directory.join("companion-import"), "renamed"),
+        (directory.clone(), "transport"),
+    ] {
+        let report = import_kicad_netlist_with_options(
+            &netlist,
+            &output,
+            board_id,
+            KiCadNetlistImportOptions {
+                layers: Some(2),
+                keep_footprint_clearances: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read_to_string(output.join(format!("{board_id}.kicad_pro"))).unwrap(),
+            supplied_project
+        );
+        let gap = report.footprint_clearance_evidence[0]
+            .netclass_gap
+            .as_ref()
+            .unwrap();
+        assert_eq!(gap.required_mm, 0.25);
+        assert!(!gap.applied);
+    }
+    assert_eq!(fs::read_to_string(&companion).unwrap(), supplied_project);
+
+    let (adjusted, _) = import("netclass", 0.05, false);
+    assert_eq!(adjusted.clearances.len(), 1, "{adjusted:?}");
+    assert!(adjusted.clearance_conflicts.is_empty(), "{adjusted:?}");
+    assert!(native_pad_findings(&adjusted).is_empty());
+    assert!(
+        adjusted.footprint_clearance_evidence[0]
+            .netclass_gap
+            .as_ref()
+            .unwrap()
+            .applied
+    );
+
+    let (preserved, _) = import("preserve-netclass", 0.05, true);
+    assert_eq!(preserved.footprint_clearance_policy, "preserve_supplied");
+    assert!(preserved.clearances.is_empty());
+    let witness = &preserved.footprint_clearance_evidence[0];
+    assert_eq!(witness.reference, "J1");
+    assert!(witness.supplied_footprint_mm.is_none());
+    let gap = witness.netclass_gap.as_ref().unwrap();
+    assert_eq!(gap.required_mm, 0.2);
+    assert!(!gap.applied);
+    assert!(preserved.clearance_conflicts[0].contains("Preserved the supplied clearance policy"));
+    assert_eq!(native_pad_findings(&preserved).len(), 1);
+    let board = fs::read_to_string(&preserved.board).unwrap();
+    assert!(!board.contains("(clearance "));
+
+    let jumper_path = library.join("Jumper.kicad_mod");
+    let jumper = fs::read_to_string(&jumper_path).unwrap();
+    fs::write(
+        &jumper_path,
+        jumper.replace("(attr smd)", "(attr smd) (clearance 0.10)"),
+    )
+    .unwrap();
+    let (authored, _) = import("authored-override", 0.05, true);
+    assert!(authored.clearances.is_empty());
+    assert_eq!(
+        authored.footprint_clearance_evidence[0].supplied_footprint_mm,
+        Some(0.1)
+    );
+    assert!(
+        authored.footprint_clearance_evidence[0]
+            .netclass_gap
+            .is_none()
+    );
+    assert!(native_pad_findings(&authored).is_empty());
+    assert!(
+        fs::read_to_string(&authored.board)
+            .unwrap()
+            .contains("(clearance 0.10)")
+    );
+
+    fs::write(&jumper_path, jumper.replace("(at 0.72 0)", "(at 1 0)")).unwrap();
+    let (sufficient, _) = import("adequate-gap", 0.05, true);
+    let (sufficient_default, _) = import("adequate-gap-default", 0.05, false);
+    assert!(sufficient.clearances.is_empty() && sufficient.footprint_clearance_evidence.is_empty());
+    assert_eq!(
+        fs::read(&sufficient.board).unwrap(),
+        fs::read(&sufficient_default.board).unwrap()
+    );
+    fs::write(&jumper_path, jumper).unwrap();
+
+    let (board_minimum, _) = import("board-minimum", 0.15, true);
+    assert!(board_minimum.clearances.is_empty(), "{board_minimum:?}");
+    assert_eq!(
+        board_minimum.clearance_conflicts.len(),
+        1,
+        "{board_minimum:?}"
+    );
+    assert!(
+        board_minimum.clearance_conflicts[0]
+            .contains("board minimum (Board Setup) requires 0.15 mm")
+    );
+    assert_eq!(native_pad_findings(&board_minimum).len(), 1);
+
+    // A netlist exported under another name points to the actual board's
+    // rules. KiCad uses the clearance rule in the temporary check and on
+    // the imported board. The router resolves the same file's width.
+    fs::create_dir(directory.join("schematic")).unwrap();
+    let custom_rules = r#"(version 1)
+        (rule "Higher pad clearance" (condition "A.Type == 'Pad' && B.Type == 'Pad'")
+            (constraint clearance (min 0.3mm)))
+        (rule "Wide A" (condition "A.NetName == 'A'") (constraint track_width (min 0.55mm)))"#;
+    fs::write(directory.join("schematic/design.kicad_dru"), custom_rules).unwrap();
+    let (custom, project) = import("custom", 0.05, true);
+    assert!(custom.clearances.is_empty(), "{custom:?}");
+    assert_eq!(custom.clearance_conflicts.len(), 1, "{custom:?}");
+    assert!(custom.clearance_conflicts[0].contains("rule 'Higher pad clearance' requires 0.3 mm"));
+    assert_eq!(
+        fs::read_to_string(project.with_extension("kicad_dru")).unwrap(),
+        custom_rules
+    );
+    assert!(
+        native_pad_findings(&custom)
+            .iter()
+            .any(|description| description.contains("rule 'Higher pad clearance'"))
+    );
+    let router = resolve_project_rules(&project, &custom.board).unwrap();
+    assert_eq!(router.connection_rules["A"].trace_width_mm, 0.55);
+    fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]
@@ -1150,15 +1585,15 @@ fn pins_are_read_with_their_nets_and_unnamed_nets_are_skipped() {
     assert_eq!(pins.len(), 2);
     assert_eq!(
         pins[&("R1".to_string(), "1".to_string())],
-        (
+        vec![(
             "GND".to_string(),
             Some("A".to_string()),
             Some("passive".to_string())
-        )
+        )]
     );
     assert_eq!(
         pins[&("R2".to_string(), "2".to_string())],
-        ("GND".to_string(), None, None)
+        vec![("GND".to_string(), None, None)]
     );
 }
 
@@ -1172,29 +1607,6 @@ fn a_symbols_path_is_its_sheets_path_and_its_own_stamp() {
     assert_eq!(symbol_path_of(&root).as_deref(), Some("/u2"));
     let stampless = parse(r#"(comp (ref "R3"))"#).unwrap();
     assert_eq!(symbol_path_of(&stampless), None);
-    let both = parse(r#"(export (components (comp (ref "R1") (tstamps "u1")) (comp (ref "R2"))))"#)
-        .unwrap();
-    let components = both.child("components").unwrap().children();
-    assert_eq!(
-        symbol_paths(components),
-        BTreeSet::from(["/u1".to_string()])
-    );
-}
-
-#[test]
-fn the_most_common_new_name_of_a_footprint_wins() {
-    let renamed = BTreeMap::from([
-        (("lib:A".to_string(), "x:A".to_string()), 2),
-        (("lib:A".to_string(), "y:A".to_string()), 5),
-        (("lib:B".to_string(), "x:B".to_string()), 1),
-    ]);
-    assert_eq!(
-        most_common_renames(&renamed),
-        BTreeMap::from([
-            ("lib:A".to_string(), "y:A".to_string()),
-            ("lib:B".to_string(), "x:B".to_string())
-        ])
-    );
 }
 
 #[test]

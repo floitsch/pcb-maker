@@ -66,7 +66,7 @@ const KEY_VERSION: &str = "pcb-maker-drc-cache-v1";
 const MAX_PROJECT_FILES: usize = 5000;
 const MAX_PROJECT_BYTES: u64 = 1 << 30;
 /// Directory depth below the board's directory that is hashed.
-const MAX_PROJECT_DEPTH: usize = 6;
+pub(crate) const MAX_PROJECT_DEPTH: usize = 6;
 
 static CALLS: AtomicU64 = AtomicU64::new(0);
 static HITS: AtomicU64 = AtomicU64::new(0);
@@ -143,7 +143,7 @@ pub(crate) struct KeyContext {
 impl KeyContext {
     /// `config_home` is the `KICAD_CONFIG_HOME` kicad-cli runs with when it
     /// is not the process's own (see `kicad_config`): its tables are hashed.
-    fn current(
+    pub(crate) fn current(
         program: &OsStr,
         arguments: &[&str],
         config_home: Option<&Path>,
@@ -322,6 +322,10 @@ pub(crate) struct DrcCache {
 }
 
 impl DrcCache {
+    pub(crate) fn keyed(directory: PathBuf, key: String) -> Self {
+        Self { directory, key }
+    }
+
     /// The cache entry for a DRC of `input`, or `None` when the cache is
     /// off or the inputs cannot be hashed.
     pub(crate) fn for_run(
@@ -356,6 +360,17 @@ impl DrcCache {
         Some(bytes)
     }
 
+    pub(crate) fn contains_bounded(&self, limit: u64) -> bool {
+        fs::symlink_metadata(self.entry())
+            .is_ok_and(|metadata| metadata.is_file() && metadata.len() <= limit)
+    }
+
+    pub(crate) fn lookup_bounded(&self, limit: u64) -> Option<Vec<u8>> {
+        self.contains_bounded(limit)
+            .then(|| self.lookup())
+            .flatten()
+    }
+
     /// Drops an entry that did not validate.
     pub(crate) fn discard(&self) {
         let _ = fs::remove_file(self.entry());
@@ -367,11 +382,15 @@ impl DrcCache {
 
     /// Stores a fresh report's bytes and keeps the cache within its bounds.
     pub(crate) fn store(&self, bytes: &[u8]) {
+        self.store_with_bounds(bytes, MAX_ENTRIES, MAX_BYTES);
+    }
+
+    pub(crate) fn store_with_bounds(&self, bytes: &[u8], max_entries: usize, max_bytes: u64) {
         let stored = fs::create_dir_all(&self.directory)
             .map_err(|error| format!("failed to create {}: {error}", self.directory.display()))
             .and_then(|()| write_atomically(&self.entry(), bytes));
         match stored {
-            Ok(()) => evict(&self.directory, MAX_ENTRIES, MAX_BYTES),
+            Ok(()) => evict(&self.directory, max_entries, max_bytes),
             Err(error) => warn(&error),
         }
     }

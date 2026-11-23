@@ -132,6 +132,9 @@ change the board before it is lowered.
   both sides (a hot-swap socket) with that courtyard too. The **tight
   body** (fabrication outline and pads) is used only where the project
   lets courtyards overlap.
+  A plated drill whose annulus is too small to cover the board's
+  hole-to-copper clearance keeps the additional space clear on both
+  sides. Slotted drills use their length, diameter and angle.
 - **Angles.** A movable part may take any quarter turn (`tuning.keep_rotation`
   false) unless a `rotation` constraint restricts it. Only `front` and
   `back` constraints change a part's side.
@@ -140,8 +143,9 @@ change the board before it is lowered.
   reaches within `tuning.edge_keep_mm` (3 mm) of a rule area that forbids
   footprints (an antenna module at its keepout), or it is a through-hole
   part with at least four pins (a connector, a header) within
-  `tuning.edge_keep_mm` of the outline. `fixed` and `fixed_patterns` add parts,
-  `free` releases them. The placer, the keepout constraints and the free
+  `tuning.edge_keep_mm` of the outline. `fixed` and `fixed_patterns` add
+  explicit holds that apply with `move_all`. `free` releases default
+  holds. The placer, the keepout constraints and the free
   dimension share one decision (`placement_constraints::held_parts`).
 - **Halos.** Each part keeps `ceil(pins / pins_per_halo_track)` tracks of
   `tuning.track_pitch_mm` free around its body (8 pins a track, 0.65 mm), at most
@@ -171,8 +175,6 @@ change the board before it is lowered.
   mask there (`far_copper`); `mask_reach` in `lower/footprint.rs`.
   vaio_re's J1 opens the mask 1.625 mm around its mounting holes: parts
   on both sides sat in the opening and bridged.
-- **Breakaway strips.** A strip too thin to be a piece beyond mouse
-  bites or a V-cut is an obstacle ("Breakaway strips" under "Panels").
 - **Footprints without a courtyard.** Two such parts keep the boxes of
   their pads and outlines apart (`Component::courtless`) unless one is at
   most a quarter of the other (a diode under its key switch); against a
@@ -290,6 +292,14 @@ its pair's source and destination (`facing::face`). On the measured boards
 the pairs without two parts side by side fell from 14 to 3, but the pairs
 coupled barely changed and the connections moved both ways.
 
+Pair rows use mobility after the brief takes effect, including
+`move_all` for footprints parked outside the outline after import.
+The parts may have an explicitly required common face. Locks, explicit
+holds and other authored placement relations keep parts out of inferred
+rows. The layout carries the placed row definitions
+through routing. Each `pair_row` status checks the saved origins and
+relative angle, and `distance_mm` gives their measured separation.
+
 ### Following diff_pairs
 
 `PAIR_ROWS_FOLLOW_DIFF_PAIRS` (false) keeps an unset `pair_rows` off
@@ -402,19 +412,22 @@ coupled loop's) keeps to its rules (`Relaxation::apply`).
 (`legal::legalize`). Parts that found no room go first in a second pass
 (`legalize_first`); a few still without room (at most a fiftieth of the
 parts, three at least) take a spot from movable parts, which find new ones
-(`evict_for`); a part held at an edge still without room has the parts
-held at that edge packed along it (`compact_edges`, below); the rest may
-lie on the board's marks (`seat_on_marks`).
+(`evict_for`); the rest may lie on the board's marks (`seat_on_marks`).
 
 **A looser level keeps what the level before placed**: what was legal
 stays legal, so only the parts without room look for a spot
-(`legalize_keeping`), then eviction and the packing along edges, then
-(at the edge and courtyard levels, where nothing else is left to give)
-up to four passes with the stuck parts first from the anneal that gave
-the kept placement (`legalize_stuck_first`, `STUCK_FIRST_PASSES`). A
-level with a finer grid
+(`legalize_keeping`), then eviction, then (at the edge and courtyard
+levels, where nothing else is left to give) up to four passes with the
+stuck parts first from the anneal that gave the kept placement
+(`legalize_stuck_first`, `STUCK_FIRST_PASSES`). A level with a finer grid
 or tighter bodies is a new problem and gets a fresh anneal too, which may
 beat the kept placement.
+
+**Packing along an edge.** If eviction leaves a part held at an edge
+without room, the legaliser tries sliding the movable parts held along
+that edge together. It keeps their order and seeks a legal slot for the
+stuck part. The placement work budget and a per-attempt limit cap the
+scan.
 
 **Shortcuts**, each for a case that used to waste the budget: a level
 whose bodies need more area than a side has is skipped (`overfull`); where
@@ -449,27 +462,22 @@ farther for fewer crossings (`CROSSING_REACH`) and paying escape-demand
 overflow. On a fine grid it searches only near the part's wanted spot.
 `legal::conflict_kind` says why two parts may not touch.
 
-### Packing along an edge
+The dense pass can spend nearly all its work checking points close to the
+same crowded bank. A fresh level with a modeled work limit reserves the
+last 1/32 of the seed's budget for the remaining parts to sample the
+whole board. The step is a multiple of the existing grid, at least 2 mm.
+The test uses the same board and placement legality and checks that
+individual relation misses do not increase. Seated parts stay in place
+during the search. The new poses are kept only when all remaining parts
+fit. On success, `board-placer.json` records their count and modeled work
+under `sparse_legalization` for the selected placement.
 
-The eviction moves one part at a time: a part held at an edge whose room
-is taken by the others held there finds none, though the edge has room
-for all once they slide (the molecules' panels: four 17.5 mm connectors
-on a 76.2 mm edge, 6.2 mm to spare, the first seated 5.5 mm from the
-edge's end and the fourth without room; the board had no result).
-`legal::compact_edges` takes, for each part held at an edge and still
-without room, the movable parts held at that edge whose bodies may meet
-it, in their order along it (its own spot among them, else the nearest
-slot in that order that packs: the 7x5 molecule's J9 belongs on the
-wave's lowest segment, before the others), and packs them
-along the edge: each keeps its angle and its distance from the edge and
-takes the legal spot nearest its own between the one before and the
-latest that leaves room for the ones after (a packing from the end gives
-that), so the earlier ones slide only as far as the later need. Where
-the parts do not fit in that order nothing moves, and the attempt books
-no work (`add_work_back`): a part held at an edge is without room at
-some level on 20-odd of the sweep's boards, and a failed attempt booked
-shifted every later budget decision there for nothing. So a board places
-as before unless the packing seats a part.
+At the fine-grid stage, when one part remains unplaced after eviction,
+the placer can try giving that part first choice on a subset of the
+current grid and reseating the other movable parts. It keeps the trial
+only when every part fits the original geometry and authored placement
+constraints. The same budget bounds the trial. `moved_others` records the
+number of other poses changed by a successful reseat.
 
 ### The legality model against KiCad
 
@@ -513,6 +521,22 @@ close it are moved or turned (within `reach_mm`, the cheapest of
 reported and rank right after illegal parts. Needs the router's config
 (layout or place check). Stage 1 on its four boards: -3.0 % (p 0.228);
 the full protocol is pending.
+
+The probe also reports a surface pad with no legal grid node when a
+rule area fully covers its copper and bars both tracks and vias. The
+bounds check leaves pads that could still reach the area outside the
+keepout to the router's escape search.
+
+`pad-exits-kicad-board --repair-config <pad-exits.json>` can preview a
+repair on a saved placement. With
+`{"scope": "rule_areas", "reach_mm": 3, "candidates": 160}` it tests surface
+pads fully covered by authored board areas that forbid tracks and vias.
+It searches for a legal local pose with room to reach all of a trapped
+footprint's pads. If up to two movable neighbors block that pose, the
+legalizer tries to reseat those neighbors within the same reach. The
+preview leaves the board file untouched. On a routed board,
+`repair-kicad-opens --rule-area` can verify and publish a repair for a
+specific open pad.
 
 ### Bus-group moves
 
@@ -685,26 +709,90 @@ with a budget share by its parts (its own fullness decides its levels),
 then the unassigned parts. With every part stacked and no `--reference`,
 the pieces are only reported.
 
-### Breakaway strips
+On a single-board outline, the placer also keeps movable parts off
+narrow exterior fabrication rails. A rail spans its side of the outline
+and has a small eroded core beside mouse bites or a V-cut. Explicit
+edge, overhang and region constraints, and fixed connected footprints
+on the rail, take priority.
 
-A rail outside a row of mouse bites can be too thin to be a piece (its
-core after the erosion under 20 mm², `MIN_CORE_MM2`: USB_Keypad's
-2.4 mm rails leave 13 mm²), so the board is one piece and the rail was
-board to place on: C11 landed there with GND and +3.3V open across the
-bites. `Pieces::strips` finds such strips on a board of any number of
-pieces: what the erosion took from every piece (beyond the pieces'
-grown-back cores) in components that hold a core of their own under the
-minimum, touch at most one piece (between two it is a tab) and border a
-mouse bite's hole or a V-cut. The lowering makes each a fixed obstacle on
-both sides (`add_breakaway_strips` in `lower/obstacles.rs`; nothing on a
-board without bites or V-cuts). The conditions come from the sweep's
-boards: a strip set off by the outline alone is board (bumwings' 2 mm
-bridges between a switch's cutouts, a sensor on a narrow neck), a tab
-between two pieces is the sub-boards' (OpenRX's designer put C208 at its
-edge), and no designer's movable part lies on a strip the rule finds
-(USB_Keypad, WLED_Matrix, SmartSpin2k's panel, the 0xCB pcb-panel,
-protoesp, whose held USB connector CN10 lies on its breakaway strip and
-stays).
+### Modules of one board
+
+A board can be one circuit cut into breakaway modules. protoesp's outline
+holds ten sections parted by slots and rows of 0.5 mm holes, and the
+designer runs one to three tracks across each tab through wider gaps
+between the holes (1.5 and 2.5 mm apart where a mouse bite's are at most
+1.25 mm, so `outline_pieces` sees one board and splits no net). The
+Modular Hub's three boards are separate outline loops. The placer's costs
+are straight-line, so parts land in another module and the nets that
+then cross the tabs overflow them: protoesp's layouts crossed modules 84,
+46 and 50 times (per net not poured, the modules it spans less one) where
+the designer's crosses 35.
+
+`keep_in_modules` (on; `modules.rs`) places by module:
+
+- **Detect** (`modules::detect`): where `outline_pieces` finds no pieces,
+  the holes of footprints made only of small non-plated drills chained at
+  3 mm (`Cuts::perforation`), each row's gaps drawn as cut lines and the
+  outline's pieces taken again; or the outline's loops. Per pair of
+  neighbouring modules, the tracks the gaps between them pass (one per
+  0.9 mm of clear width).
+- **Assign** (`modules::assign`): a k-way partition of the movable parts
+  from the netlist, seeded by the parts that stay where they are, a
+  region's module and the modules an edge constraint reaches; each
+  module's parts take at most 0.7 of its area on a side, less the fixed
+  parts' bodies; it minimises, over the nets not poured and not on every
+  module already, the tabs a tree over each net's modules crosses plus
+  twice the tracks over a tab's capacity: a greedy start (the part most
+  attached to the assigned ones first), then Fiduccia-Mattheyses passes
+  from it and from eight perturbations of the best. A part on poured nets
+  alone gets no module and is placed freely.
+- **Hold** (`modules::hold_in_modules`): each assigned part's module box,
+  1 mm inside it towards tabs and slots, is a region the tool gives
+  (`automatic_regions`, as `keep_on_pieces`'s: the race over skeletons
+  still leaves the passives out), from the global placement to the
+  refinement. A part an edge, overhang or region holds stays as it is; no
+  part gets a start (a start names a passive, and the race then has no
+  skeleton); the board's copper texts stop yielding (a connector held in
+  protoesp's middle strip seated its pads on "I'm a bitmask!"). A module
+  that is not a box (protoesp's protoboard wraps three small ones) holds
+  its parts in its box. The layout's moves after the first route lower the
+  placed board again without the regions, as with sub-boards.
+
+When a part has no legal pose, its regional diagnosis records
+`origin: breakaway_module` for an automatic module hold, `board_piece`
+for an inferred board-piece hold, or `authored` for a brief region.
+The placement guidance groups parts held by the same kind of
+automatic assignment. An explicit region inside the intended module
+can override that assignment. Use `placer.keep_in_modules: false`
+for a separate comparison where parts may cross the breakaway sections.
+
+`unplaced_parts[].local_diagnosis.region.fixed_region_cover` lists held
+footprint identities and poses when their bodies together obstruct every
+permitted centre and rotation in the part's region. The proof uses
+same-face rectangular bodies and inscribed squares for circular fixed
+bodies, and applies only to a rectangular moving body at quarter-turn
+angles. This identifies cases where a retry with the same holds would
+leave the part unplaced. Review the reported holds with the mechanical
+owner before changing a pose, section, or mounting face.
+
+`modules-kicad-board <project-dir> <board-id> [layout.json] --designer
+<board>` prints the modules and the assignment without placing. The
+partition finds an assignment as good as the designer's by its measure,
+not the designer's own: on protoesp 44 of the 69 active movable parts
+land in the designer's module (net ties and jumpers on a tab, connectors
+between two modules are ambiguous by the netlist), but the assignment
+crosses modules 54 times against the designer's 52 (36 against 35 in the
+diagnosis's eight sections) and its tabs 58 times against 62. On the Hub
+every part with a net not poured goes to the designer's module. Of the
+109 sweep and 46 expansion boards it fires on protoesp, the Hub,
+zpn_devboard and one expansion board, whose parts `keep_on_pieces` holds
+already (nothing changes). Off against on at placer seeds 1 to 401,
+KiCad's unconnected after full layouts went from 87, 15, 18, 16, 22 to 3,
+4, 2, 4, 1 on protoesp (seeds 501 to 801: 82, 7, 29, 51 to 1, 1, 3, 2;
+`placer_ab.py` BETTER at p 0.002 over the nine pairs) and from 18, 14, 15,
+16, 15 to 2 at every seed on the Hub, no strict pass on either side; the
+short tier and the other ten dense boards place and route byte for byte
+as before (placement digests and rows).
 
 ## The race
 
@@ -884,6 +972,16 @@ greedy legaliser and `tuning.whitespace_fill`.
 
 Global placement and start:
 
+- Starting the anneal from the schematic drawing (November 18, seed 1).
+  Sheet instances supplied the groups, their cross-sheet nets and fixed
+  parts located each group, and symbol positions located its members.
+  The mini and 30x30 OpenESC boards improved from 117 to 110 and from
+  99 to 92 KiCad opens after the first route. Shuffling the same starting
+  points gave 145 and 132. OpenFC went from zero to four opens in a full
+  layout despite a shorter placed wirelength. Copying the solver's own
+  physical arrangement of a repeated channel gave 126 opens on the mini.
+  Both experiments kept the mechanical constraints. The stock start
+  remains the default.
 - `routing_demand` (October): each net's wire area as charge over its box;
   no change within the seed noise.
 - Crossings in the global placement (`tuning.ratsnest_crossings.global`,
@@ -964,8 +1062,3 @@ Race and measurement:
   part keeps off it until the last level.
 - The spectral solve is a direct O(n³) cosine transform on 64 bins; an FFT
   matters only for boards with thousands of parts.
-- The packing along an edge keeps the parts' order there and packs one
-  side's parts held at one edge; parts held by no edge constraint (a
-  connector the lowering holds where it is) stay where they are, and a
-  part that would need another order, another side or another edge
-  stays without room.

@@ -26,8 +26,8 @@ pub(in crate::board_placer) fn keep_on_pieces(problem: &mut core::Problem, footp
         part
     }
     let mut first_on_net: BTreeMap<usize, usize> = BTreeMap::new();
-    for part in 0..footprints {
-        for pin in &problem.components[part].pins {
+    for (part, component) in problem.components[..footprints].iter().enumerate() {
+        for pin in &component.pins {
             match first_on_net.get(&pin.net) {
                 Some(&other) => {
                     let (a, b) = (root(&mut parent, part), root(&mut parent, other));
@@ -116,8 +116,8 @@ pub(super) fn keep_copies_apart(problem: &mut core::Problem, footprints: usize) 
         part
     }
     let mut first_on_net: BTreeMap<usize, usize> = BTreeMap::new();
-    for part in 0..footprints {
-        for pin in &problem.components[part].pins {
+    for (part, component) in problem.components[..footprints].iter().enumerate() {
+        for pin in &component.pins {
             match first_on_net.get(&pin.net) {
                 Some(&other) => {
                     let (a, b) = (root(&mut parent, part), root(&mut parent, other));
@@ -130,8 +130,8 @@ pub(super) fn keep_copies_apart(problem: &mut core::Problem, footprints: usize) 
         }
     }
     let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-    for part in 0..footprints {
-        if !problem.components[part].pins.is_empty() {
+    for (part, component) in problem.components[..footprints].iter().enumerate() {
+        if !component.pins.is_empty() {
             groups
                 .entry(root(&mut parent, part))
                 .or_default()

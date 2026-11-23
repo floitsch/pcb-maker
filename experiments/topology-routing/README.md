@@ -141,6 +141,6 @@ PathFinder uses congestion costs on routing resources; this prototype instead
 uses explicit capacity conflicts in a small best-first discrete search.
 
 The prior program experiment is
-[Pressure-directed blocker repair](../../docs/experiments/pressure-directed-blocker-repair.md),
+[Pressure-directed blocker repair](https://github.com/floitsch/pcb-maker/blob/1bdc7c9bbf504d51d9bb82a214b8590f99a4e1dd/docs/experiments/pressure-directed-blocker-repair.md),
 which already found that measuring passage deficit can be more useful than a
 generic blocked-frontier pressure vector for deciding component displacement.

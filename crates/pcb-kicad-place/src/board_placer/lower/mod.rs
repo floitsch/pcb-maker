@@ -19,6 +19,7 @@ use pcb_placer as core;
 mod footprint;
 mod holds;
 mod obstacles;
+mod perimeter;
 mod pieces;
 mod router_rules;
 #[cfg(test)]
@@ -26,7 +27,7 @@ mod tests;
 
 pub use self::holds::fixed_on_marks_warning;
 pub(in crate::board_placer) use self::pieces::keep_on_pieces;
-pub(crate) use self::router_rules::length_rule_report;
+pub use self::router_rules::length_rule_report;
 
 /// Whether a net's name marks it as one designers keep short: a token
 /// (between non-alphanumerics) naming a switcher's switch node, feedback or
@@ -65,7 +66,15 @@ pub struct LoweredPlacement {
     pub net_names: Vec<String>,
     pub references: Vec<String>,
     pub source_at: Vec<[f64; 3]>,
+    /// Exact target pin labels for authored body-to-pin near relations.
+    pub(crate) body_near_pin_of: BTreeMap<usize, String>,
+    /// The relation indices compiled from the brief's explicit `near` list.
+    pub(crate) authored_near: std::ops::Range<usize>,
+    pub(crate) confirmed_sub_boards: Option<crate::sub_boards::Confirmed>,
+    pub(crate) placement_courtyard: Vec<crate::placement_constraints::KiCadPlacementCourtyard>,
     pub constraint_warnings: Vec<String>,
+    /// References moved to the rear by the optional side assignment.
+    pub back_side_assignments: Vec<String>,
     /// Copper layers signals can use (the board's layers less the planes
     /// a multilayer stack keeps): what the routing demand spreads over.
     pub routing_layers: f64,
@@ -87,6 +96,7 @@ pub struct LoweredPlacement {
     /// `problem.constraints.relations` (board-placer.json's
     /// `length_rules`).
     pub length_rules: Vec<LoweredLengthRule>,
+    pub(crate) perimeter_contact_boxes: Vec<(usize, Vec<[f64; 4]>)>,
 }
 
 /// A net of a `length` rule as the placer holds it (`length_windows`).
@@ -118,6 +128,7 @@ pub(super) struct LowerContext<'a> {
     pub loops: outline::BoardLoops,
     /// The user's constraints, where the config holds them inline.
     pub user_constraints: Option<&'a crate::placement_constraints::KiCadPlacementConstraints>,
+    pub courtyard_model: crate::placement_constraints::CourtyardModel<'a>,
     /// The nets with copper pours.
     pub pour_nets: BTreeSet<String>,
     /// Copper layers signals can use (`LoweredPlacement::routing_layers`).
@@ -168,12 +179,24 @@ impl<'a> LowerContext<'a> {
             Some(KiCadConstraintsSource::Inline(constraints)) => Some(constraints),
             _ => None,
         };
+        let courtyard_model = if let Some(brief) = user_constraints {
+            crate::placement_constraints::CourtyardModel::read(
+                &brief.placement_courtyard,
+                pcb.children()
+                    .iter()
+                    .filter(|item| item.head() == Some("footprint")),
+                &brief.hollow,
+            )?
+        } else {
+            Default::default()
+        };
         Ok(LowerContext {
             pcb,
             config,
             net_names,
             loops,
             user_constraints,
+            courtyard_model,
             pour_nets,
             routing_layers,
             mask_growth,
@@ -233,6 +256,7 @@ pub(super) struct ProblemBuilder {
     pub source_at: Vec<[f64; 3]>,
     pub locked: Vec<bool>,
     pub footprints: Footprints,
+    pub perimeter_contact_boxes: Vec<(usize, Vec<[f64; 4]>)>,
 }
 
 impl ProblemBuilder {
@@ -261,11 +285,16 @@ impl ProblemBuilder {
             source_at: Vec::new(),
             locked: Vec::new(),
             footprints: Footprints::default(),
+            perimeter_contact_boxes: Vec::new(),
         }
     }
 
     /// Adds a lowered footprint as the next part.
     fn push_footprint(&mut self, lowered: footprint::LoweredFootprint) {
+        if let Some(boxes) = lowered.perimeter_contact_boxes {
+            self.perimeter_contact_boxes
+                .push((self.problem.components.len(), boxes));
+        }
         self.problem.components.push(lowered.component);
         self.problem.poses.push(lowered.pose);
         self.references.push(lowered.reference);
@@ -309,12 +338,34 @@ pub fn lower_placement(
     obstacles::add_copper_graphics(&context, &mut builder)?;
     let marks = obstacles::add_board_marks(&context, &mut builder)?;
     let cutouts = obstacles::add_cutouts(&context, &mut builder);
-    obstacles::add_breakaway_strips(&context, &mut builder);
     builder.problem.net_weights = net_weights(&builder.net_ids, &builder.problem.components);
     board_constraints(&context, &mut builder.problem, &marks, cutouts.solid);
     holds::fix_default_parts(&context, &mut builder, &keepouts);
+    let first_near = builder.problem.constraints.relations.len();
     let (pair_rows, mut constraint_warnings) =
         holds::apply_user_constraints(&context, &mut builder)?;
+    let confirmed_sub_boards = if let Some(brief) = context.user_constraints {
+        if !brief.sub_board.is_empty() && !config.sub_boards {
+            return Err(crate::exit::input_error(
+                "sub_board constraints require placer.sub_boards",
+            ));
+        }
+        crate::sub_boards::Confirmed::read(
+            pcb,
+            &builder.problem,
+            &builder.references,
+            &brief.sub_board,
+        )?
+    } else {
+        None
+    };
+    let body_near_pin_of = crate::placement_constraints::body_near_pin_labels(
+        context.pcb,
+        context.user_constraints,
+        &builder.problem,
+        &builder.references,
+        first_near,
+    );
     holds::carry_slots(&mut builder, &cutouts.owned);
     // A polygon outline: parts held at an edge keep to the nearest side of
     // the polygon that faces it.
@@ -326,9 +377,10 @@ pub fn lower_placement(
         builder.problem.constraints.sides =
             core::constraints::outline_sides(&context.loops.piece_loops);
     }
-    let overlap_warnings = holds::fixed_overlap_warnings(&builder);
+    let overlap_warnings = holds::fixed_overlap_warnings(&context, &builder);
     let (attached, attached_report) = holds::attach_marks_to_parts(&context, &mut builder, &marks);
     let on_marks_warnings = holds::fixed_on_marks_warnings(&builder, &marks);
+    obstacles::add_fabrication_rails(&context, &mut builder);
     obstacles::add_footprint_rule_areas(&context, &mut builder)?;
     add_decoupling(&context, &mut builder.problem)?;
     let (array_rooms, length_rules) = router_rules::apply_router_rules(&context, &mut builder);
@@ -348,8 +400,12 @@ pub fn lower_placement(
         builder.problem.net_weights.len(),
     );
     let net_names = names_by_id(&builder.net_ids);
-    let pair_row_parts =
-        super::lowered_pair_rows(&pair_rows, &builder.references, &builder.net_ids);
+    let pair_row_parts = super::lowered_pair_rows(
+        &pair_rows,
+        &builder.problem,
+        &builder.references,
+        &builder.net_ids,
+    );
     // Each pair row turns to face its pair's two ends after the
     // refinement (`pcb_placer::facing`).
     builder.problem.constraints.facing = pair_row_parts
@@ -373,7 +429,15 @@ pub fn lower_placement(
         net_names,
         references: builder.references,
         source_at: builder.source_at,
+        body_near_pin_of,
+        authored_near: first_near
+            ..first_near + context.user_constraints.map_or(0, |brief| brief.near.len()),
+        confirmed_sub_boards,
+        placement_courtyard: context
+            .user_constraints
+            .map_or_else(Vec::new, |brief| brief.placement_courtyard.clone()),
         constraint_warnings,
+        back_side_assignments: Vec::new(),
         routing_layers: context.routing_layers,
         poured,
         attached_marks: attached,
@@ -381,6 +445,7 @@ pub fn lower_placement(
         array_rooms,
         pair_rows: pair_row_parts,
         length_rules,
+        perimeter_contact_boxes: builder.perimeter_contact_boxes,
     })
 }
 

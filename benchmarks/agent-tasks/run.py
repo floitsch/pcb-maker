@@ -85,6 +85,7 @@ import harness_common  # noqa: E402
 from harness_common import COSMETIC, counts_as_error, error_counts, file_sha256  # noqa: E402, F401
 import quality  # noqa: E402
 import schematic  # noqa: E402
+import stored_copper  # noqa: E402
 import tier_estimates  # noqa: E402
 ROOT = HERE.parents[1]
 # Benchmark tiers: subsets of a task list with their reasons (README.md).
@@ -928,6 +929,125 @@ def strict_row(row, strict, unexpected=()):
     row["pass_strict"] = bool(not unexpected and compare.passes_strict(row))
 
 
+def verified_schematic_parity(work, board_id, verdict):
+    """The saved layout's native parity count, or None without proof."""
+    if not isinstance(board_id, str) or not board_id or Path(board_id).name != board_id:
+        return None
+    layout = work / "layout"
+    result = layout / "result"
+    pcb = f"{board_id}.kicad_pcb"
+    schematic = f"{board_id}.kicad_sch"
+    if not (result / pcb).is_file() or not (result / schematic).is_file():
+        return None
+    verification = harness_common.read_json(result / "verification.json")
+    drc = harness_common.read_json(result / "drc.json")
+    erc = harness_common.read_json(result / "erc.json")
+    if not all(isinstance(report, dict) for report in (verdict, verification, drc, erc)):
+        return None
+    if verdict.get("kicad_checked") is not True or verification.get("board_id") != board_id:
+        return None
+    # The layout's paired ERC and DRC distinguish schematic verification
+    # from its board-only path, which writes a synthetic empty ERC report.
+    # The separate copper DRC under work/drc/ can also contain an empty
+    # schematic_parity array without having run schematic parity.
+    version = drc.get("kicad_version")
+    sheets = erc.get("sheets")
+    if (not isinstance(version, str) or not version or erc.get("kicad_version") != version
+        or not isinstance(sheets, list) or not sheets
+        or not isinstance(drc.get("source"), str) or Path(drc["source"]).name != pcb
+        or not isinstance(erc.get("source"), str) or Path(erc["source"]).name != schematic):
+        return None
+    severities = drc.get("included_severities")
+    parity = drc.get("schematic_parity")
+    if (not isinstance(severities, list)
+        or not all(level in severities for level in ("error", "warning", "exclusion"))
+        or not isinstance(parity, list)):
+        return None
+    count = len(parity)
+    recorded = [report.get("schematic_parity_issues") for report in (verification, verdict)]
+    if any(type(value) is not int or value != count for value in recorded):
+        return None
+    return count
+
+
+def completed_schematic_layout(row, verdict):
+    """Whether both the runner and the binary confirm complete layout."""
+    statuses = [row.get("verdict"), verdict.get("status")]
+    exits = [row.get("exit"), verdict.get("exit_code")]
+    misses = [row.get("missed"), verdict.get("constraints_missed")]
+    if (any(isinstance(status, str) and status != "complete" for status in statuses)
+        or any(type(code) is int and code != 0 for code in exits)
+        or any(isinstance(found, list) and found for found in misses)):
+        return False
+    if (all(status == "complete" for status in statuses)
+        and all(type(code) is int and code == 0 for code in exits)
+        and all(isinstance(found, list) and not found for found in misses)):
+        return True
+    return None
+
+
+def stored_copper_evidence(work, board_id, verdict, check_stored):
+    """Use the exact PCB's stored-fill proof or check it afresh."""
+    result = work / "layout/result"
+    board = result / f"{board_id}.kicad_pcb"
+    refilled = harness_common.read_json(result / "drc.json")
+    if not isinstance(refilled, dict):
+        return None
+    version = refilled.get("kicad_version")
+    proof = stored_copper.verified_fill(board, verdict.get("fill_publication"), version)
+    if proof is not None or not check_stored:
+        return proof
+    started = time.monotonic()
+    proof, report = stored_copper.check(board, version)
+    if proof is None:
+        return None
+    try:
+        # The historical strict score already judges refilled error findings.
+        new = strict_findings(counting_findings(report), counting_findings(refilled))["new"]
+    except (KeyError, TypeError, ValueError):
+        return None
+    return {**proof, "new_findings_strict": new, "seconds": round(time.monotonic() - started, 3)}
+
+
+def record_schematic_acceptance(row, work, board_id, check_stored=False):
+    """Add schematic acceptance without changing the legacy pass scores."""
+    if row.get("mode") != "schematic":
+        return row
+    verdict = harness_common.read_json(work / "layout/verdict.json")
+    verdict = verdict if isinstance(verdict, dict) else {}
+    verified = verified_schematic_parity(work, board_id, verdict)
+    parity = row.get("parity")
+    checked = verified is not None and (parity is None or (type(parity) is int and parity == verified))
+    row["parity_checked"] = checked
+    strict = False if row.get("pass_strict") is False else compare.passes_strict(row)
+    required = (strict, completed_schematic_layout(row, verdict),
+                verified == 0 if checked else None)
+    stored = (stored_copper_evidence(work, board_id, verdict, check_stored and all(required))
+              if checked else None)
+    row["stored_copper"] = stored
+    stored_ok = ((stored["unconnected"] == stored["parity"] == 0
+                  and not stored.get("new_findings_strict")) if stored is not None else None)
+    required += (stored_ok,)
+    if any(gate is False for gate in required):
+        row["pass_schematic"] = False
+    elif all(gate is True for gate in required):
+        row["pass_schematic"] = True
+    else:
+        row["pass_schematic"] = None
+    return row
+
+
+def schematic_acceptance_summary(rows):
+    return {
+        "rows": len(rows),
+        "passed": sum(row.get("pass_schematic") is True for row in rows),
+        "failed": sum(row.get("pass_schematic") is False for row in rows),
+        "unknown": sum(row.get("pass_schematic") is None for row in rows),
+        "parity_unverified": sum(row.get("parity_checked") is not True for row in rows),
+        "stored_copper_unverified": sum(row.get("stored_copper") is None for row in rows),
+    }
+
+
 def pin_work_rate(given, environ):
     """Sets PCB_WORK_RATE in `environ`, which every board's binary inherits:
     `given` (--work-rate), else what it holds, else the reference's;
@@ -1122,7 +1242,7 @@ def designer_via_sites(binary, directory, board_id):
         return cached[digest]
     if digest in cached and f"large:{digest}" in cached:
         return cached[digest] + cached[f"large:{digest}"]
-    report = quality.score(binary, directory, board_id, timeout=SCORE_TIMEOUT_SECONDS) or {}
+    report = quality.score(binary, directory, board_id, timeout=SCORE_TIMEOUT_SECONDS, stored=True) or {}
     manufacturing = report.get("manufacturing") or {}
     if "filled_vias_in_pads" not in manufacturing:
         return None
@@ -2087,7 +2207,8 @@ def layout_result(row, task, work, code, output, allowed, designer_seconds, drc_
     result = json.loads(report.read_text())
     routed = result["routed"]
     expected = {tuple(miss) for miss in task.get("expected_misses", [])}
-    missed = [(c["kind"], c["part"], c.get("other")) for c in result["constraints"] if not c["satisfied"]]
+    missed = [(c["kind"], c["part"], c.get("other")) for c in result["constraints"]
+              if not harness_common.constraint_satisfied(c)]
     unexpected = [miss for miss in missed if miss not in expected]
     copper = native(drc_directory or work / "layout/result", allowed)
     if allowed:
@@ -2313,7 +2434,7 @@ def schematic_admitted(task, arguments, token):
         row.update(stopped="drc", why="new errors: " + ", ".join(f"{k} {v}" for k, v in row["native"]["errors"].items()))
     else:
         row["stopped"] = None
-    return row
+    return record_schematic_acceptance(row, work, board_id, check_stored=True)
 
 
 def route_admitted(task, arguments, token):
@@ -3025,12 +3146,12 @@ def main():
     arguments.declared = {}
     # The boards of the tier (or task list) that --only leaves out: with
     # --splice-from their rows come from the earlier log.
-    left_out = []
+    left_out = {}
     for task in json.loads(arguments.tasks.read_text())["tasks"]:
         if tier is not None and task["name"] not in tier["boards"]:
             continue
         if arguments.only and task["name"] not in arguments.only:
-            left_out.append(task["name"])
+            left_out[task["name"]] = task.get("board_id")
             continue
         entry = None
         if tier is not None:
@@ -3088,8 +3209,12 @@ def main():
                   f"{missing}", file=sys.stderr)
         for name in left_out:
             if name in spliced:
-                rows[name] = spliced[name]
-                print(json.dumps(spliced[name]), flush=True)
+                row = spliced[name]
+                if arguments.schematic:
+                    archived = compare.output_directory(row["spliced_from"]) / name
+                    record_schematic_acceptance(row, archived, left_out[name])
+                rows[name] = row
+                print(json.dumps(row), flush=True)
     if run_mode(tasks) == "route" and not arguments.route_from:
         budgets = sorted({task.get("budget_seconds") for task in tasks if task.get("budget_seconds") is not None})
         print(f"mode route (the designer's placement), budget scale {arguments.budget_scale:g}"
@@ -3111,11 +3236,14 @@ def main():
         def guarded(task):
             # A runner failure on one task fails that task, not the run.
             try:
-                return run_task(task, arguments)
+                row = run_task(task, arguments)
             except Exception as error:
-                return {"name": task["name"], "pass": False, "error": f"runner: {type(error).__name__}: {error}",
-                        "mode": "schematic" if arguments.schematic else "route" if arguments.route_from
-                        or arguments.designer else task.get("mode", "layout")}
+                row = {"name": task["name"], "pass": False, "error": f"runner: {type(error).__name__}: {error}",
+                       "mode": "schematic" if arguments.schematic else "route" if arguments.route_from
+                       or arguments.designer else task.get("mode", "layout")}
+            if arguments.schematic and "pass_schematic" not in row:
+                record_schematic_acceptance(row, arguments.output / task["name"], task["board_id"])
+            return row
 
         for future in as_completed([pool.submit(guarded, task) for task in tasks]):
             row = future.result()
@@ -3209,8 +3337,14 @@ def main():
         summary["stopped"] = stages
         summary["missing_footprints"] = sum(row.get("missing", 0) for row in ordered)
         summary["parity"] = sum(row.get("parity") or 0 for row in ordered)
+        acceptance = schematic_acceptance_summary(ordered)
+        summary["schematic_acceptance"] = acceptance
         print("stopped at: " + ", ".join(f"{stage} {count}" for stage, count in sorted(stages.items()))
               + f"; missing footprints {summary['missing_footprints']}, parity issues {summary['parity']}")
+        print(f"schematic acceptance: {acceptance['passed']}/{acceptance['rows']} pass, "
+              f"{acceptance['failed']} fail, {acceptance['unknown']} unknown, "
+              f"parity unverified on {acceptance['parity_unverified']}, "
+              f"stored copper unverified on {acceptance['stored_copper_unverified']}")
     print(objectives_line(summary) + f"; tasks {arguments.tasks_label} (sha256 {arguments.tasks_sha256[:12]})")
     # The same against the designer's boards, per board (compare.py).
     summary["normalised"] = normalised(ordered)

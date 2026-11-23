@@ -8,6 +8,18 @@
 use crate::constraints;
 use crate::problem::{Point, Pose, Problem, point_in_polygon};
 
+mod edge_packing;
+mod global_recovery;
+mod module_seats;
+mod pad_near;
+mod region_pair;
+
+pub(crate) use edge_packing::{compact_edges, connector_cell_window, seat_edge_slots};
+pub(crate) use global_recovery::{recover_unplaced, repack_one_unplaced};
+pub(crate) use module_seats::seat_pairs;
+pub(crate) use pad_near::refine_pad_near;
+pub use region_pair::{RegionPairConflict, region_pair_conflict};
+
 #[derive(Clone, Copy, Debug)]
 struct Rect {
     center: Point,
@@ -507,6 +519,37 @@ pub fn is_legal(
     legal
 }
 
+/// Up to `limit` movable bodies preventing a candidate pose. An outline,
+/// fixed-body or oversized collision cannot be repaired by moving them.
+pub(crate) fn movable_blockers(
+    problem: &Problem,
+    poses: &[Pose],
+    index: usize,
+    pose: Pose,
+    limit: usize,
+    movable: impl Fn(usize) -> bool,
+) -> Option<Vec<usize>> {
+    let mut work = 1;
+    let mut blockers = Vec::new();
+    let body = rect(problem, index, pose);
+    let linked = linked_work(problem);
+    let fits = fits_board(problem, index, pose, &mut work, None)
+        && (0..poses.len()).all(|other| {
+            if clear_of_one(
+                problem, poses, index, pose, &body, linked, other, &mut work, None,
+            ) {
+                return true;
+            }
+            if blockers.len() == limit || !movable(other) {
+                return false;
+            }
+            blockers.push(other);
+            true
+        });
+    crate::add_work(work);
+    fits.then_some(blockers)
+}
+
 fn is_legal_counting(
     problem: &Problem,
     poses: &[Pose],
@@ -614,6 +657,9 @@ fn clear_of_one(
         return true;
     }
     *work += 1;
+    if module_envelopes_conflict(problem, poses, index, pose, other, work) {
+        return false;
+    }
     // Two fixed parts are the designer's responsibility.
     if problem.components[index].fixed && problem.components[other].fixed {
         return true;
@@ -711,12 +757,12 @@ fn clear_of_one(
             return false;
         }
         if problem.constraints.pad_clearance
-            && match facts {
+            && (match facts {
                 Some(facts) => {
                     pads_too_close_turned(problem, facts, index, pose, other, poses[other], work)
                 }
                 None => pads_too_close(problem, index, pose, other, poses[other], work),
-            }
+            } || graphics_too_close(problem, index, pose, other, poses[other], work))
         {
             return false;
         }
@@ -1028,6 +1074,7 @@ impl Apart {
         for other in others {
             if let Some(mine) = mine
                 && other != index
+                && !problem.constraints.has_module_pair(index, other)
                 && let Some(theirs) = self.other_box(problem, poses, other)
                 && boxes_apart(mine, theirs, self.gap)
             {
@@ -1303,6 +1350,7 @@ impl Sweep {
                     (area[1] - center[1]).max(center[1] - area[3]),
                 ];
                 apart[0].max(apart[1]) < mine + theirs
+                    || problem.constraints.has_module_pair(index, other)
             })
             .collect();
         // The far path's work: the part moved far off, where every test
@@ -1374,6 +1422,7 @@ impl Sweep {
             work += self.prefix[other] - self.prefix[next];
             next = other + 1;
             if let Some(mine) = mine
+                && !problem.constraints.has_module_pair(index, other)
                 && let Some(theirs) = apart.other_box(problem, poses, other)
                 && boxes_apart(mine, theirs, apart.gap)
             {
@@ -1423,6 +1472,9 @@ pub fn conflict_kind(
     other: usize,
 ) -> Option<&'static str> {
     let mut work = 0;
+    if module_envelopes_conflict(problem, poses, index, pose, other, &mut work) {
+        return Some("declared mounted-module outlines miss clearance");
+    }
     if clear_of(
         problem,
         poses,
@@ -1449,6 +1501,10 @@ pub fn conflict_kind(
             "pads in a cutout or pad keepout"
         } else if pads_in_hole_rings(problem, index, pose, other, poses[other], &mut work) {
             "pads in a hole's clearance or a mask opening"
+        } else if problem.constraints.pad_clearance
+            && graphics_too_close(problem, index, pose, other, poses[other], &mut work)
+        {
+            "unassigned copper graphics closer than the clearance"
         } else if mine.hollow_for(theirs) || theirs.hollow_for(mine) {
             "shaped or hollow boxes"
         } else if overlaps(
@@ -1469,6 +1525,25 @@ pub fn conflict_kind(
     } else {
         "far side"
     })
+}
+
+fn module_envelopes_conflict(
+    problem: &Problem,
+    poses: &[Pose],
+    index: usize,
+    pose: Pose,
+    other: usize,
+    work: &mut u64,
+) -> bool {
+    problem
+        .constraints
+        .module_envelopes
+        .iter()
+        .filter(|pair| pair.contains(index, other))
+        .any(|pair| {
+            *work += pair.work();
+            pair.violates(|part| if part == index { pose } else { poses[part] })
+        })
 }
 
 /// The work of setting up one spot to test (snapping, the body's box, the
@@ -1564,6 +1639,7 @@ fn ring_steps(ring: i64, window: [i64; 4]) -> impl Iterator<Item = (i64, i64)> {
 /// Placed parts by area: a spot is tested only against parts near it.
 struct Buckets {
     grid: crate::buckets::Grid,
+    module_present: Vec<bool>,
     /// How far beyond its rectangle a part meets another (spacing, the
     /// edge margin around cutouts, and some slack).
     reach: f64,
@@ -1574,6 +1650,11 @@ impl Buckets {
         Buckets {
             grid: crate::buckets::Grid::new(problem.bounds(), 2.5, problem.components.len())
                 .with_answers(),
+            module_present: if problem.constraints.module_envelopes.is_empty() {
+                Vec::new()
+            } else {
+                vec![false; problem.components.len()]
+            },
             reach: problem.spacing
                 + problem.min_spacing
                 + problem.edge_margin
@@ -1586,11 +1667,17 @@ impl Buckets {
     fn insert(&mut self, problem: &Problem, index: usize, pose: Pose) {
         let body = rect(problem, index, pose);
         self.grid.insert(index, body.center, body.half);
+        if let Some(present) = self.module_present.get_mut(index) {
+            *present = true;
+        }
     }
 
     fn remove(&mut self, problem: &Problem, index: usize, pose: Pose) {
         let body = rect(problem, index, pose);
         self.grid.remove(index, body.center, body.half);
+        if let Some(present) = self.module_present.get_mut(index) {
+            *present = false;
+        }
     }
 
     /// The parts that may meet part `index` at `pose`. Counts its work:
@@ -1604,6 +1691,18 @@ impl Buckets {
             [body.half[0] + self.reach, body.half[1] + self.reach],
             out,
         );
+        // A declared daughterboard can reach beyond its connector
+        // courtyard. Add only its declared partners, if already placed.
+        for partner in problem
+            .constraints
+            .module_envelopes
+            .iter()
+            .filter_map(|pair| pair.partner(index))
+        {
+            if self.module_present[partner] && !out.contains(&partner) {
+                out.push(partner);
+            }
+        }
         crate::add_work((SPOT_WORK + cells + out.len()) as u64);
     }
 }
@@ -1627,19 +1726,24 @@ fn copper_meets_cutout(
     if problem.components[part].copper_only {
         return false;
     }
-    let margin = problem.edge_margin;
+    let rule_area = problem.constraints.pad_rule_areas.contains(&hole);
+    let margin = if rule_area { 0.0 } else { problem.edge_margin };
     let outline = &problem.components[hole].cutout_outline;
     let component = &problem.components[part];
     let pads = turned(&component.pads, pose_part, margin);
     *work += list_work(component.pads.len());
-    // Its copper graphics too: KiCad checks them against a cutout's edge
-    // as it checks pads (osprey's AE1 antenna).
-    let graphics = turned(&component.copper_graphics, pose_part, margin);
-    if !component.copper_graphics.is_empty() {
-        *work += list_work(component.copper_graphics.len());
+    // Physical cutouts also keep copper drawings clear of their edges.
+    // A pad prohibition in a board rule area applies to pads alone.
+    let graphics = if rule_area {
+        &[][..]
+    } else {
+        &component.copper_graphics
+    };
+    if !graphics.is_empty() {
+        *work += list_work(graphics.len());
     }
-    let pads = pads.chain(graphics);
-    let pad_count = component.pads.len() + component.copper_graphics.len();
+    let pads = pads.chain(turned(graphics, pose_part, margin));
+    let pad_count = component.pads.len() + graphics.len();
     if outline.len() >= 3 {
         // The hole's own outline: its box covers much more board where
         // the hole runs diagonally. A pad outside the outline's box cannot
@@ -1661,6 +1765,17 @@ fn copper_meets_cutout(
     let hole = rect(problem, hole, pose_hole);
     *work += pad_count as u64;
     pads.into_iter().any(|pad| overlaps(pad, hole, 0.0))
+}
+
+/// Tests a pad rule area using the same polygon geometry as final placement.
+pub(crate) fn pads_meet_rule_area(
+    problem: &Problem,
+    area: usize,
+    part: usize,
+    pose: Pose,
+    work: &mut u64,
+) -> bool {
+    copper_meets_cutout(problem, area, problem.poses[area], part, pose, work, None)
 }
 
 /// Whether two parts without courtyards meet by the bodies a courtyard
@@ -1915,8 +2030,8 @@ impl Outline {
         for index in 0..polygon.len() {
             let (a, b) = (polygon[index], polygon[(index + 1) % polygon.len()]);
             let (low, high) = (outline.band(a[1].min(b[1])), outline.band(a[1].max(b[1])));
-            for band in low..=high {
-                outline.bands[band].push(index as u32);
+            for band in &mut outline.bands[low..=high] {
+                band.push(index as u32);
             }
         }
         outline
@@ -2603,6 +2718,35 @@ fn pads_too_close(
     })
 }
 
+/// Check clearance from unassigned footprint copper to neighboring pads and artwork.
+fn graphics_too_close(
+    problem: &Problem,
+    a: usize,
+    pose_a: Pose,
+    b: usize,
+    pose_b: Pose,
+    work: &mut u64,
+) -> bool {
+    let (first, second) = (&problem.components[a], &problem.components[b]);
+    let a_graphics = &first.unassigned_copper_graphics;
+    let b_graphics = &second.unassigned_copper_graphics;
+    if a_graphics.is_empty() && b_graphics.is_empty() {
+        return false;
+    }
+    let clearance = problem.min_spacing.max(problem.constraints.pad_mask_gap);
+    let mut overlaps_copper = |from: &[[f64; 4]], pose, to: &[[f64; 4]], other_pose| {
+        if from.is_empty() || to.is_empty() {
+            return false;
+        }
+        *work += list_work(from.len()) + list_work(to.len()) + (from.len() * to.len()) as u64;
+        let to = turned_rects(to, other_pose, 0.0);
+        turned(from, pose, 0.0).any(|item| to.iter().any(|other| overlaps(item, *other, clearance)))
+    };
+    overlaps_copper(a_graphics, pose_a, &second.pads, pose_b)
+        || overlaps_copper(b_graphics, pose_b, &first.pads, pose_a)
+        || overlaps_copper(a_graphics, pose_a, b_graphics, pose_b)
+}
+
 /// Per pad of a part (`Component::pads`), the net of the pin inside it
 /// (None: no pin, a pad of no net).
 fn pad_nets(component: &crate::problem::Component) -> Vec<Option<usize>> {
@@ -2946,12 +3090,42 @@ pub fn legalize_keeping(
     first: &[usize],
     keep: &[usize],
 ) -> Vec<usize> {
+    legalize_keeping_until(problem, poses, first, keep, None, None)
+}
+
+/// Legalizes only the parts outside `keep`, with a hard work limit on
+/// the search. Unplaced parts are returned without a new pose.
+pub fn legalize_keeping_bounded(
+    problem: &Problem,
+    poses: &mut [Pose],
+    keep: &[usize],
+    additional_work: u64,
+) -> Vec<usize> {
+    let stop = crate::work().saturating_add(additional_work);
+    legalize_keeping_until(problem, poses, &[], keep, Some(stop), None)
+}
+
+fn legalize_keeping_until(
+    problem: &Problem,
+    poses: &mut [Pose],
+    first: &[usize],
+    keep: &[usize],
+    stop_work: Option<u64>,
+    deadline: Option<std::time::Instant>,
+) -> Vec<usize> {
     let count = problem.components.len();
     let mut placed: Vec<usize> = (0..count)
         .filter(|index| problem.components[*index].fixed || keep.contains(index))
         .collect();
+    if !problem.constraints.module_envelopes.is_empty() {
+        module_seats::seat_pairs(problem, poses, &mut placed, stop_work, 0.25);
+    }
     let mut order: Vec<usize> = (0..count)
-        .filter(|index| !problem.components[*index].fixed && !keep.contains(index))
+        .filter(|index| {
+            !problem.components[*index].fixed
+                && !keep.contains(index)
+                && (problem.constraints.module_envelopes.is_empty() || !placed.contains(index))
+        })
         .collect();
     order.sort_by(|a, b| {
         let area = |index: &usize| {
@@ -3045,8 +3219,9 @@ pub fn legalize_keeping(
             .map_or(0, |state| state.involving_or_kept(poses, &[index]));
         // A part near another (`follow_anchors`) pays for the near
         // relations it misses at a spot: the closest spot that keeps them
-        // beats a closer one that does not. A part with a pin under a
-        // net's length maximum (`Relation::Within`) pays for it always.
+        // beats a closer one that does not. A constraint measuring the
+        // distance between named pads pays on either end, even when
+        // anchor following is disabled.
         let own_relations: Vec<&constraints::Relation> = problem
             .constraints
             .relations
@@ -3056,13 +3231,14 @@ pub fn legalize_keeping(
                 | constraints::Relation::NearAny { part, .. } => {
                     !start.is_empty() && *part == index
                 }
+                constraints::Relation::PadNear { .. } => relation.involves(index),
                 constraints::Relation::Within { part, other, .. } => {
                     *part == index || *other == index
                 }
                 _ => false,
             })
             .collect();
-        for angle in &component.angle_options {
+        'angles: for angle in &component.angle_options {
             // Rotating about the body centre keeps the part where global
             // placement wanted it; prefer the global angle on ties.
             let penalty = if (angle - wanted.angle).abs() < 1.0e-9 {
@@ -3082,6 +3258,9 @@ pub fn legalize_keeping(
             );
             let (nearest, farthest) = window.map_or((0, rings), window_rings);
             'search: for ring in 0..=rings.min(farthest) {
+                if deadline.is_some_and(|end| std::time::Instant::now() >= end) {
+                    break 'angles;
+                }
                 if ring < nearest {
                     continue;
                 }
@@ -3107,6 +3286,9 @@ pub fn legalize_keeping(
                 // Only the steps the part's regions admit (the same order).
                 let [low_x, low_y, high_x, high_y] = window.unwrap_or([-ring, -ring, ring, ring]);
                 for (dx, dy) in ring_steps(ring, [low_x, low_y, high_x, high_y]) {
+                    if stop_work.is_some_and(|stop| crate::work() >= stop) {
+                        break 'angles;
+                    }
                     let pose = Pose {
                         position: [origin[0] + dx as f64 * step, origin[1] + dy as f64 * step],
                         angle: *angle,
@@ -3574,297 +3756,6 @@ pub fn evict_for(problem: &Problem, poses: &mut [Pose], failed: &[usize]) -> Vec
     still
 }
 
-/// The step along an edge where the problem has no grid (mm).
-const EDGE_PACK_STEP: f64 = 0.1;
-
-/// For each part of `failed` that an edge holds (still without room after
-/// the eviction, which moves single parts only): the movable parts held
-/// at that edge whose bodies may meet it, packed along the edge with it
-/// (`pack_edge`), before it is given up. The molecules' panels hold four
-/// 17.5 mm connectors at a 76.2 mm edge, 6.2 mm to spare: the legaliser
-/// seated the first 5.5 mm from the edge's end and the fourth found no
-/// room, though the designer's spots exist. Returns the parts still
-/// without room, in `failed`'s order. Books its work only where it seats a
-/// part: a packing that seats none changes nothing but the work count,
-/// and booked it shifted every later decision a budget makes on the
-/// boards where it was tried and failed (a part held at an edge without
-/// room at some level is common: 20-odd of the sweep's boards at seed 1;
-/// the attempt costs a few edge scans).
-pub fn compact_edges(problem: &Problem, poses: &mut [Pose], failed: &[usize]) -> Vec<usize> {
-    let edges = &problem.constraints.edges;
-    if !failed
-        .iter()
-        .any(|index| edges.iter().any(|(part, _, _)| part == index))
-    {
-        return failed.to_vec();
-    }
-    let before = crate::work();
-    let mut unplaced = failed.to_vec();
-    let mut apart = Apart::new(problem);
-    let mut work = 0;
-    for &index in failed {
-        for &(_, edge, _) in edges.iter().filter(|(part, _, _)| *part == index) {
-            if crate::out_of_work(work) {
-                break;
-            }
-            if let Some(packed) = pack_edge(
-                problem, poses, index, edge, &unplaced, &mut apart, &mut work,
-            ) {
-                poses.copy_from_slice(&packed);
-                unplaced.retain(|part| *part != index);
-                break;
-            }
-        }
-    }
-    if unplaced.len() < failed.len() {
-        crate::add_work(work);
-    } else {
-        // `Buckets::near` books its own.
-        crate::add_work_back(crate::work() - before);
-    }
-    unplaced
-}
-
-/// The parts held at `edge` that may meet part `index` (movable, on a side
-/// its body meets, seated: not in `unplaced`), it among them, packed
-/// along the edge in their order there (`pack_in_order`): the others in
-/// the order of their body centres along it, `index` in the slot its own
-/// pose's centre gives it, else in the nearest slot that packs (a
-/// connector whose own spot lies where the edge constraint cannot be
-/// kept: the 7x5 molecule's J9 belongs on the wave's lowest segment, at
-/// the far end of the others). None where no slot packs.
-fn pack_edge(
-    problem: &Problem,
-    poses: &[Pose],
-    index: usize,
-    edge: constraints::Edge,
-    unplaced: &[usize],
-    apart: &mut Apart,
-    work: &mut u64,
-) -> Option<Vec<Pose>> {
-    let side = problem.components[index].side;
-    let mut others: Vec<usize> = problem
-        .constraints
-        .edges
-        .iter()
-        .filter(|(part, held, _)| {
-            *held == edge
-                && *part != index
-                && !problem.components[*part].fixed
-                && !unplaced.contains(part)
-                && problem.components[*part].side.collides(side)
-        })
-        .map(|(part, _, _)| *part)
-        .collect();
-    others.sort_unstable();
-    others.dedup();
-    let axis = match edge {
-        constraints::Edge::Left | constraints::Edge::Right => 1,
-        constraints::Edge::Top | constraints::Edge::Bottom => 0,
-    };
-    let center = |part: usize| problem.components[part].center(poses[part])[axis];
-    others.sort_by(|a, b| center(*a).total_cmp(&center(*b)).then(a.cmp(b)));
-    let own = center(index);
-    let natural = others.partition_point(|part| center(*part) <= own);
-    let mut slots: Vec<usize> = (0..=others.len()).collect();
-    slots.sort_by_key(|slot| (slot.abs_diff(natural), *slot));
-    for slot in slots {
-        let mut members = others.clone();
-        members.insert(slot, index);
-        let mut wanted: Vec<f64> = members.iter().map(|part| center(*part)).collect();
-        let before = if slot > 0 {
-            wanted[slot - 1]
-        } else {
-            f64::NEG_INFINITY
-        };
-        let after = wanted.get(slot + 1).copied().unwrap_or(f64::INFINITY);
-        wanted[slot] = own.clamp(before, after);
-        if let Some(packed) = pack_in_order(
-            problem, poses, index, &members, &wanted, axis, unplaced, apart, work,
-        ) {
-            return Some(packed);
-        }
-    }
-    None
-}
-
-/// `members` (`index` among them) packed along the edge axis `axis` in
-/// their order: each keeps its angle and its distance from the edge
-/// (`index` flush with it), and takes the legal spot nearest `wanted`
-/// within what the others leave, so the earlier ones slide only as far
-/// as the later need. Three passes: every part as early as it goes
-/// (`first`), as late (`last`, from the end), then each as near its
-/// wanted spot as lies between the one before and its latest; where that
-/// last pass fails, the early packing. None where they do not fit in
-/// that order.
-#[allow(clippy::too_many_arguments)]
-fn pack_in_order(
-    problem: &Problem,
-    poses: &[Pose],
-    index: usize,
-    members: &[usize],
-    wanted: &[f64],
-    axis: usize,
-    unplaced: &[usize],
-    apart: &mut Apart,
-    work: &mut u64,
-) -> Option<Vec<Pose>> {
-    let bounds = problem.bounds();
-    let (low, high) = (bounds[axis], bounds[axis + 2]);
-    let step = if problem.grid > 0.0 {
-        problem.grid
-    } else {
-        EDGE_PACK_STEP
-    };
-    let pass = |order: &mut dyn Iterator<Item = usize>,
-                window: &dyn Fn(usize, f64) -> (f64, f64, f64),
-                apart: &mut Apart,
-                work: &mut u64|
-     -> Option<(Vec<Pose>, Vec<f64>)> {
-        let mut scratch = poses.to_vec();
-        let mut buckets = Buckets::new(problem);
-        for (other, pose) in poses.iter().enumerate() {
-            if !members.contains(&other) && !unplaced.contains(&other) {
-                buckets.insert(problem, other, *pose);
-            }
-        }
-        let mut along = vec![f64::NAN; members.len()];
-        let mut previous = f64::NAN;
-        let mut near = Vec::new();
-        for slot in order {
-            let part = members[slot];
-            let (from, to, target) = window(slot, previous);
-            let pose = seat_along(
-                problem,
-                &scratch,
-                part,
-                poses[part],
-                part == index,
-                axis,
-                [from, to, target],
-                step,
-                &mut buckets,
-                apart,
-                &mut near,
-                work,
-            )?;
-            scratch[part] = pose;
-            buckets.insert(problem, part, pose);
-            along[slot] = problem.components[part].center(pose)[axis];
-            previous = along[slot];
-        }
-        Some((scratch, along))
-    };
-    let (first, _) = pass(
-        &mut (0..members.len()),
-        &|_, previous| {
-            let from = if previous.is_nan() { low } else { previous };
-            (from, high, from)
-        },
-        apart,
-        work,
-    )?;
-    let Some((_, last)) = pass(
-        &mut (0..members.len()).rev(),
-        &|_, previous| {
-            let to = if previous.is_nan() { high } else { previous };
-            (low, to, to)
-        },
-        apart,
-        work,
-    ) else {
-        return Some(first);
-    };
-    let nearest = pass(
-        &mut (0..members.len()),
-        &|slot, previous| {
-            let from = if previous.is_nan() { low } else { previous };
-            let to = last[slot].max(from);
-            (from, to, wanted[slot].clamp(from, to))
-        },
-        apart,
-        work,
-    );
-    Some(nearest.map_or(first, |(packed, _)| packed))
-}
-
-/// The legal pose of part `part` nearest `window[2]` along the edge axis
-/// `axis` (body centre between `window[0]` and `window[1]`), at `pose`'s
-/// angle and distance from the edge (`flush`: flush with the edge that
-/// holds it; else every angle it may take is tried after its own), in
-/// steps of `step`, against the parts in `buckets` (at `poses`). None:
-/// no spot.
-#[allow(clippy::too_many_arguments)]
-fn seat_along(
-    problem: &Problem,
-    poses: &[Pose],
-    part: usize,
-    pose: Pose,
-    flush: bool,
-    axis: usize,
-    window: [f64; 3],
-    step: f64,
-    buckets: &mut Buckets,
-    apart: &mut Apart,
-    near: &mut Vec<usize>,
-    work: &mut u64,
-) -> Option<Pose> {
-    let component = &problem.components[part];
-    let [from, to, target] = window;
-    if from.is_nan() || to.is_nan() || from > to {
-        return None;
-    }
-    let mut angles = vec![pose.angle];
-    if flush {
-        angles.extend(
-            component
-                .angle_options
-                .iter()
-                .copied()
-                .filter(|angle| *angle != pose.angle),
-        );
-    }
-    let start = component.center(pose);
-    let steps = ((to - from) / step).ceil() as i64 + 1;
-    for angle in angles {
-        let regions = region_window(problem, part, angle);
-        for ring in 0..=steps {
-            for sign in [-1.0, 1.0] {
-                if ring == 0 && sign > 0.0 {
-                    continue;
-                }
-                let t = target + sign * ring as f64 * step;
-                if t < from - 1.0e-9 || t > to + 1.0e-9 {
-                    continue;
-                }
-                let mut center = start;
-                center[axis] = t;
-                if flush {
-                    center = constraints::flush_center(problem, part, center, angle);
-                }
-                let at = component.position_for_center(center, angle);
-                let candidate = Pose {
-                    position: constraints::snap_position(problem, part, at, angle),
-                    angle,
-                };
-                if !in_window(regions, component.center(candidate)) {
-                    continue;
-                }
-                *work += SPOT_WORK as u64 + held_work(problem, part);
-                if !fits_board(problem, part, candidate, work, apart.board.as_ref()) {
-                    continue;
-                }
-                buckets.near(problem, part, candidate, near);
-                near.retain(|other| *other != part);
-                if apart.clear_of(problem, poses, part, candidate, near.iter().copied(), work) {
-                    return Some(candidate);
-                }
-            }
-        }
-    }
-    None
-}
-
 /// For every part that misses a near or relative constraint, searches legal
 /// positions around what the relation wants and takes the one with the
 /// least relation penalty plus wirelength, if that beats where it is.
@@ -3909,7 +3800,18 @@ pub fn repair_relations(problem: &Problem, poses: &mut [Pose]) -> usize {
         };
         let original = poses[index];
         let mut best = (score(poses), original);
-        let target = constraints::relation_target(problem, poses, relation);
+        let origins: Vec<_> = component
+            .angle_options
+            .iter()
+            .map(|&angle| {
+                let target = constraints::relation_target_at(problem, poses, relation, angle);
+                let ideal = component.position_for_center(target, angle);
+                (
+                    angle,
+                    constraints::snap_position(problem, index, ideal, angle),
+                )
+            })
+            .collect();
         let reach = component.body_size[0].max(component.body_size[1]) + 6.0;
         let rings = (reach / step).ceil() as i64;
         // The spots' body centres, for the sweep's legality tests.
@@ -3919,12 +3821,10 @@ pub fn repair_relations(problem: &Problem, poses: &mut [Pose]) -> usize {
             f64::NEG_INFINITY,
             f64::NEG_INFINITY,
         ];
-        for angle in &component.angle_options {
-            let ideal = component.position_for_center(target, *angle);
-            let origin = constraints::snap_position(problem, index, ideal, *angle);
+        for &(angle, origin) in &origins {
             let center = component.center(Pose {
                 position: origin,
-                angle: *angle,
+                angle,
             });
             let span = rings as f64 * step + 1.0e-6;
             area = [
@@ -3935,14 +3835,12 @@ pub fn repair_relations(problem: &Problem, poses: &mut [Pose]) -> usize {
             ];
         }
         let sweep = Sweep::new(problem, poses, &sweep_reach, index, area);
-        for angle in &component.angle_options {
-            let ideal = component.position_for_center(target, *angle);
-            let origin = constraints::snap_position(problem, index, ideal, *angle);
+        for (angle, origin) in origins {
             for ring in 0..=rings {
                 for (dx, dy) in ring_steps(ring, [-ring, -ring, ring, ring]) {
                     let pose = Pose {
                         position: [origin[0] + dx as f64 * step, origin[1] + dy as f64 * step],
-                        angle: *angle,
+                        angle,
                     };
                     if !sweep.is_legal(problem, poses, &mut apart, pose) {
                         continue;
@@ -4205,28 +4103,39 @@ pub fn refine_with(
             // Besides the pull of its nets, a part that misses a relation
             // is drawn towards what it relates to.
             let mut targets = vec![target];
+            let mut pad_targets = Vec::new();
             for relation in &problem.constraints.relations {
                 if relation.parts()[0] != Some(index)
                     || constraints::relation_violation(problem, poses, relation) <= 0.0
                 {
                     continue;
                 }
-                targets.push(constraints::relation_target(problem, poses, relation));
+                if matches!(relation, constraints::Relation::PadNear { .. }) {
+                    pad_targets.push(relation);
+                } else {
+                    targets.push(constraints::relation_target(problem, poses, relation));
+                }
             }
-            for (angle, target) in component
-                .angle_options
-                .iter()
-                .flat_map(|angle| targets.iter().map(move |target| (angle, *target)))
-            {
+            let mut candidates = Vec::new();
+            for &angle in &component.angle_options {
+                candidates.extend(targets.iter().map(|&target| (angle, target)));
+                candidates.extend(pad_targets.iter().map(|relation| {
+                    (
+                        angle,
+                        constraints::relation_target_at(problem, poses, relation, angle),
+                    )
+                }));
+            }
+            for (angle, target) in candidates {
                 for fraction in [1.0, 0.75, 0.5, 0.25, 0.125, 0.0] {
                     let wanted = [
                         center[0] + fraction * (target[0] - center[0]),
                         center[1] + fraction * (target[1] - center[1]),
                     ];
-                    let position = component.position_for_center(wanted, *angle);
+                    let position = component.position_for_center(wanted, angle);
                     let pose = Pose {
-                        position: constraints::snap_position(problem, index, position, *angle),
-                        angle: *angle,
+                        position: constraints::snap_position(problem, index, position, angle),
+                        angle,
                     };
                     if pose == original {
                         continue;
@@ -4251,13 +4160,13 @@ pub fn refine_with(
                     }
                 }
                 // Then the nearest free spots around the target itself.
-                let ideal = component.position_for_center(target, *angle);
-                let origin = constraints::snap_position(problem, index, ideal, *angle);
+                let ideal = component.position_for_center(target, angle);
+                let origin = constraints::snap_position(problem, index, ideal, angle);
                 for ring in 0..=rings {
                     for (dx, dy) in ring_steps(ring, [-ring, -ring, ring, ring]) {
                         let pose = Pose {
                             position: [origin[0] + dx as f64 * step, origin[1] + dy as f64 * step],
-                            angle: *angle,
+                            angle,
                         };
                         if pose == original {
                             continue;
@@ -4885,7 +4794,7 @@ pub(crate) mod tests {
 
     /// A 2 x 1 mm body (courtyard and pads) with two 0.6 x 0.6 mm pads at
     /// its ends, `inset` inside its courtyard on the long sides.
-    fn resistor(inset: f64) -> Component {
+    pub(super) fn resistor(inset: f64) -> Component {
         Component {
             name: "R".into(),
             body_center: [0.0, 0.0],
@@ -4914,12 +4823,13 @@ pub(crate) mod tests {
             tight_hollow: Vec::new(),
             hole_rings: Vec::new(),
             copper_graphics: Vec::new(),
+            unassigned_copper_graphics: Vec::new(),
             courtless: Vec::new(),
             slots: Vec::new(),
         }
     }
 
-    fn pair(inset: f64, gap: f64) -> (Problem, Vec<Pose>) {
+    pub(super) fn pair(inset: f64, gap: f64) -> (Problem, Vec<Pose>) {
         let poses = vec![
             Pose {
                 position: [10.0, 10.0],
@@ -4978,95 +4888,6 @@ pub(crate) mod tests {
         (problem, poses)
     }
 
-    /// `count` connectors 17.5 mm long held at the right edge of a board
-    /// 77.2 mm tall (76.2 mm inside the edge margin), the first 5.5 mm
-    /// from the top's margin, each 0.5 mm below the one before.
-    fn edge_row(count: usize) -> (Problem, Vec<Pose>) {
-        let (mut problem, _) = pair(0.0, 0.0);
-        problem.outline = vec![[0.0, 0.0], [30.0, 0.0], [30.0, 77.2], [0.0, 77.2]];
-        problem.spacing = 0.5;
-        let mut connector = resistor(0.0);
-        connector.body_size = [2.0, 17.5];
-        connector.pads = vec![[-0.5, -8.5, 0.5, 8.5]];
-        problem.components = vec![connector; count];
-        let poses: Vec<Pose> = (0..count)
-            .map(|index| Pose {
-                position: [28.5, 0.5 + 5.5 + 8.75 + 18.0 * index as f64],
-                angle: 0.0,
-            })
-            .collect();
-        problem.constraints.edges = (0..count)
-            .map(|index| (index, constraints::Edge::Right, 0.52))
-            .collect();
-        problem.poses = poses.clone();
-        (problem, poses)
-    }
-
-    #[test]
-    fn parts_held_at_an_edge_are_packed_along_it_to_make_room() {
-        // The molecules' panels: four 17.5 mm connectors on a 76.2 mm
-        // edge, the first 5.5 mm from its end; the fourth found no room,
-        // and the eviction (one part at a time) none either.
-        let (problem, poses) = edge_row(4);
-        assert!(!is_legal(&problem, &poses, 3, poses[3], 0..3));
-        let mut evicted = poses.clone();
-        assert_eq!(evict_for(&problem, &mut evicted, &[3]), vec![3]);
-        let mut packed = poses.clone();
-        assert!(compact_edges(&problem, &mut packed, &[3]).is_empty());
-        assert!(
-            illegal_components(&problem, &packed).is_empty(),
-            "{packed:?}"
-        );
-        // In their order, each as near its own spot as the room allows:
-        // the first slid up, by less than the 5.5 mm the others needed
-        // all of.
-        for index in 1..4 {
-            assert!(packed[index].position[1] > packed[index - 1].position[1]);
-        }
-        let slid = poses[0].position[1] - packed[0].position[1];
-        assert!(slid > 0.0 && slid < 5.5, "{slid}");
-        // Five do not fit: nothing moves, and no work is booked.
-        let (problem, poses) = edge_row(5);
-        let mut packed = poses.clone();
-        let before = crate::work();
-        assert_eq!(compact_edges(&problem, &mut packed, &[4]), vec![4]);
-        assert_eq!(packed, poses);
-        assert_eq!(
-            crate::work(),
-            before,
-            "a packing that seats none books no work"
-        );
-        // A part no edge holds: nothing to pack, no work.
-        let (mut problem, poses) = edge_row(4);
-        problem.constraints.edges.pop();
-        let mut packed = poses.clone();
-        let before = crate::work();
-        assert_eq!(compact_edges(&problem, &mut packed, &[3]), vec![3]);
-        assert_eq!(crate::work(), before);
-    }
-
-    #[test]
-    fn a_part_held_at_an_edge_takes_another_slot_where_its_own_cannot_be_kept() {
-        // The 7x5 molecule's J9: its own spot lay past the others along
-        // the edge, where its constraint cannot be kept (there the wave's
-        // edge is higher); its place is before them. Here a region keeps
-        // the stuck part in the top 30 mm, its pose lies past the other.
-        let (mut problem, mut poses) = edge_row(2);
-        problem
-            .constraints
-            .regions
-            .push((1, [0.0, 0.0, 30.0, 30.0]));
-        poses[0].position[1] = 40.0;
-        poses[1].position[1] = 70.0;
-        let mut packed = poses.clone();
-        assert!(compact_edges(&problem, &mut packed, &[1]).is_empty());
-        assert!(
-            illegal_components(&problem, &packed).is_empty(),
-            "{packed:?}"
-        );
-        assert!(packed[1].position[1] < packed[0].position[1]);
-    }
-
     #[test]
     fn two_parts_without_courtyards_overlapping_are_illegal_and_one_is_moved() {
         // The thumb row on the grid's last row (Goga64 ULK): 9.5 mm apart
@@ -5111,6 +4932,93 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn declared_module_pair_is_checked_beyond_connector_courtyards() {
+        use crate::constraints::{ModuleEnvelope, ModuleEnvelopePair};
+
+        let (mut problem, mut poses) = pair(0.0, 5.0);
+        let mut beneath = resistor(0.0);
+        beneath.fixed = true;
+        problem.components.push(beneath);
+        poses.push(Pose {
+            position: [13.5, 10.0],
+            angle: 0.0,
+        });
+        assert!(illegal_components(&problem, &poses).is_empty());
+        problem.components[0].fixed = true;
+        problem.components[1].fixed = true;
+        let module = |part| ModuleEnvelope {
+            part,
+            back: false,
+            vertices: vec![[-5.0, -2.0], [5.0, -2.0], [5.0, 2.0], [-5.0, 2.0]],
+        };
+        problem
+            .constraints
+            .module_envelopes
+            .push(ModuleEnvelopePair {
+                modules: [module(0), module(1)],
+                layer: "Eco2.User".into(),
+                min_gap_mm: 0.0,
+            });
+        assert_eq!(illegal_components(&problem, &poses), [0, 1]);
+        assert_eq!(
+            conflict_kind(&problem, &poses, 1, poses[1], 0),
+            Some("declared mounted-module outlines miss clearance")
+        );
+        // A quarter turn makes their edges touch, which is allowed.
+        poses[1].angle = 90.0;
+        assert!(illegal_components(&problem, &poses).is_empty());
+        poses[1].angle = 0.0;
+        problem.constraints.module_envelopes[0].modules[1].back = true;
+        assert!(illegal_components(&problem, &poses).is_empty());
+        problem.constraints.module_envelopes[0].modules[1].back = false;
+
+        problem.components[1].fixed = false;
+        problem.poses.clone_from(&poses);
+        let fixed_pose = poses[0];
+        let beneath_pose = poses[2];
+        assert!(legalize(&problem, &mut poses).is_empty());
+        assert!(illegal_components(&problem, &poses).is_empty());
+        assert_eq!(poses[0], fixed_pose);
+        assert_eq!(poses[2], beneath_pose);
+    }
+
+    #[test]
+    fn joint_module_seats_can_move_both_members_away_from_the_middle() {
+        use crate::constraints::{ModuleEnvelope, ModuleEnvelopePair};
+
+        let (mut problem, mut poses) = pair(0.0, 0.0);
+        problem.outline = vec![[0.0, 0.0], [10.0, 0.0], [10.0, 20.0], [0.0, 20.0]];
+        poses[0].position = [5.0, 10.0];
+        poses[1].position = [5.0, 10.0];
+        for component in &mut problem.components {
+            component.angle_options = vec![0.0];
+        }
+        let module = |part| ModuleEnvelope {
+            part,
+            back: false,
+            vertices: vec![[-5.0, -6.0], [5.0, -6.0], [5.0, 6.0], [-5.0, 6.0]],
+        };
+        problem
+            .constraints
+            .module_envelopes
+            .push(ModuleEnvelopePair {
+                modules: [module(0), module(1)],
+                layer: "Eco2.User".into(),
+                min_gap_mm: 0.0,
+            });
+        problem.poses.clone_from(&poses);
+        let original = poses.clone();
+        // Neither module can clear its neighbour when the neighbour stays
+        // in the middle, including when only that neighbour is retained.
+        assert_eq!(legalize_keeping(&problem, &mut poses, &[], &[0]), [1]);
+        assert_eq!(poses[0], original[0]);
+        poses.clone_from(&original);
+        assert!(legalize(&problem, &mut poses).is_empty());
+        assert!(illegal_components(&problem, &poses).is_empty());
+        assert!(poses.iter().zip(&original).all(|(seated, at)| seated != at));
+    }
+
+    #[test]
     fn a_small_part_without_courtyard_may_lie_under_a_large_one() {
         // A key's diode between its pads (a twentieth of its square).
         let (mut problem, mut poses) = keys([0.0, 0.0]);
@@ -5134,6 +5042,57 @@ pub(crate) mod tests {
         assert!(is_legal(&problem, &poses, 1, poses[1], 0..2));
         // On a pad it is not.
         poses[1].position = [24.0, 24.0];
+        assert!(!is_legal(&problem, &poses, 1, poses[1], 0..2));
+    }
+
+    #[test]
+    fn a_pad_rule_area_uses_its_polygon_without_the_board_edge_margin() {
+        let (mut problem, mut poses) = keys([0.0, 0.0]);
+        let mut area = resistor(0.0);
+        area.name = "pad rule area".into();
+        area.body_size = [10.0, 20.0];
+        area.pads.clear();
+        area.fixed = true;
+        area.side = Side::Both;
+        area.copper_only = true;
+        area.cutout_outline = vec![[30.0, 20.0], [32.0, 40.0], [40.0, 40.0], [40.0, 20.0]];
+        problem.components[0] = area;
+        problem.components[1] = resistor(0.0);
+        problem.components[1].pads = vec![[-0.25, -0.25, 0.25, 0.25]];
+        poses[0] = Pose {
+            position: [35.0, 30.0],
+            angle: 0.0,
+        };
+        poses[1] = Pose {
+            position: [31.0, 35.0],
+            angle: 0.0,
+        };
+        problem.poses = poses.clone();
+        problem.edge_margin = 0.5;
+
+        assert!(!is_legal(&problem, &poses, 1, poses[1], 0..2));
+        assert!(crate::anneal::overlaps(&problem, &poses)[1] > 0.0);
+
+        problem.constraints.pad_rule_areas.push(0);
+        for side in [Side::Front, Side::Back] {
+            problem.components[1].side = side;
+            assert!(is_legal(&problem, &poses, 1, poses[1], 0..2));
+            assert_eq!(crate::anneal::overlaps(&problem, &poses)[1], 0.0);
+            let entering = Pose {
+                position: [31.7, 35.0],
+                angle: 0.0,
+            };
+            assert!(!is_legal(&problem, &poses, 1, entering, 0..2));
+            let mut entering_poses = poses.clone();
+            entering_poses[1] = entering;
+            assert!(crate::anneal::overlaps(&problem, &entering_poses)[1] > 0.0);
+        }
+
+        poses[1].position = [27.0, 35.0];
+        problem.components[1].copper_graphics = vec![[5.5, -0.25, 6.0, 0.25]];
+        assert!(is_legal(&problem, &poses, 1, poses[1], 0..2));
+        assert_eq!(crate::anneal::overlaps(&problem, &poses)[1], 0.0);
+        problem.constraints.pad_rule_areas.clear();
         assert!(!is_legal(&problem, &poses, 1, poses[1], 0..2));
     }
 

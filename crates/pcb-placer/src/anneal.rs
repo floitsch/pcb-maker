@@ -516,26 +516,50 @@ impl State<'_> {
         if side.collides(other_component.side) {
             if component.copper_only || other_component.copper_only {
                 // A cutout keeps only copper away.
-                let margin = self.problem.edge_margin;
-                let (hole, part, part_index, part_pose) = if component.copper_only {
+                let (hole, hole_index, part, part_index, part_pose) = if component.copper_only {
                     (
                         (rect.center, rect.half),
+                        index,
                         other_component,
                         other,
                         self.poses[other],
                     )
                 } else {
-                    ((body.center, body.half), component, index, pose)
+                    ((body.center, body.half), other, component, index, pose)
                 };
                 if !part.copper_only {
+                    let is_rule_area = self
+                        .problem
+                        .constraints
+                        .pad_rule_areas
+                        .contains(&hole_index);
+                    let margin = if is_rule_area {
+                        0.0
+                    } else {
+                        self.problem.edge_margin
+                    };
+                    if is_rule_area {
+                        let mut work = 0;
+                        let hit = crate::legal::pads_meet_rule_area(
+                            self.problem,
+                            hole_index,
+                            part_index,
+                            part_pose,
+                            &mut work,
+                        );
+                        self.work.set(self.work.get() + work);
+                        if !hit {
+                            return;
+                        }
+                    }
                     self.fresh_boxes(cache, part_index);
                     let boxes = &cache[part_index];
                     booked(boxes.pads.len());
                     for (center, half) in &boxes.pads {
                         *total += area((*center, [half[0] + margin, half[1] + margin]), hole);
                     }
-                    // Its copper graphics keep the margin as its pads do.
-                    if !part.copper_graphics.is_empty() {
+                    // Physical cutouts keep copper drawings away too.
+                    if !is_rule_area && !part.copper_graphics.is_empty() {
                         booked(boxes.graphics.len());
                         for (center, half) in &boxes.graphics {
                             *total += area((*center, [half[0] + margin, half[1] + margin]), hole);
@@ -712,7 +736,9 @@ impl State<'_> {
                     return 0;
                 }
                 let mut work = list(part.pads.len()) + part.pads.len() as u64;
-                if !part.copper_graphics.is_empty() {
+                if !self.problem.constraints.pad_rule_areas.contains(&cutout)
+                    && !part.copper_graphics.is_empty()
+                {
                     work += list(part.copper_graphics.len()) + part.copper_graphics.len() as u64;
                 }
                 let solid = &self.problem.constraints.solid_cutouts;

@@ -2,14 +2,17 @@
 
 //! How whole the pours stayed on a routed board: per zone and layer, the
 //! pieces the fill keeps, the largest one's share, the copper's coverage
-//! and the other nets' tracks that cut it, from the router's own pour
+//! and the other nets' tracks on the same layer, from the router's own pour
 //! model (`Router::pour_report`) on the board as written. The verdict
 //! carries it (`pours`), board-router.json as `pour_quality`.
 
 use super::*;
 use pcb_router as core;
 
-/// One pour (a zone's net on one layer) on a routed board.
+mod region_tracks;
+pub use region_tracks::{KiCadBoundedTrackLength, KiCadRegionTrackLength};
+
+/// A pour net on one layer of a routed board.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct KiCadPourQuality {
     pub net: String,
@@ -28,15 +31,15 @@ pub struct KiCadPourQuality {
     pub area_mm2: f64,
     /// Pieces without copper of the net, which KiCad removes.
     pub islands_removed: usize,
-    /// The length of other nets' tracks on the layer (score-kicad-board's
-    /// `cut_by_mm`): what cuts the pour.
+    /// The historical layer total of other nets' tracks, using chords for arcs.
     pub cut_mm: f64,
+    /// Other nets' straight track lengths inside generated bounded regions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bounded_regions: Option<KiCadBoundedTrackLength>,
     /// For a pour in many pieces (`in_many_pieces`): the parts (six pads
     /// or more) under which a `keep_whole` region on this layer would
-    /// cover no other net's pad there, the most pads first, at most four;
-    /// empty when every such part's region would cut pads off (the
-    /// verdict's pour advice then does not suggest `keep_whole` under
-    /// parts).
+    /// cover no other net's pad there. With bounded pours the candidate
+    /// must also fit inside a requested zone outline. At most four.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub keep_whole_parts: Vec<String>,
 }
@@ -49,18 +52,24 @@ impl KiCadPourQuality {
             || (self.copper_mm2 > 0.0 && self.largest_mm2 < 0.5 * self.copper_mm2)
     }
 
-    /// One line: `GND on B.Cu: 37 pieces, the largest 41 % of the pour,
-    /// copper on 27 %, cut by 2088 mm of other nets' tracks`.
+    /// One line of measured geometry for the verdict and routing log.
     pub fn line(&self) -> String {
-        format!(
-            "{} on {}: {} pieces, the largest {:.0} % of the pour, copper on {:.0} %, cut by {:.0} mm of other nets' tracks",
+        let mut text = format!(
+            "{} on {}: {} pieces, the largest {:.0} % of the pour, copper on {:.0} %, {:.0} mm of other nets' tracks on the layer",
             self.net,
             self.layer,
             self.pieces,
             self.largest_share * 100.0,
             self.coverage * 100.0,
             self.cut_mm
-        )
+        );
+        if let Some(bounded) = &self.bounded_regions {
+            text.push_str(&format!(
+                ", {:.3} mm of other nets' straight tracks inside the bounded regions",
+                bounded.other_straight_track_mm
+            ));
+        }
+        text
     }
 }
 
@@ -168,6 +177,7 @@ pub fn measure_board_pours(
     // on a pour in many pieces.
     let region_pads = region_pads(&pcb, &layers)?;
     let region_parts = keep_whole_parts(&pcb, &region_pads)?;
+    let mut bounded_track_lengths = region_tracks::measure(&pcb);
     // The parse is done with before the router is built (a big board's
     // parse is ten times its file).
     drop(pcb);
@@ -219,6 +229,7 @@ pub fn measure_board_pours(
             (value * scale).round() / scale + 0.0
         };
         let mut quality = KiCadPourQuality {
+            bounded_regions: bounded_track_lengths.remove(&(net.clone(), layer.clone())),
             net,
             layer,
             pieces: pieces.len(),
@@ -232,8 +243,13 @@ pub fn measure_board_pours(
             keep_whole_parts: Vec::new(),
         };
         if quality.in_many_pieces() {
-            quality.keep_whole_parts =
-                keep_whole_candidates(&region_parts, &region_pads, &quality.net, entry.layer);
+            quality.keep_whole_parts = keep_whole_candidates(
+                &region_parts,
+                &region_pads,
+                &quality.net,
+                entry.layer,
+                quality.bounded_regions.as_ref(),
+            );
         }
         result.push(quality);
     }

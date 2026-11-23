@@ -26,6 +26,9 @@ use super::*;
 use crate::kicad_sexpr::{Expr, form_at};
 use pcb_router as core;
 
+mod native_scope;
+pub use native_scope::{NativeFindingLocation, NativePanelCounts, NativePanelScope};
+
 /// A panel of copies as the keepouts see it (`Pieces::copies_keepouts`):
 /// per copy its transform from the first copy (a turn by `angle`
 /// degrees, as `pcb_placer::problem::rotate` turns, then `offset`), its
@@ -117,6 +120,9 @@ const MOST_FRAME_SHARE: f64 = 0.5;
 /// (`Pieces::outline_frames`).
 const RAIL_SPAN: f64 = 0.9;
 const RAIL_AREA_SHARE: f64 = 0.2;
+/// The width of an exterior rail including its side of the breakaway
+/// tab. Larger exterior pieces can hold functional circuitry.
+const NARROW_RAIL_WIDTH_MM: f64 = 5.0;
 
 /// No piece: the cell's label where the opened area does not reach.
 const NONE: u16 = u16::MAX;
@@ -156,43 +162,139 @@ pub struct Cuts {
     pub rows: usize,
 }
 
-impl Cuts {
-    /// The mouse bites and V-cuts of a KiCad board (`Cuts`).
-    pub fn of_board(pcb: &Expr) -> Cuts {
-        let mut holes: Vec<([f64; 2], f64)> = Vec::new();
-        for footprint in pcb
+/// Two holes of a perforation that separates a board's breakaway modules
+/// lie at most this far apart, centre to centre (mm): wider than a mouse
+/// bite's pitch, so that the gaps a designer leaves for tracks across the
+/// tab (protoesp: 1.5 mm and 2.5 mm between 0.5 mm holes) are part of the
+/// row (`Cuts::perforation`).
+pub const PERFORATION_PITCH_MM: f64 = 3.0;
+
+/// A gap between two neighbouring holes of a perforation
+/// (`Cuts::perforation`): its hole centres and the clear width between
+/// the holes' edges (mm).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PerforationGap {
+    pub ends: [[f64; 2]; 2],
+    pub clear: f64,
+}
+
+/// The holes of the board that may be a mouse bite's: the round
+/// non-plated drills of at most `MOUSE_BITE_DRILL_MM` of footprints with
+/// no other pad, centre and radius.
+fn perforation_holes(pcb: &Expr) -> Vec<([f64; 2], f64)> {
+    let mut holes: Vec<([f64; 2], f64)> = Vec::new();
+    for footprint in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+    {
+        let pads: Vec<&Expr> = footprint
             .children()
             .iter()
-            .filter(|item| item.head() == Some("footprint"))
-        {
-            let pads: Vec<&Expr> = footprint
-                .children()
+            .filter(|child| child.head() == Some("pad"))
+            .collect();
+        if pads.is_empty()
+            || pads
                 .iter()
-                .filter(|child| child.head() == Some("pad"))
-                .collect();
-            if pads.is_empty()
-                || pads
-                    .iter()
-                    .any(|pad| pad.children().get(2).and_then(Expr::atom) != Some("np_thru_hole"))
-            {
+                .any(|pad| pad.children().get(2).and_then(Expr::atom) != Some("np_thru_hole"))
+        {
+            continue;
+        }
+        let Ok(at) = form_at(footprint) else { continue };
+        for pad in pads {
+            // A round drill (`(drill 0.5)`, not `(drill oval ...)`).
+            let Some(drill) = form_atom(pad, "drill", 1).and_then(|text| text.parse::<f64>().ok())
+            else {
+                continue;
+            };
+            if !(drill > 0.0 && drill <= MOUSE_BITE_DRILL_MM) {
                 continue;
             }
-            let Ok(at) = form_at(footprint) else { continue };
-            for pad in pads {
-                // A round drill (`(drill 0.5)`, not `(drill oval ...)`).
-                let Some(drill) =
-                    form_atom(pad, "drill", 1).and_then(|text| text.parse::<f64>().ok())
-                else {
-                    continue;
-                };
-                if !(drill > 0.0 && drill <= MOUSE_BITE_DRILL_MM) {
-                    continue;
+            let Ok(local) = form_at(pad) else { continue };
+            let offset = crate::geometry::rotate_vector([local[0], local[1]], -at[2]);
+            holes.push(([at[0] + offset[0], at[1] + offset[1]], drill / 2.0));
+        }
+    }
+    holes
+}
+
+impl Cuts {
+    /// The perforations of a board chained at `pitch` (centre to centre)
+    /// instead of a mouse bite's: the holes of rows of
+    /// `MOUSE_BITE_HOLES` or more, each row's gaps (the shortest links
+    /// that chain it, a spanning tree) as cut lines, so that the row cuts
+    /// the board whole where tracks may pass between its holes; and the
+    /// gaps themselves. The board's V-cut lines are kept.
+    pub fn perforation(pcb: &Expr, pitch: f64) -> (Cuts, Vec<PerforationGap>) {
+        let holes = perforation_holes(pcb);
+        let mut order: Vec<usize> = (0..holes.len()).collect();
+        order.sort_by(|a, b| {
+            holes[*a].0[0]
+                .total_cmp(&holes[*b].0[0])
+                .then(holes[*a].0[1].total_cmp(&holes[*b].0[1]))
+        });
+        let mut links: Vec<(f64, usize, usize)> = Vec::new();
+        for (index, &a) in order.iter().enumerate() {
+            for &b in &order[index + 1..] {
+                if holes[b].0[0] - holes[a].0[0] > pitch {
+                    break;
                 }
-                let Ok(local) = form_at(pad) else { continue };
-                let offset = crate::geometry::rotate_vector([local[0], local[1]], -at[2]);
-                holes.push(([at[0] + offset[0], at[1] + offset[1]], drill / 2.0));
+                let (pa, pb) = (holes[a].0, holes[b].0);
+                let distance = (pa[0] - pb[0]).hypot(pa[1] - pb[1]);
+                if distance <= pitch {
+                    links.push((distance, a.min(b), a.max(b)));
+                }
             }
         }
+        links.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)).then(x.2.cmp(&y.2)));
+        let mut parent: Vec<usize> = (0..holes.len()).collect();
+        fn root(parent: &mut [usize], mut at: usize) -> usize {
+            while parent[at] != at {
+                parent[at] = parent[parent[at]];
+                at = parent[at];
+            }
+            at
+        }
+        let mut tree: Vec<(f64, usize, usize)> = Vec::new();
+        for (distance, a, b) in links {
+            let (ra, rb) = (root(&mut parent, a), root(&mut parent, b));
+            if ra != rb {
+                parent[ra] = rb;
+                tree.push((distance, a, b));
+            }
+        }
+        let mut sizes: BTreeMap<usize, usize> = BTreeMap::new();
+        for index in 0..holes.len() {
+            *sizes.entry(root(&mut parent, index)).or_default() += 1;
+        }
+        let in_row: Vec<bool> = (0..holes.len())
+            .map(|index| sizes[&root(&mut parent, index)] >= MOUSE_BITE_HOLES)
+            .collect();
+        let gaps: Vec<PerforationGap> = tree
+            .iter()
+            .filter(|(_, a, _)| in_row[*a])
+            .map(|(distance, a, b)| PerforationGap {
+                ends: [holes[*a].0, holes[*b].0],
+                clear: distance - holes[*a].1 - holes[*b].1,
+            })
+            .collect();
+        let rows = sizes
+            .values()
+            .filter(|count| **count >= MOUSE_BITE_HOLES)
+            .count();
+        let mut lines = v_cut_lines(pcb);
+        lines.extend(gaps.iter().map(|gap| gap.ends));
+        let holes = holes
+            .into_iter()
+            .zip(in_row)
+            .filter_map(|(hole, keep)| keep.then_some(hole))
+            .collect();
+        (Cuts { holes, lines, rows }, gaps)
+    }
+
+    /// The mouse bites and V-cuts of a KiCad board (`Cuts`).
+    pub fn of_board(pcb: &Expr) -> Cuts {
+        let holes = perforation_holes(pcb);
         // Rows: holes chained by the pitch, three or more.
         let mut parent: Vec<usize> = (0..holes.len()).collect();
         fn root(parent: &mut [usize], mut at: usize) -> usize {
@@ -369,41 +471,6 @@ fn cut_line_tabs(
     (!boxes.is_empty()).then_some(boxes)
 }
 
-/// The board's area rasterised and eroded (`Pieces::opened`): cells of
-/// `cell` mm, `columns` by `rows` from `origin`, row-major.
-struct Opened {
-    origin: [f64; 2],
-    cell: f64,
-    columns: usize,
-    rows: usize,
-    /// Per cell: inside the board, not in a mouse bite's hole.
-    inside: Vec<bool>,
-    /// Per cell: in a mouse bite's hole.
-    cut: Vec<bool>,
-    /// Per cell: on a V-cut line.
-    scored: Vec<bool>,
-    /// The distance transform's infinity, and the erosion's radius (thirds
-    /// of a cell).
-    far: u32,
-    radius: u32,
-    /// Per cell: the core (component of the eroded area) it lies in,
-    /// `NONE` for none; per core, its cells.
-    core_label: Vec<u16>,
-    cores: Vec<usize>,
-}
-
-/// A breakaway strip (`Pieces::strips`): board too thin to be a piece,
-/// beside one piece across a row of mouse bites or a V-cut (USB_Keypad's
-/// 2.4 mm rails).
-#[derive(Clone, Debug, PartialEq)]
-pub struct Strip {
-    /// Its cells as boxes, in blocks of `COPPER_BLOCK_MM`.
-    pub boxes: Vec<[f64; 4]>,
-    /// Its area and that of its own core (mm²).
-    pub area: f64,
-    pub core: f64,
-}
-
 /// The outline's pieces without its tabs (module comment): a raster of
 /// the board, each cell labelled with its piece.
 #[derive(Clone, Debug)]
@@ -441,10 +508,37 @@ impl Pieces {
         ))
     }
 
-    /// The area inside `loops` (even-odd with `cutouts`), less the mouse
-    /// bites' holes and the V-cut lines of `cuts`, rasterised and eroded
-    /// (`Opened`). None for an empty outline or too many cores.
-    fn opened(loops: &[Vec<[f64; 2]>], cutouts: &[Vec<[f64; 2]>], cuts: &Cuts) -> Option<Opened> {
+    /// The pieces of the area inside `loops` (even-odd with `cutouts`),
+    /// less the mouse bites' holes and the V-cut lines of `cuts`.
+    pub fn of_loops(
+        loops: &[Vec<[f64; 2]>],
+        cutouts: &[Vec<[f64; 2]>],
+        cuts: &Cuts,
+    ) -> Option<Pieces> {
+        Self::raster_pieces(loops, cutouts, cuts, None)
+    }
+
+    /// Exterior fabrication rails of a single-board outline. A rail has
+    /// a core separated from the main board across a perforation or score,
+    /// too small for `of_loops` to count as its own piece.
+    pub fn narrow_breakaway_rails(
+        loops: &[Vec<[f64; 2]>],
+        cutouts: &[Vec<[f64; 2]>],
+        cuts: &Cuts,
+    ) -> Vec<[f64; 4]> {
+        let mut rails = Vec::new();
+        if !cuts.holes.is_empty() || !cuts.lines.is_empty() {
+            Self::raster_pieces(loops, cutouts, cuts, Some(&mut rails));
+        }
+        rails
+    }
+
+    fn raster_pieces(
+        loops: &[Vec<[f64; 2]>],
+        cutouts: &[Vec<[f64; 2]>],
+        cuts: &Cuts,
+        rails: Option<&mut Vec<[f64; 4]>>,
+    ) -> Option<Pieces> {
         let mut all = [
             f64::INFINITY,
             f64::INFINITY,
@@ -601,54 +695,6 @@ impl Pieces {
                 return None;
             }
         }
-        Some(Opened {
-            origin,
-            cell,
-            columns,
-            rows,
-            inside,
-            cut,
-            scored,
-            far,
-            radius,
-            core_label,
-            cores,
-        })
-    }
-
-    /// The pieces of the area inside `loops` (even-odd with `cutouts`),
-    /// less the mouse bites' holes and the V-cut lines of `cuts`.
-    pub fn of_loops(
-        loops: &[Vec<[f64; 2]>],
-        cutouts: &[Vec<[f64; 2]>],
-        cuts: &Cuts,
-    ) -> Option<Pieces> {
-        let Opened {
-            origin,
-            cell,
-            columns,
-            rows,
-            inside,
-            cut,
-            scored,
-            far,
-            radius,
-            core_label,
-            cores,
-        } = Self::opened(loops, cutouts, cuts)?;
-        let mut stack = Vec::new();
-        let cell_range = |low: f64, high: f64, origin: f64, count: usize| {
-            let first = ((low - origin) / cell - 0.5).ceil().max(0.0) as usize;
-            let last = ((high - origin) / cell - 0.5).floor();
-            (
-                first,
-                if last < 0.0 {
-                    None
-                } else {
-                    Some((last as usize).min(count - 1))
-                },
-            )
-        };
         // Cores large enough are pieces, renumbered: a twentieth of the
         // largest at least (a strip a row of slots sets off, SNSP-CPU-01's
         // 15 x 16 mm beside its 216 x 159 mm, is part of its board).
@@ -662,7 +708,12 @@ impl Pieces {
                 pieces += 1;
             }
         }
-        if pieces < 2 {
+        let wanted = if rails.is_some() {
+            pieces == 1
+        } else {
+            pieces >= 2
+        };
+        if !wanted {
             return None;
         }
         // Grown back: each inside cell within the radius of a piece's core
@@ -705,6 +756,22 @@ impl Pieces {
                     b[3].max(y + cell),
                 ];
             }
+        }
+        if let Some(rails) = rails {
+            let raster = Self {
+                origin,
+                cell,
+                rows,
+                columns,
+                labels,
+                inside,
+                boxes,
+                tabs: Vec::new(),
+                areas: Vec::new(),
+                cut_by: Vec::new(),
+            };
+            *rails = raster.breakaway_boxes(all, &cut, &scored, &core_label);
+            return None;
         }
         // The tabs: components of the inside cells on no piece that touch
         // two pieces.
@@ -862,138 +929,104 @@ impl Pieces {
         })
     }
 
-    /// The breakaway strips of a board of any number of pieces (`Strip`):
-    /// the area the opening took from every piece (beyond the pieces'
-    /// grown-back cores), in 4-connected components that
-    ///
-    /// - hold a core of their own too small to be a piece (under
-    ///   `MIN_CORE_MM2`): a corner the erosion rounds and a neck narrower
-    ///   than twice the radius hold none, and a strip wider than that
-    ///   joined to the board along its length shares the board's core;
-    /// - touch at most one piece (what lies between two is a tab, the
-    ///   sub-boards' business);
-    /// - border a mouse bite's hole or a V-cut: made to break off. A
-    ///   strip set off by the outline alone stays board (bumwings' 2 mm
-    ///   bridges between a switch's cutouts; a sensor on a narrow neck).
-    pub fn strips(loops: &[Vec<[f64; 2]>], cutouts: &[Vec<[f64; 2]>], cuts: &Cuts) -> Vec<Strip> {
-        let Some(Opened {
-            origin,
-            cell,
-            columns,
-            rows,
-            inside,
-            cut,
-            scored,
-            far,
-            radius,
-            core_label,
-            cores,
-        }) = Self::opened(loops, cutouts, cuts)
-        else {
-            return Vec::new();
-        };
-        let largest = cores.iter().copied().max().unwrap_or(0) as f64 * cell * cell;
-        let area_of = |count: usize| count as f64 * cell * cell;
-        let piece_core: Vec<bool> = cores
-            .iter()
-            .map(|count| {
-                area_of(*count) >= MIN_CORE_MM2 && area_of(*count) >= MIN_PIECE_SHARE * largest
-            })
-            .collect();
-        if !piece_core.contains(&true) {
-            return Vec::new();
-        }
-        // The pieces grown back, as `of_loops` grows them.
-        let mut piece_of_core = vec![NONE; cores.len()];
-        let mut pieces = 0u16;
-        for (core, piece) in piece_core.iter().enumerate() {
-            if *piece {
-                piece_of_core[core] = pieces;
-                pieces += 1;
-            }
-        }
-        let mut grown: Vec<u32> = vec![far; columns * rows];
-        let mut labels = vec![NONE; columns * rows];
-        for index in 0..columns * rows {
-            if core_label[index] != NONE && piece_core[core_label[index] as usize] {
-                grown[index] = 0;
-                labels[index] = piece_of_core[core_label[index] as usize];
-            }
-        }
-        chamfer_labels(&mut grown, &mut labels, columns, rows);
-        let off = |at: usize| inside[at] && !scored[at] && grown[at] > radius + 3;
-        let on_piece = |at: usize| inside[at] && !scored[at] && grown[at] <= radius + 3;
-        let raster = Pieces {
-            origin,
-            cell,
-            columns,
-            rows,
-            labels: Vec::new(),
-            inside: Vec::new(),
-            boxes: Vec::new(),
-            tabs: Vec::new(),
-            areas: Vec::new(),
-            cut_by: Vec::new(),
-        };
+    /// Components outside the main piece's grown core. An exterior
+    /// rail spans its side, lies outside the main stock, and has a
+    /// small eroded core beside an actual cut. Corners, notches and
+    /// outline necks alone do not identify removable stock.
+    fn breakaway_boxes(
+        &self,
+        outline: [f64; 4],
+        cut: &[bool],
+        scored: &[bool],
+        core_label: &[u16],
+    ) -> Vec<[f64; 4]> {
+        let main = self.boxes[0];
+        let (columns, rows, cell) = (self.columns, self.rows, self.cell);
+        let off = |at: usize| self.inside[at] && !scored[at] && self.labels[at] == NONE;
         let mut seen = vec![false; columns * rows];
         let mut stack = Vec::new();
-        let mut strips = Vec::new();
-        for start in 0..columns * rows {
-            if !off(start) || seen[start] {
+        let mut rails = Vec::new();
+        for start in 0..seen.len() {
+            if seen[start] || !off(start) {
                 continue;
             }
-            let (mut members, mut core, mut bitten) = (Vec::new(), 0usize, false);
-            let mut touching: BTreeSet<u16> = BTreeSet::new();
+            let mut bounds = [usize::MAX, usize::MAX, 0, 0];
+            let mut core = 0;
+            let mut beside_cut = false;
             seen[start] = true;
             stack.push(start);
             while let Some(at) = stack.pop() {
-                members.push(at);
-                if core_label[at] != NONE && !piece_core[core_label[at] as usize] {
-                    core += 1;
-                }
                 let (row, column) = (at / columns, at % columns);
-                let mut neighbours = Vec::with_capacity(4);
-                if column > 0 {
-                    neighbours.push(at - 1);
-                }
-                if column + 1 < columns {
-                    neighbours.push(at + 1);
-                }
-                if row > 0 {
-                    neighbours.push(at - columns);
-                }
-                if row + 1 < rows {
-                    neighbours.push(at + columns);
-                }
-                for next in neighbours {
-                    bitten |= cut[next] || scored[next];
-                    if on_piece(next) {
-                        touching.insert(labels[next]);
-                    }
+                bounds[0] = bounds[0].min(column);
+                bounds[1] = bounds[1].min(row);
+                bounds[2] = bounds[2].max(column + 1);
+                bounds[3] = bounds[3].max(row + 1);
+                core += usize::from(core_label[at] != NONE);
+                let mut visit = |next: usize| {
+                    beside_cut |= cut[next] || scored[next];
                     if off(next) && !seen[next] {
                         seen[next] = true;
                         stack.push(next);
                     }
+                };
+                if column > 0 {
+                    visit(at - 1);
+                }
+                if column + 1 < columns {
+                    visit(at + 1);
+                }
+                if row > 0 {
+                    visit(at - columns);
+                }
+                if row + 1 < rows {
+                    visit(at + columns);
                 }
             }
-            if core == 0 || area_of(core) >= MIN_CORE_MM2 || touching.len() > 1 || !bitten {
+            if core == 0 || core as f64 * cell * cell >= MIN_CORE_MM2 || !beside_cut {
                 continue;
             }
-            let mut mask = vec![false; columns * rows];
-            for at in &members {
-                mask[*at] = true;
+            let mut bounds = std::array::from_fn(|i| self.origin[i % 2] + bounds[i] as f64 * cell);
+            let near_main = 2.0 * cell + 1.0e-9;
+            for axis in 0..2 {
+                let along = 1 - axis;
+                let width = bounds[axis + 2] - bounds[axis];
+                let span = bounds[along + 2] - bounds[along];
+                if width > NARROW_RAIL_WIDTH_MM
+                    || span < RAIL_SPAN * (outline[along + 2] - outline[along])
+                {
+                    continue;
+                }
+                if bounds[axis] <= outline[axis] + cell
+                    && bounds[axis + 2] <= main[axis] + near_main
+                {
+                    bounds[axis + 2] = bounds[axis + 2].min(main[axis]);
+                } else if bounds[axis + 2] >= outline[axis + 2] - cell
+                    && bounds[axis] >= main[axis + 2] - near_main
+                {
+                    bounds[axis] = bounds[axis].max(main[axis + 2]);
+                } else {
+                    continue;
+                }
+                if bounds[axis] < bounds[axis + 2] {
+                    rails.push(bounds);
+                }
+                break;
             }
-            strips.push(Strip {
-                boxes: raster.mask_boxes(&mask, COPPER_BLOCK_MM),
-                area: area_of(members.len()),
-                core: area_of(core),
-            });
         }
-        strips
+        rails
     }
 
     pub fn count(&self) -> usize {
         self.boxes.len()
+    }
+
+    /// A native zone item names its outline's first corner, not its
+    /// reported copper island. Use the zone's actual outline by UUID.
+    pub fn single_zone_piece(&self, pcb: &Expr, uuid: &str) -> Option<usize> {
+        match zone_end(pcb, self, uuid) {
+            End::On(piece) => Some(piece),
+            End::Among(_) | End::Unplaced => None,
+        }
     }
 
     /// Pieces that are boxes on a board of one outline piece: a panel's
@@ -1872,16 +1905,17 @@ pub fn board_split_nets(pcb: &Expr, pieces: &Pieces) -> BTreeMap<String, usize> 
 }
 
 /// How far beyond the board an unconnected item's place may lie and still
-/// count on the nearest piece (mm): KiCad places a zone's item at a corner
-/// of its outline, which designers draw past the edge (up to 9 mm on the
-/// 4in1 panel).
+/// count on the nearest piece (mm). It was made for zones (KiCad places a
+/// zone's item at the first corner of its outline, which designers draw
+/// past the edge: up to 9 mm on the 4in1 panel); zones are now placed by
+/// their outline (`zone_end`), and the reach stays for the other items.
 const ZONE_REACH_MM: f64 = 25.0;
 
 /// A net's name as KiCad's reports write it: the board file's string
 /// escapes a quote and a backslash (`unescape`), and its text escapes `/`
 /// as `{slash}` and so on (KiCad's EscapeString); the DRC report does
 /// neither.
-fn unescaped(name: &str) -> String {
+pub fn unescaped(name: &str) -> String {
     let name = unescape(name);
     if !name.contains('{') {
         return name.into_owned();
@@ -1982,6 +2016,19 @@ pub fn repeated_reference_nets(pcb: &Expr) -> BTreeSet<String> {
 /// per sub-board does not count (`excuse_across`).
 pub const ACROSS_KEY: &str = "unconnected_across_sub_boards";
 
+/// Where one end of an unconnected item lies (`excuse_across`).
+#[derive(Clone, Debug, PartialEq)]
+enum End {
+    /// On this piece.
+    On(usize),
+    /// On one of these pieces (two or more): a zone whose outline spans
+    /// them. Its item stands for one island of its fill, and KiCad does not
+    /// say which.
+    Among(BTreeSet<usize>),
+    /// Off every piece, on a tab, or a zone the board does not hold.
+    Unplaced,
+}
+
 /// KiCad's check judged per sub-board: in a DRC report of `pcb`, the
 /// unconnected items of a net the sub-boards split (`board_split_nets`)
 /// whose two items lie on two pieces are what joining the sub-boards
@@ -1990,12 +2037,46 @@ pub const ACROSS_KEY: &str = "unconnected_across_sub_boards";
 /// `unconnected_items` to `ACROSS_KEY`. Other items, and as many more as
 /// KiCad's ratsnest put across the pieces (an island within a piece left
 /// open: its edge may end on the other piece), stay. Returns how many
-/// moved.
+/// moved. Without KiCad's fill (`excuse_across_with`), an item with an end
+/// on a zone over several pieces stays.
 pub fn excuse_across(
     report: &mut serde_json::Value,
     pcb: &Expr,
     pieces: &Pieces,
     designed: Option<&BTreeSet<String>>,
+) -> usize {
+    excuse_across_with(report, pcb, pieces, designed, &mut || None)
+}
+
+/// `excuse_across`, with `fills` giving `pcb` as KiCad's refill saves it
+/// (asked at most once, and only for a zone over several pieces).
+///
+/// A pad, track or via end lies on the piece of its place. A zone end does
+/// not: KiCad gives a zone's first outline corner as its item's place, and
+/// the item stands for one island of the zone's fill, which one the report
+/// does not say. The rule for zones: a zone (found by the item's uuid)
+/// whose outline, drawn on the pieces' raster, covers one piece lies on
+/// that piece. A zone whose outline covers several pieces lies on one of
+/// them, unknown which, and the items of its net are excused all together
+/// or not at all: when the net is split (`board_split_nets`: pads on each
+/// piece, none on a tab, no track or via on a tab or across; and none off
+/// the board, `copper_off_board`), the report is below KiCad's cap and
+/// lists exactly as many items of the net as the allowance (pieces minus
+/// one), every one of them can lie across (two ends of the net, each
+/// placed, not both on one piece), and KiCad's fill
+/// of the net, its polygons united per copper layer, has no connected part
+/// on two pieces. Then each of the net's copper clusters lies on one
+/// piece, each piece with pads holds one at least, and KiCad lists one
+/// item fewer than clusters: pieces minus one items means one cluster per
+/// piece, so every item joins two pieces and none is an open connection
+/// within one. More items than that fail the net anyway, and are left to
+/// the rule for placed ends without asking for the fill.
+pub fn excuse_across_with(
+    report: &mut serde_json::Value,
+    pcb: &Expr,
+    pieces: &Pieces,
+    designed: Option<&BTreeSet<String>>,
+    fills: &mut dyn FnMut() -> Option<Expr>,
 ) -> usize {
     let Some(items) = report["unconnected_items"].as_array() else {
         return 0;
@@ -2015,45 +2096,109 @@ pub fn excuse_across(
         .iter()
         .map(|(net, count)| (net.as_str(), count - 1))
         .collect();
-    let mut kept = Vec::new();
-    let mut across = Vec::new();
-    for item in items {
-        let ends: Vec<(Option<String>, Option<usize>)> = item["items"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(|end| {
-                let net = end["description"].as_str().and_then(described_net);
-                let at = [end["pos"]["x"].as_f64(), end["pos"]["y"].as_f64()];
-                let piece = match at {
-                    [Some(x), Some(y)] => pieces.piece_near([x, y], ZONE_REACH_MM),
-                    _ => None,
-                };
-                (net, piece)
-            })
-            .collect();
-        let excused = match ends.as_slice() {
-            [(Some(a), Some(pa)), (Some(b), Some(pb))] if a == b && pa != pb => {
-                match left.get_mut(a.as_str()) {
-                    Some(count) if *count > 0 => {
-                        *count -= 1;
-                        true
-                    }
-                    _ => false,
-                }
-            }
-            _ => false,
-        };
-        if excused {
-            across.push(item.clone());
-        } else {
-            kept.push(item.clone());
+    let mut zones: BTreeMap<String, End> = BTreeMap::new();
+    let ends: Vec<Vec<(Option<String>, End)>> = items
+        .iter()
+        .map(|item| {
+            item["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|end| {
+                    let description = end["description"].as_str().unwrap_or("");
+                    let net = described_net(description);
+                    let at = [end["pos"]["x"].as_f64(), end["pos"]["y"].as_f64()];
+                    let place = if description.starts_with("Zone ") {
+                        match (&net, end["uuid"].as_str()) {
+                            (Some(net), Some(uuid)) if split.contains_key(net) => zones
+                                .entry(uuid.to_string())
+                                .or_insert_with(|| zone_end(pcb, pieces, uuid))
+                                .clone(),
+                            _ => End::Unplaced,
+                        }
+                    } else {
+                        match at {
+                            [Some(x), Some(y)] => pieces
+                                .piece_near([x, y], ZONE_REACH_MM)
+                                .map_or(End::Unplaced, End::On),
+                            _ => End::Unplaced,
+                        }
+                    };
+                    (net, place)
+                })
+                .collect()
+        })
+        .collect();
+    let mut excused = vec![false; items.len()];
+    for (index, ends) in ends.iter().enumerate() {
+        if let [(Some(a), End::On(pa)), (Some(b), End::On(pb))] = ends.as_slice()
+            && a == b
+            && pa != pb
+            && let Some(count) = left.get_mut(a.as_str())
+            && *count > 0
+        {
+            *count -= 1;
+            excused[index] = true;
         }
     }
     // KiCad lists at most `KICAD_REPORT_CAP` unconnected items: at the cap
     // the items left are a lower bound, and none left would be a pass
     // KiCad's list cannot show; then nothing moves.
     let capped = items.len() >= KICAD_REPORT_CAP;
+    if !capped {
+        // The nets with an item on a zone over several pieces (rule above).
+        let mut of_net: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        for (index, ends) in ends.iter().enumerate() {
+            let nets: BTreeSet<&str> = ends.iter().filter_map(|(net, _)| net.as_deref()).collect();
+            for net in nets {
+                if split.contains_key(net) {
+                    of_net.entry(net).or_default().push(index);
+                }
+            }
+        }
+        let mut filled: Option<Option<Expr>> = None;
+        for (net, indices) in of_net {
+            let among = |index: &usize| {
+                ends[*index]
+                    .iter()
+                    .any(|(_, place)| matches!(place, End::Among(_)))
+            };
+            let may_cross = |index: &usize| match ends[*index].as_slice() {
+                [(Some(a), pa), (Some(b), pb)] => {
+                    a.as_str() == net
+                        && b.as_str() == net
+                        && *pa != End::Unplaced
+                        && *pb != End::Unplaced
+                        && !matches!((pa, pb), (End::On(x), End::On(y)) if x == y)
+                }
+                _ => false,
+            };
+            if !indices.iter().any(among)
+                || indices.len() != split[net] - 1
+                || !indices.iter().all(may_cross)
+                || copper_off_board(pcb, pieces, net)
+            {
+                continue;
+            }
+            let Some(filled) = filled.get_or_insert_with(&mut *fills) else {
+                continue;
+            };
+            if pieces.fill_joins(filled, net) {
+                continue;
+            }
+            for index in indices {
+                excused[index] = true;
+            }
+        }
+    }
+    let (mut kept, mut across) = (Vec::new(), Vec::new());
+    for (item, excused) in items.iter().zip(&excused) {
+        if *excused {
+            across.push(item.clone());
+        } else {
+            kept.push(item.clone());
+        }
+    }
     if capped && kept.is_empty() {
         return 0;
     }
@@ -2084,11 +2229,291 @@ fn described_net(description: &str) -> Option<String> {
     (net != "<no net>" && !net.is_empty()).then(|| net.to_string())
 }
 
-/// `excuse_across` on a DRC report file of the board file `board`, in
-/// place: read only when the report has unconnected items and the
-/// board's outline has two pieces or more. The report keeps KiCad's other
-/// fields as they are.
-pub fn excuse_across_file(report: &Path, board: &Path) -> Result<usize, String> {
+/// Whether a track, arc or via of `net` has a point off every piece and
+/// off the tabs: copper beyond the outline, which could join two pieces
+/// where `board_split_nets` does not look (a track to a point off the
+/// board and on to the other piece).
+fn copper_off_board(pcb: &Expr, pieces: &Pieces, net: &str) -> bool {
+    let codes = crate::kicad_nets::net_codes(pcb);
+    let off = |point: [f64; 2]| pieces.piece_at(point).is_none() && !pieces.between(point);
+    pcb.children().iter().any(|item| {
+        let heads: &[&str] = match item.head() {
+            Some("segment" | "arc") => &["start", "mid", "end"],
+            Some("via") => &["at"],
+            _ => return false,
+        };
+        crate::kicad_nets::item_net(item, &codes).is_some_and(|name| unescaped(name) == net)
+            && heads
+                .iter()
+                .filter_map(|head| crate::kicad_sexpr::form_xy(item, head).ok())
+                .any(off)
+    })
+}
+
+/// The zones of a board: its own and its footprints'.
+fn board_zones(pcb: &Expr) -> Vec<&Expr> {
+    let mut zones = Vec::new();
+    for item in pcb.children() {
+        match item.head() {
+            Some("zone") => zones.push(item),
+            Some("footprint") => zones.extend(
+                item.children()
+                    .iter()
+                    .filter(|child| child.head() == Some("zone")),
+            ),
+            _ => {}
+        }
+    }
+    zones
+}
+
+/// Where a zone's unconnected item lies (`excuse_across_with`): on the
+/// pieces the outline of the zone of `uuid` covers.
+fn zone_end(pcb: &Expr, pieces: &Pieces, uuid: &str) -> End {
+    let Some(zone) = board_zones(pcb)
+        .into_iter()
+        .find(|zone| crate::kicad_nets::footprint_uuid(zone).as_deref() == Some(uuid))
+    else {
+        return End::Unplaced;
+    };
+    let grid = pieces.grid();
+    let mut mask = vec![false; grid.columns * grid.rows];
+    for polygon in zone
+        .children()
+        .iter()
+        .filter(|child| child.head() == Some("polygon"))
+    {
+        if let Ok(points) = outline::pts_points(polygon) {
+            grid.draw(&points, &mut mask);
+        }
+    }
+    let covered: BTreeSet<usize> = mask
+        .iter()
+        .enumerate()
+        .filter(|(_, set)| **set)
+        .filter_map(|(index, _)| pieces.grid_piece(&grid, index))
+        .collect();
+    match covered.len() {
+        0 => End::Unplaced,
+        1 => End::On(*covered.first().expect("one piece")),
+        _ => End::Among(covered),
+    }
+}
+
+/// A raster polygons are drawn on (`Pieces::grid`).
+struct Grid {
+    origin: [f64; 2],
+    cell: f64,
+    columns: usize,
+    rows: usize,
+}
+
+impl Grid {
+    fn index_of(&self, point: [f64; 2]) -> Option<usize> {
+        let column = ((point[0] - self.origin[0]) / self.cell).floor();
+        let row = ((point[1] - self.origin[1]) / self.cell).floor();
+        if column < 0.0 || row < 0.0 {
+            return None;
+        }
+        let (column, row) = (column as usize, row as usize);
+        (column < self.columns && row < self.rows).then_some(row * self.columns + column)
+    }
+
+    /// Marks the cells whose centre `polygon` holds (even-odd) and the
+    /// cells its sides pass, so that a strip thinner than a cell stays
+    /// joined.
+    fn draw(&self, polygon: &[[f64; 2]], mask: &mut [bool]) {
+        if polygon.len() < 3 || self.columns == 0 || self.rows == 0 {
+            return;
+        }
+        let b = polygon_box(polygon);
+        let first_row = ((b[1] - self.origin[1]) / self.cell - 0.5).ceil().max(0.0) as usize;
+        let last_row = ((b[3] - self.origin[1]) / self.cell - 0.5).floor();
+        let mut crossings: Vec<f64> = Vec::new();
+        if last_row >= 0.0 {
+            for row in first_row..=(last_row as usize).min(self.rows - 1) {
+                let y = self.origin[1] + (row as f64 + 0.5) * self.cell;
+                crossings.clear();
+                for index in 0..polygon.len() {
+                    let (a, b) = (polygon[index], polygon[(index + 1) % polygon.len()]);
+                    if (a[1] <= y) != (b[1] <= y) {
+                        crossings.push(a[0] + (y - a[1]) / (b[1] - a[1]) * (b[0] - a[0]));
+                    }
+                }
+                crossings.sort_by(f64::total_cmp);
+                for pair in crossings.chunks(2) {
+                    let [start, end] = pair else { break };
+                    let first =
+                        ((start - self.origin[0]) / self.cell - 0.5).ceil().max(0.0) as usize;
+                    let last = ((end - self.origin[0]) / self.cell - 0.5).floor();
+                    if last < 0.0 {
+                        continue;
+                    }
+                    for column in first..=(last as usize).min(self.columns - 1) {
+                        mask[row * self.columns + column] = true;
+                    }
+                }
+            }
+        }
+        for index in 0..polygon.len() {
+            let (a, b) = (polygon[index], polygon[(index + 1) % polygon.len()]);
+            let steps = ((b[0] - a[0]).hypot(b[1] - a[1]) / (self.cell / 4.0))
+                .ceil()
+                .max(1.0) as usize;
+            for step in 0..=steps {
+                let t = step as f64 / steps as f64;
+                if let Some(at) =
+                    self.index_of([a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])])
+                {
+                    mask[at] = true;
+                }
+            }
+        }
+    }
+}
+
+impl Pieces {
+    /// The raster zones are drawn on: the pieces' own, or for pieces that
+    /// are boxes (`of_boxes`) one over them.
+    fn grid(&self) -> Grid {
+        if !self.boxed() {
+            return Grid {
+                origin: self.origin,
+                cell: self.cell,
+                columns: self.columns,
+                rows: self.rows,
+            };
+        }
+        let all = self.boxes.iter().fold(
+            [
+                f64::INFINITY,
+                f64::INFINITY,
+                f64::NEG_INFINITY,
+                f64::NEG_INFINITY,
+            ],
+            |a, b| {
+                [
+                    a[0].min(b[0]),
+                    a[1].min(b[1]),
+                    a[2].max(b[2]),
+                    a[3].max(b[3]),
+                ]
+            },
+        );
+        let extent = (all[2] - all[0]).max(all[3] - all[1]);
+        if !extent.is_finite() || extent <= 0.0 {
+            return Grid {
+                origin: [0.0, 0.0],
+                cell: 1.0,
+                columns: 0,
+                rows: 0,
+            };
+        }
+        let cell = (extent / 1500.0).max(0.1);
+        Grid {
+            origin: [all[0] - cell, all[1] - cell],
+            cell,
+            columns: ((all[2] - all[0]) / cell).ceil() as usize + 3,
+            rows: ((all[3] - all[1]) / cell).ceil() as usize + 3,
+        }
+    }
+
+    /// The piece of a cell of `grid` (`Pieces::grid`); None on a tab or
+    /// off the board.
+    fn grid_piece(&self, grid: &Grid, index: usize) -> Option<usize> {
+        if !self.boxed() {
+            let label = self.labels[index];
+            return (label != NONE).then_some(label as usize);
+        }
+        let (row, column) = (index / grid.columns, index % grid.columns);
+        self.piece_at([
+            grid.origin[0] + (column as f64 + 0.5) * grid.cell,
+            grid.origin[1] + (row as f64 + 0.5) * grid.cell,
+        ])
+    }
+
+    /// Whether KiCad's fill of `net` in `filled` (the board as its refill
+    /// saves it) joins two pieces: its polygons, united per copper layer
+    /// (cells touching at a corner joined), have a connected part on two.
+    fn fill_joins(&self, filled: &Expr, net: &str) -> bool {
+        let codes = crate::kicad_nets::net_codes(filled);
+        let mut layers: BTreeMap<String, Vec<Vec<[f64; 2]>>> = BTreeMap::new();
+        for zone in board_zones(filled) {
+            let Some(name) = crate::kicad_nets::item_net(zone, &codes)
+                .or_else(|| form_atom(zone, "net_name", 1))
+            else {
+                continue;
+            };
+            if unescaped(name) != net {
+                continue;
+            }
+            for polygon in zone
+                .children()
+                .iter()
+                .filter(|child| child.head() == Some("filled_polygon"))
+            {
+                let layer = form_atom(polygon, "layer", 1)
+                    .or_else(|| form_atom(zone, "layer", 1))
+                    .unwrap_or_default();
+                if let Ok(points) = outline::pts_points(polygon) {
+                    layers.entry(layer.to_string()).or_default().push(points);
+                }
+            }
+        }
+        let grid = self.grid();
+        let count = grid.columns * grid.rows;
+        let mut stack = Vec::new();
+        for polygons in layers.values() {
+            let mut mask = vec![false; count];
+            for polygon in polygons {
+                grid.draw(polygon, &mut mask);
+            }
+            let mut seen = vec![false; count];
+            for start in 0..count {
+                if !mask[start] || seen[start] {
+                    continue;
+                }
+                let mut on: Option<usize> = None;
+                seen[start] = true;
+                stack.push(start);
+                while let Some(at) = stack.pop() {
+                    if let Some(piece) = self.grid_piece(&grid, at) {
+                        match on {
+                            Some(other) if other != piece => return true,
+                            _ => on = Some(piece),
+                        }
+                    }
+                    let (row, column) = (at / grid.columns, at % grid.columns);
+                    for dy in -1i64..=1 {
+                        for dx in -1i64..=1 {
+                            let (r, c) = (row as i64 + dy, column as i64 + dx);
+                            if r < 0 || c < 0 || r >= grid.rows as i64 || c >= grid.columns as i64 {
+                                continue;
+                            }
+                            let next = r as usize * grid.columns + c as usize;
+                            if mask[next] && !seen[next] {
+                                seen[next] = true;
+                                stack.push(next);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+}
+
+/// `excuse_across_with` on a DRC report file of the board file `board`,
+/// in place: read only when the report has unconnected items and the
+/// board's outline has two pieces or more; `fills` gives the board as
+/// KiCad's refill saves it. The report keeps KiCad's other fields as they
+/// are.
+pub fn excuse_across_file(
+    report: &Path,
+    board: &Path,
+    fills: &mut dyn FnMut() -> Option<Expr>,
+) -> Result<usize, String> {
     let text = fs::read_to_string(report)
         .map_err(|error| format!("failed to read {}: {error}", report.display()))?;
     let mut value: serde_json::Value =
@@ -2112,7 +2537,7 @@ pub fn excuse_across_file(report: &Path, board: &Path) -> Result<usize, String> 
             None => return Ok(0),
         },
     };
-    let moved = excuse_across(&mut value, &pcb, &pieces, designed.as_ref());
+    let moved = excuse_across_with(&mut value, &pcb, &pieces, designed.as_ref(), fills);
     if moved > 0 {
         let text = serde_json::to_string_pretty(&value).map_err(|error| error.to_string())?;
         crate::fs_util::write_atomically(report, text.as_bytes())
@@ -2206,5 +2631,165 @@ mod tests {
             ..pieces
         };
         assert_eq!(pieces.outline_frames(), vec![false, false]);
+    }
+
+    /// Two 20 x 20 pieces (y 0 to 20 and 25 to 45) joined by a 4 mm
+    /// bridge with a row of mouse bites, a GND pad on each, and `zones`.
+    fn split_panel(zones: &str) -> Expr {
+        let outline = "(gr_poly (pts (xy 0 0) (xy 20 0) (xy 20 20) (xy 12 20) (xy 12 25) (xy 20 25) (xy 20 45) (xy 0 45) (xy 0 25) (xy 8 25) (xy 8 20) (xy 0 20)) (layer \"Edge.Cuts\"))";
+        let holes: String = (0..5)
+            .map(|index| {
+                let x = 8.4 + 0.8 * index as f64;
+                format!(
+                    "(gr_circle (center {x} 22.5) (end {} 22.5) (layer \"Edge.Cuts\"))",
+                    x + 0.25
+                )
+            })
+            .collect();
+        let part = |name: &str, x: f64, y: f64| {
+            format!(
+                r#"(footprint "{name}" (at {x} {y}) (property "Reference" "{name}") (pad "1" thru_hole circle (at 0 0) (size 1.6 1.6) (drill 0.8) (layers "*.Cu") (net "GND")))"#
+            )
+        };
+        crate::kicad_sexpr::parse(&format!(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user)) {outline} {holes} {} {} {zones})"#,
+            part("J1", 3.0, 5.0),
+            part("J1", 3.0, 35.0),
+        ))
+        .unwrap()
+    }
+
+    /// A GND zone on `layer` with outline `outline` and fill `fills`.
+    fn zone(uuid: &str, layer: &str, outline: [f64; 4], fills: &[[f64; 4]]) -> String {
+        let rect = |b: [f64; 4]| {
+            format!(
+                "(pts (xy {} {}) (xy {} {}) (xy {} {}) (xy {} {}))",
+                b[0], b[1], b[2], b[1], b[2], b[3], b[0], b[3]
+            )
+        };
+        let fills: String = fills
+            .iter()
+            .map(|b| format!("(filled_polygon (layer \"{layer}\") {})", rect(*b)))
+            .collect();
+        format!(
+            "(zone (net \"GND\") (layer \"{layer}\") (uuid \"{uuid}\") (polygon {}) {fills})",
+            rect(outline)
+        )
+    }
+
+    /// KiCad's item between the zones `a` (F.Cu) and `b` (B.Cu), each at
+    /// its outline's first corner.
+    fn zone_item(a: (&str, [f64; 2]), b: (&str, [f64; 2])) -> serde_json::Value {
+        serde_json::json!({"type": "unconnected_items", "items": [
+            {"description": "Zone [GND] on F.Cu, priority 0", "pos": {"x": a.1[0], "y": a.1[1]}, "uuid": a.0},
+            {"description": "Zone [GND] on B.Cu, priority 1", "pos": {"x": b.1[0], "y": b.1[1]}, "uuid": b.0}]})
+    }
+
+    const PANEL: [f64; 4] = [-2.0, -2.0, 30.0, 47.0];
+    const TOP: [f64; 4] = [0.5, 0.5, 19.5, 19.5];
+    const BOTTOM: [f64; 4] = [0.5, 25.5, 19.5, 44.5];
+
+    #[test]
+    fn a_split_nets_zones_over_both_pieces_are_excused_by_their_fill() {
+        // woagboard: GND split by design, one F.Cu and one B.Cu zone over
+        // the whole panel, each filled on both pieces apart; KiCad's one
+        // item joins the zones, both placed at corners off the board's
+        // right (both nearest one piece by place alone).
+        let zones = [
+            zone("zf", "F.Cu", PANEL, &[TOP, BOTTOM]),
+            zone("zb", "B.Cu", PANEL, &[TOP, BOTTOM]),
+        ]
+        .join(" ");
+        let pcb = split_panel(&zones);
+        let pieces = Pieces::of_board(&pcb).unwrap().expect("pieces");
+        assert_eq!(board_split_nets(&pcb, &pieces).get("GND"), Some(&2));
+        let report = serde_json::json!({"unconnected_items": [
+            zone_item(("zf", [30.0, 47.0]), ("zb", [30.0, 25.0]))]});
+        // Without KiCad's fill: kept.
+        let mut without = report.clone();
+        assert_eq!(excuse_across(&mut without, &pcb, &pieces, None), 0);
+        // With it (the board's own fills here): excused, the fill asked once.
+        let mut with = report.clone();
+        let mut asked = 0;
+        let mut fills = || {
+            asked += 1;
+            Some(pcb.clone())
+        };
+        assert_eq!(
+            excuse_across_with(&mut with, &pcb, &pieces, None, &mut fills),
+            1
+        );
+        assert_eq!(asked, 1);
+        assert!(with["unconnected_items"].as_array().unwrap().is_empty());
+        assert_eq!(with[ACROSS_KEY].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_zone_item_within_one_piece_is_not_excused() {
+        let excused = |zones: &[String], report: serde_json::Value| {
+            let pcb = split_panel(&zones.join(" "));
+            let pieces = Pieces::of_board(&pcb).unwrap().expect("pieces");
+            let mut report = report;
+            excuse_across_with(&mut report, &pcb, &pieces, None, &mut || Some(pcb.clone()))
+        };
+        // Both zones on the top piece alone: an open connection there.
+        let top = [-2.0, -2.0, 22.0, 20.0];
+        assert_eq!(
+            excused(
+                &[
+                    zone("zf", "F.Cu", top, &[TOP]),
+                    zone("zb", "B.Cu", top, &[TOP]),
+                ],
+                serde_json::json!({"unconnected_items": [
+                    zone_item(("zf", [22.0, 20.0]), ("zb", [22.0, 20.0]))]}),
+            ),
+            0
+        );
+        // Zones over both pieces whose F.Cu fill runs over the bridge: the
+        // pieces' GND is one, and the item is an open connection within a
+        // piece (the B.Cu fill of one, say).
+        let over_bridge = [[0.5, 0.5, 19.5, 44.5]];
+        assert_eq!(
+            excused(
+                &[
+                    zone("zf", "F.Cu", PANEL, &over_bridge),
+                    zone("zb", "B.Cu", PANEL, &[TOP, BOTTOM]),
+                ],
+                serde_json::json!({"unconnected_items": [
+                    zone_item(("zf", [30.0, 47.0]), ("zb", [30.0, 25.0]))]}),
+            ),
+            0
+        );
+        // A GND track out past the board's edge and back onto the other
+        // piece joins the pieces where `board_split_nets` does not look.
+        assert_eq!(
+            excused(
+                &[
+                    zone("zf", "F.Cu", PANEL, &[TOP, BOTTOM]),
+                    zone("zb", "B.Cu", PANEL, &[TOP, BOTTOM]),
+                    r#"(segment (start 3 5) (end 25 22.5) (width 0.2) (layer "F.Cu") (net "GND"))"#
+                        .to_string(),
+                    r#"(segment (start 25 22.5) (end 3 35) (width 0.2) (layer "F.Cu") (net "GND"))"#
+                        .to_string(),
+                ],
+                serde_json::json!({"unconnected_items": [
+                    zone_item(("zf", [30.0, 47.0]), ("zb", [30.0, 25.0]))]}),
+            ),
+            0
+        );
+        // Two items of GND over two pieces: one more than the split
+        // explains, and which is within a piece the report does not say.
+        assert_eq!(
+            excused(
+                &[
+                    zone("zf", "F.Cu", PANEL, &[TOP, BOTTOM]),
+                    zone("zb", "B.Cu", PANEL, &[TOP, BOTTOM]),
+                ],
+                serde_json::json!({"unconnected_items": [
+                    zone_item(("zf", [30.0, 47.0]), ("zb", [30.0, 25.0])),
+                    zone_item(("zf", [30.0, 47.0]), ("zb", [30.0, 25.0]))]}),
+            ),
+            0
+        );
     }
 }

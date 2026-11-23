@@ -28,11 +28,34 @@ pub struct KiCadBoardRouterViolation {
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct KiCadBoardRouterResult {
     pub board_id: String,
+    /// Exact prior copper considered in route mode and its native admission.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub route_reuse: Option<super::KiCadRouteReuse>,
+    /// In-process proof for sharing the selected closed trial's strict DRC.
+    #[doc(hidden)]
+    #[serde(skip)]
+    pub closed_reuse_drc: Option<verification::ClosedReuseDrc>,
+    /// The ordinary final native check's exact in-process fill receipt.
+    #[doc(hidden)]
+    #[serde(skip)]
+    pub checked_layout_refill: Option<verification::CheckedRefill>,
+    /// Short pad leaves emitted by this route, for the native-gated repair.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub generated_pad_leaf_ids: Vec<String>,
     pub routable_connections: usize,
     pub routed_connections: usize,
     pub unconnected_terminals: usize,
+    /// Legacy total of `nets[].vias` from route emission.
     pub vias: usize,
+    /// Legacy total of `nets[].length_mm` from route emission.
     pub length_mm: f64,
+    /// All track and via objects on the saved PCB, including retained copper,
+    /// pair routes and repairs that ran after the ordinary router.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub saved_copper: Option<pcb_kicad_file::board_stats::KiCadSavedCopper>,
+    /// Independent KiCad evidence for preserving an input route or plane.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_connectivity: Option<super::KiCadInputConnectivity>,
     pub grid_pitch_mm: f64,
     pub grid_nodes: [usize; 2],
     pub iterations: usize,
@@ -44,6 +67,19 @@ pub struct KiCadBoardRouterResult {
     pub native_verification_seconds: f64,
     pub internal_violations: Vec<KiCadBoardRouterViolation>,
     pub native: Option<VerificationReport>,
+    /// Scoped severity-error DRC count used while ranking checked rungs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_candidate_errors: Option<usize>,
+    /// Native verification and `saved_copper` include a later repair. Core
+    /// search metrics and per-net route totals precede it.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub model_precedes_additive_repair: bool,
+    /// The saved copper and native result include a verified pad-via move.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub model_precedes_generated_pad_via_repair: bool,
+    /// A verified postroute pad relocation retained the saved tracks and vias.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub model_precedes_body_near_grid_retry: bool,
     /// `connect`, `tracks`, or `none` when the board has no pours.
     pub pours: String,
     pub nets: Vec<KiCadBoardRouterNet>,
@@ -245,6 +281,9 @@ pub struct KiCadAttemptRecord {
     pub open: usize,
     pub starved: usize,
     pub counted_by: String,
+    /// The native severity-error count when the rung was fully checked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_candidate_errors: Option<usize>,
     pub vias: usize,
     pub iterations: usize,
     /// Its work as the ladder charged it and its routing's wall clock.
@@ -647,7 +686,7 @@ pub(super) fn starved_thermal_diagnostics(directory: &Path) -> Vec<KiCadStarvedT
     found
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct KiCadDeadPad {
     pub pad: String,
     pub net: String,
@@ -657,6 +696,22 @@ pub struct KiCadDeadPad {
     /// at the pad's best point for the net's narrowest track, or what
     /// blocks the stubs from a legal track end to the nearest nodes.
     pub wall: String,
+}
+
+impl KiCadDeadPad {
+    pub(crate) fn of(
+        dead: &core::router::DeadPad,
+        board: &core::Board,
+        layer_names: &[String],
+    ) -> Self {
+        Self {
+            pad: dead.label.clone(),
+            net: board.nets[dead.net as usize].name.clone(),
+            at: dead.anchor.map(|value| (value * 1000.0).round() / 1000.0),
+            near: dead.near.clone(),
+            wall: name_layers(&dead.wall, layer_names),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -872,13 +927,7 @@ pub(super) fn diagnostics(
             .diagnostics
             .dead_pads
             .iter()
-            .map(|dead| KiCadDeadPad {
-                pad: dead.label.clone(),
-                net: board.nets[dead.net as usize].name.clone(),
-                at: round(dead.anchor),
-                near: dead.near.clone(),
-                wall: name_layers(&dead.wall, layer_names),
-            })
+            .map(|dead| KiCadDeadPad::of(dead, board, layer_names))
             .collect(),
         conflicted_nets: result
             .diagnostics

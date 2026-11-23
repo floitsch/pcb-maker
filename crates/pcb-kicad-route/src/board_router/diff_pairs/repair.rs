@@ -248,7 +248,11 @@ impl StubRepair<'_> {
                 continue;
             };
             let (at, along) = link.stub_end(end, polarity, pair.width);
-            let layers = link.runs[end][polarity].layers;
+            let Some(layer) = self.candidates[position].2.stub_layers()[end][polarity] else {
+                self.failed.insert(position);
+                continue;
+            };
+            let layers = 1 << layer;
             sub.obstacles.push(net_copper(
                 core::Shape::Capsule {
                     start: at,
@@ -296,17 +300,21 @@ impl StubRepair<'_> {
             }
             let pair = &self.pairs[self.candidates[position].0];
             let link = self.links[position];
+            let layers = self.candidates[position].2.stub_layers();
             let joined = complete
                 && (0..2).filter(|&end| !link.fixed[end]).all(|end| {
                     [(0, pair.positive), (1, pair.negative)]
                         .into_iter()
                         .all(|(polarity, net)| {
+                            let Some(layer) = layers[end][polarity] else {
+                                return false;
+                            };
                             stub_joined(
                                 self.board,
                                 &result.routes[net as usize],
                                 net,
                                 (link.pads[end][polarity], link.pads[1 - end][polarity]),
-                                link.stub_end(end, polarity, pair.width),
+                                (layer, link.stub_end(end, polarity, pair.width)),
                                 stub_reach(pair, result, net),
                             )
                         })

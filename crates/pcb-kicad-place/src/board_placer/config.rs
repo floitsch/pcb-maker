@@ -30,6 +30,16 @@ pub struct KiCadBoardPlacerConfig {
     pub fixed_patterns: Vec<String>,
     /// References that may move even though a default rule would fix them.
     pub free: Vec<String>,
+    /// Reference patterns of movable front-side SMD footprints the placer
+    /// may put on the back to relieve overcrowding, a same-side region
+    /// conflict, or a single unplaced part. Defaults to empty. Explicit
+    /// sides and held poses still apply.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub allow_back: Vec<String>,
+    /// Try one placement seed with the initial pose of a movable,
+    /// signal-dense footprint estimated from the held interfaces.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub signal_anchor_seed: bool,
     /// Wall-clock time by which placement returns its best result (set by
     /// the layout from its budget; placement of a 404-part panel ran past
     /// 25 minutes).
@@ -104,6 +114,14 @@ pub struct KiCadBoardPlacerConfig {
     /// zpn_devboard passes (its parts had spread over an empty breakaway,
     /// 129 open after the first route); nothing changes on the quick tier.
     pub keep_on_pieces: bool,
+    /// On a board divided into breakaway modules (slots and rows of holes
+    /// whose tabs pass a few tracks, protoesp; or separate outline loops,
+    /// the Modular Hub), each movable part stays in the module the netlist
+    /// assigns it (a partition seeded by the parts that stay where they
+    /// are, each module's parts within its area, the fewest tracks over
+    /// the tabs): docs/placer.md, "Modules of one board". No change on a
+    /// board without modules.
+    pub keep_in_modules: bool,
     /// Panel-aware placement (on since 2026-10-26; false turns it off):
     /// where the board holds
     /// copies of one circuit (the same footprints, nets that map one to
@@ -260,6 +278,9 @@ pub struct KiCadBoardPlacerConfig {
     /// check from the router's rules where the switch is on).
     #[serde(skip)]
     pub pair_geometry: std::collections::BTreeMap<String, PairGeometry>,
+    /// The rows already placed, if the layout is reading back its own board.
+    #[serde(skip)]
+    pub placed_pair_rows: Option<Vec<super::PairRow>>,
     /// Pads without a way out (off; docs/placer.md "Pads without a way out"):
     /// after each seed's placement, every pad is tested for a way out as the
     /// router sees the board (a legal lattice path from its nodes on the
@@ -270,7 +291,8 @@ pub struct KiCadBoardPlacerConfig {
     /// leaves fewer pads closed around it), and the pads left closed are
     /// reported (`pad_exits` in board-placer.json, the verdict's next
     /// actions). Needs the router's configuration (the layout and the place
-    /// check give it). `PCB_PLACER_PAD_EXITS=1` turns it on with the defaults
+    /// check give it).
+    /// `PCB_PLACER_PAD_EXITS=1` turns it on with the defaults
     /// (`reach_mm` 1, `candidates` 16), `0` off.
     #[serde(default)]
     pub pad_exits: Option<KiCadPadExits>,
@@ -290,6 +312,9 @@ pub struct KiCadPlacerTuning {
     pub spacing_mm: f64,
     /// Footprint origins are snapped to multiples of this.
     pub grid_mm: f64,
+    /// After normal placement, explicit pad-to-pad near constraints may
+    /// move a seated source part off the grid while preserving legality.
+    pub refine_pad_near: bool,
     /// Movable parts keep the angle the board gives them; otherwise each
     /// may take any quarter turn of it (and square angles too when it
     /// stands at an odd one).
@@ -420,6 +445,7 @@ impl Default for KiCadPlacerTuning {
         Self {
             spacing_mm: 0.5,
             grid_mm: 0.635,
+            refine_pad_near: false,
             keep_rotation: false,
             edge_keep_mm: default_edge_keep_mm(),
             whitespace_fill: 0.0,
@@ -502,6 +528,8 @@ impl Default for KiCadBoardPlacerConfig {
             fixed: Vec::new(),
             fixed_patterns: Vec::new(),
             free: Vec::new(),
+            allow_back: Vec::new(),
+            signal_anchor_seed: false,
             deadline: None,
             work_seconds: None,
             constraints: None,
@@ -516,6 +544,7 @@ impl Default for KiCadBoardPlacerConfig {
             decoupling_mm: None,
             decoupling_near: false,
             keep_on_pieces: true,
+            keep_in_modules: true,
             panel_copies: true,
             sub_boards: true,
             sub_board_reference: None,
@@ -530,6 +559,7 @@ impl Default for KiCadBoardPlacerConfig {
             length_minima: false,
             router_rules: None,
             pair_geometry: Default::default(),
+            placed_pair_rows: None,
             pad_exits: None,
             tuning: KiCadPlacerTuning::default(),
         }

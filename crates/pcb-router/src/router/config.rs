@@ -259,6 +259,9 @@ pub struct Config {
     /// its budget: a 210 x 170 mm board routed clean in 130 s and then
     /// spent the runner's remaining 770 s polishing).
     pub via_reduction_seconds: f64,
+    /// Start via reduction only if its phase budget fits before the
+    /// caller's work deadline.
+    pub require_via_reduction_budget: bool,
     /// The via reduction keeps its budget within a round too: a round
     /// whose cost (projected from the previous round) exceeds what is left
     /// does not start, and a round's negotiation and clean-up get only
@@ -431,6 +434,7 @@ impl Default for Config {
             via_reduction_present: 0.5,
             via_reduction_budget: 3.0,
             via_reduction_seconds: 300.0,
+            require_via_reduction_budget: false,
             strict_via_budget: true,
             run_work: None,
             via_reduction_keeps_spokes: false,

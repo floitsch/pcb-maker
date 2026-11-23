@@ -33,6 +33,23 @@ pub(super) struct LinkCopper {
     pub moved: bool,
 }
 
+impl LinkCopper {
+    /// The layer of the emitted copper at each end and polarity. The
+    /// planning terminal may have advertised several possible layers.
+    pub(super) fn stub_layers(&self) -> [[Option<usize>; 2]; 2] {
+        std::array::from_fn(|end| {
+            self.segments.each_ref().map(|segments| {
+                (if end == 0 {
+                    segments.first()
+                } else {
+                    segments.last()
+                })
+                .map(|(layer, ..)| *layer)
+            })
+        })
+    }
+}
+
 /// One side of a centreline polyline, `offset` to its left (`side` 1) or
 /// right (-1): mitred on the inside of a bend where both segments are long
 /// enough, bevelled on the outside (it stays inside the envelope).

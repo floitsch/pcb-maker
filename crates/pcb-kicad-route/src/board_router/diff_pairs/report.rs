@@ -22,6 +22,9 @@ pub struct KiCadDiffPairs {
     /// nothing asks.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub reason: String,
+    /// Pairs explicitly omitted from coupling and inferred placement.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub excluded_pairs: Vec<KiCadExcludedDiffPair>,
     /// Pairs found by name (both nets with pads on the board).
     pub found: usize,
     /// Pairs whose every link is coupled.
@@ -67,8 +70,13 @@ pub struct KiCadDiffPairs {
     /// run"). Their work is in `work_seconds`.
     #[serde(default, skip_serializing_if = "is_no_count")]
     pub stubs_routed: usize,
-    /// The fallback router's and the stub repair's work (seconds of an
-    /// idle machine), charged to the ladder.
+    /// Redundant generated paths removed beside retained coupled copper.
+    #[serde(default, skip_serializing_if = "is_no_count")]
+    pub parallel_branches_removed: usize,
+    /// Short tips discarded where a generated launch was replaced.
+    #[serde(default, skip_serializing_if = "is_no_count")]
+    pub obsolete_launch_tips_removed: usize,
+    /// Fallback routing, stub repair and path cleanup work charged to the ladder.
     pub work_seconds: f64,
     /// The largest skew of a pair with a coupled link (its nets' lengths
     /// apart after the route, from the written copper: tracks, and vias at
@@ -92,8 +100,84 @@ pub struct KiCadDiffPairs {
     /// verdict, unlike `pairs`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skews: Vec<KiCadPairSkew>,
+    /// Planar track lengths on simple two-pad pairs routed separately.
+    /// Advisory evidence from the final board after a native check.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fallback_lengths: Vec<KiCadFallbackPairLength>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pairs: Vec<KiCadDiffPair>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct KiCadExcludedDiffPair {
+    /// The exact pad net names as declared on the source board.
+    pub nets: [String; 2],
+    /// Authored electrical rules resolved for these nets. KiCad still
+    /// evaluates them on the finished copper.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub native_rules: Vec<String>,
+}
+
+impl KiCadDiffPairs {
+    pub(crate) fn exclusions_without_plan(
+        config: &KiCadBoardRouterConfig,
+        reason: &str,
+    ) -> Option<Self> {
+        if config.diff_pair_exclusions.is_empty() {
+            return None;
+        }
+        let mut report = Self {
+            default: "off".into(),
+            reason: reason.into(),
+            ..Self::default()
+        };
+        report.record_exclusions(config);
+        Some(report)
+    }
+
+    pub fn record_exclusions(&mut self, config: &KiCadBoardRouterConfig) {
+        self.excluded_pairs = config
+            .diff_pair_exclusions
+            .iter()
+            .zip(&config.excluded_pair_connections)
+            .map(|(nets, connections)| {
+                let mut rules = BTreeSet::new();
+                for name in connections {
+                    if let Some(pair) = config.diff_pair_rules.get(name) {
+                        rules.extend(pair.rules.iter().cloned());
+                    }
+                }
+                for rule in &config.length_rules {
+                    if rule
+                        .nets
+                        .iter()
+                        .any(|member| connections.contains(&member.net))
+                    {
+                        rules.insert(rule.rule.clone());
+                    }
+                }
+                KiCadExcludedDiffPair {
+                    nets: nets.clone(),
+                    native_rules: rules.into_iter().collect(),
+                }
+            })
+            .collect();
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct KiCadFallbackPairLength {
+    pub positive: KiCadFallbackConductor,
+    pub negative: KiCadFallbackConductor,
+    pub planar_difference_mm: f64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct KiCadFallbackConductor {
+    /// The exact board net name as used by KiCad's rule expressions.
+    pub net: String,
+    pub pads: [String; 2],
+    pub planar_track_length_mm: f64,
 }
 
 /// One coupled pair's lengths (`KiCadDiffPairs::skews`).
@@ -148,6 +232,8 @@ pub struct KiCadDiffPair {
     /// Why links fell back, when some did.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub why: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unmatched_end: Option<KiCadPairEndpointSpacing>,
     /// After routing: the two nets' lengths apart (`KiCadPairSkew`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skew_mm: Option<f64>,
@@ -162,4 +248,12 @@ pub struct KiCadDiffPair {
     pub pair_vias: usize,
     #[serde(default)]
     pub return_vias: usize,
+}
+
+/// The pads at the unmatched end of a two-terminal differential pair.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct KiCadPairEndpointSpacing {
+    pub pad_labels: [String; 2],
+    pub separation_mm: f64,
+    pub ordinary_span_mm: f64,
 }

@@ -5,7 +5,293 @@
 //! parts on top of each other.
 
 use super::*;
-use crate::footprint_bodies::{PadBox, pad_boxes};
+use crate::footprint_bodies::{PadBox, pad_boxes, write_footprint_pose};
+use pcb_router::geometry::{
+    Aabb, Shape, point_in_polygon, point_segment_distance, polygon_edges, segment_segment_distance,
+};
+
+// Include endpoint chaining (20 µm per contour), curve flattening, and
+// board coordinate rounding when comparing outlines.
+const CONTOUR_GAP: f64 = 0.041 + 2.0 * outline::ARC_TOLERANCE;
+pub const HELD_BOUNDING_BOXES: &str = "bounding boxes";
+
+enum Courtyard {
+    Absent,
+    Closed {
+        outlines: Vec<Vec<[f64; 2]>>,
+        has_cutouts: bool,
+    },
+    Unknown,
+}
+
+impl Courtyard {
+    fn read(footprint: &Expr, layer: &str) -> Self {
+        let Ok(at) = form_at(footprint) else {
+            return Self::Unknown;
+        };
+        // Chain the authored local coordinates before applying the pose.
+        // World-space arc reconstruction can round a shared endpoint
+        // differently after a footprint is rotated and translated.
+        let mut drawing = vec![Expr::Atom("footprint".into())];
+        for graphic in footprint
+            .children()
+            .iter()
+            .filter(|graphic| form_atom(graphic, "layer", 1) == Some(layer))
+        {
+            let supported = match graphic.head() {
+                Some("fp_line" | "fp_arc" | "fp_rect" | "fp_circle") => true,
+                Some("fp_poly") => {
+                    graphic.child("pts").is_some_and(|pts| {
+                        pts.children()
+                            .iter()
+                            .skip(1)
+                            .all(|point| matches!(point.head(), Some("xy" | "arc")))
+                    }) && outline::pts_points(graphic).is_ok_and(|points| points.len() >= 3)
+                }
+                _ => false,
+            };
+            if !supported || drawing.len() > 128 {
+                return Self::Unknown;
+            }
+            let mut fields = graphic.children().to_vec();
+            if let Some(field) = fields
+                .iter_mut()
+                .find(|field| field.head() == Some("layer"))
+            {
+                *field = Expr::List(vec![
+                    Expr::Atom("layer".into()),
+                    Expr::Atom("Edge.Cuts".into()),
+                ]);
+            }
+            drawing.push(Expr::List(fields));
+        }
+        if drawing.len() == 1 {
+            return Self::Absent;
+        }
+        let board = Expr::List(vec![Expr::Atom("kicad_pcb".into()), Expr::List(drawing)]);
+        let Ok(mut loops) = outline::board_loops_strict(&board) else {
+            return Self::Unknown;
+        };
+        // Treat each outer loop as solid, including holes. Internal gaps
+        // in a footprint drawing are insufficient proof of physical fit.
+        if loops
+            .piece_loops
+            .iter()
+            .chain(&loops.cutouts)
+            .all(|points| simple_contour(points))
+        {
+            for point in loops.piece_loops.iter_mut().flatten() {
+                let offset = rotate_vector(*point, -at[2]);
+                *point = [at[0] + offset[0], at[1] + offset[1]];
+            }
+            Self::Closed {
+                outlines: loops.piece_loops,
+                has_cutouts: !loops.cutouts.is_empty(),
+            }
+        } else {
+            Self::Unknown
+        }
+    }
+
+    fn clear_of(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Closed { outlines: a, .. }, Self::Closed { outlines: b, .. }) => {
+                a.iter().all(|a| b.iter().all(|b| polygons_separate(a, b)))
+            }
+            _ => false,
+        }
+    }
+
+    fn overlaps(&self, other: &Self) -> bool {
+        let (
+            Self::Closed {
+                outlines: a,
+                has_cutouts: false,
+            },
+            Self::Closed {
+                outlines: b,
+                has_cutouts: false,
+            },
+        ) = (self, other)
+        else {
+            return false;
+        };
+        // A point that lies well inside the other contour witnesses area
+        // overlap, leaving an ambiguous touch as a bounding-box warning.
+        let inside = |point, polygon: &[[f64; 2]]| {
+            point_in_polygon(point, polygon)
+                && polygon_edges(polygon)
+                    .all(|(u, v)| point_segment_distance(point, u, v) > CONTOUR_GAP)
+        };
+        let penetrates = |a: &[[f64; 2]], b: &[[f64; 2]]| {
+            let n = a.len() as f64;
+            let center = a.iter().fold([0.0, 0.0], |[x, y], point| {
+                [x + point[0] / n, y + point[1] / n]
+            });
+            a.iter().any(|&point| inside(point, b)) || (inside(center, a) && inside(center, b))
+        };
+        a.iter()
+            .any(|a| b.iter().any(|b| penetrates(a, b) || penetrates(b, a)))
+    }
+
+    fn clears_pad(&self, pad: &Aabb) -> bool {
+        let [x0, y0] = pad.minimum;
+        let [x1, y1] = pad.maximum;
+        let corners = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+        match self {
+            Self::Absent => true,
+            Self::Closed { outlines, .. } => outlines
+                .iter()
+                .all(|points| polygons_separate(points, &corners)),
+            Self::Unknown => false,
+        }
+    }
+}
+
+fn polygons_separate(a: &[[f64; 2]], b: &[[f64; 2]]) -> bool {
+    !point_in_polygon(a[0], b)
+        && !point_in_polygon(b[0], a)
+        && polygon_edges(a).all(|(u, v)| {
+            polygon_edges(b).all(|(x, y)| segment_segment_distance(u, v, x, y) > CONTOUR_GAP)
+        })
+}
+
+fn simple_contour(points: &[[f64; 2]]) -> bool {
+    let len = points.len();
+    // A malformed or excessively detailed contour cannot clear a warning.
+    if !(3..=512).contains(&len) || !points.iter().flatten().all(|point| point.is_finite()) {
+        return false;
+    }
+    let twice_area = polygon_edges(points)
+        .map(|(a, b)| a[0] * b[1] - a[1] * b[0])
+        .sum::<f64>();
+    twice_area.abs() > 1.0e-9
+        && polygon_edges(points).enumerate().all(|(i, (a, b))| {
+            polygon_edges(points)
+                .take(if i == 0 { len - 1 } else { len })
+                .skip(i + 2)
+                .all(|(c, d)| segment_segment_distance(a, b, c, d) > 1.0e-6)
+        })
+}
+
+/// Physical evidence for refining a coarse fixed-body overlap. Incomplete
+/// shape or layer information leaves the existing warning in place.
+pub(crate) struct HeldOverlapGeometry {
+    mount: Courtyard,
+    reverse: Courtyard,
+    back: bool,
+    pads: Vec<(Aabb, Vec<String>)>,
+}
+
+impl HeldOverlapGeometry {
+    pub(crate) fn at_pose(footprint: &Expr, pose: core::Pose) -> Option<Self> {
+        let mut placed = footprint.clone();
+        write_footprint_pose(&mut placed, pose).ok()?;
+        Self::read(&placed)
+    }
+
+    fn read(footprint: &Expr) -> Option<Self> {
+        let back = match form_atom(footprint, "layer", 1)? {
+            "F.Cu" => false,
+            "B.Cu" => true,
+            _ => return None,
+        };
+        let (mount, reverse) = if back {
+            ("B.CrtYd", "F.CrtYd")
+        } else {
+            ("F.CrtYd", "B.CrtYd")
+        };
+        let mount = Courtyard::read(footprint, mount);
+        if !matches!(mount, Courtyard::Closed { .. }) {
+            return None;
+        }
+        let copper_pads = footprint.children().iter().filter(|pad| {
+            pad.head() == Some("pad")
+                && pad.child("layers").is_some_and(|layers| {
+                    layers
+                        .children()
+                        .iter()
+                        .filter_map(Expr::atom)
+                        .any(|layer| layer.ends_with(".Cu"))
+                })
+        });
+        if copper_pads.clone().any(|pad| {
+            pad.child("padstack").is_some()
+                || !matches!(
+                    pad.children().get(3).and_then(Expr::atom),
+                    Some("rect" | "roundrect" | "circle" | "oval" | "trapezoid" | "custom")
+                )
+        }) {
+            return None;
+        }
+        let pads = pad_boxes(footprint).ok()?;
+        if pads.len() != copper_pads.count() || pads.is_empty() {
+            return None;
+        }
+        let pads = pads
+            .into_iter()
+            .map(|(_, layers, shape, _)| Some((shape?.aabb(), layers)))
+            .collect::<Option<_>>()?;
+        Some(Self {
+            mount,
+            reverse: Courtyard::read(footprint, reverse),
+            back,
+            pads,
+        })
+    }
+
+    fn disjoint(&self, other: &Self) -> bool {
+        self.back == other.back
+            && self.mount.clear_of(&other.mount)
+            && (matches!(
+                (&self.reverse, &other.reverse),
+                (Courtyard::Absent, Courtyard::Absent)
+            ) || self.reverse.clear_of(&other.reverse))
+            && self.clears_pads_of(other)
+            && other.clears_pads_of(self)
+            && self.pads.iter().all(|(a, a_layers)| {
+                other
+                    .pads
+                    .iter()
+                    .all(|(b, b_layers)| !a.intersects(*b) || !pad_layers_meet(a_layers, b_layers))
+            })
+    }
+
+    fn clears_pads_of(&self, other: &Self) -> bool {
+        let (front, back) = if self.back {
+            (&self.reverse, &self.mount)
+        } else {
+            (&self.mount, &self.reverse)
+        };
+        [("F.Cu", front), ("B.Cu", back)]
+            .iter()
+            .all(|(layer, courtyard)| {
+                other.pads.iter().all(|(pad, layers)| {
+                    !layers
+                        .iter()
+                        .any(|name| name == layer || matches!(name.as_str(), "*.Cu" | "F&B.Cu"))
+                        || courtyard.clears_pad(pad)
+                })
+            })
+    }
+}
+
+pub(crate) fn held_body_overlap(
+    first: Option<&HeldOverlapGeometry>,
+    second: Option<&HeldOverlapGeometry>,
+) -> Option<&'static str> {
+    if let (Some(first), Some(second)) = (first, second) {
+        if first.disjoint(second) {
+            return None;
+        }
+        if first.back == second.back
+            && (first.mount.overlaps(&second.mount) || first.reverse.overlaps(&second.reverse))
+        {
+            return Some("courtyards");
+        }
+    }
+    Some(HELD_BOUNDING_BOXES)
+}
 
 /// The parts the placer leaves where the input has them, one flag per
 /// footprint in the board's order (`held_parts`).
@@ -100,9 +386,16 @@ pub fn held_parts_as_given(
 /// Whether two pads' copper layer lists share a layer (`*.Cu` and
 /// `F&B.Cu` reach both outer sides, which is what the parts' pads use).
 fn pad_layers_meet(a: &[String], b: &[String]) -> bool {
-    let wide = |name: &str| name == "*.Cu" || name == "F&B.Cu";
-    a.iter()
-        .any(|x| b.iter().any(|y| x == y || wide(x) || wide(y)))
+    let outer = |name: &str| matches!(name, "F.Cu" | "B.Cu" | "F&B.Cu");
+    a.iter().any(|x| {
+        b.iter().any(|y| {
+            x == y
+                || x == "*.Cu"
+                || y == "*.Cu"
+                || (x == "F&B.Cu" && outer(y))
+                || (y == "F&B.Cu" && outer(x))
+        })
+    })
 }
 
 /// A point of a shape's copper (for a containment test).
@@ -120,7 +413,6 @@ fn point_of(shape: &pcb_router::geometry::Shape) -> Option<[f64; 2]> {
 /// is zero (an edge of one crosses or touches the other, or one lies
 /// inside the other).
 fn shapes_meet(a: &pcb_router::geometry::Shape, b: &pcb_router::geometry::Shape) -> bool {
-    use pcb_router::geometry::Shape;
     match b {
         Shape::Circle { center, radius } => a.distance_to_point(*center) <= *radius,
         Shape::Capsule { start, end, radius } => a.distance_to_segment(*start, *end) <= *radius,
@@ -157,14 +449,15 @@ pub(crate) fn held_parts_overlapping(
         reference: String,
         courtyard: Option<([f64; 4], usize)>,
         pads: Vec<PadBox>,
+        footprint: usize,
     }
     let mut parts = Vec::new();
-    for (index, footprint) in pcb
+    let footprints: Vec<_> = pcb
         .children()
         .iter()
         .filter(|item| item.head() == Some("footprint"))
-        .enumerate()
-    {
+        .collect();
+    for (index, footprint) in footprints.iter().copied().enumerate() {
         let reference = footprint_reference(footprint).unwrap_or_default();
         let wired = footprint
             .children()
@@ -178,10 +471,12 @@ pub(crate) fn held_parts_overlapping(
             courtyard: courtyard_box(footprint)?,
             pads: pad_boxes(footprint)?,
             reference,
+            footprint: index,
         });
     }
     parts.sort_by(|a, b| crate::canonical_order::natural_cmp(&a.reference, &b.reference));
     let mut pairs = Vec::new();
+    let mut geometry = BTreeMap::new();
     for (index, first) in parts.iter().enumerate() {
         for second in &parts[index + 1..] {
             let mut what = Vec::new();
@@ -190,7 +485,17 @@ pub(crate) fn held_parts_overlapping(
             {
                 let smaller = ((a[2] - a[0]) * (a[3] - a[1])).min((b[2] - b[0]) * (b[3] - b[1]));
                 if smaller > 0.0 && box_overlap(a, b) >= 0.5 * smaller {
-                    what.push("courtyards".to_string());
+                    for index in [first.footprint, second.footprint] {
+                        geometry
+                            .entry(index)
+                            .or_insert_with(|| HeldOverlapGeometry::read(footprints[index]));
+                    }
+                    if let Some(reason) = held_body_overlap(
+                        geometry[&first.footprint].as_ref(),
+                        geometry[&second.footprint].as_ref(),
+                    ) {
+                        what.push(reason.to_string());
+                    }
                 }
             }
             let mut layers: Vec<String> = Vec::new();
@@ -214,7 +519,7 @@ pub(crate) fn held_parts_overlapping(
                         && pad_layers_meet(layers_a, layers_b)
                         && match (shape_a, shape_b) {
                             (Some(shape_a), Some(shape_b)) => shapes_meet(shape_a, shape_b),
-                            _ => true,
+                            _ => false,
                         }
                     {
                         let layer = layers_a
@@ -230,6 +535,7 @@ pub(crate) fn held_parts_overlapping(
                 }
             }
             if !layers.is_empty() {
+                what.retain(|reason| reason != HELD_BOUNDING_BOXES);
                 what.push(format!("pads on {}", layers.join(", ")));
             }
             if !what.is_empty() {
@@ -242,6 +548,36 @@ pub(crate) fn held_parts_overlapping(
         }
     }
     Ok(pairs)
+}
+
+/// Refine bare placed-body warnings only when the saved pad geometry
+/// proves copper overlap in the placement model. An inconclusive check
+/// leaves the original body warning available.
+pub(crate) fn refine_held_overlap_warnings(pcb: &Expr, held: &HeldParts, warnings: &mut [String]) {
+    if !warnings
+        .iter()
+        .any(|warning| warning.starts_with("fixed parts ") && warning.contains(" overlap"))
+    {
+        return;
+    }
+    let Ok(pairs) = held_parts_overlapping(pcb, held) else {
+        return;
+    };
+    for (first, second, what) in pairs {
+        if !what.contains("pads on ") {
+            continue;
+        }
+        let forward = format!("fixed parts {first} and {second} overlap");
+        let reverse = format!("fixed parts {second} and {first} overlap");
+        for warning in warnings.iter_mut().filter(|line| {
+            [forward.as_str(), reverse.as_str()].iter().any(|prefix| {
+                line.strip_prefix(prefix)
+                    .is_some_and(|tail| tail.is_empty() || tail.starts_with(" ("))
+            })
+        }) {
+            *warning = overlap_warning(&first, &second, &what);
+        }
+    }
 }
 
 /// The input check's warnings for fixed parts on top of each other
@@ -339,11 +675,15 @@ pub(crate) fn without_parts_placed_elsewhere(
 pub fn overlap_warning(first: &str, second: &str, what: &str) -> String {
     if what.contains("pads") {
         format!(
-            "fixed parts {first} and {second} overlap ({what}): the placer keeps both where the input has them and their pads cannot both be connected; give one its own place (place, or free it from fixed and fixed_patterns)"
+            "fixed parts {first} and {second} overlap ({what}): the placement model found copper pad overlap. Inspect the pads in KiCad and review the held poses."
+        )
+    } else if what == HELD_BOUNDING_BOXES {
+        format!(
+            "fixed parts {first} and {second} overlap ({what}): the exact footprint overlap is unverified. Inspect the held poses and contours in KiCad."
         )
     } else {
         format!(
-            "fixed parts {first} and {second} overlap ({what}): the placer keeps both where the input has them; their pads are apart, so it costs no connection (a part under a socket or module on purpose); where it is a mistake give one its own place (place, or free it from fixed and fixed_patterns)"
+            "fixed parts {first} and {second} overlap ({what}): inspect the held poses and the assembly's permitted overlaps."
         )
     }
 }
@@ -358,6 +698,12 @@ pub fn placement_input_warnings(
     config: &KiCadBoardPlacerConfig,
 ) -> Result<Vec<String>, String> {
     let mut warnings = keepout_warnings(source_directory, board_id, config)?;
+    if config.constraints.is_none() && source_directory.join("constraints.json").is_file() {
+        warnings.push(
+            "The project contains constraints.json, but this placement has no constraints selected. To apply the file, set placer.constraints to \"constraints.json\" in the layout config, or constraints to \"constraints.json\" in a standalone placer config."
+                .into(),
+        );
+    }
     warnings.extend(overlap_warnings(source_directory, board_id, config)?);
     Ok(warnings)
 }

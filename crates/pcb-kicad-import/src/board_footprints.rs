@@ -14,6 +14,11 @@
 //! and the pads' nets dropped.
 
 use super::*;
+use sha2::{Digest, Sha256};
+
+mod groups;
+mod placement_roundoff;
+pub(crate) use placement_roundoff::same_two_pad_donor_model;
 
 /// One footprint of the board, with what tells it apart.
 #[derive(Clone, Debug)]
@@ -43,7 +48,9 @@ pub(crate) fn name_of(id: &str) -> &str {
 #[derive(Clone, Debug)]
 pub(crate) struct BoardFootprints {
     pub file: PathBuf,
+    pub sha256: String,
     pub footprints: Vec<BoardFootprint>,
+    pub net_codes: BTreeMap<String, String>,
     /// The board's copper layers (its `layers` list's `.Cu` entries).
     pub copper_layers: usize,
 }
@@ -55,6 +62,13 @@ pub(crate) enum Found {
     Own,
     /// Another footprint of that name (the symbol's own is not on the board).
     ByName,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DonorModels {
+    Same,
+    PerInstanceDocumentation,
+    Incompatible,
 }
 
 impl BoardFootprints {
@@ -112,65 +126,116 @@ impl BoardFootprints {
         });
         Ok(Self {
             file: file.to_path_buf(),
+            sha256: format!("{:x}", Sha256::digest(text.as_bytes())),
             footprints,
+            net_codes: net_codes(&board),
             copper_layers,
         })
     }
 
-    /// The symbol's own footprint on the board: by its path, else by its
-    /// reference when one footprint has it and that footprint is not linked
-    /// to another of the schematic's symbols (`claimed`, their paths: a
-    /// board renumbered after the schematic). Any footprint name.
-    pub fn own(
-        &self,
-        path: Option<&str>,
-        reference: &str,
-        claimed: &BTreeSet<String>,
-    ) -> Option<&BoardFootprint> {
-        if let Some(path) = path
-            && let Some(found) = self
-                .footprints
+    /// The board's own footprint for each `(path, reference)` in the schematic.
+    /// A path unique on both sides survives renumbering. A repeated path
+    /// needs a unique reference within that group. Finally match the
+    /// remaining symbols and footprints by reference where both are unique.
+    pub fn assign<'a>(
+        &'a self,
+        symbols: &[(Option<&str>, &str)],
+    ) -> Vec<Option<&'a BoardFootprint>> {
+        let symbols_by_path = by_key(
+            symbols
                 .iter()
-                .find(|footprint| footprint.path.as_deref() == Some(path))
-        {
-            return Some(found);
+                .enumerate()
+                .filter_map(|(index, (path, _))| path.map(|path| (path, index))),
+        );
+        let footprints_by_path = by_key(
+            self.footprints
+                .iter()
+                .enumerate()
+                .filter_map(|(index, footprint)| {
+                    footprint.path.as_deref().map(|path| (path, index))
+                }),
+        );
+        let mut assigned = vec![None; symbols.len()];
+        let mut used = vec![false; self.footprints.len()];
+        let mut assign = |symbol, footprint| {
+            assigned[symbol] = Some(&self.footprints[footprint]);
+            used[footprint] = true;
+        };
+        for (path, group) in symbols_by_path {
+            let Some(candidates) = footprints_by_path.get(path) else {
+                continue;
+            };
+            if let ([symbol], [footprint]) = (group.as_slice(), candidates.as_slice()) {
+                assign(*symbol, *footprint);
+                continue;
+            }
+            let references = group.into_iter().map(|index| (symbols[index].1, index));
+            let donors = candidates
+                .iter()
+                .map(|&index| (self.footprints[index].reference.as_str(), index));
+            for (symbol, footprint) in unique_pairs(references, donors) {
+                assign(symbol, footprint);
+            }
         }
-        let mut same = self.footprints.iter().filter(|footprint| {
-            footprint.reference == reference
-                && !footprint
-                    .path
-                    .as_ref()
-                    .is_some_and(|path| claimed.contains(path))
-        });
-        match (same.next(), same.next()) {
-            (Some(found), None) => Some(found),
-            _ => None,
+        let remaining = symbols
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| assigned[*index].is_none())
+            .map(|(index, (_, reference))| (*reference, index));
+        let donors = self
+            .footprints
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !used[*index])
+            .map(|(index, footprint)| (footprint.reference.as_str(), index));
+        for (symbol, footprint) in unique_pairs(remaining, donors) {
+            assigned[symbol] = Some(&self.footprints[footprint]);
         }
+        assigned
     }
 
-    /// The board's version of the footprint `id` for a symbol: its own
-    /// footprint (whatever its name), else (`by_name`) the first footprint
-    /// of that name.
-    pub fn for_symbol(
-        &self,
-        path: Option<&str>,
-        reference: &str,
-        id: &str,
-        by_name: bool,
-        claimed: &BTreeSet<String>,
-    ) -> Option<(&BoardFootprint, Found)> {
+    /// A copy of a footprint model by name, for symbols without a library model.
+    pub fn by_name(&self, id: &str) -> Option<&BoardFootprint> {
         let name = name_of(id);
-        if let Some(own) = self.own(path, reference, claimed) {
-            return Some((own, Found::Own));
+        let exact = self.footprints.iter().any(|footprint| footprint.id == id);
+        let mut matches = self.footprints.iter().filter(|footprint| {
+            if exact {
+                footprint.id == id
+            } else {
+                footprint.name() == name
+            }
+        });
+        let model = matches.next()?;
+        let form = library_form(&model.expr, name).ok()?;
+        matches
+            .all(|other| {
+                library_form(&other.expr, name).is_ok_and(|other| same_library_model(&form, &other))
+            })
+            .then_some(model)
+    }
+
+    pub fn donor_models(
+        &self,
+        id: &str,
+        form: &Expr,
+        normalize: impl Fn(&BoardFootprint, &mut Expr),
+        equivalent_presentation: fn(&Expr, &Expr) -> bool,
+    ) -> DonorModels {
+        let mut result = DonorModels::Same;
+        for donor in self.footprints.iter().filter(|other| other.id == id) {
+            let Ok(mut other) = library_form(&donor.expr, name_of(id)) else {
+                return DonorModels::Incompatible;
+            };
+            normalize(donor, &mut other);
+            if same_library_model(form, &other) {
+                continue;
+            }
+            if !equivalent_presentation(form, &other) {
+                return DonorModels::Incompatible;
+            }
+            result = DonorModels::PerInstanceDocumentation;
         }
-        if by_name {
-            return self
-                .footprints
-                .iter()
-                .find(|footprint| footprint.name() == name)
-                .map(|footprint| (footprint, Found::ByName));
-        }
-        None
+        result
     }
 
     /// The footprint `reference`; where the reference repeats (mounting
@@ -213,6 +278,31 @@ impl BoardFootprints {
                 }),
         }
     }
+}
+
+fn by_key<'a>(items: impl Iterator<Item = (&'a str, usize)>) -> BTreeMap<&'a str, Vec<usize>> {
+    let mut groups = BTreeMap::<_, Vec<_>>::new();
+    for (key, index) in items.filter(|(key, _)| !key.is_empty()) {
+        groups.entry(key).or_default().push(index);
+    }
+    groups
+}
+
+fn unique_pairs<'a>(
+    symbols: impl Iterator<Item = (&'a str, usize)>,
+    footprints: impl Iterator<Item = (&'a str, usize)>,
+) -> Vec<(usize, usize)> {
+    let footprints = by_key(footprints);
+    by_key(symbols)
+        .into_iter()
+        .filter_map(|(reference, group)| {
+            let ([symbol], [footprint]) = (group.as_slice(), footprints.get(reference)?.as_slice())
+            else {
+                return None;
+            };
+            Some((*symbol, *footprint))
+        })
+        .collect()
 }
 
 /// An angle in (-180, 180], without float noise.
@@ -356,6 +446,153 @@ pub(crate) fn library_form(footprint: &Expr, name: &str) -> Result<Expr, String>
     Ok(footprint)
 }
 
+/// Compare library-form models independently of item UUIDs and the board
+/// instance's reference and value fields. The position of an explicitly
+/// hidden property belongs to the instance, so it does not split the model.
+/// Preserve property contents and all pad and artwork data.
+pub(crate) fn same_library_model(first: &Expr, second: &Expr) -> bool {
+    compare_library_models(first, second, InstancePresentation::Exact)
+}
+
+/// A shared ID can name instances with additional board documentation on
+/// User.Drawings and different presentation for their fabrication reference
+/// text. Keep those forms on the individual board instances.
+pub(crate) fn same_library_model_with_instance_documentation(first: &Expr, second: &Expr) -> bool {
+    compare_library_models(first, second, InstancePresentation::Documentation)
+}
+
+/// Compare instance text presentation while requiring identical drawings.
+pub(crate) fn same_library_model_with_fab_text(first: &Expr, second: &Expr) -> bool {
+    compare_library_models(first, second, InstancePresentation::FabText)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InstancePresentation {
+    Exact,
+    FabText,
+    Documentation,
+}
+
+fn strip_instance_fab_text_presentation(item: &mut Expr) {
+    if item.head() != Some("fp_text")
+        || item.children().get(1).and_then(Expr::atom) != Some("user")
+        || !matches!(form_atom(item, "layer", 1), Some("F.Fab" | "B.Fab"))
+    {
+        return;
+    }
+    let text = item.children().get(2).and_then(Expr::atom);
+    let dynamic_reference = text == Some("${REFERENCE}");
+    let legacy_placeholder = text == Some("REF**") && form_atom(item, "hide", 1) == Some("yes");
+    let ignore_angle =
+        (dynamic_reference || legacy_placeholder) && item.child("render_cache").is_none();
+    let Expr::List(fields) = item else { return };
+    if dynamic_reference {
+        fields.retain(|field| {
+            field.head() != Some("hide")
+                || !matches!(
+                    field.children().get(1).and_then(Expr::atom),
+                    Some("yes" | "no")
+                )
+        });
+    }
+    if ignore_angle
+        && let Some(Expr::List(at)) = fields.iter_mut().find(|field| field.head() == Some("at"))
+        && at
+            .get(3)
+            .and_then(Expr::atom)
+            .and_then(|angle| angle.parse::<f64>().ok())
+            .is_some_and(f64::is_finite)
+    {
+        // KiCad can keep a fabrication reference upright as its footprint
+        // turns. Only the display angle is instance-specific. The anchor,
+        // layer, contents and font still belong to this model signature.
+        at.remove(3);
+    }
+}
+
+fn compare_library_models(first: &Expr, second: &Expr, presentation: InstancePresentation) -> bool {
+    if footprint_form_error(first).is_some() || footprint_form_error(second).is_some() {
+        return false;
+    }
+    fn strip_instance_ids(item: &mut Expr) {
+        let Expr::List(parts) = item else { return };
+        if parts.first().and_then(Expr::atom) == Some("at")
+            && parts
+                .get(3)
+                .and_then(Expr::atom)
+                .and_then(|a| a.parse::<f64>().ok())
+                == Some(0.0)
+        {
+            parts.remove(3);
+        }
+        parts.retain(|part| !matches!(part.head(), Some("uuid" | "tstamp")));
+        for part in parts {
+            strip_instance_ids(part);
+        }
+    }
+    let model_item = |item: &Expr| {
+        let instance_only = match item.head() {
+            Some("version" | "generator" | "generator_version") => true,
+            Some("fp_text") => matches!(
+                item.children().get(1).and_then(Expr::atom),
+                Some("reference" | "value")
+            ),
+            Some("property") => matches!(
+                item.children().get(1).and_then(Expr::atom),
+                Some("Reference" | "Value" | "Sheetfile" | "Sheetname")
+            ),
+            Some("fp_arc" | "fp_circle" | "fp_curve" | "fp_line" | "fp_poly" | "fp_rect") => {
+                presentation == InstancePresentation::Documentation
+                    && matches!(
+                        form_atom(item, "layer", 1),
+                        Some("Dwgs.User" | "User.Drawings")
+                    )
+            }
+            _ => false,
+        };
+        if instance_only {
+            return None;
+        }
+        let mut item = item.clone();
+        if presentation != InstancePresentation::Exact {
+            strip_instance_fab_text_presentation(&mut item);
+        }
+        if item.head() == Some("property")
+            && form_atom(&item, "hide", 1) == Some("yes")
+            && let Expr::List(fields) = &mut item
+        {
+            fields.retain(|field| {
+                let values = field.children();
+                !(field.head() == Some("at")
+                    && (3..=4).contains(&values.len())
+                    && values[1..].iter().all(|value| {
+                        value
+                            .atom()
+                            .and_then(|atom| atom.parse::<f64>().ok())
+                            .is_some_and(f64::is_finite)
+                    }))
+            });
+        }
+        strip_instance_ids(&mut item);
+        Some(encode(&item))
+    };
+    let first = &first.children()[2..];
+    let second = &second.children()[2..];
+    if first
+        .iter()
+        .chain(second)
+        .any(|item| item.head() == Some("group"))
+    {
+        return groups::equivalent(first, second, model_item);
+    }
+    let signature = |items: &[Expr]| {
+        let mut items: Vec<_> = items.iter().filter_map(model_item).collect();
+        items.sort_unstable();
+        items
+    };
+    signature(first) == signature(second)
+}
+
 /// A library-form footprint put at a pose on the front: `(at x y angle)`
 /// set, pad and text angles made absolute, zones in board coordinates.
 pub(crate) fn posed(footprint: &Expr, at: [f64; 3]) -> Result<Expr, String> {
@@ -420,6 +657,63 @@ pub(crate) fn drifted(library: ([f64; 2], usize), board: ([f64; 2], usize)) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn donor_paths_reserve_renumbered_parts_and_references_resolve_copied_links() {
+        let donors = [
+            ("SW28", Some("/copied"), "1u"),
+            ("SW29", Some("/copied"), "1.5u"),
+            ("U5", Some("/renumbered"), "correct"),
+            ("U2", None, "other"),
+            ("T1", Some("/ambiguous"), "a"),
+            ("T1", Some("/ambiguous"), "b"),
+            ("X1", Some("/more-copies"), "x"),
+            ("X2", Some("/more-copies"), "y"),
+        ];
+        let symbols = [
+            (Some("/copied"), "SW29"),
+            (Some("/stale"), "SW28"),
+            (Some("/renumbered"), "U2"),
+            (None, "U5"),
+            (Some("/ambiguous"), "T1"),
+            (Some("/more-copies"), "X2"),
+            (Some("/more-copies"), "X3"),
+        ];
+        let expected = vec![
+            Some("1.5u"),
+            Some("1u"),
+            Some("correct"),
+            None,
+            None,
+            Some("y"),
+            None,
+        ];
+        let mut board = BoardFootprints {
+            file: PathBuf::new(),
+            sha256: String::new(),
+            footprints: donors
+                .into_iter()
+                .map(|(reference, path, id)| BoardFootprint {
+                    reference: reference.into(),
+                    path: path.map(str::to_owned),
+                    id: id.into(),
+                    uuid: None,
+                    expr: Expr::List(Vec::new()),
+                })
+                .collect(),
+            net_codes: BTreeMap::new(),
+            copper_layers: 2,
+        };
+        for _ in 0..2 {
+            let assigned: Vec<_> = board
+                .assign(&symbols)
+                .into_iter()
+                .map(|donor| donor.map(|item| item.id.as_str()))
+                .collect();
+            assert_eq!(assigned, expected);
+            board.footprints.reverse();
+        }
+    }
 
     fn near(a: f64, b: f64) -> bool {
         (a - b).abs() < 1e-6
@@ -495,5 +789,108 @@ mod tests {
         assert!(!drifted(([4.0, 2.0], 2), ([4.4, 2.2], 2)));
         assert!(drifted(([15.9, 12.2], 4), ([12.85, 11.6], 4)));
         assert!(drifted(([4.0, 2.0], 3), ([4.0, 2.0], 2)));
+    }
+
+    #[test]
+    fn library_equivalence_ignores_only_the_pose_of_hidden_properties() {
+        let original = r#"(footprint "jack" (layer "F.Cu")
+            (property "Supplier" "P-0123" (at 2 3 45) (layer "F.Fab")
+                (hide yes) (effects (font (size 1 1))))
+            (property "Label" "OUT" (at 3 2) (layer "F.SilkS")
+                (effects (font (size 1 1))))
+            (fp_rect (start -3 -3) (end 3 3) (layer "F.CrtYd") (width 0.05))
+            (pad "1" thru_hole circle (at 0 0) (size 2 2) (drill 1) (layers "*.Cu" "*.Mask")))"#;
+        let first = parse(original).unwrap();
+        let hidden_moved = parse(&original.replace("(at 2 3 45)", "(at -15 8)")).unwrap();
+        assert!(same_library_model(&first, &hidden_moved));
+        assert_ne!(first, hidden_moved);
+        for (before, after) in [
+            ("P-0123", "P-0124"),
+            ("(hide yes)", "(hide no)"),
+            ("(at 3 2)", "(at 4 2)"),
+            ("(end 3 3)", "(end 3 4)"),
+            ("(drill 1)", "(drill 1.1)"),
+        ] {
+            let alternative = parse(&original.replace(before, after)).unwrap();
+            assert!(!same_library_model(&first, &alternative), "{after}");
+        }
+    }
+
+    #[test]
+    fn instance_documentation_does_not_absorb_other_footprint_changes() {
+        let original = r#"(footprint "module" (layer "F.Cu")
+            (fp_rect (start -3 -3) (end 3 3) (layer "Eco2.User"))
+            (fp_text user "${REFERENCE}" (at 0 0 0) (layer "F.Fab") (hide yes))
+            (pad "1" thru_hole circle (at 0 0) (size 2 2) (drill 1) (layers "*.Cu" "*.Mask")))"#;
+        let first = parse(original).unwrap();
+        let variant = format!(
+            r#"{} (fp_rect (start 0 0) (end 3 4) (layer "User.Drawings")))"#,
+            original.strip_suffix(')').unwrap()
+        );
+        let variant = variant.replace("(hide yes)", "");
+        let second = parse(&variant).unwrap();
+        assert!(!same_library_model(&first, &second));
+        assert!(same_library_model_with_instance_documentation(
+            &first, &second
+        ));
+        for (before, after) in [
+            ("(drill 1)", "(drill 1.1)"),
+            ("(end 3 3)", "(end 4 3)"),
+            ("(at 0 0 0)", "(at 1 0 0)"),
+            ("User.Drawings", "F.SilkS"),
+            ("User.Drawings", "F.Cu"),
+            ("User.Drawings", "Edge.Cuts"),
+        ] {
+            let changed = parse(&variant.replace(before, after)).unwrap();
+            assert!(
+                !same_library_model_with_instance_documentation(&first, &changed),
+                "{after}"
+            );
+        }
+    }
+
+    #[test]
+    fn rotated_fab_reference_placeholder_keeps_the_model_and_its_own_angle() {
+        let original = r#"(footprint "led" (layer "F.Cu")
+            (fp_text user "REF**" (at 0 5 0) (layer "F.Fab") (hide yes)
+                (effects (font (size 1 1))))
+            (fp_line (start -1 -1) (end 1 -1) (layer "F.SilkS"))
+            (pad "1" smd rect (at -1 0) (size 0.8 1) (layers "F.Cu" "F.Mask")))"#;
+        let first = parse(original).unwrap();
+        let variant = original.replace("(at 0 5 0)", "(at 0 5 180)");
+        let second = parse(&variant).unwrap();
+        assert!(!same_library_model(&first, &second));
+        assert!(same_library_model_with_instance_documentation(
+            &first, &second
+        ));
+        assert_eq!(
+            form_atom(second.child("fp_text").unwrap(), "at", 3),
+            Some("180")
+        );
+
+        for (before, after) in [
+            ("REF**", "pin one"),
+            ("(at 0 5 180)", "(at 0.1 5 180)"),
+            ("(hide yes)", "(hide no)"),
+            ("(size 1 1)", "(size 1 1.1)"),
+            ("(end 1 -1)", "(end 1.2 -1)"),
+            ("(size 0.8 1)", "(size 0.81 1)"),
+        ] {
+            let changed = parse(&variant.replace(before, after)).unwrap();
+            assert!(
+                !same_library_model_with_instance_documentation(&first, &changed),
+                "{after}"
+            );
+        }
+        for layer in ["F.SilkS", "F.Cu", "F.Mask"] {
+            let on_layer = |text: &str| parse(&text.replace("F.Fab", layer)).unwrap();
+            assert!(
+                !same_library_model_with_instance_documentation(
+                    &on_layer(original),
+                    &on_layer(&variant)
+                ),
+                "{layer}"
+            );
+        }
     }
 }

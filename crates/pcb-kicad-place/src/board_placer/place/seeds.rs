@@ -49,6 +49,7 @@ pub(super) struct SeedWork {
     pub pool: u64,
     pub seeds: u64,
     pub run: u64,
+    pub composition: u64,
 }
 
 /// The kept seeds, best first (`rank`), and the work they booked.
@@ -56,6 +57,8 @@ pub(super) struct SeedsPlaced {
     pub kept_seeds: Vec<u64>,
     pub placements: Vec<core::Placement>,
     pub work: SeedWork,
+    pub signal_anchor_seed: Option<KiCadSignalAnchorSeed>,
+    compositions: Vec<Option<KiCadPadObjectiveComposition>>,
 }
 
 /// Places the board's seeds in a pool and ranks the kept ones.
@@ -82,21 +85,86 @@ pub(super) fn place_seeds(
     // on four cores and left the route no time).
     let minimum_seeds = seeds.min(3);
     let threads = rayon::current_num_threads().max(1);
+    let (anchor_seed, anchor_work) = if config.signal_anchor_seed
+        && seeds > 1
+        && placer_config.start.is_none()
+        && pieces.copies.is_none()
+        && pieces.held_sub_boards.is_none()
+        && pieces.report.is_none()
+        && pieces.modules.is_none()
+    {
+        let cap = core::work_per_second() as u64;
+        let limit = placer_config
+            .work_limit
+            .map_or(cap, |limit| cap.min(limit / 8));
+        core::initial::signal_anchor_seed(problem, limit)
+    } else {
+        (None, 0)
+    };
+    let signal_anchor_seed = anchor_seed.map(|anchor| KiCadSignalAnchorSeed {
+        seed: config.tuning.seed.wrapping_add(1),
+        reference: lowered.references[anchor.part].clone(),
+        estimated_xy_mm: anchor.estimate,
+        projected_xy_mm: anchor.pose.position,
+        projected_angle_deg: anchor.pose.angle,
+        work_seconds: anchor_work as f64 / core::work_per_second(),
+    });
+    let anchor_start = anchor_seed.map(|anchor| {
+        eprintln!(
+            "placer: signal anchor seed {} starts movable {} at ({:.3}, {:.3}, {:.1}°), projected from ({:.3}, {:.3})",
+            config.tuning.seed.wrapping_add(1),
+            lowered.references[anchor.part],
+            anchor.pose.position[0], anchor.pose.position[1], anchor.pose.angle,
+            anchor.estimate[0], anchor.estimate[1],
+        );
+        let mut poses = problem.poses.clone();
+        poses[anchor.part] = anchor.pose;
+        let mut parts = vec![false; poses.len()];
+        parts[anchor.part] = true;
+        std::sync::Arc::new(core::Start {
+            poses,
+            parts,
+            stage: core::StartStage::Global,
+        })
+    });
+    let seed_limit = placer_config
+        .work_limit
+        .map(|limit| limit.saturating_sub(anchor_work));
     let race = race_seeds(
         seeds,
         minimum_seeds,
-        placer_config.work_limit,
+        seed_limit,
         threads,
         |placement: &core::Placement| placement.work,
         |offset| {
             let mut seeded = placer_config.clone();
-            seeded.global.seed = config.tuning.seed + offset;
+            seeded.work_limit = seed_limit;
+            seeded.global.seed = config.tuning.seed.wrapping_add(offset);
             seeded.anneal.seed = seeded.anneal.seed.wrapping_add(offset);
             // The pad-exits repair is a whole board's (its test
             // names parts by the board's indices): not inside a
             // panel's copies or a held sub-board.
             if pieces.copies.is_some() || pieces.held_sub_boards.is_some() {
                 seeded.pad_exits = None;
+            }
+            if offset == 1
+                && let Some(start) = &anchor_start
+            {
+                seeded.start = Some(start.clone());
+                return core::place(problem, &seeded);
+            }
+            if offset == 1
+                && pieces.is_whole()
+                && seeded.start.is_none()
+                && problem.constraints.module_envelopes.iter().any(|pair| {
+                    pair.modules[0].back == pair.modules[1].back
+                        && pair
+                            .modules
+                            .iter()
+                            .any(|module| !problem.components[module.part].fixed)
+                })
+            {
+                return core::place_with_module_seed(problem, &seeded);
             }
             match (&pieces.copies, &pieces.held_sub_boards) {
                 (Some(copies), _) => panel::place_copies(problem, copies, &seeded),
@@ -128,40 +196,82 @@ pub(super) fn place_seeds(
         .iter()
         .filter_map(|(_, placement)| placement.exits.as_ref().map(|outcome| outcome.work))
         .collect();
-    let work = SeedWork {
-        pool: race.pool_work + seed_race::pool_makespan(&exits_works, REFERENCE_THREADS),
+    let mut work = SeedWork {
+        pool: anchor_work
+            + race.pool_work
+            + seed_race::pool_makespan(&exits_works, REFERENCE_THREADS),
         seeds: race
             .kept
             .iter()
             .map(|(_, placement)| placement.work)
             .sum::<u64>()
-            + exits_works.iter().sum::<u64>(),
+            + exits_works.iter().sum::<u64>()
+            + anchor_work,
         run: race.run,
+        composition: 0,
     };
     let mut placements: Vec<(u64, core::Placement)> = race
         .kept
         .into_iter()
-        .map(|(offset, placement)| (config.tuning.seed + offset, placement))
+        .map(|(offset, placement)| (config.tuning.seed.wrapping_add(offset), placement))
         .collect();
     sort_by_rank(&mut placements);
+    let mut compositions = vec![None; placements.len()];
+    if skeleton_race.is_none_or(|race| !race.budget_ok)
+        && pieces.copies.is_none()
+        && pieces.held_sub_boards.is_none()
+        && pieces.report.is_none()
+        && pieces.modules.is_none()
+    {
+        let search = super::pad_composition::explore(
+            context,
+            lowered,
+            placer_config,
+            &placements,
+            work.seeds,
+        );
+        work.pool += search.work;
+        work.seeds += search.work;
+        work.run += search.drafts;
+        work.composition = search.work;
+        if let Some((candidate, composition)) = search.best {
+            let score = rank(&candidate);
+            let index = placements.partition_point(|(_, placement)| rank(placement) <= score);
+            placements.insert(index, (composition.parent_seed, candidate));
+            compositions.insert(index, Some(composition));
+        }
+    }
     let (kept_seeds, placements) = placements.into_iter().unzip();
     SeedsPlaced {
         kept_seeds,
         placements,
         work,
+        signal_anchor_seed,
+        compositions,
     }
 }
 
 /// The placer's key of a placement, the smaller the better: its parts
-/// without a legal place, its pads closed, whether it needed courtyards
-/// touching, its parts on the board's marks, its missed constraints, its
-/// wirelength.
-pub(super) fn rank(placement: &core::Placement) -> (usize, usize, usize, usize, f64, f64) {
+/// without a legal place, its strict pad limits, its closed pads, whether it
+/// needed courtyards touching, its parts on the board's marks, its other
+/// missed constraints, its pad proximity objectives and its wirelength.
+type SeedRank = (usize, (usize, f64), usize, usize, usize, f64, f64, f64);
+
+pub(super) fn rank(placement: &core::Placement) -> SeedRank {
     let missed: f64 = placement
         .constraints
         .iter()
         .map(|status| status.violation)
         .sum();
+    let pad_distances: f64 = placement
+        .constraints
+        .iter()
+        .filter(|status| status.kind == "pad_near_objective")
+        .filter_map(|status| status.distance)
+        .sum();
+    // Within a micron, the contact refinement cannot reliably distinguish
+    // two totals. Let wirelength rank that group of placements.
+    let pad_distance_microns = (pad_distances * 1000.0).round();
     // Pads another part or the edge closes (`pad_exits`; none
     // with it off) count after the illegal parts.
     let closed = placement.exits.as_ref().map_or(0, |outcome| {
@@ -169,17 +279,18 @@ pub(super) fn rank(placement: &core::Placement) -> (usize, usize, usize, usize, 
     });
     (
         placement.unplaced.len() + placement.illegal.len(),
+        core::constraints::pad_near_requirements_key(&placement.constraints),
         closed,
         placement.relaxation.courtyard_spacing as usize,
         placement.relaxation.on_marks.len(),
         missed,
+        pad_distance_microns,
         placement.wirelength_final,
     )
 }
 
-/// Sorts the seeds' placements by `rank`. A placement that needed
-/// courtyards touching (the last relaxation level) is a last resort: it
-/// ranks below every legal one that did not, however short its wires.
+/// Sorts by `rank`. Among placements equally close to the exact pad limits,
+/// prefer those that never needed courtyards touching regardless of wirelength.
 pub(super) fn sort_by_rank(placements: &mut [(u64, core::Placement)]) {
     // Stable: a tie goes to the earlier seed.
     placements.sort_by(|(_, a), (_, b)| {
@@ -195,14 +306,16 @@ pub(super) struct Picked {
     pub placement: core::Placement,
     /// The seed of the placement picked.
     pub seed_kept: u64,
-    /// The longest kept seed's work, in seconds (the budget's measure).
+    /// The longest kept seed and any serial composition work, in seconds.
     pub work_seconds: f64,
     pub seeds_placed: usize,
     pub work: SeedWork,
     pub skeleton_race: Option<KiCadSkeletonRaceReport>,
     pub panel_copies: Option<KiCadPanelCopiesReport>,
+    pub pad_objective_composition: Option<KiCadPadObjectiveComposition>,
     /// The other legal placements and their pads without a way out.
     pub alternatives: Vec<(Vec<core::Pose>, core::Relaxation, f64)>,
+    pub alternative_seed_metrics: Vec<KiCadPlacementSeedMetrics>,
     pub alternative_exits: Vec<Option<exits::KiCadPadExitsReport>>,
 }
 
@@ -221,23 +334,33 @@ pub(super) fn pick(
         kept_seeds,
         mut placements,
         work,
+        mut compositions,
+        ..
     } = seeds;
-    let work_seconds = placements
+    let seed_placements: Vec<&core::Placement> = placements
+        .iter()
+        .zip(&compositions)
+        .filter_map(|(placement, composition)| composition.is_none().then_some(placement))
+        .collect();
+    let seeds_placed = seed_placements.len();
+    let longest_seed = seed_placements
         .iter()
         .map(|placement| placement.work)
         .max()
-        .unwrap_or(0) as f64
-        / core::work_per_second();
-    let seeds_placed = placements.len();
-    let skeleton_race_report = skeleton_race.map(|race| {
-        KiCadSkeletonRaceReport::of(
-            config.skeleton_race.as_ref().expect("the race's settings"),
-            config.work_seconds,
-            &race.passive,
-            &placements[0],
-            &placements.iter().collect::<Vec<_>>(),
-        )
-    });
+        .unwrap_or(0);
+    let work_seconds = (longest_seed + work.composition) as f64 / core::work_per_second();
+    let skeleton_report = |kept: &core::Placement| {
+        skeleton_race.map(|race| {
+            KiCadSkeletonRaceReport::of(
+                config.skeleton_race.as_ref().expect("the race's settings"),
+                config.work_seconds,
+                &race.passive,
+                kept,
+                &seed_placements,
+            )
+        })
+    };
+    let skeleton_race_report = skeleton_report(&placements[0]);
     match &skeleton_race_report {
         Some(report) => eprintln!("placer: skeleton race: {}", report.summary),
         // On, but a panel's copies or held sub-boards place each piece on
@@ -253,29 +376,53 @@ pub(super) fn pick(
         ),
         None => {}
     }
-    let placement = placements.remove(0);
-    let panel_copies = pieces
-        .copies
-        .as_ref()
-        .map(|copies| KiCadPanelCopiesReport::of(&lowered.problem, copies, &placement));
+    let panel_report = |kept: &core::Placement| {
+        pieces
+            .copies
+            .as_ref()
+            .map(|copies| KiCadPanelCopiesReport::of(&lowered.problem, copies, kept))
+    };
+    let panel_copies = panel_report(&placements[0]);
     // The other legal placements, for layout to race when the best one by
     // wirelength does not route: wirelength is not routability.
-    let (alternatives, alternative_exits): (Vec<_>, Vec<_>) = placements
-        .into_iter()
-        .filter(|other| other.unplaced.is_empty() && other.illegal.is_empty())
-        .map(|other| {
+    let mut alternatives = Vec::new();
+    let mut alternative_seed_metrics = Vec::new();
+    let mut alternative_exits = Vec::new();
+    for (index, (seed, other)) in kept_seeds
+        .iter()
+        .copied()
+        .zip(&placements)
+        .enumerate()
+        .skip(1)
+    {
+        if other.unplaced.is_empty() && other.illegal.is_empty() {
             let missed = other
                 .constraints
                 .iter()
                 .map(|status| status.violation)
                 .sum();
-            let exits = other
-                .exits
-                .as_ref()
-                .map(|outcome| exits::exits_report(outcome, &lowered.references, pcb));
-            ((other.poses, other.relaxation, missed), exits)
-        })
-        .unzip();
+            alternative_exits.push(
+                other
+                    .exits
+                    .as_ref()
+                    .map(|outcome| exits::exits_report(outcome, &lowered.references, pcb)),
+            );
+            alternative_seed_metrics.push(KiCadPlacementSeedMetrics {
+                seed,
+                global_iterations: other.global_iterations,
+                global_overflow: other.global_overflow,
+                wirelength_source_mm: other.wirelength_initial,
+                wirelength_global_mm: other.wirelength_global,
+                wirelength_legal_mm: other.wirelength_legal,
+                skeleton_race: skeleton_report(other),
+                panel_copies: panel_report(other),
+                pad_objective_composition: compositions[index].clone(),
+                sparse_legalization: other.sparse_legalization.map(Into::into),
+            });
+            alternatives.push((other.poses.clone(), other.relaxation.clone(), missed));
+        }
+    }
+    let placement = placements.remove(0);
     Picked {
         placement,
         seed_kept: kept_seeds[0],
@@ -284,7 +431,9 @@ pub(super) fn pick(
         work,
         skeleton_race: skeleton_race_report,
         panel_copies,
+        pad_objective_composition: compositions.remove(0),
         alternatives,
+        alternative_seed_metrics,
         alternative_exits,
     }
 }

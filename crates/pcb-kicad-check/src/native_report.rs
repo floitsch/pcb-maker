@@ -7,6 +7,7 @@
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
+    collections::BTreeMap,
     ffi::OsStr,
     fs,
     path::{Path, PathBuf},
@@ -14,6 +15,58 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
+
+#[path = "zone_width.rs"]
+mod zone_width;
+pub use zone_width::{
+    ZoneWidthLocalization, ZoneWidthLocation, localize_zone_widths,
+    localize_zone_widths_from_checked_fill,
+};
+
+/// DRC findings excluded from routed-board scoring and verdicts.
+pub fn is_cosmetic_drc(kind: &str) -> bool {
+    [
+        "silk_",
+        "text_",
+        "lib_footprint",
+        "footprint_type_mismatch",
+        "missing_courtyard",
+        "isolated_copper",
+        "nonmirrored_text",
+    ]
+    .iter()
+    .any(|prefix| kind.starts_with(prefix))
+}
+
+/// Electrical and other design errors in a complete all-severity report.
+/// Open connections and schematic parity have their own counts.
+pub fn count_scoped_drc_errors(report: &Value) -> Option<usize> {
+    if !report["included_severities"]
+        .as_array()
+        .is_some_and(|severities| severities.iter().any(|severity| severity == "error"))
+        || !report["unconnected_items"].is_array()
+    {
+        return None;
+    }
+    report["violations"]
+        .as_array()?
+        .iter()
+        .try_fold(0, |count, finding| {
+            let severity = finding["severity"].as_str()?;
+            let kind = finding["type"].as_str()?;
+            if !matches!(severity, "error" | "warning" | "exclusion") || kind.is_empty() {
+                return None;
+            }
+            Some(
+                count
+                    + usize::from(
+                        severity == "error"
+                            && finding["excluded"].as_bool() != Some(true)
+                            && !is_cosmetic_drc(kind),
+                    ),
+            )
+        })
+}
 
 /// Whether a validated DRC finding is tracked as library metadata rather than
 /// a board design violation. Keep this policy shared by absolute verification
@@ -205,12 +258,95 @@ pub(super) fn validate_report(
     validate().map_err(|error| format!("invalid {kind:?} report for {}: {error}", input.display()))
 }
 
+pub fn validate_drc_report(report: &Value, input: &Path) -> Result<(), String> {
+    validate_report(report, ReportKind::Drc, input)
+}
+
 pub fn remove_if_present(path: &Path) -> Result<(), String> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(format!("failed to invalidate {}: {error}", path.display())),
     }
+}
+
+/// Removes reports and previews for the prior board from a staged project
+/// copy. Placement constraints, configuration and libraries are inputs.
+pub fn remove_stale_board_run_reports(directory: &Path) -> Result<(), String> {
+    for name in [
+        "drc.json",
+        "erc.json",
+        "verification.json",
+        "verdict.json",
+        "board-router.json",
+        "board-placer.json",
+        "board-layout.json",
+        "preview.json",
+        "preview.svg",
+        "preview-labels.json",
+        "placement.html",
+        "native-check-drc.json",
+        "drc-stored-input.json",
+        "drc-protected-planes.json",
+        "drc-rejected-protected-planes.json",
+        "drc-original-before-trial.json",
+        "drc-original-library-sample.json",
+        "drc-refilled-as-published.json",
+        "drc-width-source-replay.json",
+        "drc-width-source-replay-rotated.json",
+        "reference-drc.json",
+        "necks.json",
+        "supplemental-neck-repair.json",
+        "drc-before-supplemental-necks.json",
+        "drc-supplemental-neck-trial.json",
+        "hatched-neck-repair.json",
+        "drc-before-hatched-necks.json",
+        "drc-hatched-necks-trial.json",
+        "drc-hatched-neck-bridges.json",
+        "dangling-repair.json",
+        "drc-before-dangling-repair.json",
+        "drc-dangling-repair-trial.json",
+        "drc-before-dangling-stored.json",
+        "drc-before-dangling-refilled.json",
+        "drc-dangling-trial-stored.json",
+        "drc-dangling-trial-refilled.json",
+        "silkscreen-repair.json",
+        "zone-island-repair.json",
+        "open-repair.json",
+        "drc-before-open-repair.json",
+        "relocated-open-repair.json",
+        "drc-before-relocation-stored.json",
+        "drc-before-relocation-refilled.json",
+        "drc-relocation-trial-stored.json",
+        "drc-relocation-trial-refilled.json",
+        "fill-handoff.json",
+        "drc-saved-fill.json",
+        "drc-before-fill.json",
+        "drc-as_saved.json",
+        "drc-as_saved.log",
+        "drc-refilled.json",
+        "drc-refilled.log",
+    ] {
+        remove_if_present(&directory.join(name))?;
+    }
+    for entry in fs::read_dir(directory).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if entry.file_name().to_str().is_some_and(|name| {
+            let numeric =
+                |part: &str| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit());
+            let Some(stem) = name.strip_suffix(".json") else {
+                return false;
+            };
+            stem.strip_prefix("drc-open-trial-").is_some_and(numeric)
+                || stem
+                    .strip_prefix("drc-open-width-source-")
+                    .and_then(|rest| rest.split_once('-'))
+                    .is_some_and(|(trial, replay)| numeric(trial) && numeric(replay))
+        }) {
+            remove_if_present(&entry.path())?;
+        }
+    }
+    Ok(())
 }
 
 struct ReportDirectory(PathBuf);
@@ -341,6 +477,36 @@ pub fn run_kicad_report(arguments: &[&str], output: &Path, input: &Path) -> Resu
     result
 }
 
+/// Exports the current schematic through KiCad into private scratch space.
+/// There can also be a .net beside the schematic from a previous revision.
+pub fn export_schematic_netlist(input: &Path) -> Result<crate::Expr, String> {
+    let scratch = ReportDirectory::new(&std::env::temp_dir())?;
+    let output = scratch.0.join("schematic.net");
+    let mut command = Command::new(kicad_cli());
+    command
+        .args([
+            "sch",
+            "export",
+            "netlist",
+            "--format",
+            "kicadsexpr",
+            "--output",
+        ])
+        .arg(&output)
+        .arg(input);
+    let started = std::time::Instant::now();
+    let result = run_bounded(&mut command, &scratch.0);
+    note_kicad(started);
+    let (status, transcript) = result?;
+    if !status.success() {
+        return Err(format!(
+            "kicad-cli netlist export failed with {status}: {transcript}"
+        ));
+    }
+    let text = fs::read_to_string(output).map_err(|error| error.to_string())?;
+    crate::parse(&text)
+}
+
 fn run_kicad_report_untimed(arguments: &[&str], output: &Path, input: &Path) -> Result<(), String> {
     let program = kicad_cli();
     let program = program.as_os_str();
@@ -369,9 +535,11 @@ fn run_kicad_report_untimed(arguments: &[&str], output: &Path, input: &Path) -> 
     )?;
     // KiCad's check judged per sub-board (a panel of different boards
     // sharing net names): the items across two sub-boards are moved out
-    // of the counted list (`outline_pieces::excuse_across`).
+    // of the counted list (`outline_pieces::excuse_across_with`); a zone
+    // over several pieces asks for KiCad's fill.
     if arguments.get(..2) == Some(&["pcb", "drc"]) {
-        let moved = crate::outline_pieces::excuse_across_file(output, input)?;
+        let moved =
+            crate::outline_pieces::excuse_across_file(output, input, &mut || kicad_filled(input))?;
         if moved > 0 {
             eprintln!(
                 "kicad check: {moved} unconnected items join two sub-boards of a panel (nets of the same name no copper joins): not counted ({}){}",
@@ -399,6 +567,600 @@ fn run_report_command(
     run_report_command_cached(program, arguments, output, input, None, None)
 }
 
+/// Fresh, raw DRC for a staged fill handoff. The save pass lets KiCad
+/// write the board. The stored pass reads the file as is, including for
+/// panels, without repair, refill, cached reports or finding excuses.
+pub fn run_fill_handoff_drc(
+    board: &Path,
+    output: &Path,
+    parity: bool,
+    save_refill: bool,
+) -> Result<Value, String> {
+    run_exact_drc(board, output, parity, save_refill, save_refill)
+}
+
+pub(crate) fn ordinary_drc_arguments(
+    parity: bool,
+    refill: bool,
+    save_board: bool,
+) -> Vec<&'static str> {
+    let mut arguments = vec!["pcb", "drc", "--format", "json", "--severity-all"];
+    if parity {
+        arguments.push("--schematic-parity");
+    }
+    if refill {
+        arguments.push("--refill-zones");
+    }
+    if save_board {
+        arguments.push("--save-board");
+    }
+    arguments.push("--output");
+    arguments
+}
+
+/// The ordinary layout DRC, saving its fill in the caller's private copy.
+pub(crate) fn run_layout_refill_drc(board: &Path, output: &Path) -> Result<Value, String> {
+    run_fresh_handoff_report(board, output, &ordinary_drc_arguments(true, true, true))
+}
+
+/// Resample a capped library report on the original project. Only the
+/// enumeration order of its footprint forms changes in this private copy.
+pub fn resample_footprint_warnings(
+    board: &Path,
+    output: &Path,
+    expired: impl Fn() -> bool,
+) -> Result<Value, String> {
+    use pcb_kicad_file::kicad_sexpr::{Expr, encode, parse};
+    if expired() {
+        return Err("deadline reached before resampling the source footprint warnings".into());
+    }
+    let scratch = ReportDirectory::new(output.parent().ok_or("missing report directory")?)?;
+    let project = scratch.0.join("project");
+    pcb_kicad_file::fs_util::copy_directory_tree(
+        board.parent().ok_or("missing project directory")?,
+        &project,
+    )?;
+    let staged = project.join(board.file_name().ok_or("missing PCB name")?);
+    let mut original = parse(&fs::read_to_string(&staged).map_err(|e| e.to_string())?)?;
+    let Expr::List(items) = &mut original else {
+        return Err("missing PCB forms".into());
+    };
+    let slots: Vec<_> = items
+        .iter()
+        .enumerate()
+        .filter_map(|(i, item)| (item.head() == Some("footprint")).then_some(i))
+        .collect();
+    for i in 0..slots.len() / 2 {
+        items.swap(slots[i], slots[slots.len() - 1 - i]);
+    }
+    fs::write(&staged, encode(&original)).map_err(|e| e.to_string())?;
+    check_kept_route_input(
+        &staged,
+        output,
+        staged.with_extension("kicad_sch").is_file(),
+        true,
+        expired,
+    )
+}
+
+/// Independent all-track DRC for routing with reused copper. Zone refill,
+/// where needed, is in memory and the board under test is not saved.
+pub fn run_route_reuse_drc(board: &Path, output: &Path, refill: bool) -> Result<Value, String> {
+    run_exact_drc(board, output, true, refill, false)
+}
+
+/// Reads an unchanged private project under the same native rule policy as
+/// an all-track DRC. An optional preflight can stop at its own time limit.
+pub fn check_kept_route_input(
+    board: &Path,
+    output: &Path,
+    parity: bool,
+    refill: bool,
+    expired: impl Fn() -> bool,
+) -> Result<Value, String> {
+    check_scoped_drc(board, output, parity, refill, false, expired)
+}
+
+/// Refill a private candidate under the native check's wall guard.
+pub fn save_kept_route_fill(
+    board: &Path,
+    output: &Path,
+    parity: bool,
+    expired: impl Fn() -> bool,
+) -> Result<Value, String> {
+    check_scoped_drc(board, output, parity, true, true, expired)
+}
+
+/// Read KiCad's refilled geometry from a private copy, including transient
+/// teardrops. The original board and its manufacturing rules stay intact.
+pub fn read_refilled_board(
+    board: &Path,
+    expired: impl Fn() -> bool,
+) -> Result<pcb_kicad_file::kicad_sexpr::Expr, String> {
+    let scratch = ReportDirectory::new(&std::env::temp_dir())?;
+    let saved = refilled_board_copy(board, &scratch.0, expired)?;
+    let text = fs::read_to_string(&saved).map_err(|error| error.to_string())?;
+    pcb_kicad_file::canonical_order::parse_board(&text)
+}
+
+fn refilled_board_copy(
+    board: &Path,
+    scratch: &Path,
+    expired: impl Fn() -> bool,
+) -> Result<PathBuf, String> {
+    let name = board.file_name().ok_or("missing PCB filename")?;
+    let saved = scratch.join(name);
+    fs::copy(board, &saved).map_err(|error| error.to_string())?;
+    for extension in ["kicad_pro", "kicad_dru"] {
+        let source = board.with_extension(extension);
+        if source.is_file() {
+            fs::copy(source, saved.with_extension(extension)).map_err(|error| error.to_string())?;
+        }
+    }
+    save_kept_route_fill(&saved, &scratch.join("drc.json"), false, expired)?;
+    Ok(saved)
+}
+
+fn check_scoped_drc(
+    board: &Path,
+    output: &Path,
+    parity: bool,
+    refill: bool,
+    save_board: bool,
+    expired: impl Fn() -> bool,
+) -> Result<Value, String> {
+    check_guarded_drc(
+        board,
+        output,
+        parity,
+        exact_drc_arguments(parity, refill, save_board),
+        expired,
+    )
+}
+
+fn check_zone_width_witness(
+    board: &Path,
+    output: &Path,
+    expired: impl Fn() -> bool,
+) -> Result<Value, String> {
+    let mut arguments = exact_drc_arguments(false, false, false);
+    // The temporary tracks are used solely to tag connection widths.
+    // Exhaustive track clearance occurrences do not enter that proof.
+    arguments.retain(|argument| *argument != "--all-track-errors");
+    check_guarded_drc(board, output, false, arguments, expired)
+}
+
+fn check_guarded_drc(
+    board: &Path,
+    output: &Path,
+    parity: bool,
+    arguments: Vec<&str>,
+    expired: impl Fn() -> bool,
+) -> Result<Value, String> {
+    let parent = output.parent().ok_or("a DRC report needs a directory")?;
+    let scratch = ReportDirectory::new(parent)?;
+    let fresh = scratch.0.join("drc.json");
+    let mut command = Command::new(kicad_cli());
+    command.args(arguments).arg(&fresh).arg(board);
+    crate::kicad_config::configure_drc(&mut command, &kicad_cli(), board);
+    let (status, log) =
+        crate::ledger::kicad_check(|| run_bounded_unreserved(&mut command, &scratch.0, expired))?;
+    if !status.success() {
+        return Err(format!("KiCad input DRC failed with {status}: {log}"));
+    }
+    let report = read_kicad_report(&fresh)?;
+    let severities = report["included_severities"]
+        .as_array()
+        .ok_or("KiCad input DRC did not report its checked severities")?;
+    if ["error", "warning", "exclusion"]
+        .iter()
+        .any(|wanted| !severities.iter().any(|known| known == *wanted))
+    {
+        return Err("KiCad input DRC did not cover all severities".into());
+    }
+    if parity {
+        required_array(&report, "schematic_parity")?;
+    }
+    fs::rename(&fresh, output).map_err(|error| error.to_string())?;
+    Ok(report)
+}
+
+/// An optional, read-only native electrical census. The caller supplies
+/// the version of the DRC which it supplements and the same private PCB
+/// path used for that DRC, with its project and rules next to it.
+pub fn connectivity_partition(
+    board: &Path,
+    version: &str,
+    refill: bool,
+    wall_passed: impl Fn() -> bool,
+) -> Result<Vec<(String, Vec<String>)>, String> {
+    let bytes = connectivity_evidence(board, version, refill, false, wall_passed)?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| format!("invalid native connectivity result: {error}"))
+}
+
+/// A native filled polygon keyed by net, layer, teardrop and isolated
+/// flags, its exact integer bounds, and its authored zone ID when available.
+pub type FilledIslandKey = (String, String, bool, bool, [i64; 4], String);
+
+#[derive(serde::Deserialize)]
+pub struct NativeIslandTopology {
+    pub ordinary: Vec<(String, Vec<String>)>,
+    pub islands: Vec<(FilledIslandKey, Vec<String>)>,
+    pub shapes: Vec<(FilledIslandKey, String)>,
+}
+
+impl NativeIslandTopology {
+    /// The island identifiers must match exactly. Each previous island must
+    /// still attach to the complete native group of its original members.
+    pub fn keeps_island_attachments(&self, before: &Self) -> bool {
+        let by_member: BTreeMap<_, _> = self
+            .ordinary
+            .iter()
+            .flat_map(|group| group.1.iter().map(move |id| (id.as_str(), group)))
+            .collect();
+        !before.islands.is_empty()
+            && self.islands.len() == before.islands.len()
+            && before.islands.iter().zip(&self.islands).all(
+                |((old_key, old_members), (key, members))| {
+                    old_key == key
+                        && !old_members.is_empty()
+                        && old_members.iter().all(|id| {
+                            by_member
+                                .get(id.as_str())
+                                .is_some_and(|(net, group)| net == &key.0 && group == members)
+                        })
+                },
+            )
+    }
+
+    /// Count native open descriptions by net and full finding metadata.
+    /// Endpoint positions on a native zone can be its outline origin, so
+    /// a fill witness only names a net here. Its attachment proof is separate.
+    pub fn open_counts(&self, report: &Value) -> Option<BTreeMap<(String, String), usize>> {
+        let by_member: BTreeMap<_, _> = self
+            .ordinary
+            .iter()
+            .enumerate()
+            .flat_map(|(index, (net, group))| {
+                group
+                    .iter()
+                    .map(move |id| (id.as_str(), (net.as_str(), Some(index))))
+            })
+            .collect();
+        let net_of = |item: &Value| {
+            let id = item["uuid"].as_str()?.to_ascii_lowercase();
+            if let Some((net, index)) = by_member.get(id.as_str()) {
+                return Some(((*net).to_owned(), *index));
+            }
+            let label = item["description"].as_str()?;
+            let (teardrop, name) = label
+                .strip_prefix("Teardrop [")
+                .map(|name| (true, name))
+                .or_else(|| label.strip_prefix("Zone [").map(|name| (false, name)))?;
+            let (net, layer) = name.rsplit_once("] on ")?;
+            let layer = layer.split(',').next()?;
+            self.islands
+                .iter()
+                .any(|(key, _)| {
+                    key.0 == net && key.1 == layer && key.2 == teardrop && (teardrop || key.5 == id)
+                })
+                .then(|| (net.to_owned(), None))
+        };
+        let mut counts = BTreeMap::new();
+        let local = report["unconnected_items"].as_array()?;
+        let across = match report.get(pcb_kicad_file::outline_pieces::ACROSS_KEY) {
+            Some(across) => Some(across.as_array()?),
+            None => None,
+        };
+        for item in local.iter().chain(across.into_iter().flatten()) {
+            if item["severity"] != "error"
+                || item["type"] != "unconnected_items"
+                || item["excluded"] == true
+            {
+                return None;
+            }
+            let mut header = item.clone();
+            let endpoints = header.as_object_mut()?.remove("items")?;
+            let [a, b] = endpoints.as_array()?.as_slice() else {
+                return None;
+            };
+            let (net, a_group) = net_of(a)?;
+            let (other, b_group) = net_of(b)?;
+            if net != other || (a_group.is_some() && a_group == b_group) {
+                return None;
+            }
+            *counts.entry((net, header.to_string())).or_default() += 1;
+        }
+        Some(counts)
+    }
+}
+
+/// Complete native memberships for every supported fill island. The
+/// private probe proves its one-polygon copies preserve the ordinary
+/// native partition before using their finer attribution.
+pub fn connectivity_islands(
+    board: &Path,
+    version: &str,
+    refill: bool,
+    wall_passed: impl Fn() -> bool,
+) -> Result<NativeIslandTopology, String> {
+    let bytes = connectivity_evidence(board, version, refill, true, wall_passed)?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| format!("invalid native island connectivity result: {error}"))
+}
+
+fn connectivity_evidence(
+    board: &Path,
+    version: &str,
+    refill: bool,
+    islands: bool,
+    wall_passed: impl Fn() -> bool,
+) -> Result<Vec<u8>, String> {
+    let parent = board
+        .parent()
+        .ok_or("connectivity PCB needs a project directory")?;
+    let scratch = ReportDirectory::new(parent)?;
+    let result = scratch.0.join("partition.json");
+    let filled;
+    let (board, refill) = if islands && refill {
+        // The Python zone filler alone does not construct native teardrops.
+        // Use the same CLI fill as the native DRC, including derived copper.
+        filled = refilled_board_copy(board, &scratch.0, &wall_passed)?;
+        (filled.as_path(), false)
+    } else {
+        (board, refill)
+    };
+    let mut command = Command::new("python3");
+    command
+        .args(["-I", "-c", include_str!("connectivity_partition.py")])
+        .arg(board)
+        .arg(&result)
+        .args([if refill { "refill" } else { "stored" }, version]);
+    if islands {
+        command.arg("islands");
+    }
+    crate::kicad_config::configure_drc(&mut command, &kicad_cli(), board);
+    let (status, log) = crate::ledger::kicad_check(|| {
+        run_bounded_unreserved(&mut command, &scratch.0, wall_passed)
+    })
+    .map_err(|error| format!("optional KiCad Python connectivity check unavailable: {error}"))?;
+    if !status.success() {
+        return Err(format!(
+            "optional KiCad Python connectivity check failed: {}",
+            log.lines().last().unwrap_or("no native result")
+        ));
+    }
+    fs::read(&result).map_err(|error| error.to_string())
+}
+
+/// Prove contacts between footprint copper graphics and pads on a private
+/// copy of the exact saved board. This probe does not refill or edit copper.
+pub fn footprint_artwork_bridges(
+    board: &Path,
+    version: &str,
+    witnesses: &Value,
+) -> Result<(Value, String), String> {
+    native_board_probe(
+        board,
+        version,
+        witnesses,
+        include_str!("footprint_artwork_bridges.py"),
+        "artwork",
+    )
+}
+
+/// Screen candidate same-face placement moves around a short two-layer link.
+pub fn placement_escape_probe(
+    board: &Path,
+    version: &str,
+    request: &Value,
+) -> Result<(Value, String), String> {
+    native_board_probe(
+        board,
+        version,
+        request,
+        include_str!("placement_escape.py"),
+        "placement escape",
+    )
+}
+
+/// Measure explicit pad pairs or resolve authored near entries on saved copper.
+pub fn routed_path_probe(
+    board: &Path,
+    version: &str,
+    request: &Value,
+) -> Result<(Value, String), String> {
+    bounded_native_board_probe(
+        board,
+        version,
+        request,
+        concat!(
+            include_str!("routed_supply_paths.py"),
+            "\n",
+            include_str!("routed_path_probe.py"),
+        ),
+        "routed pad path",
+        true,
+        || false,
+    )
+}
+
+/// Screen short bridge or fill patches around chords found by the native
+/// width locator. Its proposals still need an exact refill and reopen DRC.
+pub fn hatch_neck_geometry(
+    board: &Path,
+    version: &str,
+    request: &Value,
+    expired: impl Fn() -> bool,
+) -> Result<(Value, String), String> {
+    bounded_native_board_probe(
+        board,
+        version,
+        request,
+        include_str!("hatch_neck_geometry.py"),
+        "hatch neck geometry",
+        true,
+        expired,
+    )
+}
+
+fn native_board_probe(
+    board: &Path,
+    version: &str,
+    input_data: &Value,
+    script: &str,
+    name: &str,
+) -> Result<(Value, String), String> {
+    bounded_native_board_probe(board, version, input_data, script, name, false, || false)
+}
+
+fn bounded_native_board_probe(
+    board: &Path,
+    version: &str,
+    input_data: &Value,
+    script: &str,
+    name: &str,
+    copy_rules: bool,
+    expired: impl Fn() -> bool,
+) -> Result<(Value, String), String> {
+    use std::time::{Duration, Instant};
+
+    const MAX_BOARD_BYTES: u64 = 32 * 1024 * 1024;
+    if fs::metadata(board)
+        .map_err(|error| error.to_string())?
+        .len()
+        > MAX_BOARD_BYTES
+    {
+        return Err(format!(
+            "the PCB exceeds the native {name} probe's board size limit"
+        ));
+    }
+    let started = Instant::now();
+    let scratch = ReportDirectory::new(&std::env::temp_dir())?;
+    let original = crate::fs_util::file_sha256(board)?;
+    let input = scratch
+        .0
+        .join(board.file_name().ok_or("missing PCB filename")?);
+    fs::copy(board, &input).map_err(|error| error.to_string())?;
+    if copy_rules {
+        for extension in ["kicad_pro", "kicad_dru"] {
+            let source = board.with_extension(extension);
+            if source.is_file() {
+                fs::copy(source, input.with_extension(extension))
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+    }
+    if crate::fs_util::file_sha256(&input)? != original {
+        return Err(format!("the PCB changed before the native {name} probe"));
+    }
+    let request = scratch.0.join("request.json");
+    let result = scratch.0.join("result.json");
+    fs::write(
+        &request,
+        serde_json::to_vec(input_data).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let mut command = Command::new("python3");
+    command
+        .args(["-I", "-c", script])
+        .arg(&input)
+        .arg(&request)
+        .arg(&result)
+        .arg(version);
+    let (status, log) = crate::ledger::kicad_check(|| {
+        run_bounded_unreserved(&mut command, &scratch.0, || {
+            expired() || started.elapsed() >= Duration::from_secs(8)
+        })
+    })
+    .map_err(|error| format!("native KiCad {name} probe unavailable: {error}"))?;
+    if !status.success() {
+        return Err(format!(
+            "native KiCad {name} probe failed: {}",
+            log.lines().last().unwrap_or("no native result")
+        ));
+    }
+    if crate::fs_util::file_sha256(board)? != original {
+        return Err(format!("the PCB changed during the native {name} probe"));
+    }
+    let value = serde_json::from_slice(&fs::read(result).map_err(|error| error.to_string())?)
+        .map_err(|error| format!("invalid native {name} probe result: {error}"))?;
+    Ok((value, original))
+}
+
+pub(crate) fn exact_drc_arguments(
+    parity: bool,
+    refill: bool,
+    save_board: bool,
+) -> Vec<&'static str> {
+    let mut args = vec![
+        "pcb",
+        "drc",
+        "--format",
+        "json",
+        "--severity-all",
+        "--all-track-errors",
+    ];
+    if parity {
+        args.push("--schematic-parity");
+    }
+    if refill {
+        args.push("--refill-zones");
+    }
+    if save_board {
+        args.push("--save-board");
+    }
+    args.push("--output");
+    args
+}
+
+pub(crate) fn route_reuse_drc_input_key(board: &Path, refill: bool) -> Result<String, String> {
+    let program = kicad_cli();
+    let config = crate::kicad_config::drc_config_home(&program, board)
+        .ok_or("route reuse DRC is using the user's library configuration")?;
+    let arguments = exact_drc_arguments(true, refill, false);
+    let context = crate::drc_cache::KeyContext::current(&program, &arguments, Some(&config))?;
+    crate::drc_cache::key(&context, board)
+}
+
+fn run_exact_drc(
+    board: &Path,
+    output: &Path,
+    parity: bool,
+    refill: bool,
+    save_board: bool,
+) -> Result<Value, String> {
+    run_fresh_handoff_report(
+        board,
+        output,
+        &exact_drc_arguments(parity, refill, save_board),
+    )
+}
+
+fn run_fresh_handoff_report(
+    board: &Path,
+    output: &Path,
+    arguments: &[&str],
+) -> Result<Value, String> {
+    let started = std::time::Instant::now();
+    let program = kicad_cli();
+    let program = program.as_os_str();
+    let config = crate::kicad_config::drc_config_home(program, board);
+    let checked = run_report_command_with_policy(
+        program,
+        arguments,
+        output,
+        board,
+        None,
+        config.as_deref(),
+        true,
+    );
+    note_kicad(started);
+    checked?;
+    read_kicad_report(output)
+}
+
 /// Runs a native report, a DRC through the cache in `cache` (see
 /// `drc_cache`): a hit is validated and published exactly as a fresh
 /// report is. `config_home`, when given, is kicad-cli's `KICAD_CONFIG_HOME`
@@ -410,6 +1172,18 @@ fn run_report_command_cached(
     input: &Path,
     cache: Option<&Path>,
     config_home: Option<&Path>,
+) -> Result<(), String> {
+    run_report_command_with_policy(program, arguments, output, input, cache, config_home, false)
+}
+
+fn run_report_command_with_policy(
+    program: &OsStr,
+    arguments: &[&str],
+    output: &Path,
+    input: &Path,
+    cache: Option<&Path>,
+    config_home: Option<&Path>,
+    confirm_handoff: bool,
 ) -> Result<(), String> {
     let kind = match arguments.get(..2) {
         Some(["sch", "erc"]) => ReportKind::Erc,
@@ -471,11 +1245,43 @@ fn run_report_command_cached(
     if let Some(home) = config_home {
         command.env("KICAD_CONFIG_HOME", home);
     }
-    let (status, transcript) = run_bounded(&mut command, &temporary.0)?;
-    if !status.success() {
-        return Err(format!("kicad-cli failed with {status}: {transcript}"));
+    if confirm_handoff {
+        command.env("LC_ALL", "C");
     }
-    let report = super::read_json(&fresh)?;
+    let report = with_one_rerun(|| {
+        remove_if_present(&fresh)?;
+        let (status, transcript) = run_bounded(&mut command, &temporary.0)?;
+        if !status.success() {
+            return Err(format!("kicad-cli failed with {status}: {transcript}"));
+        }
+        let report = read_kicad_report(&fresh);
+        if confirm_handoff {
+            if arguments.contains(&"--save-board")
+                && !transcript.lines().any(|line| line.trim() == "Saved board")
+            {
+                return Err("kicad-cli did not confirm saving the refilled board".into());
+            }
+            if arguments.contains(&"--schematic-parity")
+                && let Ok(value) = &report
+            {
+                let parity = required_array(value, "schematic_parity")?;
+                let printed = transcript.lines().find_map(|line| {
+                    line.trim()
+                        .strip_prefix("Found ")?
+                        .strip_suffix(" schematic parity issues")?
+                        .parse::<usize>()
+                        .ok()
+                });
+                if printed != Some(parity.len()) {
+                    return Err(
+                        "kicad-cli did not confirm the schematic parity findings in its report"
+                            .into(),
+                    );
+                }
+            }
+        }
+        Ok(report)
+    })?;
     validate_report(&report, kind, input)?;
     if let Some(cache) = &cache {
         match fs::read(&fresh) {
@@ -489,6 +1295,72 @@ fn run_report_command_cached(
             output.display()
         )
     })
+}
+
+/// kicad-cli's JSON report at `path`, after a run that exited 0. KiCad
+/// writes its reports without checking the write (`DRC_REPORT::
+/// WriteJsonReport` returns true whatever happened, and kicad-cli prints
+/// "Saved DRC Report" and exits 0): on a full disk the report is empty, cut
+/// short or missing. A shared `/tmp` that other runs fill for a moment did
+/// that to a netlist import's pad check (2026-11-11). The error names the
+/// file, says what was there and how much space was free beside it.
+pub fn read_kicad_report(path: &Path) -> Result<Value, String> {
+    let (what, detail) = match fs::read(path) {
+        Ok(bytes) => match serde_json::from_slice(&bytes) {
+            Ok(report) => return Ok(report),
+            Err(error) if bytes.is_empty() => ("is empty".to_string(), error.to_string()),
+            Err(error) => (
+                format!("does not parse ({} bytes)", bytes.len()),
+                error.to_string(),
+            ),
+        },
+        Err(error) => ("could not be read".to_string(), error.to_string()),
+    };
+    let free = path
+        .parent()
+        .and_then(free_megabytes)
+        .map(|megabytes| format!("; {megabytes:.0} MB free there now"))
+        .unwrap_or_default();
+    Err(format!(
+        "kicad-cli exited 0 but its report {} {what}: {detail} (KiCad does not check that \
+         its report was written: a full disk leaves it empty or cut short{free})",
+        path.display()
+    ))
+}
+
+/// Runs `run` (a kicad-cli report: Err when kicad-cli failed, else the
+/// report as [`read_kicad_report`] read it) and once more when the report
+/// did not read: a disk that was full for a moment rarely is twice.
+pub fn with_one_rerun(
+    mut run: impl FnMut() -> Result<Result<Value, String>, String>,
+) -> Result<Value, String> {
+    match run()? {
+        Ok(report) => Ok(report),
+        Err(error) => {
+            eprintln!("kicad check: {error}; running kicad-cli once more");
+            run()?
+        }
+    }
+}
+
+/// Free space in megabytes on the file system holding `directory`.
+#[cfg(unix)]
+fn free_megabytes(directory: &Path) -> Option<f64> {
+    use std::os::unix::ffi::OsStrExt;
+    let name = std::ffi::CString::new(directory.as_os_str().as_bytes()).ok()?;
+    let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: `name` is NUL-terminated and `stat` is written by statvfs
+    // before it is read, which happens only when the call succeeded.
+    if unsafe { libc::statvfs(name.as_ptr(), stat.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    let stat = unsafe { stat.assume_init() };
+    Some(stat.f_bavail as f64 * stat.f_frsize as f64 / 1e6)
+}
+
+#[cfg(not(unix))]
+fn free_megabytes(_directory: &Path) -> Option<f64> {
+    None
 }
 
 /// Refills the zones of `board` with kicad-cli's DRC (which also rebuilds
@@ -532,6 +1404,45 @@ fn run_kicad_save_board_untimed(board: &Path, report: &Path) -> Result<(), Strin
     Ok(())
 }
 
+/// `board` with its zones as KiCad's refill leaves them, for the excuse of
+/// items across sub-boards (`outline_pieces::excuse_across_with`): a
+/// scratch copy with its project and rules, refilled and saved by
+/// kicad-cli (`run_kicad_save_board`); None, said on stderr, when that
+/// fails.
+fn kicad_filled(board: &Path) -> Option<pcb_kicad_file::kicad_sexpr::Expr> {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let scratch = std::env::temp_dir().join(format!(
+        "pcb-maker-zone-fill-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let filled = (|| {
+        let stem = board
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .ok_or_else(|| format!("no board name in {}", board.display()))?;
+        fs::create_dir_all(&scratch).map_err(|error| error.to_string())?;
+        for extension in ["kicad_pcb", "kicad_pro", "kicad_dru"] {
+            let file = board.with_extension(extension);
+            if file.exists() {
+                fs::copy(&file, scratch.join(format!("{stem}.{extension}")))
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+        let saved = scratch.join(format!("{stem}.kicad_pcb"));
+        run_kicad_save_board(&saved, &scratch.join("drc.json"))?;
+        let text = fs::read_to_string(&saved)
+            .map_err(|error| format!("failed to read {}: {error}", saved.display()))?;
+        pcb_kicad_file::canonical_order::parse_board(&text)
+    })();
+    let _ = fs::remove_dir_all(&scratch);
+    filled
+        .map_err(|error| {
+            eprintln!("kicad check: no zone fill for the items across sub-boards: {error}")
+        })
+        .ok()
+}
+
 /// How a kicad-cli run that outlived `report_timeout` is reported (the
 /// verdict's next action names `PCB_KICAD_TIMEOUT` on it).
 pub const KICAD_TIMEOUT_MESSAGE: &str = "kicad-cli timed out after";
@@ -556,12 +1467,13 @@ fn run_bounded(
 ) -> Result<(std::process::ExitStatus, String), String> {
     // kicad-cli's 2.2 GB, inside the process's reservation in the memory
     // ledger while it runs.
-    crate::ledger::kicad_check(|| run_bounded_unreserved(command, scratch))
+    crate::ledger::kicad_check(|| run_bounded_unreserved(command, scratch, || false))
 }
 
 fn run_bounded_unreserved(
     command: &mut Command,
     scratch: &Path,
+    wall_passed: impl Fn() -> bool,
 ) -> Result<(std::process::ExitStatus, String), String> {
     let log = scratch.join("kicad-cli.log");
     let file = fs::File::create(&log)
@@ -588,6 +1500,11 @@ fn run_bounded_unreserved(
         if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
             break status;
         }
+        if wall_passed() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("layout wall guard expired during native connectivity proof".into());
+        }
         if started.elapsed() > timeout {
             let _ = child.kill();
             let _ = child.wait();
@@ -605,6 +1522,76 @@ fn run_bounded_unreserved(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn filled_island_attachments_distinguish_equal_ordinary_partitions() {
+        let ordinary = vec![
+            ("GND".to_owned(), vec!["pad-a".to_owned()]),
+            ("GND".to_owned(), vec!["pad-b".to_owned()]),
+        ];
+        let key = (
+            "GND".into(),
+            "F.Cu".into(),
+            false,
+            false,
+            [0, 0, 2, 3],
+            "zone".into(),
+        );
+        let before = NativeIslandTopology {
+            ordinary: ordinary.clone(),
+            islands: vec![(key.clone(), vec!["pad-a".into()])],
+            shapes: Vec::new(),
+        };
+        let candidate = NativeIslandTopology {
+            ordinary,
+            islands: vec![(key, vec!["pad-b".into()])],
+            shapes: Vec::new(),
+        };
+        let open = json!({"type":"unconnected_items", "severity":"error", "items":[
+            {"uuid":"pad-a"}, {"uuid":"zone", "description":"Zone [GND] on F.Cu, priority 0"}
+        ]});
+        let report = json!({"unconnected_items":[open.clone()]});
+        let mut repartitioned = json!({"unconnected_items":[]});
+        repartitioned[pcb_kicad_file::outline_pieces::ACROSS_KEY] = json!([open]);
+        assert!(before.keeps_island_attachments(&before));
+        assert!(!candidate.keeps_island_attachments(&before));
+        assert!(before.open_counts(&report).is_some());
+        assert_eq!(
+            before.open_counts(&report),
+            candidate.open_counts(&repartitioned)
+        );
+        let mut wrong_net = report;
+        wrong_net["unconnected_items"][0]["items"][1]["description"] =
+            json!("Zone [OTHER] on F.Cu");
+        assert!(before.open_counts(&wrong_net).is_none());
+    }
+
+    #[test]
+    fn stale_run_reports_are_removed_without_removing_project_inputs() {
+        let directory = ReportDirectory::new(&std::env::temp_dir()).unwrap();
+        let derived = [
+            "board-layout.json",
+            "preview.svg",
+            "native-check-drc.json",
+            "erc.json",
+            "zone-island-repair.json",
+            "drc-before-open-repair.json",
+            "drc-open-trial-12.json",
+        ];
+        let preserved = [
+            "constraints.json",
+            "layout.json",
+            "drc-open-trial-notes.json",
+        ];
+        for name in derived.into_iter().chain(preserved) {
+            fs::write(directory.0.join(name), name).unwrap();
+        }
+        remove_stale_board_run_reports(&directory.0).unwrap();
+        assert!(derived.iter().all(|name| !directory.0.join(name).exists()));
+        for name in preserved {
+            assert_eq!(fs::read_to_string(directory.0.join(name)).unwrap(), name);
+        }
+    }
 
     fn report(kind: ReportKind) -> Value {
         let mut report = json!({
@@ -644,7 +1631,7 @@ mod tests {
             "description": "Footprint differs from library", "items": []
         }]);
         let assess = |drc: &Value| {
-            crate::verification::assess_verification_reports("board", &erc, drc).unwrap()
+            crate::verification::assess_verification_reports("board", &erc, drc, true).unwrap()
         };
         let result = assess(&drc);
         assert!(result.complete);
@@ -722,13 +1709,40 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_native_parity_array_does_not_prove_that_check_ran() {
+        let erc = report(ReportKind::Erc);
+        let drc = report(ReportKind::Drc);
+        let assess = |requested| {
+            crate::verification::assess_verification_reports("board", &erc, &drc, requested)
+                .unwrap()
+        };
+        let checked = assess(true);
+        assert!(checked.schematic_parity_checked);
+        let board_only = assess(false);
+        assert!(!board_only.schematic_parity_checked);
+        assert_eq!(
+            checked.schematic_parity_issues,
+            board_only.schematic_parity_issues
+        );
+        assert_eq!(checked.complete, board_only.complete);
+        let mut legacy = serde_json::to_value(checked).unwrap();
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("schematic_parity_checked");
+        let legacy: crate::verification::VerificationReport =
+            serde_json::from_value(legacy).unwrap();
+        assert!(!legacy.schematic_parity_checked);
+    }
+
+    #[test]
     fn valid_reports_with_findings_are_incomplete_and_malformed_reports_invalidate_old_verdicts() {
         let directory = ReportDirectory::new(&std::env::temp_dir()).unwrap();
         let verdict = directory.0.join("verification.json");
         let erc = report(ReportKind::Erc);
         let mut drc = report(ReportKind::Drc);
         let assess = |drc: &Value| {
-            crate::verification::write_verification_report(&directory.0, "board", &erc, drc)
+            crate::verification::write_verification_report(&directory.0, "board", &erc, drc, true)
         };
         assert!(assess(&drc).unwrap().complete);
         drc["violations"] = json!([finding()]);
@@ -785,6 +1799,72 @@ mod tests {
                     .is_dir())
             );
         }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_report_kicad_left_empty_runs_kicad_again_and_is_named_when_it_stays_empty() {
+        // KiCad on a full disk: "Saved DRC Report", exit 0, an empty file.
+        let directory = ReportDirectory::new(&std::env::temp_dir()).unwrap();
+        let output = directory.0.join("drc.json");
+        let runs = directory.0.join("runs");
+        let valid = report(ReportKind::Drc);
+        let empty_first = format!(
+            "echo run >> {runs}\nif [ \"$(wc -l < {runs})\" -lt 2 ]; then\n  \
+             while [ \"$1\" != --output ]; do shift; done\n  : > \"$2\"\n  exit 0\nfi\n{}",
+            write_report_script(&valid, 0),
+            runs = runs.display()
+        );
+        let always_empty = format!(
+            "echo run >> {}\nwhile [ \"$1\" != --output ]; do shift; done\n: > \"$2\"\nexit 0",
+            runs.display()
+        );
+        let run = |body: &str| {
+            let _ = fs::remove_file(&runs);
+            let cli = fake_cli(&directory.0, body);
+            let result = run_report_command(
+                cli.as_os_str(),
+                &["pcb", "drc", "--output"],
+                &output,
+                Path::new("board.kicad_pcb"),
+            );
+            let kicad_runs = fs::read_to_string(&runs).unwrap().lines().count();
+            (result, kicad_runs)
+        };
+        let (result, kicad_runs) = run(&empty_first);
+        assert_eq!((result, kicad_runs), (Ok(()), 2));
+        assert_eq!(super::super::read_json(&output).unwrap(), valid);
+        let (result, kicad_runs) = run(&always_empty);
+        let error = result.unwrap_err();
+        assert_eq!(kicad_runs, 2, "once more, not more");
+        assert!(
+            error.contains("report.json is empty") && error.contains("full disk"),
+            "{error}"
+        );
+        assert!(!output.exists());
+    }
+
+    #[test]
+    fn a_report_that_does_not_read_names_its_file_and_what_was_there() {
+        let directory = ReportDirectory::new(&std::env::temp_dir()).unwrap();
+        let path = directory.0.join("drc.json");
+        let error = |contents: Option<&str>| {
+            let _ = fs::remove_file(&path);
+            if let Some(contents) = contents {
+                fs::write(&path, contents).unwrap();
+            }
+            read_kicad_report(&path).unwrap_err()
+        };
+        let empty = error(Some(""));
+        assert!(
+            empty.contains(&format!("{} is empty", path.display())),
+            "{empty}"
+        );
+        assert!(empty.contains("MB free there now"), "{empty}");
+        assert!(error(Some("{\"violations\": [")).contains("does not parse (16 bytes)"));
+        assert!(error(None).contains("could not be read"));
+        fs::write(&path, "{\"violations\": []}").unwrap();
+        assert_eq!(read_kicad_report(&path).unwrap(), json!({"violations": []}));
     }
 
     #[test]

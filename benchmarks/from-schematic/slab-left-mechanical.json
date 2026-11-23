@@ -1,0 +1,634 @@
+{
+  "version": 1,
+  "move_all": true,
+  "place": [
+    {
+      "part": "MX1",
+      "x": 186.0,
+      "y": 45.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX2",
+      "x": 167.0,
+      "y": 45.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX3",
+      "x": 148.0,
+      "y": 38.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX4",
+      "x": 129.0,
+      "y": 36.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX5",
+      "x": 110.0,
+      "y": 37.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX6",
+      "x": 91.0,
+      "y": 40.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX7",
+      "x": 186.0,
+      "y": 64.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX8",
+      "x": 167.0,
+      "y": 64.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX9",
+      "x": 148.0,
+      "y": 57.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX10",
+      "x": 129.0,
+      "y": 55.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX11",
+      "x": 110.0,
+      "y": 56.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX12",
+      "x": 91.0,
+      "y": 59.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX13",
+      "x": 186.0,
+      "y": 83.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX14",
+      "x": 167.0,
+      "y": 83.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX15",
+      "x": 148.0,
+      "y": 76.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX16",
+      "x": 129.0,
+      "y": 74.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX17",
+      "x": 110.0,
+      "y": 75.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX18",
+      "x": 91.0,
+      "y": 78.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX19",
+      "x": 186.0,
+      "y": 102.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX20",
+      "x": 167.0,
+      "y": 102.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX21",
+      "x": 148.0,
+      "y": 95.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX22",
+      "x": 129.0,
+      "y": 93.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX23",
+      "x": 110.0,
+      "y": 94.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX24",
+      "x": 91.0,
+      "y": 97.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX25",
+      "x": 186.0,
+      "y": 121.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX26",
+      "x": 167.0,
+      "y": 121.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX27",
+      "x": 148.0,
+      "y": 114.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX28",
+      "x": 129.0,
+      "y": 112.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX29",
+      "x": 110.0,
+      "y": 113.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "MX30",
+      "x": 91.0,
+      "y": 116.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED1",
+      "x": 186.0,
+      "y": 45.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED2",
+      "x": 167.0,
+      "y": 45.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED3",
+      "x": 148.0,
+      "y": 38.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED4",
+      "x": 129.0,
+      "y": 36.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED5",
+      "x": 110.0,
+      "y": 37.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED6",
+      "x": 91.0,
+      "y": 40.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED7",
+      "x": 186.0,
+      "y": 64.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED8",
+      "x": 167.0,
+      "y": 64.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED9",
+      "x": 148.0,
+      "y": 57.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED10",
+      "x": 129.0,
+      "y": 55.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED11",
+      "x": 110.0,
+      "y": 56.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED12",
+      "x": 91.0,
+      "y": 59.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED13",
+      "x": 186.0,
+      "y": 83.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED14",
+      "x": 167.0,
+      "y": 83.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED15",
+      "x": 148.0,
+      "y": 76.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED16",
+      "x": 129.0,
+      "y": 74.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED17",
+      "x": 110.0,
+      "y": 75.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED18",
+      "x": 91.0,
+      "y": 78.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED19",
+      "x": 186.0,
+      "y": 102.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED20",
+      "x": 167.0,
+      "y": 102.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED21",
+      "x": 148.0,
+      "y": 95.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED22",
+      "x": 129.0,
+      "y": 93.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED23",
+      "x": 110.0,
+      "y": 94.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED24",
+      "x": 91.0,
+      "y": 97.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED25",
+      "x": 186.0,
+      "y": 121.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED26",
+      "x": 167.0,
+      "y": 121.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED27",
+      "x": 148.0,
+      "y": 114.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED28",
+      "x": 129.0,
+      "y": 112.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED29",
+      "x": 110.0,
+      "y": 113.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED30",
+      "x": 91.0,
+      "y": 116.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "LED31",
+      "x": 81.465,
+      "y": 130.499998,
+      "angle": 180.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "H1",
+      "x": 110.0,
+      "y": 75.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "H2",
+      "x": 148.0,
+      "y": 55.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "H3",
+      "x": 186.0,
+      "y": 102.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "H4",
+      "x": 129.0,
+      "y": 112.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "H5",
+      "x": 207.9,
+      "y": 111.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "H6",
+      "x": 91.0,
+      "y": 97.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "H7",
+      "x": 186.0,
+      "y": 64.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "H8",
+      "x": 75.75,
+      "y": 121.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "H9",
+      "x": 91.0,
+      "y": 59.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J1",
+      "x": 73.1,
+      "y": 92.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J2",
+      "x": 228.9,
+      "y": 92.5,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J3",
+      "x": 78.35,
+      "y": 49.95,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J4",
+      "x": 223.75,
+      "y": 74.5,
+      "angle": 180.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J5",
+      "x": 217.53,
+      "y": 130.5,
+      "angle": 90.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "U1",
+      "x": 217.0,
+      "y": 55.5,
+      "angle": 180.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "RV1",
+      "x": 83.33285,
+      "y": 62.199998,
+      "angle": 270.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "SW1",
+      "x": 89.0,
+      "y": 128.0,
+      "angle": 180.0,
+      "origin": "absolute"
+    }
+  ],
+  "front": [
+    "MX1",
+    "MX2",
+    "MX3",
+    "MX4",
+    "MX5",
+    "MX6",
+    "MX7",
+    "MX8",
+    "MX9",
+    "MX10",
+    "MX11",
+    "MX12",
+    "MX13",
+    "MX14",
+    "MX15",
+    "MX16",
+    "MX17",
+    "MX18",
+    "MX19",
+    "MX20",
+    "MX21",
+    "MX22",
+    "MX23",
+    "MX24",
+    "MX25",
+    "MX26",
+    "MX27",
+    "MX28",
+    "MX29",
+    "MX30",
+    "LED1",
+    "LED2",
+    "LED3",
+    "LED4",
+    "LED5",
+    "LED6",
+    "LED7",
+    "LED8",
+    "LED9",
+    "LED10",
+    "LED11",
+    "LED12",
+    "LED13",
+    "LED14",
+    "LED15",
+    "LED16",
+    "LED17",
+    "LED18",
+    "LED19",
+    "LED20",
+    "LED21",
+    "LED22",
+    "LED23",
+    "LED24",
+    "LED25",
+    "LED26",
+    "LED27",
+    "LED28",
+    "LED29",
+    "LED30",
+    "LED31",
+    "H1",
+    "H2",
+    "H3",
+    "H4",
+    "H5",
+    "H6",
+    "H7",
+    "H8",
+    "H9",
+    "J1",
+    "J2"
+  ],
+  "back": [
+    "J3",
+    "J4",
+    "J5",
+    "U1",
+    "RV1",
+    "SW1"
+  ]
+}

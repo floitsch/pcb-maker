@@ -171,8 +171,8 @@ pub enum Where {
 fn elements(path: &Path) -> Vec<Where> {
     let count = path.discs.len();
     let mut list = Vec::with_capacity(2 * count);
-    for index in 0..count {
-        if index > 0 && index + 1 < count && path.discs[index].radius > 0.0 {
+    for (index, disc) in path.discs.iter().enumerate() {
+        if index > 0 && index + 1 < count && disc.radius > 0.0 {
             list.push(Where::Arc(index));
         }
         if index + 1 < count {

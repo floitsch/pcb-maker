@@ -92,11 +92,124 @@ fn board(entries: &[(&str, &[&str])]) -> BoardFacts {
         neck_width: 0.0,
         connection_floor_warnings: false,
         areas: Vec::new(),
+        footprint_pads: BTreeMap::new(),
     }
 }
 
 fn lowered(text: &str, board: &BoardFacts) -> Lowered {
     lower(&parse_rules(text).unwrap(), board, &BTreeMap::new())
+}
+
+#[test]
+fn literal_footprint_clearance_floors_follow_the_last_covering_rule() {
+    let mut facts = board(&[("N", &["Default"]), ("GND", &["Default"])]);
+    facts.footprint_pads = ["U9", "U10", "U90"]
+        .into_iter()
+        .map(|reference| (reference.to_string(), [format!("{reference}.1")].into()))
+        .collect();
+    let rules = r#"(version 1)
+      (rule wide (condition "A.memberOfFootprint('U9') || B.memberOfFootprint('U10')")
+        (constraint clearance (min 0.32mm)))
+      (rule local (condition "B.memberOfFootprint('U9')")
+        (constraint clearance (min 0.2mm)))
+      (rule partial (layer F.Cu) (condition "A.memberOfFootprint('U9')")
+        (constraint clearance (min 0.4mm)))
+      (rule other (condition "A.memberOfFootprint('U*') && A.memberOf('Custom')")
+        (constraint clearance (min 0.5mm)))"#;
+    let result = lowered(rules, &facts);
+    assert_eq!(
+        result.footprint_pad_clearance,
+        BTreeMap::from([("U9".into(), 0.2), ("U10".into(), 0.32)])
+    );
+    assert_eq!(result.report[0].status, "approximated");
+    assert!(result.report[0].detail.contains("U10"));
+    assert!(!result.report[0].detail.contains("U9"));
+    assert_eq!(result.report[2].status, "unmodelled");
+    assert_eq!(result.report[3].status, "unmodelled");
+    assert!(result.fixed_pad_route_clearance.is_empty());
+    let global = format!("{rules}\n(rule override (constraint clearance (min 0.12mm)))");
+    assert!(lowered(&global, &facts).footprint_pad_clearance.is_empty());
+}
+
+#[test]
+fn a_cross_class_rule_exempts_fixed_pads_and_later_footprint_patterns_only() {
+    let mut facts = board(&[("HV", &["High"]), ("SIG", &["Signal"]), ("HV_2", &["High"])]);
+    facts.footprint_pads = ["U9", "U90", "J11", "D1", "d3"]
+        .into_iter()
+        .map(|reference| (reference.to_owned(), [format!("{reference}.1")].into()))
+        .collect();
+    let text = r#"(version 1)
+      (rule "cross class"
+        (condition "A.NetClass == 'High' && B.NetClass != 'High' && !A.memberOfFootprint('U9') && !B.memberOfFootprint('U9')")
+        (constraint clearance (min 0.6mm)))
+      (rule breakout (condition "A.memberOfFootprint('U9') || B.memberOfFootprint('U9')")
+        (constraint clearance (min 0.2mm)))
+      (rule diodes (condition "A.memberOfFootprint('D*') || B.memberOfFootprint('D*')")
+        (constraint clearance (min 0.19mm)))"#;
+    let result = lowered(text, &facts);
+    assert_eq!(result.report[0].status, "applied");
+    assert_eq!(result.clearance, [0.0; 3]);
+    assert_eq!(
+        result.footprint_pad_clearance,
+        BTreeMap::from([("D1".into(), 0.19), ("U9".into(), 0.2),])
+    );
+    assert_eq!(
+        result.fixed_pad_route_clearance,
+        [("U9.1".into(), 0.2)].into()
+    );
+    let intra_part = format!(
+        "{text}\n(rule jumper (condition \"A.memberOfFootprint('U9') && B.memberOfFootprint('U9')\") (constraint clearance (min 0.5mm)))"
+    );
+    assert_eq!(
+        lowered(&intra_part, &facts).fixed_pad_route_clearance,
+        result.fixed_pad_route_clearance
+    );
+    let potentially_later = format!(
+        "{text}\n(rule conditional (condition \"A.memberOfFootprint('U9') && B.NetClass == 'High'\") (constraint clearance (min 0.5mm)))"
+    );
+    assert!(
+        lowered(&potentially_later, &facts)
+            .fixed_pad_route_clearance
+            .is_empty()
+    );
+    assert!(!result.pair_clearances.is_empty());
+    assert!(result.pair_clearances.iter().all(|rule| {
+        rule.except_pads == ["U9.1".into(), "D1.1".into()].into()
+            && rule.first != rule.second
+            && rule.clearance == 0.6
+    }));
+
+    let layer_specific = format!(
+        "{text}\n(rule \"late layer-only\" (layer \"F.Cu\") (condition \"A.memberOfFootprint('J11') || B.memberOfFootprint('J11')\") (constraint clearance (min 0.8mm)))"
+    );
+    let result = lowered(&layer_specific, &facts);
+    assert!(!result.footprint_pad_clearance.contains_key("J11"));
+    assert!(
+        result
+            .pair_clearances
+            .iter()
+            .all(|rule| !rule.except_pads.contains("J11.1"))
+    );
+
+    let unsupported = text.replace("!B.memberOfFootprint('U9')", "!B.memberOfFootprint('U90')");
+    let result = lowered(&unsupported, &facts);
+    assert_eq!(result.report[0].status, "unmodelled");
+    assert!(result.pair_clearances.is_empty());
+
+    // Fixed copper with an ambiguous diagnostic label cannot inherit an
+    // exception from a different footprint.
+    facts
+        .footprint_pads
+        .get_mut("U90")
+        .unwrap()
+        .insert("U9.1".into());
+    let shared_label = lowered(text, &facts);
+    assert!(shared_label.fixed_pad_route_clearance.is_empty());
+    assert!(
+        shared_label.pair_clearances.iter().all(|rule| {
+            !rule.except_pads.contains("U9.1") && rule.except_pads.contains("D1.1")
+        })
+    );
 }
 
 #[test]
@@ -308,6 +421,7 @@ fn item_types_and_layers_are_pair_rules() {
             kinds: 1 << 2 | 1 << 3,
             layers: 0b11,
             clearance: 0.2,
+            except_pads: BTreeSet::new(),
         }]
     );
     let tracks = lowered(
@@ -459,6 +573,16 @@ fn a_clearance_inside_a_rule_area_holds_on_the_areas_layers() {
         statuses,
         ["no_effect", "approximated", "no_effect", "unmodelled"]
     );
+    assert!(
+        rules.report[0]
+            .detail
+            .contains("KiCad evaluates the named area")
+    );
+    assert!(
+        !rules.report[2]
+            .detail
+            .contains("KiCad evaluates the named area")
+    );
     assert_eq!(rules.clearance, [0.0, 0.0]);
     assert_eq!(rules.clearance_all, 0.0);
     assert_eq!(rules.pair_clearances.len(), 1);
@@ -500,6 +624,9 @@ fn conditions_on_areas_or_parts_are_unmodelled_and_named() {
     assert!(rules.report[0].detail.contains("A.insidecourtyard()"));
     assert_eq!(rules.unmodelled.len(), 3);
     assert!(rules.unmodelled[1].starts_with("creepage ('creep', min 4 mm)"));
+    assert!(rules.unmodelled[2].starts_with("length ('len', min 10 mm, max 20 mm)"));
+    let vias = lowered("(rule limit (constraint via_count (max 2)))", &board);
+    assert!(vias.unmodelled[0].starts_with("via_count ('limit', max 2):"));
 }
 
 /// A minimum the router keeps more than anyway (at or below every

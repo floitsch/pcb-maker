@@ -15,8 +15,9 @@
 
 use super::Placing;
 use crate::{
-    Config, MANY_PINS, Pose, Problem, Relaxation, STOP, anneal, facing, legal, mark, out_of_work,
-    overfull, phase_line, side_overfull, skip_to_tight, strips_overfull, work, work_per_second,
+    Config, MANY_PINS, Pose, Problem, Relaxation, STOP, SparseLegalization, anneal, facing, legal,
+    mark, out_of_work, overfull, phase_line, side_overfull, skip_to_tight, strips_overfull, work,
+    work_per_second,
 };
 
 /// The parts of `failed` held at an edge, still without room after the
@@ -43,6 +44,89 @@ fn compact_edges(relaxed: &Problem, poses: &mut Vec<Pose>, failed: &mut Vec<usiz
     }
 }
 
+/// Reserve a small share of the placement budget for a wider search if
+/// the dense grid spends the rest of it. Try the same accepted placement,
+/// with only the remaining parts movable.
+fn legalize_level(
+    placing: &Placing,
+    problem: &Problem,
+    poses: &mut [Pose],
+) -> (Vec<usize>, Option<SparseLegalization>) {
+    let Some(limit) = placing.anneal_config.stop_at_work else {
+        return (legal::legalize(problem, poses), None);
+    };
+    let reserve = limit.saturating_sub(placing.work_started) / 32;
+    let cutoff = limit - reserve;
+    let remaining = cutoff.saturating_sub(work());
+    if remaining == 0 {
+        return (legal::legalize(problem, poses), None);
+    }
+    let failed = legal::legalize_keeping_bounded(problem, poses, &[], remaining);
+    if failed.is_empty() || work() < cutoff {
+        return (failed, None);
+    }
+    let started = mark();
+    if legal::recover_unplaced(problem, poses, &failed, || placing.out_of_budget()) {
+        if placing.debug {
+            eprintln!(
+                "placer: sparse whole-board search seated {} parts",
+                failed.len()
+            );
+        }
+        phase_line(placing.debug, "sparse whole-board search", started);
+        return (
+            Vec::new(),
+            Some(SparseLegalization {
+                seated: failed.len(),
+                work: work() - started.1,
+                moved_others: 0,
+            }),
+        );
+    }
+    // The regular nearby search can still seat a part after the budget.
+    // Start with the parts the dense pass already seated.
+    let keep: Vec<_> = (0..problem.components.len())
+        .filter(|index| !failed.contains(index))
+        .collect();
+    let failed = legal::legalize_keeping(problem, poses, &failed, &keep);
+    phase_line(placing.debug, "legalize remaining parts", started);
+    (failed, None)
+}
+
+fn seat_edge_slots(
+    placing: &Placing,
+    relaxed: &mut Problem,
+    poses: &mut [Pose],
+    failed: &mut Vec<usize>,
+) {
+    let Some(regions) = placing.panel_edge_regions else {
+        return;
+    };
+    if !relaxed.constraints.pad_clearance
+        || !relaxed.constraints.edge_copper
+        || failed.is_empty()
+        || placing.out_of_budget()
+    {
+        return;
+    }
+    let before = failed.len();
+    let search_mark = mark();
+    legal::seat_edge_slots(relaxed, poses, failed);
+    if let [part] = failed.as_slice()
+        && let Some((region_index, _)) = regions.iter().find(|(_, owner)| owner == part)
+        && let Some(trial) =
+            legal::connector_cell_window(relaxed, *part, poses[*part], *region_index)
+    {
+        legal::seat_edge_slots(&trial, poses, failed);
+        if failed.is_empty() {
+            *relaxed = trial;
+        }
+    }
+    if failed.len() < before {
+        phase_line(placing.debug, "edge slots", search_mark);
+    }
+}
+
 /// Seats the parts of `failed` (no room at this level) where only the
 /// board's marks (`Constraints::yielding`: its own texts and silkscreen
 /// graphics) are in the way: they may lie on them (`on_marks`), the other
@@ -51,12 +135,11 @@ fn compact_edges(relaxed: &Problem, poses: &mut Vec<Pose>, failed: &mut Vec<usiz
 /// (USB_Keypad) takes its spot there at the level it fails, rather than
 /// every part giving up its routing room first.
 fn seat_on_marks(
+    placing: &Placing,
     relaxed: &mut Problem,
     poses: &mut Vec<Pose>,
     failed: &mut Vec<usize>,
     pass_work: u64,
-    budget: Option<u64>,
-    debug: bool,
 ) {
     if failed.is_empty() || relaxed.constraints.yielding.is_empty() {
         return;
@@ -67,12 +150,17 @@ fn seat_on_marks(
     on_marks.sort_unstable();
     on_marks.dedup();
     trial.constraints.on_marks = on_marks;
-    let keep: Vec<usize> = (0..trial.components.len())
-        .filter(|index| !failed.contains(index))
-        .collect();
+    let debug = placing.debug;
     let mut seated = poses.clone();
     let seat_mark = mark();
-    let mut again = legal::legalize_keeping(&trial, &mut seated, failed, &keep);
+    let mut again = failed.clone();
+    seat_edge_slots(placing, &mut trial, &mut seated, &mut again);
+    if !again.is_empty() {
+        let keep: Vec<usize> = (0..trial.components.len())
+            .filter(|index| !again.contains(index))
+            .collect();
+        again = legal::legalize_keeping(&trial, &mut seated, &again, &keep);
+    }
     let kept_left = again.len();
     // Still without room (the others took the spots by the marks, where
     // MIDAS-MK1.1's two 36 mm headers go at the bottom edge): every part
@@ -92,7 +180,10 @@ fn seat_on_marks(
         .filter(|component| !component.fixed)
         .count();
     let many = failed.len() * 8 >= movable;
-    let costly = budget.is_some_and(|budget| STUCK_FIRST_PASSES as u64 * pass_work > budget / 8);
+    let costly = placing
+        .config
+        .work_limit
+        .is_some_and(|budget| STUCK_FIRST_PASSES as u64 * pass_work > budget / 8);
     if !again.is_empty() && !(many && costly) {
         let (retry, left) =
             legal::legalize_stuck_first(&trial, poses, failed, STUCK_FIRST_PASSES, debug);
@@ -327,6 +418,7 @@ pub(crate) struct Walk {
     pub(super) best_annealed: Option<Vec<Pose>>,
     /// The levels that ran (`Placement::walk`).
     pub(super) walk: Vec<(usize, Vec<usize>, u64)>,
+    pub(super) sparse_legalization: Option<SparseLegalization>,
     /// Even the last level's bodies need more area than a side has
     /// (`Placement::overfull`).
     pub(super) overfull_sides: bool,
@@ -389,6 +481,7 @@ impl Placing<'_> {
             best_level: 0,
             best_annealed: None,
             walk: Vec::new(),
+            sparse_legalization: None,
             overfull_sides: false,
             pass_work: 0,
             annealed_shape: None,
@@ -560,6 +653,7 @@ impl Walk {
             let keeping_mark = mark();
             let mut failed = legal::legalize_keeping(relaxed, &mut kept, known_failed, &keep);
             phase_line(debug, "legalize keeping", keeping_mark);
+            seat_edge_slots(placing, relaxed, &mut kept, &mut failed);
             if !failed.is_empty() && failed.len() <= (problem.components.len() / 50).max(3) {
                 let mut evicted = kept.clone();
                 let evict_mark = mark();
@@ -606,14 +700,7 @@ impl Walk {
                     failed = again;
                 }
             }
-            seat_on_marks(
-                relaxed,
-                &mut kept,
-                &mut failed,
-                self.pass_work,
-                placing.config.work_limit,
-                debug,
-            );
+            seat_on_marks(placing, relaxed, &mut kept, &mut failed, self.pass_work);
             if debug {
                 eprintln!(
                     "placer: level halo {halo_scale} (small {small_factor}) spacing {spacing_scale} grid {grid} inset {inset} tight {tight}: kept placement, {:.1}s, {} failed",
@@ -699,9 +786,10 @@ impl Walk {
         let annealed_for_trace = annealed.clone();
         let anneal_seconds = level_started.elapsed().as_secs_f64();
         let legalize_mark = mark();
-        let mut failed = legal::legalize(&relaxed, &mut poses);
+        let (mut failed, mut sparse_legalization) = legalize_level(placing, &relaxed, &mut poses);
         self.pass_work = work() - legalize_mark.1;
         phase_line(debug, "legalize", legalize_mark);
+        seat_edge_slots(placing, &mut relaxed, &mut poses, &mut failed);
         if debug {
             let work_started = placing.work_started;
             eprintln!(
@@ -748,13 +836,42 @@ impl Walk {
             }
             compact_edges(&relaxed, &mut poses, &mut failed, debug);
         }
+        if failed.len() == 1
+            && halo_scale == 0.0
+            && spacing_scale == 0.0
+            && grid == ladder.fine
+            && let Some(stop) = placing.stop_at_work
+        {
+            let retry_mark = mark();
+            let reserve = stop.saturating_sub(placing.work_started) / 32;
+            let limit = stop.min(work().saturating_add(reserve));
+            if let Some(moved_others) = legal::repack_one_unplaced(
+                &relaxed,
+                &mut poses,
+                &failed,
+                limit,
+                placing.config.anneal.deadline,
+            ) {
+                sparse_legalization = Some(SparseLegalization {
+                    seated: 1,
+                    work: work() - retry_mark.1,
+                    moved_others,
+                });
+                failed.clear();
+                if debug {
+                    eprintln!(
+                        "placer: a sparse priority pass seated the remaining part and moved {moved_others} others"
+                    );
+                }
+                phase_line(debug, "sparse priority pass", retry_mark);
+            }
+        }
         seat_on_marks(
+            placing,
             &mut relaxed,
             &mut poses,
             &mut failed,
             self.pass_work,
-            placing.config.work_limit,
-            debug,
         );
         self.walk
             .push((level, failed.clone(), work() - placing.work_started));
@@ -769,6 +886,7 @@ impl Walk {
             self.relaxation = Some(ladder.relaxation(level, shape, &relaxed));
             self.best = Some((failed, poses, relaxed));
             self.best_annealed = Some(annealed_for_trace);
+            self.sparse_legalization = sparse_legalization;
         }
         self.last_level_work = Some(work() - level_mark);
         done
@@ -782,14 +900,7 @@ impl Walk {
             && !failed.is_empty()
         {
             let before = failed.len();
-            seat_on_marks(
-                relaxed,
-                poses,
-                failed,
-                self.pass_work,
-                placing.config.work_limit,
-                placing.debug,
-            );
+            seat_on_marks(placing, relaxed, poses, failed, self.pass_work);
             if failed.len() < before
                 && let Some(relaxation) = self.relaxation.as_mut()
             {

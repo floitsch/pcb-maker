@@ -124,6 +124,11 @@ pub fn absent_parts(problem: &Problem, passive: &[bool]) -> Vec<bool> {
         name(follower.part);
         name(follower.leader);
     }
+    for pair in &constraints.module_envelopes {
+        for module in &pair.modules {
+            name(module.part);
+        }
+    }
     for (part, _) in &constraints.starts {
         name(*part);
     }
@@ -578,8 +583,8 @@ pub fn skeleton_problem(
 }
 
 /// The ranking key of a placement among its alternatives here: illegal
-/// and unplaced parts, then missed constraints, then wirelength.
-fn key(placement: &Placement) -> (usize, f64, f64) {
+/// and unplaced parts, exact pad limits, other missed constraints, then wirelength.
+fn key(placement: &Placement) -> (usize, (usize, f64), f64, f64) {
     let missed: f64 = placement
         .constraints
         .iter()
@@ -587,6 +592,7 @@ fn key(placement: &Placement) -> (usize, f64, f64) {
         .sum();
     (
         placement.unplaced.len() + placement.illegal.len(),
+        crate::constraints::pad_near_requirements_key(&placement.constraints),
         missed,
         placement.wirelength_final,
     )
@@ -915,6 +921,7 @@ mod tests {
             tight_hollow: Vec::new(),
             hole_rings: Vec::new(),
             copper_graphics: Vec::new(),
+            unassigned_copper_graphics: Vec::new(),
             courtless: Vec::new(),
             slots: Vec::new(),
             far_open: Default::default(),

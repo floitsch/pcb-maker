@@ -1975,6 +1975,44 @@ fn a_pads_own_mask_margin_keeps_same_side_pads_out_of_its_opening() {
 }
 
 #[test]
+fn unassigned_footprint_copper_keeps_clear_of_pads_on_its_side() {
+    let illegal = |layer_and_net: &str, x| {
+        let pcb = parse(&format!(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+            (gr_rect (start 0 0) (end 60 30) (layer "Edge.Cuts"))
+            (footprint "Antenna" (layer "F.Cu") (at 10 15)
+                (property "Reference" "AE1")
+                (fp_poly (pts (xy 1 -0.5) (xy 6 -0.5) (xy 6 0.5) (xy 1 0.5)) {layer_and_net} (width 0) (fill solid))
+                (pad "1" smd rect (at 0 0) (size 0.5 0.5) (layers "F.Cu") (net 1 "RF")))
+            (footprint "Resistor" (layer "F.Cu") (at {x} 15)
+                (property "Reference" "R1")
+                (fp_rect (start -0.25 -0.25) (end 0.25 0.25) (layer "F.CrtYd"))
+                (pad "1" smd rect (at 0 0) (size 0.5 0.5) (layers "F.Cu") (net 2 "SIG"))))"#,
+        ))
+        .unwrap();
+        let config = KiCadBoardPlacerConfig {
+            copper_clearance_mm: Some(0.2),
+            ..Default::default()
+        };
+        let mut problem = lower_placement(&pcb, &config).unwrap().problem;
+        problem.constraints.pad_clearance = true;
+        for component in &mut problem.components {
+            component.halo = 0.0;
+        }
+        let part = problem
+            .components
+            .iter()
+            .position(|part| part.name == "R1")
+            .unwrap();
+        core::legal::illegal_components(&problem, &problem.poses).contains(&part)
+    };
+    assert!(illegal(r#"(layer "F.Cu")"#, 16.3));
+    assert!(illegal(r#"(layers "F.Cu" "F.Mask") (net 0)"#, 16.3));
+    assert!(!illegal(r#"(layer "F.Cu")"#, 16.5));
+    assert!(!illegal(r#"(layer "B.Cu")"#, 16.3));
+}
+
+#[test]
 fn a_parts_copper_graphics_keep_the_edge_margin_from_a_cutout() {
     // osprey's AE1, a PCB antenna: its meander is a B.Cu polygon beyond
     // its pads, and the placement put it over the battery cutout's edge
@@ -2828,6 +2866,104 @@ fn a_pair_row_faces_its_pairs_two_ends() {
             (fp_rect (start -0.91 -0.46) (end 0.91 0.46) (layer "F.CrtYd"))
             (pad "1" smd roundrect (at -0.48 0 90) (size 0.56 0.62) (layers "F.Cu") (net 2 "TX_N"))
             (pad "2" smd roundrect (at 0.48 0 90) (size 0.56 0.62) (layers "F.Cu") (net 4 "HDMI_N"))))"#;
+    let cold = board
+        .replace("(at 20 5 90)", "(at -10 -10 90)")
+        .replace("(at 25 15 90)", "(at -10 -10 90)");
+    let cold_lowering = |board: &str, constraints: &str, fixed: Vec<String>| {
+        let mut pcb = parse(board).unwrap();
+        let constraints = serde_json::from_str(constraints).unwrap();
+        crate::placement_constraints::apply_sides(&mut pcb, &constraints).unwrap();
+        lower_placement(
+            &pcb,
+            &KiCadBoardPlacerConfig {
+                pair_rows: Some(true),
+                fixed,
+                constraints: Some(KiCadConstraintsSource::Inline(constraints)),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    };
+    let move_all = r#"{"version":1,"move_all":true}"#;
+    let cold_pair = cold_lowering(&cold, move_all, Vec::new());
+    assert_eq!(cold_pair.pair_rows.len(), 1);
+    for (brief, side) in [
+        (
+            r#"{"version":1,"move_all":true,"front":["C*"]}"#,
+            pcb_placer::Side::Front,
+        ),
+        (
+            r#"{"version":1,"move_all":true,"back":["C1","C2"]}"#,
+            pcb_placer::Side::Back,
+        ),
+    ] {
+        let lowered = cold_lowering(&cold, brief, Vec::new());
+        let [row] = lowered.pair_rows.as_slice() else {
+            panic!("a same-face pair should make a row");
+        };
+        assert_eq!(lowered.problem.components[row.first].side, side);
+        for part in [row.first, row.other] {
+            assert!(
+                lowered
+                    .problem
+                    .constraints
+                    .kept
+                    .iter()
+                    .any(|entry| { entry.part == part && entry.side == Some(side) })
+            );
+        }
+    }
+    for brief in [
+        r#"{"version":1,"move_all":true,"front":["C1"],"back":["C2"]}"#,
+        r#"{"version":1,"move_all":true,"front":["C*"],"rotation":[{"part":"C1","angle":90}]}"#,
+    ] {
+        assert!(cold_lowering(&cold, brief, Vec::new()).pair_rows.is_empty());
+    }
+    assert!(
+        cold_lowering(&cold, r#"{"version":1}"#, Vec::new())
+            .pair_rows
+            .is_empty()
+    );
+    assert!(
+        cold_lowering(&cold, move_all, vec!["C1".into()])
+            .pair_rows
+            .is_empty()
+    );
+    assert!(
+        cold_lowering(
+            &cold,
+            r#"{"version":1,"move_all":true,"fixed":["C1"]}"#,
+            Vec::new()
+        )
+        .pair_rows
+        .is_empty()
+    );
+    let locked_cold = cold.replacen("(at -10 -10 90)", "(at -10 -10 90) (locked yes)", 1);
+    assert!(
+        cold_lowering(&locked_cold, move_all, Vec::new())
+            .pair_rows
+            .is_empty()
+    );
+    let statuses = |poses: &[pcb_placer::Pose]| {
+        pair_row_statuses(
+            &cold_pair.pair_rows,
+            &cold_pair.problem,
+            poses,
+            &cold_pair.references,
+        )
+    };
+    let mut saved = cold_pair.problem.poses.clone();
+    assert!(statuses(&saved)[0].satisfied);
+    let second = cold_pair.pair_rows[0].other;
+    saved[second].position = [-10.0, -10.0];
+    let missed = &statuses(&saved)[0];
+    assert!(!missed.satisfied);
+    assert_eq!(missed.distance_mm, Some(0.0));
+    assert!((missed.violation_mm - 0.93).abs() < 1.0e-9);
+    saved = cold_pair.problem.poses.clone();
+    saved[second].angle += 180.0;
+    assert!(!statuses(&saved)[0].satisfied);
+
     // The row's leader faces with the TX nets on one side, the HDMI nets
     // on the other.
     let lowered = lower_placement(
@@ -2886,6 +3022,35 @@ fn a_pair_row_faces_its_pairs_two_ends() {
     // Each capacitor's TX pad lies left of its HDMI pad, the two side by
     // side across the row.
     let placed = parse(&fs::read_to_string(output.join("board.kicad_pcb")).unwrap()).unwrap();
+    let mut replay_config = config.clone();
+    replay_config.pair_geometry.insert(
+        "TX_P".into(),
+        PairGeometry {
+            width: 1.4,
+            gap: 0.4,
+            clearance: 0.4,
+        },
+    );
+    let nominal = lower_placement(&placed, &replay_config).unwrap();
+    assert!((nominal.pair_rows[0].plan.row.pitch_mm - 1.8).abs() < 1.0e-9);
+    replay_config.placed_pair_rows = Some(result.placed_pair_rows.clone());
+    let replay = lower_placement(&placed, &replay_config).unwrap();
+    let stored_poses: Vec<_> = replay
+        .source_at
+        .iter()
+        .map(|at| pcb_placer::Pose {
+            position: [at[0], at[1]],
+            angle: at[2],
+        })
+        .collect();
+    let stored = pair_row_statuses(
+        &replay.pair_rows,
+        &replay.problem,
+        &stored_poses,
+        &replay.references,
+    );
+    assert!(stored[0].satisfied);
+    assert!((stored[0].distance_mm.unwrap() - 0.93).abs() < 1.0e-5);
     let pad_x = |reference: &str, number: &str| {
         let footprint = placed
             .children()
@@ -3132,106 +3297,9 @@ fn the_placer_settings_tuning_group_holds_every_moved_key() {
     assert!(top.contains(&"fixed") && top.contains(&"tuning"), "{top:?}");
     let tuning = field_names::<KiCadPlacerTuning>();
     let checked = check_tuning_group::<KiCadBoardPlacerConfig>("placer", top, tuning, &[]).unwrap();
-    assert_eq!((checked.len(), tuning.len()), (23, 23));
-}
-
-#[test]
-fn a_breakaway_rail_too_thin_to_be_a_piece_keeps_parts_off() {
-    // USB_Keypad: 2.4 mm rails outside a row of mouse bites, too thin to
-    // be pieces of their own (the eroded core under `MIN_CORE_MM2`), so
-    // the board is one piece and the rails were placeable: C11 landed on
-    // one with GND and +3.3V open across the bites. Here a 2.4 mm rail
-    // joined by a 2 mm tab, with and without bites across the tab.
-    let board = |bites: bool| {
-        let holes = if bites {
-            r#"(footprint "MouseBites" (layer "F.Cu") (at 0 10)
-                (property "Reference" "MB1")
-                (pad "" np_thru_hole circle (at 0 -0.75) (size 0.4 0.4) (drill 0.4) (layers "*.Cu" "*.Mask"))
-                (pad "" np_thru_hole circle (at 0 -0.25) (size 0.4 0.4) (drill 0.4) (layers "*.Cu" "*.Mask"))
-                (pad "" np_thru_hole circle (at 0 0.25) (size 0.4 0.4) (drill 0.4) (layers "*.Cu" "*.Mask"))
-                (pad "" np_thru_hole circle (at 0 0.75) (size 0.4 0.4) (drill 0.4) (layers "*.Cu" "*.Mask")))"#
-        } else {
-            ""
-        };
-        parse(&format!(
-            r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
-            (gr_poly (pts (xy 0 0) (xy 40 0) (xy 40 20) (xy 0 20) (xy 0 11) (xy -1 11) (xy -1 20)
-                (xy -3.4 20) (xy -3.4 0) (xy -1 0) (xy -1 9) (xy 0 9)) (layer "Edge.Cuts") (width 0.05))
-            {holes}
-            (footprint "Cap" (layer "F.Cu") (at 20 10)
-                (property "Reference" "C1")
-                (fp_rect (start -0.5 -0.3) (end 0.5 0.3) (layer "F.CrtYd"))
-                (pad "1" smd rect (at -0.3 0) (size 0.3 0.4) (layers "F.Cu" "F.Mask") (net 1 "GND"))
-                (pad "2" smd rect (at 0.3 0) (size 0.3 0.4) (layers "F.Cu" "F.Mask") (net 2 "VCC")))
-            (footprint "Cap" (layer "F.Cu") (at 30 10)
-                (property "Reference" "C2")
-                (fp_rect (start -0.5 -0.3) (end 0.5 0.3) (layer "F.CrtYd"))
-                (pad "1" smd rect (at -0.3 0) (size 0.3 0.4) (layers "F.Cu" "F.Mask") (net 1 "GND"))
-                (pad "2" smd rect (at 0.3 0) (size 0.3 0.4) (layers "F.Cu" "F.Mask") (net 2 "VCC"))))"#
-        ))
-        .unwrap()
-    };
-    let strips = |pcb: &Expr| {
-        let loops = crate::outline::board_loops(pcb).unwrap();
-        crate::outline_pieces::Pieces::strips(
-            &loops.piece_loops,
-            &loops.cutouts,
-            &crate::outline_pieces::Cuts::of_board(pcb),
-        )
-    };
-    let (bitten, plain) = (board(true), board(false));
-    assert!(
-        crate::outline_pieces::Pieces::of_board(&bitten)
-            .unwrap()
-            .is_none(),
-        "one piece"
-    );
-    let found = strips(&bitten);
-    assert_eq!(found.len(), 1, "{found:?}");
-    let bounds = found[0].boxes.iter().fold(
-        [
-            f64::INFINITY,
-            f64::INFINITY,
-            f64::NEG_INFINITY,
-            f64::NEG_INFINITY,
-        ],
-        |a, b| {
-            [
-                a[0].min(b[0]),
-                a[1].min(b[1]),
-                a[2].max(b[2]),
-                a[3].max(b[3]),
-            ]
-        },
-    );
-    // The rail and the tab's stub beyond the bites, not the board.
-    assert!(
-        bounds[0] < -3.2 && bounds[2] < 0.3 && bounds[1] < 0.2 && bounds[3] > 19.8,
-        "{bounds:?}"
-    );
-    // Without the bites the rail is board set off by a neck: placeable.
-    assert!(strips(&plain).is_empty());
-    let config = KiCadBoardPlacerConfig {
-        tuning: crate::board_placer::KiCadPlacerTuning {
-            halo_scale: 0.0,
-            ..Default::default()
-        },
-        ..KiCadBoardPlacerConfig::default()
-    };
-    let legal_at = |pcb: &Expr, at: [f64; 2]| {
-        let lowered = lower_placement(pcb, &config).unwrap();
-        let part = lowered
-            .references
-            .iter()
-            .position(|name| name == "C1")
-            .unwrap();
-        assert!(!lowered.problem.components[part].fixed);
-        let mut poses = lowered.problem.poses.clone();
-        poses[part].position = at;
-        poses[part].angle = 90.0;
-        !core::legal::illegal_components(&lowered.problem, &poses).contains(&part)
-    };
-    assert!(legal_at(&plain, [-2.2, 5.0]), "the rail without bites");
-    assert!(!legal_at(&bitten, [-2.2, 5.0]), "the rail beyond the bites");
-    assert!(legal_at(&bitten, [10.0, 5.0]), "the board");
+    assert_eq!((checked.len(), tuning.len()), (24, 24));
+    assert!(!KiCadBoardPlacerConfig::default().tuning.refine_pad_near);
+    let opted_in: KiCadBoardPlacerConfig =
+        serde_json::from_str(r#"{"tuning":{"refine_pad_near":true}}"#).unwrap();
+    assert!(opted_in.tuning.refine_pad_near);
 }

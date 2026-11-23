@@ -18,6 +18,9 @@ use std::sync::Arc;
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields, default)]
 pub struct KiCadPadExits {
+    /// Test all escape paths per seed, or repair pads trapped inside
+    /// authored track-and-via rule areas after keeping the seeds.
+    pub scope: KiCadPadExitScope,
     /// How far a part may move to open a pad, mm.
     pub reach_mm: f64,
     /// Candidate poses asked about per part with a closed pad, the
@@ -25,9 +28,18 @@ pub struct KiCadPadExits {
     pub candidates: usize,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum KiCadPadExitScope {
+    #[default]
+    All,
+    RuleAreas,
+}
+
 impl Default for KiCadPadExits {
     fn default() -> Self {
         Self {
+            scope: KiCadPadExitScope::All,
             reach_mm: 1.0,
             candidates: 16,
         }
@@ -98,7 +110,7 @@ pub struct KiCadPadExitsReport {
 const LOWERING_EXPRESSION_NANOS: f64 = 100.0;
 
 /// A session's lowering of `base`, in placement units.
-fn lowering_units(base: &Expr) -> u64 {
+pub(super) fn lowering_units(base: &Expr) -> u64 {
     (crate::kicad_sexpr::expression_count(base) as f64 * LOWERING_EXPRESSION_NANOS / 1.0e9
         * pcb_router::router::reference_time_scale()
         * core::work_per_second()) as u64
@@ -314,6 +326,7 @@ fn repair_as_placed(
     board_id: &str,
     router_config: &KiCadBoardRouterConfig,
     settings: &KiCadPadExits,
+    target: Option<&str>,
 ) -> Result<KiCadPadExitsReport, String> {
     let mut config = KiCadBoardPlacerConfig::default();
     if source_directory.join("constraints.json").exists() {
@@ -327,28 +340,91 @@ fn repair_as_placed(
     placer_config.kicad_last_level = true;
     let poses = lowered.problem.poses.clone();
     let levels = core::level_problems(&lowered.problem, &placer_config);
-    let level = levels
+    let legal = levels
         .iter()
-        .find(|(_, problem)| core::legal::illegal_components(problem, &poses).is_empty())
+        .find(|(_, problem)| core::legal::illegal_components(problem, &poses).is_empty());
+    if legal.is_none() && target.is_some() {
+        return Ok(KiCadPadExitsReport::default());
+    }
+    let level = legal
         .or(levels.last())
         .map(|(_, problem)| problem)
         .ok_or("no relaxation level")?;
-    let exits = core::exits::PadExits {
-        factory: exit_factory(
+    let factory = match settings.scope {
+        KiCadPadExitScope::All => Some(exit_factory(
+            pcb,
+            &lowered.references,
+            router_config,
+            config.keep_board_marks,
+        )?),
+        KiCadPadExitScope::RuleAreas => super::rule_area_exits::factory(
             pcb,
             &lowered.references,
             router_config,
             config.keep_board_marks,
         )?,
+    };
+    let Some(factory) = factory else {
+        return Ok(KiCadPadExitsReport::default());
+    };
+    let exits = core::exits::PadExits {
+        factory,
         reach: settings.reach_mm,
         candidates: settings.candidates,
     };
     let mut poses = poses;
     let before = core::work();
-    let mut outcome = core::exits::repair(level, &mut poses, &[], &exits)
-        .ok_or("the pad-exits test could not lower the board")?;
+    let mut outcome = if let Some(target) = target {
+        core::exits::repair_pad(level, &mut poses, &exits, target)
+    } else {
+        match settings.scope {
+            KiCadPadExitScope::All => core::exits::repair(level, &mut poses, &[], &exits),
+            KiCadPadExitScope::RuleAreas => {
+                core::exits::repair_entire_part(level, &mut poses, &[], &exits)
+            }
+        }
+    }
+    .ok_or("the pad-exits test could not lower the board")?;
+    if target.is_some() && !outcome.moves.is_empty() {
+        let requirements = |positions| {
+            constraint_report(&lowered.problem, positions, &lowered.references)
+                .into_iter()
+                .chain(pair_row_statuses(
+                    &lowered.pair_rows,
+                    &lowered.problem,
+                    positions,
+                    &lowered.references,
+                ))
+                .collect::<Vec<_>>()
+        };
+        let old = requirements(&lowered.problem.poses);
+        let new = requirements(&poses);
+        if old.len() != new.len()
+            || old.iter().zip(&new).any(|(before, after)| {
+                before.requirement_satisfied() && !after.requirement_satisfied()
+            })
+        {
+            return Ok(KiCadPadExitsReport::default());
+        }
+    }
     outcome.work = core::work() - before;
     Ok(exits_report(&outcome, &lowered.references, pcb))
+}
+
+/// Finds a legal local placement for a specific pad fully trapped in an
+/// authored board track-and-via rule area. It writes no board files.
+pub fn propose_rule_area_pad_move(
+    source: &Path,
+    board_id: &str,
+    router: &KiCadBoardRouterConfig,
+    pad: &str,
+) -> Result<KiCadPadExitsReport, String> {
+    let settings = KiCadPadExits {
+        scope: KiCadPadExitScope::RuleAreas,
+        reach_mm: 3.0,
+        candidates: 160,
+    };
+    repair_as_placed(source, board_id, router, &settings, Some(pad))
 }
 
 /// The census of a board as it is placed (its tracks and vias left out):
@@ -404,6 +480,7 @@ pub fn pad_exits_kicad_board(
             board_id,
             &router_config,
             settings,
+            None,
         )?),
         None => None,
     };

@@ -130,6 +130,39 @@ fn part_wirelength(
 /// Placement work a candidate's legality and wirelength take, a pin.
 const CANDIDATE_PIN_WORK: u64 = 40;
 
+/// Tries to make room for a candidate by reseating at most two neighbors.
+/// The candidate and all other parts stay fixed during this legalizer pass.
+fn make_room(
+    problem: &Problem,
+    original: &[Pose],
+    trial: &mut [Pose],
+    part: usize,
+    reach: f64,
+    movable: impl Fn(usize) -> bool,
+) -> Option<Vec<usize>> {
+    let moved = crate::legal::movable_blockers(problem, original, part, trial[part], 2, movable)?;
+    if moved.is_empty() {
+        return None;
+    }
+    let keep: Vec<usize> = (0..trial.len())
+        .filter(|index| !moved.contains(index))
+        .collect();
+    let limit = (0.20 * crate::work_per_second()) as u64;
+    if !crate::legal::legalize_keeping_bounded(problem, trial, &keep, limit).is_empty()
+        || !moved.iter().copied().chain([part]).all(|index| {
+            (original[index].position[0] - trial[index].position[0])
+                .hypot(original[index].position[1] - trial[index].position[1])
+                <= reach + 1.0e-6
+                && crate::legal::relation_penalty_counted(problem, trial, index)
+                    <= crate::legal::relation_penalty_counted(problem, original, index) + 1.0e-9
+                && crate::legal::is_legal(problem, trial, index, trial[index], 0..trial.len())
+        })
+    {
+        return None;
+    }
+    Some(moved)
+}
+
 /// Asks the session about every placed part, then moves or turns parts
 /// so that fewer pads stay closed (see the module). `unplaced` parts are
 /// neither asked about nor moved. `None`: the session could not answer.
@@ -138,6 +171,39 @@ pub fn repair(
     poses: &mut [Pose],
     unplaced: &[usize],
     exits: &PadExits,
+) -> Option<ExitOutcome> {
+    repair_with(problem, poses, unplaced, exits, false, None)
+}
+
+/// Like `repair`, requiring a moved part to have no remaining closed pad
+/// and leaving all previously open pads open.
+pub fn repair_entire_part(
+    problem: &Problem,
+    poses: &mut [Pose],
+    unplaced: &[usize],
+    exits: &PadExits,
+) -> Option<ExitOutcome> {
+    repair_with(problem, poses, unplaced, exits, true, None)
+}
+
+/// Repairs the part with this exact closed pad label, checking nearby pads
+/// before accepting any of the changed poses.
+pub fn repair_pad(
+    problem: &Problem,
+    poses: &mut [Pose],
+    exits: &PadExits,
+    pad: &str,
+) -> Option<ExitOutcome> {
+    repair_with(problem, poses, &[], exits, true, Some(pad))
+}
+
+fn repair_with(
+    problem: &Problem,
+    poses: &mut [Pose],
+    unplaced: &[usize],
+    exits: &PadExits,
+    require_open: bool,
+    target: Option<&str>,
 ) -> Option<ExitOutcome> {
     let count = problem.components.len();
     let mut session = (exits.factory)();
@@ -171,7 +237,10 @@ pub fn repair(
     };
     let defective: Vec<usize> = by_part
         .iter()
-        .filter(|(_, pads)| placement_closed(pads) > 0)
+        .filter(|(_, pads)| {
+            pads.iter()
+                .any(|pad| !pad.own_only && target.is_none_or(|name| pad.pad == name))
+        })
         .map(|(part, _)| *part)
         .collect();
     for part in defective {
@@ -195,6 +264,7 @@ pub fn repair(
         }
         // Candidates of every mover: (cost, distance, mover, pose).
         let mut candidates: Vec<(f64, f64, usize, Pose)> = Vec::new();
+        let mut obstructed: Vec<(f64, f64, usize, Pose)> = Vec::new();
         for &mover in &movers {
             let component = &problem.components[mover];
             let nets: Vec<usize> = {
@@ -232,11 +302,19 @@ pub fn repair(
                                 angle,
                             );
                             let pose = Pose { position, angle };
-                            if pose == original || seen.contains(&pose) {
+                            if pose == original
+                                || seen.contains(&pose)
+                                || (require_open
+                                    && (pose.position[0] - original.position[0])
+                                        .hypot(pose.position[1] - original.position[1])
+                                        > exits.reach + 1.0e-6)
+                            {
                                 continue;
                             }
                             seen.push(pose);
-                            if !crate::legal::is_legal(problem, poses, mover, pose, 0..count) {
+                            let legal =
+                                crate::legal::is_legal(problem, poses, mover, pose, 0..count);
+                            if !legal && !(require_open && mover == part) {
                                 continue;
                             }
                             crate::add_work(CANDIDATE_PIN_WORK * pins);
@@ -252,7 +330,11 @@ pub fn repair(
                             // To a micrometre of wire: equal costs go to the
                             // nearest pose, not to rounding.
                             let cost = ((after - before) * 1.0e3).round() / 1.0e3;
-                            candidates.push((cost, distance, mover, pose));
+                            if legal {
+                                candidates.push((cost, distance, mover, pose));
+                            } else {
+                                obstructed.push((cost, distance, mover, pose));
+                            }
                         }
                     }
                 }
@@ -282,17 +364,56 @@ pub fn repair(
             }
         }
         firsts.extend(rest);
-        let candidates = firsts;
-        for &(_, _, mover, pose) in candidates.iter().take(exits.candidates) {
+        obstructed.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.total_cmp(&b.0)));
+        let solo = firsts
+            .iter()
+            .take(exits.candidates)
+            .map(|entry| (entry, false));
+        let nearby = obstructed
+            .iter()
+            .take(exits.candidates)
+            .map(|entry| (entry, true));
+        let mut reseating_budget = 8;
+        for (&(_, _, mover, pose), obstructed) in solo.chain(nearby) {
             outcome.tried += 1;
             let original = poses[mover];
+            let mut reseated = Vec::new();
+            if obstructed {
+                if reseating_budget == 0 {
+                    break;
+                }
+                let mut trial = poses.to_vec();
+                trial[mover] = pose;
+                let Some((closed, work)) = session(&trial, &[mover]) else {
+                    break;
+                };
+                crate::add_work(work);
+                if placement_closed(&closed) > 0 {
+                    continue;
+                }
+                reseating_budget -= 1;
+                let Some(moved) = make_room(problem, poses, &mut trial, mover, exits.reach, free)
+                else {
+                    continue;
+                };
+                for index in moved {
+                    reseated.push((index, poses[index]));
+                    poses[index] = trial[index];
+                }
+            }
             // The parts whose pads the move can open or close: the part,
             // the mover and the placed parts near either of its spots.
             let reach = exits.reach + 3.0;
             let spots = [
                 problem.components[mover].center(original),
                 problem.components[mover].center(pose),
-            ];
+            ]
+            .into_iter()
+            .chain(reseated.iter().flat_map(|&(index, old)| {
+                let component = &problem.components[index];
+                [component.center(old), component.center(poses[index])]
+            }))
+            .collect::<Vec<_>>();
             let near: Vec<usize> = placed
                 .iter()
                 .copied()
@@ -316,11 +437,22 @@ pub fn repair(
             poses[mover] = pose;
             let Some((answer, work)) = session(poses, &near) else {
                 poses[mover] = original;
+                for (index, old) in reseated {
+                    poses[index] = old;
+                }
                 break;
             };
             crate::add_work(work);
             let after = placement_closed(&answer);
-            if after < before {
+            let no_new_closed = !require_open
+                || answer.iter().all(|pad| {
+                    pad.own_only
+                        || (pad.part != mover
+                            && by_part.get(&pad.part).is_some_and(|prior| {
+                                prior.iter().any(|old| old.pad == pad.pad && !old.own_only)
+                            }))
+                });
+            if after < before && no_new_closed {
                 let still: Vec<&str> = answer.iter().map(|pad| pad.pad.as_str()).collect();
                 let opened: Vec<String> = near
                     .iter()
@@ -341,9 +473,20 @@ pub fn repair(
                     to: pose,
                     opened,
                 });
+                for (index, old) in reseated {
+                    outcome.moves.push(ExitMove {
+                        part: index,
+                        from: old,
+                        to: poses[index],
+                        opened: Vec::new(),
+                    });
+                }
                 break;
             }
             poses[mover] = original;
+            for (index, old) in reseated {
+                poses[index] = old;
+            }
         }
     }
     outcome.closed = by_part.into_values().flatten().collect();

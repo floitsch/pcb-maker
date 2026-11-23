@@ -14,17 +14,28 @@
 //! to the core from the file that holds `place_kicad_board`.
 
 use super::*;
+
+mod alternate_side;
+mod body_near_retry;
 use pcb_placer as core;
 
 mod demand;
+mod diagnostics;
+mod fixed_region_cover;
+mod outline_anchors;
 mod output;
+mod pad_composition;
+mod perimeter_retry;
 mod pieces;
 mod prepare;
+mod rear_retry;
 mod report;
 mod seeds;
 
+pub use self::body_near_retry::{BodyNearReseat, propose_body_near_reseat};
 use self::demand::add_routing_demand;
 use self::output::{WrittenPoses, check_written_pads, write_placed_directory, write_poses};
+pub use self::pieces::check_sub_board_assignments;
 use self::pieces::{BoardPieces, place_in_pieces};
 pub use self::prepare::{PreparedBoard, prepare_board};
 #[cfg(test)]
@@ -54,6 +65,18 @@ pub fn place_kicad_board(
     output_directory: &Path,
     config: &KiCadBoardPlacerConfig,
 ) -> Result<KiCadBoardPlacerResult, String> {
+    place_kicad_board_with_rear_retry(source_directory, board_id, output_directory, config, None)
+}
+
+/// Like `place_kicad_board`, with the layout's unspent work budget
+/// available for a bounded alternate rear assignment if placement fails.
+pub fn place_kicad_board_with_rear_retry(
+    source_directory: &Path,
+    board_id: &str,
+    output_directory: &Path,
+    config: &KiCadBoardPlacerConfig,
+    layout_work_available: Option<f64>,
+) -> Result<KiCadBoardPlacerResult, String> {
     let started = std::time::Instant::now();
     let PreparedBoard {
         mut pcb,
@@ -79,10 +102,9 @@ pub fn place_kicad_board(
     }
     let pieces = place_in_pieces(&context, &pcb, &mut lowered)?;
     add_routing_demand(&context, &pcb, &mut lowered)?;
-    let lowered = lowered;
     let placer_config = placer_config(&context, &pcb, &lowered)?;
     let skeleton_race = skeleton_race(&context, &pcb, &lowered, &pieces);
-    let seeds = place_seeds(
+    let mut seeds = place_seeds(
         &context,
         &lowered,
         &placer_config,
@@ -98,7 +120,8 @@ pub fn place_kicad_board(
             Path::new(&trace),
         )?;
     }
-    let picked = pick(
+    let signal_anchor_seed = seeds.signal_anchor_seed.take();
+    let mut picked = pick(
         &context,
         &pcb,
         &lowered,
@@ -106,10 +129,52 @@ pub fn place_kicad_board(
         skeleton_race.as_ref(),
         seeds,
     );
+    let perimeter_contact_recovery = pieces
+        .is_whole()
+        .then(|| {
+            perimeter_retry::recover(
+                &context,
+                &mut lowered,
+                &mut picked,
+                &placer_config,
+                layout_work_available,
+            )
+        })
+        .flatten();
+    let back_side_fit = if pieces.is_whole() {
+        alternate_side::fit_stranded_part(&context, &mut pcb, &mut lowered, &mut picked)
+    } else {
+        None
+    };
+    let automatic_rear_retry = pieces
+        .is_whole()
+        .then(|| {
+            rear_retry::recover(
+                &context,
+                &mut pcb,
+                &mut lowered,
+                &mut picked,
+                layout_work_available,
+            )
+        })
+        .flatten();
     let written = write_poses(&mut pcb, &lowered, &picked.placement)?;
     check_written_pads(&pcb, &lowered, &picked.placement.poses)?;
     write_placed_directory(&context, &pcb, &lowered, &picked.placement)?;
-    let result = placement_report(&context, &pcb, &lowered, pieces.report, picked, written);
+    let mut result = placement_report(
+        &context,
+        &pcb,
+        &lowered,
+        pieces,
+        picked,
+        written,
+        report::SideRecovery {
+            back_side_fit,
+            automatic_rear_retry,
+        },
+    );
+    result.signal_anchor_seed = signal_anchor_seed;
+    result.perimeter_contact_recovery = perimeter_contact_recovery;
     write_report(&context, &result)?;
     Ok(result)
 }
@@ -133,6 +198,7 @@ fn placer_config(
         .map(|seconds| (seconds.max(0.0) * core::work_per_second()) as u64);
     placer_config.overlap_far_side_pads = config.tuning.overlap_far_side_pads;
     placer_config.orientation_search = config.tuning.orientation_search;
+    placer_config.refine_pad_near = config.tuning.refine_pad_near;
     placer_config.bus_groups = config
         .tuning
         .bus_groups
@@ -145,6 +211,11 @@ fn placer_config(
     // seed's placement, with the router's configuration the layout and the
     // place check give.
     if let Some(settings) = exits::pad_exits_settings(config) {
+        if settings.scope != exits::KiCadPadExitScope::All {
+            return Err(
+                "use the rule_areas scope with pad-exits-kicad-board --repair-config".into(),
+            );
+        }
         match &config.measure_router {
             Some(router_config) => {
                 placer_config.pad_exits = Some(core::exits::PadExits {

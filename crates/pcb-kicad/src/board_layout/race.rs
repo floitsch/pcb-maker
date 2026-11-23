@@ -19,6 +19,22 @@ pub(super) struct RaceOutcome {
     pub lines_why: Option<String>,
     pub congestion: Option<KiCadCongestionRanking>,
     pub pad_exits: Option<crate::board_placer::KiCadPadExitsReport>,
+    pub pool_index: usize,
+    pub alternative_index: Option<usize>,
+}
+
+impl RaceOutcome {
+    pub(super) fn empty() -> Self {
+        Self {
+            placement_race: Vec::new(),
+            report: None,
+            lines_why: None,
+            congestion: None,
+            pad_exits: None,
+            pool_index: 0,
+            alternative_index: None,
+        }
+    }
 }
 
 /// The router settings of the race, the move trials and the first route
@@ -65,6 +81,7 @@ pub(super) fn race_and_route(
     let Candidates {
         others,
         labels,
+        alternative_indices,
         pool_exits,
         congestion,
         dropped,
@@ -114,6 +131,10 @@ pub(super) fn race_and_route(
             lines_why,
             congestion,
             pad_exits: pool_exits.get(routed_pool_index).cloned().flatten(),
+            pool_index: routed_pool_index,
+            alternative_index: routed_pool_index
+                .checked_sub(1)
+                .map(|index| alternative_indices[index]),
         },
     ))
 }
@@ -284,7 +305,7 @@ fn run_race(
             .into_iter()
             .nth(chosen - 1)
             .expect("a candidate per probe");
-        let pcb = posed(&kept.pcb, &poses)?;
+        let pcb = posed(&kept.pcb, &poses, &ctx.router_config.add_pours)?;
         kept.board = candidate_board;
         router.config_mut().verbose = core_config.verbose;
         kept.adopt(pcb, &relaxation)?;
@@ -359,7 +380,10 @@ fn lower_candidates(
     let mut candidates = Vec::new();
     for (poses, relaxation) in others {
         let (candidate_board, plan_work) = lower_for_route(
-            &without_copper_texts(&posed(pcb, &poses)?, ctx.config.placer.keep_board_marks),
+            &without_copper_texts(
+                &posed(pcb, &poses, &ctx.router_config.add_pours)?,
+                ctx.config.placer.keep_board_marks,
+            ),
             &ctx.router_config,
             copper.connect,
         )?;

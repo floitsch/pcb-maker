@@ -39,6 +39,8 @@ pub(crate) struct BoardFacts {
     /// The board's named zones and rule areas (the footprints' too), which
     /// `intersectsArea()`, `insideArea()` and `enclosedByArea()` name.
     pub areas: Vec<NamedArea>,
+    /// Current board references of footprints containing pads.
+    pub footprint_pads: BTreeMap<String, BTreeSet<String>>,
 }
 
 /// A zone or rule area a condition can name (`BoardFacts::areas`).
@@ -134,6 +136,7 @@ pub(crate) struct PairClearance {
     /// rule on every layer.
     pub layers: u32,
     pub clearance: f64,
+    pub except_pads: BTreeSet<String>,
 }
 
 /// The kinds the router lays (A of a clearance) and the kinds they meet
@@ -185,6 +188,9 @@ pub(crate) struct Lowered {
     /// sets of nets, from some item types only (pads to tracks), on some
     /// layers only (router `ClearanceRule`s).
     pub pair_clearances: Vec<PairClearance>,
+    /// Last definitely matching all-layer pad clearance floor by reference.
+    pub footprint_pad_clearance: BTreeMap<String, f64>,
+    pub fixed_pad_route_clearance: BTreeMap<String, f64>,
     pub report: Vec<KiCadCustomRuleReport>,
     /// Set by a clearance kept wherever an area may hold (`lower`'s
     /// report says so).
@@ -268,15 +274,19 @@ impl Lowered {
         detail: String,
     ) {
         if status == "unmodelled" {
+            let mut bounds = String::new();
+            for (label, value) in [("min", constraint.min), ("max", constraint.max)] {
+                if let Some(value) = value {
+                    let limit = match constraint.kind.as_str() {
+                        "via_count" | "min_resolved_spokes" => value.to_string(),
+                        _ => mm(value),
+                    };
+                    bounds.push_str(&format!(", {label} {limit}"));
+                }
+            }
             self.unmodelled.push(format!(
-                "{} ('{}'{}): {detail}",
-                constraint.kind,
-                rule.name,
-                constraint
-                    .min
-                    .map(|value| format!(", min {}", mm(value)))
-                    .or_else(|| constraint.max.map(|value| format!(", max {}", mm(value))))
-                    .unwrap_or_default()
+                "{} ('{}'{bounds}): {detail}",
+                constraint.kind, rule.name
             ));
         }
         self.report.push(KiCadCustomRuleReport {
@@ -363,6 +373,7 @@ pub fn lower(rules: &[Rule], board: &BoardFacts, severities: &BTreeMap<String, S
             Some(text) => parse_condition(text).ok(),
         })
         .collect();
+    let unknown = Ex::Opaque("unparsed later condition".into());
     for (index, rule) in rules.iter().enumerate() {
         for constraint in &rule.constraints {
             // KiCad applies the last matching rule of a constraint: a later
@@ -380,11 +391,11 @@ pub fn lower(rules: &[Rule], board: &BoardFacts, severities: &BTreeMap<String, S
                             .iter()
                             .any(|own| own.kind == constraint.kind && own.min.is_some())
                     })
-                    .filter_map(|(other, condition)| {
-                        Some((
-                            condition.as_ref()?,
+                    .map(|(other, condition)| {
+                        (
+                            condition.as_ref().unwrap_or(&unknown),
                             rule_layers(other, &board.copper_layers),
-                        ))
+                        )
                     })
                     .collect()
             } else {
@@ -401,12 +412,19 @@ pub fn lower(rules: &[Rule], board: &BoardFacts, severities: &BTreeMap<String, S
             );
             if std::mem::take(&mut lowered.by_area)
                 && let Some(note) = lowered.report.last_mut()
-                && matches!(note.status.as_str(), "applied" | "approximated")
             {
-                note.status = "approximated".into();
-                note.detail.push_str(
-                    " (where a rule area may hold: on the area's layers wherever the area lies)",
-                );
+                match note.status.as_str() {
+                    "applied" | "approximated" => {
+                        note.status = "approximated".into();
+                        note.detail.push_str(
+                            " (where a rule area may hold: on the area's layers wherever the area lies)",
+                        );
+                    }
+                    "no_effect" => note.detail.push_str(
+                        ". KiCad evaluates the named area. The router keeps its modeled clearance inside that area too.",
+                    ),
+                    _ => {}
+                }
             }
         }
     }
@@ -466,7 +484,17 @@ fn lower_constraint(
         return;
     };
     let kind = constraint.kind.as_str();
-    let matcher = Matcher::new(board, no_net, later, kind, layers, condition);
+    let mut except_pads = BTreeSet::new();
+    let condition = if kind == "clearance"
+        && let Some((ordinary, except)) = symmetric_footprint_exceptions(&condition)
+    {
+        except_pads = footprint_exception_pads(board, &except, later);
+        ordinary
+    } else {
+        condition
+    };
+    let mut matcher = Matcher::new(board, no_net, later, kind, layers, condition);
+    matcher.except_pads = except_pads;
     match kind {
         "clearance" | "hole_clearance" | "edge_clearance" | "hole_to_hole" => {
             let Some(value) = constraint.min else {
@@ -474,13 +502,249 @@ fn lower_constraint(
                 return;
             };
             if kind == "clearance" {
-                clearance::lower_net_clearance(lowered, rule, constraint, &matcher, value);
+                if !lower_footprint_pad_clearance(lowered, rule, constraint, &matcher, value) {
+                    clearance::lower_net_clearance(lowered, rule, constraint, &matcher, value);
+                }
             } else {
                 clearance::lower_board_clearance(lowered, rule, constraint, &matcher, value);
             }
         }
         _ => sizes::lower_sizes(lowered, rule, constraint, &matcher),
     }
+}
+
+/// All terms must be footprint-reference matchers. In an item pair
+/// KiCad tries both orientations, so either side can match the copper pad.
+fn footprint_patterns<'a>(condition: &'a Ex, patterns: &mut BTreeSet<&'a str>) -> bool {
+    match condition {
+        Ex::Or(a, b) => footprint_patterns(a, patterns) && footprint_patterns(b, patterns),
+        Ex::Call(Side::A | Side::B, function, arguments) if function == "memberoffootprint" => {
+            let [Ex::Text(reference)] = arguments.as_slice() else {
+                return false;
+            };
+            if reference.is_empty() {
+                return false;
+            }
+            patterns.insert(reference);
+            true
+        }
+        _ => false,
+    }
+}
+
+fn matches_footprint(pattern: &str, reference: &str) -> bool {
+    // memberOfFootprint's reference patterns are case-sensitive in
+    // KiCad, unlike its ordinary string comparison operators.
+    crate::project_rules::wildcard_match(pattern, reference)
+}
+
+fn lower_footprint_pad_clearance(
+    lowered: &mut Lowered,
+    rule: &Rule,
+    constraint: &Constraint,
+    matcher: &Matcher<'_>,
+    value: f64,
+) -> bool {
+    let board = matcher.board;
+    let mut patterns = BTreeSet::new();
+    if matcher.layers.len() != board.copper_layers.len()
+        || !footprint_patterns(&matcher.condition, &mut patterns)
+    {
+        return false;
+    }
+    let mut references: BTreeSet<&str> = board
+        .footprint_pads
+        .keys()
+        .map(String::as_str)
+        .filter(|reference| {
+            patterns
+                .iter()
+                .any(|pattern| matches_footprint(pattern, reference))
+        })
+        .collect();
+    if references.is_empty() {
+        lowered.note(
+            rule,
+            constraint,
+            "no_effect",
+            "no matching footprint pads".into(),
+        );
+        return true;
+    }
+    for (condition, layers) in matcher.later {
+        if layers.len() != board.copper_layers.len() {
+            continue;
+        }
+        if matches!(condition, Ex::Number(value) if *value != 0.0) {
+            references.clear();
+            break;
+        }
+        let mut shadowed = BTreeSet::new();
+        if footprint_patterns(condition, &mut shadowed) {
+            references.retain(|reference| {
+                !shadowed
+                    .iter()
+                    .any(|pattern| matches_footprint(pattern, reference))
+            });
+        }
+    }
+    if references.is_empty() {
+        lowered.note(
+            rule,
+            constraint,
+            "no_effect",
+            "a later all-layer rule takes every matching footprint".into(),
+        );
+        return true;
+    }
+    let mut exact_pads = 0;
+    if value > 0.0 {
+        lowered.footprint_pad_clearance.extend(
+            references
+                .iter()
+                .map(|reference| ((*reference).to_owned(), value)),
+        );
+        if patterns
+            .iter()
+            .all(|pattern| !pattern.contains(['*', '?', '\\']))
+        {
+            let pads = unambiguous_pad_labels(board, |reference| {
+                references.contains(reference)
+                    && matcher.later.iter().all(|(condition, layers)| {
+                        layers.is_empty()
+                            || [Side::A, Side::B].into_iter().all(|pad| {
+                                footprint_against_route(condition, reference, pad) == Some(false)
+                            })
+                    })
+            });
+            exact_pads = pads.len();
+            lowered
+                .fixed_pad_route_clearance
+                .extend(pads.into_iter().map(|pad| (pad, value)));
+        }
+    }
+    let named = references.into_iter().collect::<Vec<_>>().join(", ");
+    let exact = if exact_pads == 0 {
+        "; stronger clearances stay in force".into()
+    } else {
+        format!("; the class spacing is replaced only against {exact_pads} fixed pad labels")
+    };
+    lowered.note(
+        rule,
+        constraint,
+        if value > 0.0 {
+            "approximated"
+        } else {
+            "no_effect"
+        },
+        format!("{} clearance floor for pads of {named}{exact}", mm(value)),
+    );
+    true
+}
+
+/// Resolve only the footprint relationships of one fixed pad against a
+/// routed track or via. An unknown permits a later rule to win.
+fn footprint_against_route(condition: &Ex, reference: &str, pad: Side) -> Option<bool> {
+    match condition {
+        Ex::Number(number) => Some(*number != 0.0),
+        Ex::Not(term) => footprint_against_route(term, reference, pad).map(|value| !value),
+        Ex::And(a, b) | Ex::Or(a, b) => {
+            let a = footprint_against_route(a, reference, pad);
+            let b = footprint_against_route(b, reference, pad);
+            let decisive = matches!(condition, Ex::Or(..));
+            if a == Some(decisive) || b == Some(decisive) {
+                Some(decisive)
+            } else if a == Some(!decisive) && b == Some(!decisive) {
+                Some(!decisive)
+            } else {
+                None
+            }
+        }
+        Ex::Call(side @ (Side::A | Side::B), function, arguments)
+            if function == "memberoffootprint" =>
+        {
+            let [Ex::Text(pattern)] = arguments.as_slice() else {
+                return None;
+            };
+            Some(*side == pad && matches_footprint(pattern, reference))
+        }
+        _ => None,
+    }
+}
+
+/// Strip only symmetric exclusions. Otherwise which pad is excluded
+/// depends on the class of the other member and needs a directed rule.
+fn symmetric_footprint_exceptions(condition: &Ex) -> Option<(Ex, BTreeSet<&str>)> {
+    let mut terms = vec![condition];
+    let mut a = BTreeSet::new();
+    let mut b = BTreeSet::new();
+    let mut rest = Vec::new();
+    while let Some(term) = terms.pop() {
+        if let Ex::And(left, right) = term {
+            terms.push(right);
+            terms.push(left);
+        } else if let Ex::Not(inner) = term
+            && let Ex::Call(side @ (Side::A | Side::B), function, arguments) = inner.as_ref()
+            && function == "memberoffootprint"
+            && let [Ex::Text(reference)] = arguments.as_slice()
+            && !reference.is_empty()
+        {
+            let refs = if *side == Side::A { &mut a } else { &mut b };
+            refs.insert(reference.as_str());
+        } else {
+            rest.push(term.clone());
+        }
+    }
+    if a.is_empty() || a != b || rest.is_empty() {
+        return None;
+    }
+    Some((
+        rest.into_iter()
+            .reduce(|a, b| Ex::And(Box::new(a), Box::new(b)))?,
+        a,
+    ))
+}
+
+/// A later disjunction of footprint matches can also take the
+/// rule from a fixed pad when its floor is modelled on every copper layer.
+fn footprint_exception_pads(
+    board: &BoardFacts,
+    except: &BTreeSet<&str>,
+    later: &[Later<'_>],
+) -> BTreeSet<String> {
+    fn later_covers(condition: &Ex, reference: &str) -> bool {
+        match condition {
+            Ex::Or(a, b) => later_covers(a, reference) || later_covers(b, reference),
+            Ex::Call(Side::A | Side::B, name, args) if name == "memberoffootprint" => {
+                matches!(args.as_slice(), [Ex::Text(pattern)] if matches_footprint(pattern, reference))
+            }
+            _ => false,
+        }
+    }
+    unambiguous_pad_labels(board, |reference| {
+        except
+            .iter()
+            .any(|pattern| matches_footprint(pattern, reference))
+            || later.iter().any(|(condition, coverage)| {
+                coverage.len() == board.copper_layers.len() && later_covers(condition, reference)
+            })
+    })
+}
+
+/// Fixed pad labels predate these rules. If two references share a label,
+/// only select it when the rule applies to both.
+fn unambiguous_pad_labels(board: &BoardFacts, matches: impl Fn(&str) -> bool) -> BTreeSet<String> {
+    let mut selected = BTreeSet::new();
+    let mut unmatched = BTreeSet::new();
+    for (reference, pads) in &board.footprint_pads {
+        if matches(reference) {
+            selected.extend(pads.iter().cloned());
+        } else {
+            unmatched.extend(pads.iter().map(String::as_str));
+        }
+    }
+    selected.retain(|label| !unmatched.contains(label.as_str()));
+    selected
 }
 
 /// Recognises whether the router keeps a constraint at all, and notes it
@@ -641,8 +905,9 @@ fn note_unmodelled(lowered: &mut Lowered, rule: &Rule, constraint: &Constraint) 
     let kind = constraint.kind.as_str();
     let detail = match kind {
         "creepage" => "creepage (surface distance) is not modelled".to_string(),
-        "length" | "skew" | "max_uncoupled" | "via_count" => {
-            "no length tuning or via counts in the router".into()
+        "via_count" => "KiCad checks the via count for each matching net".into(),
+        "length" | "skew" | "max_uncoupled" => {
+            "KiCad checks the custom length constraint on the routed board".into()
         }
         "diff_pair_gap" | "diff_pair_uncoupled" => {
             "differential pairs route coupled only with the router setting `diff_pairs`, off here (a layout's routes keep it off unless the router config sets \"diff_pairs\": true; route mode turns it on where such a rule holds)".into()
@@ -682,6 +947,7 @@ pub(super) struct Matcher<'a> {
     /// The board's layers of the rule (`rule_layers`).
     pub layers: Vec<&'a str>,
     pub condition: Ex,
+    pub except_pads: BTreeSet<String>,
     /// The groups of nets neither the condition nor a later rule's can
     /// tell apart (`net_groups`), as indices into `BoardFacts::nets`.
     pub groups: Vec<Vec<usize>>,
@@ -718,6 +984,7 @@ impl<'a> Matcher<'a> {
             kind,
             layers,
             condition,
+            except_pads: BTreeSet::new(),
             groups,
             shadowed_any: Cell::new(false),
             no_net,

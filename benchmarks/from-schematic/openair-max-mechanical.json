@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "move_all": true,
+  "place": [
+    {
+      "part": "BAT1",
+      "origin": "absolute",
+      "x": 145.81,
+      "y": 85.82,
+      "angle": 0.0
+    },
+    {
+      "part": "I2C1",
+      "origin": "absolute",
+      "x": 104.0,
+      "y": 118.22,
+      "angle": 0.0
+    },
+    {
+      "part": "I2C2",
+      "origin": "absolute",
+      "x": 160.3,
+      "y": 118.22,
+      "angle": 0.0
+    },
+    {
+      "part": "LED2",
+      "origin": "absolute",
+      "x": 126.17,
+      "y": 119.14,
+      "angle": 180.0
+    },
+    {
+      "part": "SW1",
+      "origin": "absolute",
+      "x": 118.49,
+      "y": 118.175,
+      "angle": 180.0
+    },
+    {
+      "part": "USB1",
+      "origin": "absolute",
+      "x": 134.33,
+      "y": 119.02,
+      "angle": 0.0
+    }
+  ]
+}

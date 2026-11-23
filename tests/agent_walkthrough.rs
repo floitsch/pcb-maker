@@ -443,20 +443,49 @@ fn the_documented_flow_lays_out_a_keyboard_from_its_schematic() {
     assert_eq!(verdict["constraints_missed"], json!([]));
     assert_eq!(verdict["unplaced"], json!([]));
     assert_eq!(verdict["cut"], json!([]));
-    // Nothing to do; the parity findings are the controller's no-connect
-    // pins, and the verdict says so.
+    // KiCad can report controller pins 31–33 as missing because they are
+    // unwired in this fixture and absent from the footprint. They have
+    // no explicit no-connect marks, so a completed layout may still ask
+    // for a review of the affected pin mapping.
     let actions = verdict["next_actions"].as_array().unwrap();
+    let mapping = "KiCad's current schematic netlist lists ";
     assert!(
-        actions
-            .iter()
-            .all(|action| action.as_str().unwrap().starts_with("nothing to do")),
+        actions.iter().all(|action| {
+            let action = action.as_str().unwrap();
+            action.starts_with("nothing to do") || action.starts_with(mapping)
+        }),
         "{actions:?}"
     );
+    let review = actions
+        .iter()
+        .filter_map(Value::as_str)
+        .find(|action| action.starts_with(mapping));
+    if let Some(missing) = verdict["missing_schematic_pads"].as_array() {
+        let review = review.expect("missing pins should have mapping advice");
+        assert!(
+            review.contains("on single-pin unconnected nets"),
+            "{review}"
+        );
+        for pad in missing {
+            let reference = pad["reference"].as_str().unwrap();
+            let pin = pad["pin"].as_str().unwrap();
+            assert!(matches!(reference, "U1" | "U2"), "{pad}");
+            assert!(matches!(pin, "31" | "32" | "33"), "{pad}");
+            assert!(pad.get("net").is_none(), "{pad}");
+            assert_eq!(pad["schematic_netlist"]["connection"], "isolated", "{pad}");
+            assert_eq!(pad["schematic_netlist"]["terminals"], 1, "{pad}");
+            assert_eq!(pad["schematic_netlist"]["pin_type"], "input", "{pad}");
+            assert!(review.contains(&format!("{reference}:{pin}")), "{review}");
+        }
+    } else {
+        assert!(review.is_none(), "{actions:?}");
+    }
     assert!(verdict["skipped"].is_array());
     assert!(verdict["work_seconds"].as_f64().unwrap() > 0.0);
     assert!(verdict["drc_cache"]["calls"].as_u64().unwrap() >= 1);
-    // The no-net pins above are KiCad's parity findings, nothing more
-    // (181 when the library's references won).
+    // Any parity findings concern the unwired controller pins (181
+    // findings when the library's references won).
+    assert_eq!(verdict["schematic_parity_checked"], true, "{verdict}");
     assert!(
         verdict["schematic_parity_issues"].as_u64().unwrap() <= 6,
         "{verdict}"

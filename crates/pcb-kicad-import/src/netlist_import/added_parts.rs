@@ -21,6 +21,12 @@ struct AddedForm {
     kept: Option<String>,
 }
 
+#[derive(Default)]
+pub(super) struct AddedParts {
+    pub lines: Vec<String>,
+    pub donor_instances: BTreeMap<String, String>,
+}
+
 /// The parts of `add` in `<out>/constraints.json`, put on the board
 /// `board_only`; returns a line per part. A library footprint not found
 /// goes to `missing`; an entry that cannot be carried out is an input
@@ -32,9 +38,9 @@ pub(super) fn add_parts(
     designer: Option<&crate::board_footprints::BoardFootprints>,
     missing: &mut Vec<String>,
     kept_ids: &mut BTreeSet<String>,
-) -> Result<Vec<String>, String> {
+) -> Result<AddedParts, String> {
     let Some(additions) = read_additions(output)? else {
-        return Ok(Vec::new());
+        return Ok(AddedParts::default());
     };
     let nets_on_board: BTreeSet<String> = board
         .children()
@@ -50,7 +56,7 @@ pub(super) fn add_parts(
         // As `add` names them (`quote` spells them in the board).
         .map(|net| unescape(net).into_owned())
         .collect();
-    let mut lines = Vec::new();
+    let mut result = AddedParts::default();
     for addition in additions {
         let Some((footprint, line)) = add_part(
             &addition,
@@ -64,12 +70,35 @@ pub(super) fn add_parts(
         else {
             continue;
         };
-        lines.push(line);
+        // A same-reference copy at its authored pose can also satisfy a
+        // mechanical transfer from this exact board. Renamed or overridden
+        // copies must not stand in for the original instance.
+        if addition.from_board
+            && addition
+                .board_reference
+                .as_ref()
+                .is_none_or(|reference| reference == &addition.part)
+            && addition.x.is_none()
+            && addition.y.is_none()
+            && addition.angle.is_none()
+            && addition.side.is_none()
+            && addition.nets.is_none()
+            && let Some(source) =
+                designer.and_then(|donor| donor.by_reference(&addition.part, None).ok())
+            && let (Some(donor_uuid), Some(output_uuid)) =
+                (source.uuid.as_ref(), footprint_uuid(&footprint))
+            && donor_uuid.eq_ignore_ascii_case(&output_uuid)
+        {
+            result
+                .donor_instances
+                .insert(addition.part.clone(), output_uuid);
+        }
+        result.lines.push(line);
         if let Expr::List(items) = board {
             items.push(footprint);
         }
     }
-    Ok(lines)
+    Ok(result)
 }
 
 /// The `add` entries of `<out>/constraints.json`; `None` where there is no

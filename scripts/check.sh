@@ -79,9 +79,10 @@ step cargo test --release -p pcb-router -p pcb-kicad-file -p pcb-kicad-check -p 
   -p pcb-topo -p config-reference
 step cargo test --release -p pcb-maker --bins --test cli_exit_codes ${walkthrough[@]+"${walkthrough[@]}"} \
   --test native_verification --test router_fingerprint --test config_reference --test hostile_inputs --test fixtures
-step python3 -m pytest -q benchmarks/agent-tasks
+step python3 -m pytest -q benchmarks/agent-tasks benchmarks/from-schematic
 step python3 -m pytest -q benchmarks/github
-step python3 -m pytest -q benchmarks/expansion
+# Keep the downloaded board corpus out of test discovery.
+step python3 -m pytest -q benchmarks/expansion --ignore=benchmarks/expansion/data
 step python3 -m pytest -q scripts
 step cargo clippy --release --workspace --all-targets -- -D warnings
 # A cargo test of the library crates does not refresh
