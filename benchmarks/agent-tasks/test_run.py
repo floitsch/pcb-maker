@@ -365,6 +365,17 @@ class StrictRule(unittest.TestCase):
         self.assertEqual(run.strict_findings([feed], ground_only)["new"], {"shorting_items": 1})
         split = run.strict_findings([feed, other], ground_only, None, walled)
         self.assertEqual((split["new"], split["preexisting"]), ({"shorting_items": 1}, {"shorting_items": 1}))
+        # The designer excluded the pairings in the project (nrf24_remote):
+        # the excluded findings still show the graphic over its pads.
+        excluded = {"violations": [
+            {"type": "clearance", "severity": "error", "excluded": True, "description": "c",
+             "items": [{"uuid": "p1", "description": "Pad 1 [Net-(AE1-A)] of AE1 on F.Cu", "pos": {"x": 5, "y": 5}},
+                       {"uuid": "g1", "description": "Polygon [<no net>] of AE1 on F.Cu", "pos": {"x": 6, "y": 5}}]}]}
+        self.assertEqual(run.counting_findings(excluded), [])
+        split = run.strict_findings([feed], [], None, None, run.all_findings(excluded))
+        self.assertEqual((split["new"], split["preexisting"]), ({}, {"shorting_items": 1}))
+        self.assertEqual(run.strict_findings([feed], None, None, None, run.all_findings(excluded))["new"],
+                         {"shorting_items": 1})
         # Without the designer's pairing, the run's record alone is no evidence.
         self.assertEqual(run.strict_findings([feed], [], None, walled)["new"], {"shorting_items": 1})
 

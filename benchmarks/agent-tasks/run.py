@@ -640,6 +640,15 @@ def counting_findings(drc):
     return findings
 
 
+def all_findings(drc):
+    """Every finding of a DRC report, excluded and of any severity, in
+    counting_findings' form: the evidence of what the designer's board
+    holds, not what counts (`graphic_walls`: a pad-graphic pairing the
+    designer excluded is one they accepted)."""
+    return counting_findings({"violations": [dict(violation, severity="error", excluded=False)
+                                             for violation in drc.get("violations", [])]})
+
+
 def zone_item(item):
     """Whether a finding's item is a zone (KiCad's description)."""
     return (item[2] if len(item) > 2 else "").startswith("Zone")
@@ -855,7 +864,7 @@ def _distance(a, b):
     return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
 
 
-def strict_findings(ours, reference, designer=None, walled=None):
+def strict_findings(ours, reference, designer=None, walled=None, pairings=None):
     """Splits our findings (counting_findings) into the reference's at the
     same place and our own: {"new": {type: n}, "preexisting": {type: n},
     "unknown": [types the reference has at KiCad's cap], "mask_openings":
@@ -871,14 +880,16 @@ def strict_findings(ours, reference, designer=None, walled=None):
     reference (the stripped designer board) or on `designer` (the
     designer's own board, tracks and all: shipped bridged) and the other
     item is a track or a zone (`prebridged`); those are counted in
-    "mask_openings", in neither "new" nor "preexisting"."""
+    "mask_openings", in neither "new" nor "preexisting". `pairings`: the
+    baseline report's every finding, excluded ones too (`all_findings`),
+    which `graphic_walls` reads beside `reference`."""
     if reference is None:
-        reference, designer = [], None
+        reference, designer, pairings = [], None, None
     counts = {}
     for kind, _ in reference:
         counts[kind] = counts.get(kind, 0) + 1
     openings = bridged_openings(reference) + bridged_openings(designer)
-    walls = graphic_walls(reference, walled)
+    walls = graphic_walls(list(reference) + list(pairings or []), walled)
     new, preexisting, unknown, mask_openings = {}, {}, [], 0
     used = [False] * len(reference)
     for finding in ours:
@@ -947,6 +958,14 @@ class StrictBaseline:
             shutil.rmtree(project, ignore_errors=True)
         return self.result
 
+    def pairings(self):
+        """Every finding of the stored baseline report, excluded ones too
+        (`all_findings`), for `graphic_walls`; None without the report."""
+        try:
+            return all_findings(json.loads((self.work / "baseline-drc.json").read_text()))
+        except (OSError, ValueError):
+            return None
+
     def designer(self):
         """The designer's own board's solder mask bridges (designer_findings
         keeps them as `designer-mask-bridges.json`): counting_findings, or
@@ -975,7 +994,8 @@ def strict_native(result_directory, baseline):
         walled = json.loads((result_directory / "verdict.json").read_text()).get("walled_pads")
     except (OSError, ValueError):
         pass
-    split = strict_findings(ours, reference, designer, walled)
+    pairings = baseline.pairings() if reference is not None else None
+    split = strict_findings(ours, reference, designer, walled, pairings)
     split["clean"] = not ours and not drc.get("unconnected_items")
     if ours and baseline is not None and baseline.enabled and reference is None:
         split["baseline_error"] = baseline.error or "no baseline"
