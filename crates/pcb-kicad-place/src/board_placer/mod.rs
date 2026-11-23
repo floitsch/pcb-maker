@@ -20,6 +20,7 @@ mod pair_rows;
 mod panel;
 mod place;
 mod result;
+mod rule_area_exits;
 mod rules;
 mod seed_race;
 mod skeleton;
@@ -30,14 +31,15 @@ mod trace;
 pub use self::courtyards::courtyard_slabs;
 pub use self::exits::closed_pad_reason;
 pub use self::exits::pad_exits_settings;
+pub use self::exits::propose_rule_area_pad_move;
 pub use self::measured::{attribution, reference_index};
 pub use self::place::room_hint;
 pub(crate) use self::skeleton::passive_mask;
 pub use self::{
     config::*,
     exits::{
-        KiCadClosedPad, KiCadExitMove, KiCadPadExits, KiCadPadExitsCensus, KiCadPadExitsReport,
-        pad_exits_kicad_board, pad_exits_override,
+        KiCadClosedPad, KiCadExitMove, KiCadPadExitScope, KiCadPadExits, KiCadPadExitsCensus,
+        KiCadPadExitsReport, pad_exits_kicad_board, pad_exits_override,
     },
     panel::{KiCadPanelCellClass, KiCadPanelCopiesReport, KiCadPanelCopy},
     place::*,
@@ -49,3 +51,12 @@ pub use self::{lower::*, pair_rows::*, rules::*};
 pub(crate) use self::{marks::*, seed_race::*};
 use crate::board_router::largest_clearance;
 use crate::footprint_bodies::*;
+
+/// The mounting face named by the saved footprint's board layer.
+pub fn footprint_mounting_side(footprint: &Expr) -> &'static str {
+    match form_atom(footprint, "layer", 1) {
+        Some("F.Cu") => "front",
+        Some("B.Cu") => "back",
+        _ => "unknown",
+    }
+}

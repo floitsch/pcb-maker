@@ -46,6 +46,16 @@ def error_counts(report, missing_severity=None):
     return counts
 
 
+def constraint_satisfied(constraint):
+    """Use strict explicit pad-near evidence where the layout reported it."""
+    if not isinstance(constraint, dict):
+        return False
+    near = constraint.get("pad_near") if constraint.get("kind") == "near" else None
+    if near is not None:
+        return isinstance(near, dict) and near.get("satisfied") is True
+    return constraint.get("satisfied") is True
+
+
 def file_sha256(path):
     """The SHA-256 of a file, read in 1 MB chunks."""
     digest = hashlib.sha256()

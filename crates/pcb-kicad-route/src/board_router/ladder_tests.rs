@@ -88,6 +88,8 @@ struct Fake {
     probe_pour: f64,
     /// Per rung, a probe's pour work instead of `probe_pour` (empty: none).
     probe_pours: Vec<f64>,
+    probe_first_pass: f64,
+    held_keys: Mutex<Vec<u128>>,
     build: f64,
     lowering: f64,
     /// The part of `build` routers of the same static maps share
@@ -105,6 +107,8 @@ struct Fake {
     /// KiCad's unconnected pads of every routed attempt ("Pad 1 [N] of
     /// U1 on F.Cu"), written to its drc.json (empty: none written).
     drc_open: Vec<String>,
+    /// Candidate vias and native fixture per rung. None is a missing report.
+    ranked: BTreeMap<&'static str, (usize, Option<serde_json::Value>)>,
 }
 
 /// The scripted runner's static maps' key of a rung on a lattice: the
@@ -142,6 +146,8 @@ impl Fake {
             pour: 0.0,
             probe_pour: 0.0,
             probe_pours: Vec::new(),
+            probe_first_pass: 0.0,
+            held_keys: Mutex::new(Vec::new()),
             build: 0.0,
             lowering: 0.0,
             shared_statics: 0.0,
@@ -150,6 +156,7 @@ impl Fake {
             probe_open: Vec::new(),
             lines_probes: Vec::new(),
             drc_open: Vec::new(),
+            ranked: BTreeMap::new(),
         }
     }
 
@@ -195,12 +202,18 @@ fn rung_of(attempt: &KiCadBoardRouterConfig, connect: bool) -> &'static str {
 /// work on a lattice of `pitch` mm.
 fn report(open: usize, work: f64, pitch: f64) -> KiCadBoardRouterResult {
     KiCadBoardRouterResult {
+        generated_pad_leaf_ids: Vec::new(),
         board_id: "t".into(),
+        route_reuse: None,
+        closed_reuse_drc: None,
+        checked_layout_refill: None,
         routable_connections: 50,
         routed_connections: 50 - open.min(50),
         unconnected_terminals: open,
         vias: 10 + open,
         length_mm: 100.0,
+        saved_copper: None,
+        input_connectivity: None,
         grid_pitch_mm: pitch,
         grid_nodes: [100, 100],
         iterations: 1,
@@ -212,6 +225,10 @@ fn report(open: usize, work: f64, pitch: f64) -> KiCadBoardRouterResult {
         native_verification_seconds: 0.0,
         internal_violations: Vec::new(),
         native: None,
+        native_candidate_errors: None,
+        model_precedes_additive_repair: false,
+        model_precedes_generated_pad_via_repair: false,
+        model_precedes_body_near_grid_retry: false,
         pours: String::new(),
         nets: Vec::new(),
         congestion: Vec::new(),
@@ -285,6 +302,7 @@ impl LadderRunner for Fake {
     }
 
     fn hold(&self, board: &u128, _: &KiCadBoardRouterConfig) -> u128 {
+        self.held_keys.lock().unwrap().push(*board);
         *board
     }
 
@@ -320,7 +338,7 @@ impl LadderRunner for Fake {
             .get(mode)
             .copied()
             .unwrap_or(self.probe_pour);
-        let search = if probe.counts_all { work - pour } else { work };
+        let search = if probe.counts_all { work - pour } else { work }.max(self.probe_first_pass);
         probe.expansions = (search * core::router::expansions_per_second()).round() as u64;
         probe.pour = pour;
         if probe.lines && !self.lines_probes.is_empty() {
@@ -332,6 +350,7 @@ impl LadderRunner for Fake {
     fn work(&self, probe: &FakeProbe) -> RouterWork {
         RouterWork {
             expansions: probe.expansions,
+            first_iteration_expansions: core::router::negotiation_expansions(self.probe_first_pass),
             pour: probe.pour,
             build: self.build,
             shared: self.shared(probe.key),
@@ -355,16 +374,10 @@ impl LadderRunner for Fake {
                 .deadline_work
                 .map_or(f64::INFINITY, |end| end - probed),
         );
-        let expansions = probe.expansions + (work * core::router::expansions_per_second()) as u64;
-        (
-            self.continued,
-            RouterWork {
-                expansions,
-                pour: probe.pour + self.pour,
-                build: self.build,
-                shared: self.shared(probe.key),
-            },
-        )
+        let mut charged = self.work(&probe);
+        charged.expansions += (work * core::router::expansions_per_second()) as u64;
+        charged.pour += self.pour;
+        (self.continued, charged)
     }
 
     fn write(
@@ -430,6 +443,9 @@ impl LadderRunner for Fake {
             .map_err(|error| error.to_string())?;
         }
         let mut result = report(outcome.open, work, routed.pitch.unwrap_or(0.1));
+        if let Some((vias, _)) = self.ranked.get(routed.rung) {
+            result.vias = *vias;
+        }
         result.manual_spokes_work_seconds = self.spokes;
         result.pour_work_seconds = self.pour + self.spokes;
         result.build_work_seconds = self.build;
@@ -440,8 +456,36 @@ impl LadderRunner for Fake {
         Ok(result)
     }
 
-    fn check(&self, _: &mut KiCadBoardRouterResult, _: &Path) -> Result<(), String> {
-        Ok(())
+    fn check(
+        &self,
+        result: &mut KiCadBoardRouterResult,
+        directory: &Path,
+    ) -> Result<usize, String> {
+        if !self.ranked.is_empty() {
+            let rung = fs::read_to_string(directory.join("board")).map_err(|e| e.to_string())?;
+            if let Some((_, findings)) = self.ranked.get(rung.as_str()) {
+                result.native = Some(verification::VerificationReport {
+                    board_id: "t".into(),
+                    complete: false,
+                    erc_violations: 0,
+                    drc_design_violations: findings
+                        .as_ref()
+                        .and_then(|drc| drc["violations"].as_array())
+                        .map_or(0, Vec::len),
+                    schematic_parity_checked: false,
+                    schematic_parity_issues: 0,
+                    selected_net_unconnected_items: 0,
+                    intentional_no_connect_groups: 0,
+                    library_metadata_warnings: 0,
+                    erc_library_warnings: BTreeMap::new(),
+                });
+                if let Some(findings) = findings {
+                    fs::write(directory.join("drc.json"), findings.to_string())
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+        }
+        Ok(1)
     }
 
     fn starved(&self, _: &Path) -> usize {
@@ -480,6 +524,18 @@ fn route_mode(budget: f64) -> KiCadBoardRouterConfig {
         ladder_budget_seconds: Some(budget),
         ..KiCadBoardRouterConfig::default()
     }
+}
+
+#[test]
+fn a_reserved_route_ceiling_keeps_the_route_mode_recipe() {
+    let mut config = route_mode(120.0);
+    let path = Path::new("test-output");
+    let ordinary_bound = ladder(&config, path, 6).work_bound;
+    assert_eq!(ordinary_bound, Some(126.0));
+    config.ladder_work_ceiling = Some(120.0);
+    let protected = ladder(&config, path, 6);
+    assert_eq!(protected.work_bound, Some(120.0));
+    assert!(protected.leader_first);
 }
 
 /// `config` with signals narrower than the classes (the narrow-signal
@@ -524,6 +580,38 @@ fn kept(ladder: &Ladder, output: &Path) -> (usize, String) {
 }
 
 #[test]
+fn a_provisional_reroute_stops_checking_at_its_separate_native_limit() {
+    let ordinary = KiCadBoardRouterConfig {
+        skip_native_verification: false,
+        ..route_mode(800.0)
+    };
+    let limited = KiCadBoardRouterConfig {
+        provisional_native_check_limit: Some(1),
+        ..ordinary.clone()
+    };
+    for (config, name) in [
+        (&ordinary, "checks-unlimited"),
+        (&limited, "checks-limited"),
+    ] {
+        let out = output(name);
+        let fake = Fake::new(|attempt| {
+            Some(Outcome {
+                open: if attempt.rung == "tracks" { 1 } else { 5 },
+                work: 5.0,
+            })
+        });
+        let mut attempts = ladder(config, &out, 2);
+        attempts.run(&fake).unwrap();
+        if config.provisional_native_check_limit.is_some() {
+            assert_eq!(attempts.checks_charged.checks, 1);
+        } else {
+            assert!(attempts.checks_charged.checks > 1);
+        }
+        assert!(attempts.best.is_some());
+    }
+}
+
+#[test]
 fn the_rungs_follow_the_board_layers_and_pour_mode() {
     let auto = KiCadBoardRouterConfig::default();
     assert_eq!(
@@ -557,6 +645,79 @@ fn the_rungs_follow_the_board_layers_and_pour_mode() {
         ladder_pitches(&auto),
         vec![None, Some(vec![0.075]), Some(vec![0.05])]
     );
+}
+
+#[test]
+fn a_checked_rung_with_fewer_native_errors_beats_fewer_vias_at_the_same_open_count() {
+    use serde_json::json;
+
+    let mut config = route_mode(90.0);
+    config.skip_native_verification = false;
+    config.tuning.leader_first = Some(false);
+    let mut fake = Fake::new(|_| Some(Outcome { open: 4, work: 5.0 }));
+    let drc = |findings| {
+        json!({
+            "included_severities": ["error", "warning", "exclusion"],
+            "unconnected_items": [],
+            "violations": findings,
+        })
+    };
+    fake.ranked = BTreeMap::from([
+        (
+            "exclusive",
+            (
+                198,
+                Some(drc(vec![
+                    json!({"type": "skew_out_of_range", "severity": "error"});
+                    8
+                ])),
+            ),
+        ),
+        (
+            "connect",
+            (
+                296,
+                Some(drc({
+                    let mut findings = vec![
+                        json!({"type": "diff_pair_uncoupled_length_too_long", "severity": "error"});
+                        7
+                    ];
+                    findings.extend([
+                        json!({"type": "clearance", "severity": "warning"}),
+                        json!({"type": "clearance", "severity": "error", "excluded": true}),
+                        json!({"type": "silk_overlap", "severity": "error"}),
+                    ]);
+                    findings
+                })),
+            ),
+        ),
+    ]);
+    for (out, incomplete) in [
+        ("native-rank-missing", None),
+        ("native-rank-partial", Some(json!({"violations": []}))),
+    ] {
+        let out = output(out);
+        fake.ranked.insert("tracks", (2, incomplete));
+        let mut ladder = ladder(&config, &out, 4);
+        ladder.run(&fake).unwrap();
+        assert_eq!(kept(&ladder, &out), (4, "connect".into()));
+        let ledger = ladder.attempt_ledger();
+        assert!(
+            ledger
+                .iter()
+                .any(|attempt| attempt.native_candidate_errors == Some(8))
+        );
+        let selected = ledger.iter().find(|attempt| attempt.selected).unwrap();
+        assert_eq!(
+            (selected.native_candidate_errors, selected.vias),
+            (Some(7), 296)
+        );
+        assert!(
+            ledger
+                .iter()
+                .any(|attempt| attempt.vias == 2 && attempt.native_candidate_errors.is_none())
+        );
+    }
 }
 
 #[test]
@@ -1053,6 +1214,39 @@ fn route_mode_probes_charge_their_pour_work_and_lattices() {
         "{} {:?}",
         ladder.work,
         ladder.charged
+    );
+    assert_eq!(kept(&ladder, &out), (0, "continued".into()));
+}
+
+#[test]
+fn route_mode_stops_probing_when_the_first_pass_uses_the_search_share() {
+    let config = with_narrow_step(route_mode(90.0));
+    let out = output("probe-first-pass-overruns");
+    let mut fake = Fake::new(|_| panic!("the continuing probe completes the board"));
+    fake.layers = 4;
+    fake.connections = 200;
+    fake.probes = vec![30, 10, 20, 40];
+    fake.probe_first_pass = 44.0;
+    fake.build = 0.5;
+    fake.continued = Outcome {
+        open: 0,
+        work: 20.0,
+    };
+    let mut ladder = ladder(&config, &out, 4);
+    ladder.run(&fake).unwrap();
+    let calls = fake.calls();
+    assert!(matches!(
+        calls.as_slice(),
+        [Call::Probe { mode: 0, .. }, Call::Resume { .. }]
+    ));
+    assert_eq!(ladder.probe_counts, vec![Some(30), None, None, None]);
+    assert_eq!(fake.held_keys.lock().unwrap().len(), 1);
+    assert!((ladder.work - 64.5).abs() < 1e-6);
+    assert!(
+        ladder
+            .skipped
+            .iter()
+            .any(|reason| reason.contains("44.0 s"))
     );
     assert_eq!(kept(&ladder, &out), (0, "continued".into()));
 }

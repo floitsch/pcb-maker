@@ -132,6 +132,7 @@ pub(super) fn try_moves(
     move_work_started: f64,
 ) -> Result<MovesOutcome, String> {
     let config = ctx.config;
+    let finish_reserve = ctx.native_finish_reserve(copper.has_pours);
     let mut trials = MoveTrials {
         moves: Vec::new(),
         since_improvement: 0,
@@ -143,7 +144,12 @@ pub(super) fn try_moves(
         if !ctx.stop.allows(LayoutStep::Move) {
             break;
         }
-        ctx.arm(&mut routing.router, ledger.clock());
+        let reserve = if routing.best.0 == 0 {
+            finish_reserve
+        } else {
+            0.0
+        };
+        ctx.arm(&mut routing.router, ledger.clock() + reserve);
         if routing.best.0 == 0 && trials.since_improvement >= config.tuning.patience {
             break;
         }
@@ -184,10 +190,22 @@ pub(super) fn try_moves(
         for (_, pose) in candidates {
             // A trial is a reroute and a finish (60-200 s on a big board
             // under load): none starts past the deadline.
-            if !ctx.stop.allows(LayoutStep::Move) {
+            if !ctx.stop.allows(LayoutStep::Move)
+                || (reserve > 0.0 && ledger.left(ctx.work_deadline) <= reserve)
+            {
                 break;
             }
-            if try_pose(ctx, ledger, kept, routing, copper, &mut trials, index, pose)? {
+            if try_pose(
+                ctx,
+                ledger,
+                kept,
+                routing,
+                copper,
+                &mut trials,
+                index,
+                pose,
+                reserve,
+            )? {
                 improved = true;
                 break;
             }
@@ -283,21 +301,8 @@ fn candidate_poses(
                 ) {
                     continue;
                 }
-                // A nudge must not break a near or relative constraint
-                // further.
-                if !problem.problem.constraints.relations.is_empty() {
-                    let before = placer::constraints::relation_penalty(
-                        &problem.problem,
-                        &problem.problem.poses,
-                        Some(index),
-                    );
-                    let mut trial = problem.problem.poses.clone();
-                    trial[index] = pose;
-                    if placer::constraints::relation_penalty(&problem.problem, &trial, Some(index))
-                        > before + 1.0e-9
-                    {
-                        continue;
-                    }
+                if !move_keeps_constraints(&problem.problem, index, pose) {
+                    continue;
                 }
                 let landing = body_congestion(
                     result,
@@ -312,6 +317,20 @@ fn candidate_poses(
     candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
     candidates.truncate(3);
     candidates
+}
+
+fn move_keeps_constraints(problem: &placer::Problem, index: usize, pose: placer::Pose) -> bool {
+    if problem.constraints.relations.is_empty() {
+        return true;
+    }
+    let before = placer::constraints::relation_penalty(problem, &problem.poses, Some(index));
+    let mut trial = problem.poses.clone();
+    trial[index] = pose;
+    if placer::constraints::relation_penalty(problem, &trial, Some(index)) > before + 1.0e-9 {
+        return false;
+    }
+    problem.sync_followers(&mut trial);
+    placer::constraints::keeps_pad_near_requirements(problem, &problem.poses, &trial)
 }
 
 /// One trial: part `index` (and the parts its row carries) moved to
@@ -333,6 +352,7 @@ fn try_pose(
     trials: &mut MoveTrials,
     index: usize,
     pose: placer::Pose,
+    finish_reserve: f64,
 ) -> Result<bool, String> {
     let problem = &mut kept.problem;
     let router = &mut routing.router;
@@ -353,6 +373,7 @@ fn try_pose(
             }
         }
     }
+    crate::board_router::refresh_pour_regions(&mut kept.pcb, &ctx.router_config.add_pours)?;
     problem.problem.poses = poses;
     let (trial_board, plan_work) = lower_for_route(
         &without_copper_texts(&kept.pcb, ctx.config.placer.keep_board_marks),
@@ -360,7 +381,12 @@ fn try_pose(
         copper.connect,
     )?;
     ledger.work += plan_work;
-    ctx.arm(router, ledger.clock());
+    if finish_reserve > 0.0 && ledger.left(ctx.work_deadline) <= finish_reserve {
+        kept.pcb = saved_pcb;
+        problem.problem.poses = saved_poses;
+        return Ok(false);
+    }
+    ctx.arm(router, ledger.clock() + finish_reserve);
     let expansions_before = router.expansions();
     // (An error ends the layout: nothing to restore.) A move that
     // takes a part to another sub-board splits the nets otherwise
@@ -387,7 +413,9 @@ fn try_pose(
         Err(error) => return Err(error),
     };
     let polish = routing.best.0 == 0;
+    router.config_mut().require_via_reduction_budget = finish_reserve > 0.0;
     let trial = router.reroute(polish);
+    router.config_mut().require_via_reduction_budget = false;
     ledger.work += router.expansions().saturating_sub(expansions_before) as f64
         / core::router::expansions_per_second();
     let trial_score = score(&trial, &trial_board);
@@ -428,4 +456,55 @@ fn try_pose(
     kept.pcb = saved_pcb;
     problem.problem.poses = saved_poses.clone();
     Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use placer::constraints::{Anchor, Relation};
+
+    #[test]
+    fn route_nudges_keep_each_exact_pad_limit_when_either_endpoint_moves() {
+        let pcb = parse(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+                (gr_rect (start 0 0) (end 40 20) (layer "Edge.Cuts"))
+                (footprint "A" (layer "F.Cu") (at 10 10) (property "Reference" "C1")
+                    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu")))
+                (footprint "B" (layer "F.Cu") (at 16 10) (property "Reference" "U1")
+                    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu")))
+                (footprint "C" (layer "F.Cu") (at 22 10) (property "Reference" "C2")
+                    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu"))))"#,
+        )
+        .unwrap();
+        let mut problem = lower_placement(&pcb, &Default::default()).unwrap().problem;
+        let point = |index| Anchor::Point(index, [0.0, 0.0]);
+        let near = |source, anchor, max| Relation::PadNear {
+            source: point(source),
+            anchor: point(anchor),
+            max,
+            pad_numbers: None,
+        };
+        problem.constraints.relations = vec![near(0, 1, Some(6.0)), near(2, 1, None)];
+        let pose = |x| placer::Pose {
+            position: [x, 10.0],
+            angle: 0.0,
+        };
+
+        assert!(!move_keeps_constraints(&problem, 0, pose(9.994186)));
+        assert!(!move_keeps_constraints(&problem, 1, pose(16.005814)));
+        assert!(move_keeps_constraints(&problem, 1, pose(15.994186)));
+        assert!(move_keeps_constraints(&problem, 0, pose(9.9999992)));
+
+        // An improvement to C2 cannot compensate for a new violation at C1.
+        problem.constraints.relations[1] = near(2, 1, Some(5.99));
+        assert!(!move_keeps_constraints(&problem, 1, pose(16.005814)));
+
+        // An ordinary body-to-point relation keeps its established tolerance.
+        problem.constraints.relations = vec![Relation::Near {
+            part: 1,
+            anchor: point(0),
+            max: 5.5,
+        }];
+        assert!(move_keeps_constraints(&problem, 1, pose(16.005814)));
+    }
 }

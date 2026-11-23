@@ -544,6 +544,7 @@ mod tests {
         let outline = vec![[-0.05, -0.05], [3.15, -0.05], [3.15, 3.15], [-0.05, 3.15]];
         Board {
             layer_count: 2,
+            fixed_pad_route_clearance: Default::default(),
             outline,
             edge_clearance: 0.0,
             hole_clearance: 0.0,

@@ -244,25 +244,32 @@ def net_names(designer_footprints, imported_footprints, matched):
     return {net: max(names, key=names.get) for net, names in votes.items()}
 
 
-def designer_matches(designer_footprints, imported):
-    """The imported footprint of each designer footprint (by index) and the
-    imported board's name of each designer net: footprints matched by the
-    symbol's path, then by a reference the imported board has once and no
-    path claimed (a copy of a footprint is not its original)."""
+def match_footprints(designer_footprints, imported):
+    """Match one footprint on each board by a unique symbol path, then
+    by a unique reference among the remaining footprints. Copied
+    footprints can retain their original's path after reannotation."""
     matched = {}
-    by_path = {f["path"]: f for f in imported if f["path"]}
-    by_reference = {}
-    for footprint in imported:
-        by_reference.setdefault(footprint["reference"], []).append(footprint)
-    for index, footprint in enumerate(designer_footprints):
-        if footprint["path"] and footprint["path"] in by_path:
-            matched[index] = by_path[footprint["path"]]
-    claimed = {id(other) for other in matched.values()}
-    for index, footprint in enumerate(designer_footprints):
-        candidates = by_reference.get(footprint["reference"], [])
-        if index not in matched and len(candidates) == 1 and id(candidates[0]) not in claimed:
-            matched[index] = candidates[0]
-            claimed.add(id(candidates[0]))
+    claimed = set()
+    for key in ("path", "reference"):
+        sources, targets = {}, {}
+        for index, footprint in enumerate(designer_footprints):
+            if index not in matched and footprint[key]:
+                sources.setdefault(footprint[key], []).append(index)
+        for footprint in imported:
+            if id(footprint) not in claimed and footprint[key]:
+                targets.setdefault(footprint[key], []).append(footprint)
+        for value, indices in sources.items():
+            candidates = targets.get(value, [])
+            if len(indices) == 1 and len(candidates) == 1:
+                matched[indices[0]] = candidates[0]
+                claimed.add(id(candidates[0]))
+    return matched
+
+
+def designer_matches(designer_footprints, imported):
+    """The imported footprint of each designer footprint (by index) and
+    the imported board's name of each designer net."""
+    matched = match_footprints(designer_footprints, imported)
     names = net_names(designer_footprints, imported,
                       {f["uuid"]: matched[index] for index, f in enumerate(designer_footprints) if index in matched})
     return matched, names
@@ -362,7 +369,6 @@ def constraints_for_import(task_constraints, description, designer_text, importe
     # their pads on B.Cu, and `back` would have flipped them.
     designer_layers = {f["uuid"]: f["layer"] for f in designer_footprints_in_file}
     imported = footprints_of(imported_text)
-    by_path = {f["path"]: f for f in imported if f["path"]}
     by_reference = {}
     for footprint in imported:
         by_reference.setdefault(footprint["reference"], []).append(footprint)
@@ -377,13 +383,6 @@ def constraints_for_import(task_constraints, description, designer_text, importe
     for footprint in imported:
         counts[footprint["reference"]] = counts.get(footprint["reference"], 0) + 1
 
-    def match(footprint):
-        path = designer_paths.get(footprint["uuid"])
-        if path and path in by_path:
-            return by_path[path]
-        candidates = by_reference.get(footprint["reference"], [])
-        return candidates[0] if len(candidates) == 1 else None
-
     def entry(other):
         """The imported footprint as a constraint names it."""
         named = {"part": other["reference"]}
@@ -393,8 +392,12 @@ def constraints_for_import(task_constraints, description, designer_text, importe
 
     matched = {}
     board_only = []
-    for footprint in designer:
-        other = match(footprint)
+    by_index = match_footprints(
+        [{**footprint, "path": designer_paths.get(footprint["uuid"])} for footprint in designer],
+        imported,
+    )
+    for index, footprint in enumerate(designer):
+        other = by_index.get(index)
         if other is None:
             board_only.append(footprint["reference"])
             if footprint["uuid"] in netless_uuids and footprint["uuid"] in blocks:

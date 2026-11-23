@@ -17,6 +17,28 @@ use crate::board_router::{LayerTable, lower};
 use crate::project_rules::{KiCadProjectRulesReport, wildcard_match};
 use pcb_router as core;
 
+mod artwork_bridges;
+mod local_pour;
+mod near_paths;
+mod open_pad_concentration;
+mod open_pad_findings;
+mod panel_opens;
+mod placement_escape;
+mod strategy;
+mod teardrops;
+mod translated_connections;
+pub use artwork_bridges::{
+    KiCadArtworkBridge, KiCadArtworkBridges, KiCadArtworkItem, KiCadArtworkPad, KiCadArtworkWitness,
+};
+pub use local_pour::KiCadLocalPourRetry;
+pub use near_paths::inspect_saved_near_paths;
+pub(crate) use open_pad_concentration::measure_open_pad_concentration;
+pub use open_pad_concentration::{
+    KiCadOpenPadConcentration, KiCadOpenPadFootprint, KiCadOpenPadTerminal,
+};
+pub use open_pad_findings::{KiCadOpenPadCounterpart, KiCadOpenPadFinding, KiCadOpenPadFindings};
+pub use translated_connections::{KiCadTranslatedConnection, KiCadTranslatedEndpoint};
+
 /// What to inspect (`inspect-routing-run`'s arguments).
 #[derive(Clone, Debug, Default)]
 pub struct KiCadRunInspection {
@@ -29,6 +51,12 @@ pub struct KiCadRunInspection {
     pub terminal: Option<String>,
     /// The reference project directory (the designer's board).
     pub reference: Option<PathBuf>,
+    /// An exact copper-free placed project for an optional same-face probe.
+    pub escape_placement: Option<PathBuf>,
+    /// Measure the saved copper for authored near-pin entries.
+    pub near_paths: bool,
+    /// An explicit authored brief for near-path measurement.
+    pub near_constraints: Option<PathBuf>,
     /// KiCad's DRC report to read instead of the run's `drc.json` (a
     /// `--native-check` the caller ran).
     pub drc: Option<PathBuf>,
@@ -117,6 +145,8 @@ pub struct KiCadNativePair {
     /// The groups (indices into `components`) its items lie in; `null`
     /// for an item that is no pad of a group (a track, a via, a zone).
     pub components: Vec<Option<usize>>,
+    #[serde(skip)]
+    retained: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -182,7 +212,7 @@ pub struct KiCadReferenceRoute {
     /// (every part where this run's board has it: route mode's).
     pub placement: String,
     /// Whether its copper joins every pad of the net: `true` when its
-    /// tracks, arcs and vias leave one group, `false` when they leave
+    /// tracks, arcs, vias and stored teardrops leave one group, `false` when they leave
     /// several and the net has no zone on the reference, `null` when they
     /// leave several and a zone of the net may join them (zone fill is
     /// not modelled here; `connected_reason` says so).
@@ -194,6 +224,9 @@ pub struct KiCadReferenceRoute {
     /// Layers on which the reference has a zone of the net.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub pour_layers: Vec<String>,
+    /// Layers of stored teardrop copper included in connectivity.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub teardrop_layers: Vec<String>,
     #[serde(flatten)]
     pub copper: KiCadNetCopper,
 }
@@ -234,6 +267,9 @@ pub struct KiCadNetDiagnosis {
     /// (`native_pairs` counts after the fill).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub pour_layers: Vec<String>,
+    /// Layers of stored teardrop copper included in connectivity.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub teardrop_layers: Vec<String>,
     /// A net with a zone: the groups left out of `components` (its fill,
     /// which this command does not model, joins them or not); listed are
     /// the groups KiCad's pairs name and the `--terminal` pad's.
@@ -245,6 +281,20 @@ pub struct KiCadNetDiagnosis {
     pub rules: KiCadInspectedRules,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reference: Option<KiCadReferenceRoute>,
+    /// Native short and clearance witnesses that name one of exactly the
+    /// same physical pads as a retained native open on this board.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub open_pad_findings: Option<KiCadOpenPadFindings>,
+    /// A singleton physical pad confirmed by KiCad's refilled copper partition.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zone_open_pad: Option<pcb_kicad_route::open_repair::ZoneOpenPad>,
+    /// Native open SMD pads inside rule areas that allow fill and prohibit tracks.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub local_pour_retries: Vec<KiCadLocalPourRetry>,
+    /// An exact translated two-pad connection on this board whose routed
+    /// copper connects the pads and whose native check reports no open.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub translated_routed_match: Option<KiCadTranslatedConnection>,
     /// The router's dead pads of this net (board-router.json).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub dead_pads: Vec<serde_json::Value>,
@@ -374,6 +424,24 @@ pub struct KiCadRunDiagnosis {
     pub units: String,
     pub run: serde_json::Value,
     pub checks: serde_json::Value,
+    /// Native paths through unassigned copper between pads of different nets.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub footprint_copper_bridges: Option<KiCadArtworkBridges>,
+    /// Within-piece native findings and samples for physical panel pieces.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub panel_opens: Option<panel_opens::KiCadPanelOpens>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub generated_pad_via_retries: Vec<crate::GeneratedPadViaRetry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generated_dangling_retry: Option<crate::GeneratedDanglingLeaf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_launch_advice: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prepared_row_escape_advice: Option<pcb_kicad_route::open_repair::PreparedRowEscapeAdvice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub placement_escape: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub near_paths: Option<serde_json::Value>,
     /// Route mode's ladder (board-router.json `attempts`): every attempt
     /// judged and the one written; `null` for a run before the ledger.
     pub attempts: serde_json::Value,
@@ -391,6 +459,17 @@ pub struct KiCadRunDiagnosis {
 
 fn is_zero_count(count: &usize) -> bool {
     *count == 0
+}
+
+pub(crate) fn native_report_matches_board(drc: &serde_json::Value, board_id: &str) -> bool {
+    drc["source"]
+        .as_str()
+        .and_then(|source| Path::new(source).file_name())
+        == Some(std::ffi::OsStr::new(&format!("{board_id}.kicad_pcb")))
+        && drc["coordinate_units"] == "mm"
+        && drc["kicad_version"]
+            .as_str()
+            .is_some_and(|version| !version.is_empty())
 }
 
 /// A footprint pad of the board: identity and place.
@@ -636,6 +715,7 @@ struct LoweredBoard {
     board: core::Board,
     layers: LayerTable,
     pads: Vec<BoardPad>,
+    teardrops: teardrops::Inventory,
 }
 
 impl LoweredBoard {
@@ -646,16 +726,26 @@ impl LoweredBoard {
         let pcb = parse(&text)?;
         let config = resolve_project_rules(&directory.join(format!("{board_id}.kicad_pro")), &path)
             .unwrap_or_default();
-        let board = lower(&pcb, &config, true)?.board;
-        let layers = LayerTable::from_pcb(&pcb)?;
         let names = NetNames::of(&pcb);
         let pads = board_pads(&pcb, &names)?;
+        Self::new(pcb, &config, names, pads)
+    }
+
+    fn new(
+        pcb: Expr,
+        config: &KiCadBoardRouterConfig,
+        names: NetNames,
+        pads: Vec<BoardPad>,
+    ) -> Result<Self, String> {
+        let layers = LayerTable::from_pcb(&pcb)?;
+        let (board, teardrops) = teardrops::inspection_board(&pcb, config, &layers, &names)?;
         Ok(Self {
             pcb,
             names,
             board,
             layers,
             pads,
+            teardrops,
         })
     }
 
@@ -816,6 +906,13 @@ impl LoweredBoard {
         layers.sort();
         layers.dedup();
         layers
+    }
+
+    fn teardrop_layers(&self, net: core::NetId) -> Vec<String> {
+        layer_names(
+            &self.layers,
+            self.teardrops.layers.get(&net).copied().unwrap_or(0),
+        )
     }
 }
 
@@ -1061,6 +1158,7 @@ struct RunInputs {
     files: KiCadRunFiles,
     /// board-router.json.
     report: serde_json::Value,
+    layout: Option<serde_json::Value>,
     verdict: Option<serde_json::Value>,
     /// KiCad's DRC report: where it was read from and what it holds.
     drc_path: Option<PathBuf>,
@@ -1077,14 +1175,16 @@ struct RunInputs {
 fn read_run_inputs(inspection: &KiCadRunInspection) -> Result<(RunInputs, LoweredBoard), String> {
     let files = run_files(&inspection.run)?;
     let directory = &files.directory;
+    let layout_root = directory.parent().filter(|_| directory.ends_with("result"));
     let board_id = &files.board_id;
     let report = read_value(&directory.join("board-router.json"))?;
     let verdict = [
         directory.join("verdict.json"),
         inspection.run.join("verdict.json"),
     ]
-    .iter()
-    .find_map(|path| read_value(path).ok());
+    .into_iter()
+    .chain(layout_root.map(|layout| layout.join("verdict.json")))
+    .find_map(|path| read_value(&path).ok());
     let drc_path = inspection
         .drc
         .clone()
@@ -1114,6 +1214,7 @@ fn read_run_inputs(inspection: &KiCadRunInspection) -> Result<(RunInputs, Lowere
         directory.join("board-layout.json"),
     ]
     .into_iter()
+    .chain(layout_root.map(|layout| layout.join("board-layout.json")))
     .find(|path| path.is_file());
     let layout = layout_path
         .as_ref()
@@ -1134,6 +1235,7 @@ fn read_run_inputs(inspection: &KiCadRunInspection) -> Result<(RunInputs, Lowere
     let inputs = RunInputs {
         files,
         report,
+        layout: layout.map(|(value, _)| value),
         verdict,
         drc_path,
         drc,
@@ -1243,6 +1345,8 @@ fn native_pairs_by_net(
                     .push(KiCadNativePair {
                         items,
                         components: Vec::new(),
+                        retained: matches!(pair["severity"].as_str(), Some("error" | "warning"))
+                            && pair["excluded"].as_bool() != Some(true),
                     }),
                 None => native_unattributed += 1,
             }
@@ -1328,18 +1432,30 @@ fn reference_route(
     reference_placement: Option<&KiCadReferencePlacement>,
 ) -> KiCadReferenceRoute {
     let copper = net_copper(&reference.pcb, &reference.names, name);
-    let (groups, pour_layers) = reference.net_id(name).map_or((0, Vec::new()), |id| {
-        (reference.components(id).len(), reference.pour_layers(id))
-    });
+    let (groups, pour_layers, teardrop_layers, unmodelled_teardrops) = reference
+        .net_id(name)
+        .map_or((0, Vec::new(), Vec::new(), false), |id| {
+            (
+                reference.components(id).len(),
+                reference.pour_layers(id),
+                reference.teardrop_layers(id),
+                reference.teardrops.unmodelled.contains(&id),
+            )
+        });
     let (connected, connected_reason) = if groups <= 1 {
         (Some(true), None)
+    } else if unmodelled_teardrops {
+        (
+            None,
+            Some("some stored teardrops could not be modelled. Check connectivity on the reference in KiCad".into()),
+        )
     } else if pour_layers.is_empty() {
         (Some(false), None)
     } else {
         (
             None,
             Some(format!(
-                "its tracks, arcs and vias leave {groups} groups; its zone on {} may join them (zone fill is not modelled here: KiCad's DRC of the reference decides)",
+                "its copper without ordinary pours leaves {groups} groups; its zone on {} may join them (KiCad's DRC of the reference decides)",
                 pour_layers.join(", ")
             )),
         )
@@ -1351,6 +1467,7 @@ fn reference_route(
         connected_reason,
         components: groups,
         pour_layers,
+        teardrop_layers,
         copper,
     }
 }
@@ -1467,9 +1584,13 @@ fn diagnose_net(
         .and_then(|net| net["status"].as_str())
         .unwrap_or("not in board-router.json")
         .to_string();
-    let (components, pour_layers) = match result.net_id(name) {
-        Some(id) => (result.components(id), result.pour_layers(id)),
-        None => (Vec::new(), Vec::new()),
+    let (components, pour_layers, teardrop_layers) = match result.net_id(name) {
+        Some(id) => (
+            result.components(id),
+            result.pour_layers(id),
+            result.teardrop_layers(id),
+        ),
+        None => (Vec::new(), Vec::new(), Vec::new()),
     };
     let native_pairs = net_native_pairs(name, inputs, result, &components, native_by_net);
     let counts = KiCadNetCounts {
@@ -1515,13 +1636,18 @@ fn diagnose_net(
         status,
         counts,
         components,
-        components_basis: "the result board's pads, tracks, arcs and vias joined where their copper overlaps on a shared layer (KiCad's connectivity without zone fill)".into(),
+        components_basis: "the result board's pads, tracks, arcs, vias and stored teardrops joined where their copper overlaps on a shared layer (without ordinary zone fill)".into(),
         pour_layers,
+        teardrop_layers,
         components_omitted,
         native_pairs,
         copper,
         rules,
         reference: reference_route,
+        translated_routed_match: None,
+        open_pad_findings: None,
+        zone_open_pad: None,
+        local_pour_retries: Vec::new(),
         dead_pads,
         hot_spots_near,
         terminal: terminal_entry,
@@ -1592,21 +1718,21 @@ fn run_checks(
 
 /// The report's `attempts`: the ladder's ledger, or why there is none.
 fn run_attempts(report: &serde_json::Value) -> serde_json::Value {
-    if report["attempts"].is_array() {
-        serde_json::json!({
+    if let Some(ledger) = report["attempts"].as_array() {
+        let mut result = serde_json::json!({
             "ledger": report["attempts"],
-            "selected": report["attempts"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .find(|attempt| attempt["selected"] == true),
+            "selected": ledger.iter().find(|attempt| attempt["selected"] == true),
             "work_seconds": report["work_seconds"],
             "work_bound_seconds": report["work_bound_seconds"],
             "negotiation_stop": report["negotiation_stop"],
             "skipped": report["skipped"],
             "cut": report["cut"],
             "attempts_failed": report["attempts_failed"],
-        })
+        });
+        if let Some(history) = strategy::summarize(ledger) {
+            result["strategy_history"] = history;
+        }
+        result
     } else {
         serde_json::json!({
             "ledger": null,
@@ -1644,16 +1770,133 @@ fn run_block(inspection: &KiCadRunInspection, inputs: &RunInputs) -> serde_json:
     })
 }
 
+fn prior_terminal_launch_advice(
+    run: &RunInputs,
+    layout: &Path,
+    current: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    let report = run.layout.as_ref()?;
+    let fill = &report["fill_publication"];
+    // A verified fill provides the identity of the saved board. Without
+    // it an older report does not attest that this is still the same PCB.
+    if fill["status"] != "saved"
+        || !fill["saved_board_sha256"].is_string()
+        || fill["saved_board_sha256"] != current["board_sha256"]
+        || report["stopped_after_first_route"] == true
+        || !report["terminal_launch_retry"].is_null()
+        || !report["plane_escape"].is_null()
+        || !report["route_reuse_placement"].is_null()
+        || run.report["rules"]["overrides"]
+            .as_array()
+            .is_some_and(|rules| !rules.is_empty())
+    {
+        return None;
+    }
+    let native = serde_json::from_value(run.report["native"].clone()).ok()?;
+    let diagnosed: Vec<crate::board_router::KiCadDeadPad> =
+        serde_json::from_value(run.report["diagnostics"]["dead_pads"].clone()).ok()?;
+    let config = run.config.as_ref()?;
+    let filename = format!("{}.kicad_pcb", run.files.board_id);
+    let advice = pcb_kicad_route::open_repair::advise_terminal_launches(
+        &layout.join("placed").join(&filename),
+        &run.files.directory.join(&filename),
+        &native,
+        &diagnosed,
+        config,
+        report["kicad_check_seconds"].as_f64()?,
+    )?;
+    serde_json::to_value(advice).ok()
+}
+
 /// The diagnosis of a run (`inspect-routing-run`).
 pub fn inspect_routing_run(inspection: &KiCadRunInspection) -> Result<KiCadRunDiagnosis, String> {
     let (mut run, mut result) = read_run_inputs(inspection)?;
     let router_nets = router_nets_of(&run.report);
     let terminal = named_terminal(inspection, &result)?;
     let selected = selected_nets(inspection, &result, &router_nets, &terminal)?;
+    let near_paths = inspection.near_paths.then(|| {
+        let only_net = if inspection.net.is_some() || inspection.terminal.is_some() {
+            selected.first().map(String::as_str)
+        } else {
+            None
+        };
+        let board = run
+            .files
+            .directory
+            .join(format!("{}.kicad_pcb", run.files.board_id));
+        inspect_saved_near_paths(&board, inspection.near_constraints.as_deref(), only_net)
+    });
     let (mut native_by_net, native_unattributed) =
         native_pairs_by_net(run.drc.as_ref(), &result.names);
     let native_capped = run.drc.as_ref().is_some_and(|drc| {
         drc["unconnected_items"].as_array().map_or(0, Vec::len) >= KICAD_REPORT_CAP
+    });
+    let scoped_drc = run
+        .drc
+        .as_ref()
+        .filter(|drc| native_report_matches_board(drc, &run.files.board_id));
+    let zone_open_pads = if let Some(drc) = scoped_drc
+        && inspection.net.is_some()
+    {
+        let board = run
+            .files
+            .directory
+            .join(format!("{}.kicad_pcb", run.files.board_id));
+        let deadline = Instant::now() + std::time::Duration::from_secs(15);
+        pcb_kicad_route::open_repair::locate_zone_open_pads(
+            &board,
+            &result.pcb,
+            drc,
+            &selected,
+            || Instant::now() >= deadline,
+        )
+    } else {
+        Ok(Vec::new())
+    };
+    let (mut zone_open_pads, zone_open_error) = match zone_open_pads {
+        Ok(pads) => (
+            pads.into_iter()
+                .map(|pad| (result.names.normalize(&pad.net).to_string(), pad))
+                .collect::<BTreeMap<_, _>>(),
+            None,
+        ),
+        Err(reason) => (BTreeMap::new(), Some(reason)),
+    };
+    let placement_escape = inspection.escape_placement.as_ref().map(|placed| {
+        let evidence = scoped_drc
+            .zip(terminal.as_ref())
+            .ok_or_else(|| {
+                "the placement escape probe requires a native open and a named terminal".to_string()
+            })
+            .and_then(|(drc, terminal)| {
+                placement_escape::probe(placed, terminal, drc, &run, &result)
+            });
+        evidence
+            .unwrap_or_else(|reason| serde_json::json!({"status":"unavailable","reason":reason}))
+    });
+    let mut translated_matches = scoped_drc
+        .filter(|_| !native_capped && native_unattributed == 0)
+        .map(|drc| translated_connections::diagnose(&result, drc, &native_by_net, &selected))
+        .unwrap_or_default();
+    let mut open_pad_findings = scoped_drc
+        .map(|drc| {
+            open_pad_findings::diagnose(&result.pcb, &result.pads, drc, &native_by_net, &selected)
+        })
+        .unwrap_or_default();
+    let mut local_pours = scoped_drc
+        .filter(|_| !native_capped)
+        .map(|_| local_pour::diagnose(&result, &native_by_net, &selected, &run.files))
+        .unwrap_or_default();
+    let footprint_copper_bridges = scoped_drc.and_then(|drc| {
+        artwork_bridges::diagnose(
+            &result,
+            &native_by_net,
+            &selected,
+            &run.files
+                .directory
+                .join(format!("{}.kicad_pcb", run.files.board_id)),
+            drc,
+        )
     });
     let overrides: Vec<serde_json::Value> = run.report["rules"]["overrides"]
         .as_array()
@@ -1671,10 +1914,22 @@ pub fn inspect_routing_run(inspection: &KiCadRunInspection) -> Result<KiCadRunDi
         };
         selected
             .iter()
-            .map(|name| diagnose_net(name, &inputs, &mut result, &mut native_by_net))
+            .map(|name| {
+                let mut diagnosis = diagnose_net(name, &inputs, &mut result, &mut native_by_net);
+                diagnosis.translated_routed_match = translated_matches.remove(name);
+                diagnosis.open_pad_findings = open_pad_findings.remove(name);
+                diagnosis.zone_open_pad = zone_open_pads.remove(name);
+                diagnosis.local_pour_retries = local_pours.remove(name).unwrap_or_default();
+                if diagnosis.open_pad_findings.is_some()
+                    && let Some(counterpart) = &mut diagnosis.translated_routed_match
+                {
+                    counterpart.next_action = "Compare pad escapes with this routed connection after reviewing the native findings on the open pads.";
+                }
+                diagnosis
+            })
             .collect()
     };
-    let native = native_check_block(
+    let mut native = native_check_block(
         run.drc.as_ref(),
         run.drc_path.as_deref(),
         &router_nets,
@@ -1682,13 +1937,103 @@ pub fn inspect_routing_run(inspection: &KiCadRunInspection) -> Result<KiCadRunDi
         native_unattributed,
         native_capped,
     );
+    if let Some(reason) = zone_open_error {
+        native["zone_open_localization"] =
+            serde_json::json!({"status":"unavailable","reason":reason});
+    }
     let checks = run_checks(&run.report, &router_nets, native, &nets);
+    let panel_opens = run
+        .drc
+        .as_ref()
+        .and_then(|drc| panel_opens::summarize(&result.pcb, drc, &run.report));
+    let layout_of_result = run
+        .files
+        .directory
+        .parent()
+        .filter(|_| inspection.drc.is_none() && run.files.directory.ends_with("result"));
+    let generated_pad_via_retries = layout_of_result
+        .map(|layout| {
+            crate::suggest_generated_pad_via_repairs(
+                &run.files.directory,
+                &run.files.board_id,
+                &layout.join("placed"),
+                &layout.join("generated-pad-via-retry"),
+            )
+            .into_iter()
+            .filter(|retry| {
+                selected
+                    .iter()
+                    .any(|name| name == result.names.normalize(&retry.net))
+            })
+            .collect()
+        })
+        .unwrap_or_default();
+    let generated_dangling_retry = layout_of_result
+        .and_then(|layout| {
+            crate::suggest_generated_dangling_leaf(
+                &run.files.directory,
+                &run.files.board_id,
+                &layout.join("placed"),
+                &layout.join("generated-dangling-retry"),
+            )
+        })
+        .filter(|retry| {
+            selected
+                .iter()
+                .any(|net| net == result.names.normalize(&retry.net))
+        });
     let reference_placement = run.reference_placement.take();
+    let run_info = run_block(inspection, &run);
+    let terminal_launch_advice = layout_of_result
+        .filter(|_| !native_capped)
+        .and_then(|layout| {
+            run.layout
+                .as_ref()
+                .and_then(|value| value.get("terminal_launch_advice"))
+                .cloned()
+                .or_else(|| prior_terminal_launch_advice(&run, layout, &run_info))
+        })
+        .filter(|advice| {
+            advice["board_sha256"].is_string()
+                && advice["board_sha256"] == run_info["board_sha256"]
+                && advice["proposed_launches"]
+                    .as_array()
+                    .is_some_and(|launches| {
+                        launches.iter().any(|launch| {
+                            launch["net"].as_str().is_some_and(|net| {
+                                selected
+                                    .iter()
+                                    .any(|name| name == result.names.normalize(net))
+                            })
+                        })
+                    })
+        });
+    let prepared_row_escape_advice = scoped_drc
+        .filter(|_| inspection.drc.is_none() && !native_capped && native_unattributed == 0)
+        .zip(run.config.as_ref())
+        .and_then(|(drc, config)| {
+            pcb_kicad_route::open_repair::prepared_row_escape_advice(&result.pcb, drc, config)
+        })
+        .filter(|advice| {
+            advice.escapes.iter().any(|escape| {
+                selected
+                    .iter()
+                    .any(|name| name == result.names.normalize(&escape.net))
+            })
+        });
     Ok(KiCadRunDiagnosis {
         schema_version: 1,
         units: "mm".into(),
-        run: run_block(inspection, &run),
+        run: run_info,
         checks,
+        footprint_copper_bridges,
+        panel_opens,
+        generated_pad_via_retries,
+        generated_dangling_retry,
+        terminal_launch_advice,
+        prepared_row_escape_advice,
+        placement_escape,
+        near_paths,
         attempts: run_attempts(&run.report),
         hot_spots,
         reference: reference_placement,
@@ -1781,6 +2126,49 @@ mod tests {
     /// crosses it on its layer (the board's own and the router's) and
     /// those of them still in conflict; on the other layer only the
     /// router's track of A.
+    #[test]
+    fn stored_teardrops_join_copper_without_becoming_pours() {
+        let directory =
+            std::env::temp_dir().join(format!("pcb-maker-teardrops-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let source = BOARD.trim_end().strip_suffix(')').unwrap();
+        let polygon = "(pts (xy 9.4 9.9) (xy 16 9.9) (xy 16 10.1) (xy 9.4 10.1))";
+        let probe = |filled: &str| {
+            let board = format!(
+                r#"{source}
+                  (zone (net "A") (layer "F.Cu")
+                    (attr (teardrop (type padvia)))
+                    (fill yes) (polygon {polygon}) {filled})
+                  (zone (net "A") (layer "B.Cu") (name "$teardrop_padvia$")
+                    (fill yes) (polygon {polygon})))"#,
+            );
+            fs::write(directory.join("t.kicad_pcb"), board).unwrap();
+            let lowered = LoweredBoard::read(&directory, "t").unwrap();
+            reference_route("A", &lowered, None)
+        };
+        let filled = probe(&format!(r#"(filled_polygon (layer "F.Cu") {polygon})"#));
+        assert_eq!(filled.components, 1);
+        assert_eq!(filled.connected, Some(true));
+        assert_eq!(filled.pour_layers, ["B.Cu"]);
+        assert_eq!(filled.teardrop_layers, ["F.Cu"]);
+        // The teardrop's authored outline does not establish contact.
+        let unfilled = probe("");
+        assert_eq!(unfilled.components, 2);
+        assert_eq!(unfilled.connected, None);
+        assert_eq!(unfilled.pour_layers, ["B.Cu"]);
+        assert!(unfilled.teardrop_layers.is_empty());
+        let wrong_layer = probe(&format!(r#"(filled_polygon (layer "B.Cu") {polygon})"#));
+        assert_eq!(wrong_layer.components, 2);
+        assert!(wrong_layer.teardrop_layers.is_empty());
+        assert!(
+            wrong_layer
+                .connected_reason
+                .unwrap()
+                .contains("stored teardrops")
+        );
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
     #[test]
     fn a_hot_spot_names_its_pads_and_nets() {
         let directory =
@@ -1951,6 +2339,7 @@ mod tests {
         let pair = |groups: Vec<Option<usize>>| KiCadNativePair {
             items: Vec::new(),
             components: groups,
+            retained: true,
         };
         let mut pairs = Some(vec![pair(vec![Some(2), None])]);
         let terminal = Some(("U1".to_string(), "1".to_string(), "A".to_string()));

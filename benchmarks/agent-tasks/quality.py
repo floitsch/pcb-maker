@@ -24,6 +24,7 @@ import json
 import statistics
 import subprocess
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -39,12 +40,27 @@ class ScoreTimeout(Exception):
     killed)."""
 
 
-def score(binary, directory, board_id, timeout=None):
-    """score-kicad-board's report, None when it fails; with `timeout`
-    (seconds), ScoreTimeout when it runs longer."""
+@lru_cache(maxsize=32)
+def supports_stored_score(binary):
+    """Check the score command's advertised options once per binary."""
     try:
-        process = run_group([str(binary), "score-kicad-board", str(directory), board_id],
-                            capture_output=True, text=True, timeout=timeout)
+        help_result = run_group([binary, "score-kicad-board", "--help"],
+                                capture_output=True, text=True, timeout=2)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return help_result.returncode == 0 and any(
+        line.strip().split()[:1] == ["--stored"] for line in help_result.stdout.splitlines())
+
+
+def score(binary, directory, board_id, timeout=None, *, stored=False):
+    """score-kicad-board's report, None when it fails; with `timeout`
+    (seconds), ScoreTimeout when it runs longer. `stored=True` skips the
+    routing lattice on binaries that advertise the option."""
+    command = [str(binary), "score-kicad-board", str(directory), board_id]
+    if stored and supports_stored_score(str(binary)):
+        command.append("--stored")
+    try:
+        process = run_group(command, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         raise ScoreTimeout(f"score-kicad-board ran past {timeout:g} s") from None
     if process.returncode != 0:

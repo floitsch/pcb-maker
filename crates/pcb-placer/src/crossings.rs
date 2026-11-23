@@ -1626,6 +1626,7 @@ mod tests {
             tight_hollow: Vec::new(),
             hole_rings: Vec::new(),
             copper_graphics: Vec::new(),
+            unassigned_copper_graphics: Vec::new(),
             courtless: Vec::new(),
             slots: Vec::new(),
         }
@@ -1659,8 +1660,11 @@ mod tests {
     /// Every pair of lines of different nets, counted directly.
     fn brute(problem: &Problem, crossings: &Crossings, poses: &[Pose]) -> u64 {
         let mut lines: Vec<(usize, Point, Point)> = Vec::new();
-        for net in 0..problem.net_weights.len() {
-            if !crossings.counted[net] {
+        for (net, &counted) in crossings.counted[..problem.net_weights.len()]
+            .iter()
+            .enumerate()
+        {
+            if !counted {
                 continue;
             }
             let mut points = Vec::new();

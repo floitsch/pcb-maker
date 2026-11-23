@@ -1424,6 +1424,9 @@ fn statics_key(board: &Board, grid: &Grid, searched: &[bool], rules: Option<&Cla
         // Keepouts the fill passes shape the fill trace.
         board.fill_passes,
     );
+    if !board.fixed_pad_route_clearance.is_empty() {
+        let _ = write!(feed, "{:?}", board.fixed_pad_route_clearance);
+    }
     for obstacle in &board.obstacles {
         let _ = write!(feed, "{obstacle:?}");
     }
@@ -1483,11 +1486,7 @@ fn preferred_layers(board: &Board, config: &Config) -> Vec<LayerMask> {
     let Some(preferences) = config.layer_preferences.as_deref() else {
         return Vec::new();
     };
-    let all: LayerMask = if board.layer_count >= 32 {
-        LayerMask::MAX
-    } else {
-        (1 << board.layer_count) - 1
-    };
+    let all = board.all_layers();
     let masks: Vec<LayerMask> = board
         .nets
         .iter()

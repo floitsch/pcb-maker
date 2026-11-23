@@ -41,7 +41,9 @@ mod held;
 mod hollow;
 mod keepout;
 mod lookup;
+mod module_envelopes;
 mod place;
+mod placement_courtyard;
 mod region;
 mod relations;
 mod rotation;
@@ -49,6 +51,7 @@ mod rows;
 mod sides;
 
 use crate::footprint_bodies::courtyard_box;
+pub use crate::sub_boards::KiCadSubBoardConstraint;
 pub use board_outline::KiCadOutlineConstraint;
 pub(crate) use board_outline::apply_outline;
 pub use board_outline::default_area_factor;
@@ -58,19 +61,27 @@ use fixed::{
     apply_move_all, fix_pinned_and_fixed, free_constrained, free_parts_off_the_outline,
     refuse_what_cannot_be_kept,
 };
-pub(crate) use held::HeldParts;
-pub use held::overlap_warning;
+pub use held::{HELD_BOUNDING_BOXES, overlap_warning};
+pub(crate) use held::{
+    HeldOverlapGeometry, HeldParts, held_body_overlap, refine_held_overlap_warnings,
+};
 pub use held::{held_parts, held_parts_as_given};
 pub use held::{overlap_warnings, placement_input_warnings};
 use hollow::apply_hollow;
 pub(crate) use keepout::{KEEPOUT_NAME, apply_keepouts};
 pub use keepout::{KiCadKeepoutConstraint, keepout_warnings};
 use lookup::Parts;
+pub use module_envelopes::KiCadModuleNonoverlap;
+pub(crate) use module_envelopes::apply_module_envelopes;
+use module_envelopes::report_module_envelopes;
 use place::apply_places;
 pub use place::expand_additions;
 pub use place::{KiCadAddConstraint, KiCadPlaceConstraint};
+pub(crate) use placement_courtyard::CourtyardModel;
+pub use placement_courtyard::{KiCadCourtModelSide, KiCadPlacementCourtyard};
 pub use region::KiCadRegionConstraint;
 use region::apply_regions;
+pub(crate) use relations::validate_near_pads;
 pub use relations::{
     KiCadApartConstraint, KiCadGroupConstraint, KiCadNearConstraint, KiCadRelativeConstraint,
 };
@@ -112,6 +123,12 @@ pub struct KiCadPlacementConstraints {
     pub edge: Vec<KiCadEdgeConstraint>,
     #[serde(default)]
     pub region: Vec<KiCadRegionConstraint>,
+    /// Explicit electrical part ownership in a multi-piece outline.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sub_board: Vec<KiCadSubBoardConstraint>,
+    /// Supply a missing footprint-side courtyard for placement only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub placement_courtyard: Vec<KiCadPlacementCourtyard>,
     #[serde(default)]
     pub keepout: Vec<KiCadKeepoutConstraint>,
     /// References or glob patterns of parts that go on the bottom side
@@ -135,6 +152,9 @@ pub struct KiCadPlacementConstraints {
     pub row: Vec<KiCadRowConstraint>,
     #[serde(default)]
     pub apart: Vec<KiCadApartConstraint>,
+    /// Explicit footprint-graphics envelopes that must coexist on a face.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub module_nonoverlap: Vec<KiCadModuleNonoverlap>,
     /// The board edge the device's front is at (`left`, `right`, `top`,
     /// `bottom`): `place` then understands `front` and `rear`.
     #[serde(default)]
@@ -170,10 +190,71 @@ pub struct KiCadConstraintStatus {
     pub other: Option<String>,
     pub satisfied: bool,
     pub violation_mm: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distance_mm: Option<f64>,
+    /// Unrounded evidence for an explicit pad-to-pad limit or objective.
+    /// The original status fields keep their legacy tolerance and rounding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pad_near: Option<KiCadPadNearStatus>,
+    /// Named pin and measured gap for a missed explicit body-to-pin limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_near_pin: Option<KiCadBodyNearPinStatus>,
+    /// Conditional lower bound for a missed explicit distance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub near_geometry: Option<KiCadNearGeometry>,
     /// What the entry is beyond kept or missed (a pair row's pitch and how
     /// it faces the pair's ends).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct KiCadBodyNearPinStatus {
+    pub pin_of: String,
+    pub distance_mm: f64,
+    pub max_mm: f64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct KiCadNearGeometry {
+    pub pin_of: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pad: Option<String>,
+    pub measured_mm: f64,
+    pub max_mm: f64,
+    pub minimum_at_target_pose_mm: f64,
+    pub body_spacing_mm: f64,
+    pub target_at: [f64; 3],
+    pub faces_without_room: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct KiCadPadNearStatus {
+    pub pad: String,
+    pub pin_of: String,
+    pub distance_mm: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_mm: Option<f64>,
+    /// Unrounded excess over max_mm before the one-nanometre allowance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overage_mm: Option<f64>,
+    /// True when the unrounded distance is within the request, allowing
+    /// one nanometre for KiCad's integer-nanometre coordinates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub satisfied: Option<bool>,
+    /// A pad distance was measured for an objective with no numeric limit.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub measured: bool,
+    pub refinable: bool,
+}
+
+impl KiCadConstraintStatus {
+    pub fn requirement_satisfied(&self) -> bool {
+        self.pad_near
+            .as_ref()
+            .and_then(|near| near.satisfied)
+            .unwrap_or(self.satisfied)
+    }
 }
 
 pub fn read_placement_constraints(path: &Path) -> Result<KiCadPlacementConstraints, String> {
@@ -230,6 +311,7 @@ pub(crate) fn apply_constraints(
     uuids: &[Option<String>],
     constraints: &KiCadPlacementConstraints,
     weight: f64,
+    configured_fixed: &[usize],
 ) -> Result<Vec<String>, String> {
     let footprints = pads.len();
     let (leaders, places, user_rows) =
@@ -269,11 +351,27 @@ pub(crate) fn apply_constraints(
     apply_groups(problem, &parts, &constraints.group, &mut constrained)?;
     apply_apart(problem, &parts, &constraints.apart, &mut constrained)?;
     apply_relative(problem, &parts, &constraints.relative, &mut constrained)?;
+    for (part, reference) in references[..footprints].iter().enumerate() {
+        if constraints
+            .module_nonoverlap
+            .iter()
+            .any(|group| group.parts.contains(reference))
+        {
+            constrained.insert(part);
+        }
+    }
     problem.constraints.relation_weight = weight;
 
     // Constrained parts move (the user said where they go), fixed ones stay.
     if constraints.move_all {
-        apply_move_all(problem, &parts, &constraints.fixed, &constrained, &pinned);
+        apply_move_all(
+            problem,
+            &parts,
+            &constraints.fixed,
+            &constrained,
+            &pinned,
+            configured_fixed,
+        );
     }
     apply_hollow(problem, &parts, &constraints.hollow)?;
     free_constrained(problem, &parts, constraints, constrained);
@@ -281,7 +379,13 @@ pub(crate) fn apply_constraints(
         free_parts_off_the_outline(problem, footprints, outline, bounds);
     }
     cannot.extend(rows_off_the_board(problem, references, &user_rows, &pinned));
-    fix_pinned_and_fixed(problem, &parts, &pinned, &constraints.fixed)?;
+    fix_pinned_and_fixed(
+        problem,
+        &parts,
+        &pinned,
+        &constraints.fixed,
+        configured_fixed,
+    )?;
     refuse_what_cannot_be_kept(problem, references, constraints, &user_rows, cannot)?;
     // The sides `apply_sides` flipped the parts to, reported as kept
     // constraints.
@@ -308,10 +412,55 @@ pub fn constraint_report(
                 .map(|other| references[other].clone()),
             satisfied: status.satisfied,
             violation_mm: (status.violation * 1000.0).round() / 1000.0,
+            distance_mm: status
+                .distance
+                .map(|distance| (distance * 1000.0).round() / 1000.0),
+            pad_near: status.pad_near.and_then(|evidence| {
+                let [pad, target] = evidence.pad_numbers?;
+                Some(KiCadPadNearStatus {
+                    pad,
+                    pin_of: format!("{}:{target}", references[status.other?]),
+                    distance_mm: evidence.distance,
+                    max_mm: evidence.max,
+                    overage_mm: evidence.overage,
+                    satisfied: evidence.satisfied,
+                    measured: evidence.max.is_none(),
+                    refinable: evidence.refinable,
+                })
+            }),
+            body_near_pin: None,
+            near_geometry: None,
             detail: None,
         })
+        .chain(report_module_envelopes(problem, poses, references))
         .collect()
 }
+
+/// Adds disjoint inferred rows after the authored brief has determined which
+/// footprints may move. Every inferred part is free of authored relations.
+pub(crate) fn apply_inferred_pair_rows(
+    problem: &mut core::Problem,
+    references: &[String],
+    pad_boxes: &[Vec<[f64; 4]>],
+    rows: &[KiCadRowConstraint],
+    constraints: Option<&KiCadPlacementConstraints>,
+) -> Result<(), String> {
+    let (_, _, user_rows) = apply_rows(problem, references, pad_boxes.len(), pad_boxes, rows)?;
+    let fallback = KiCadPlacementConstraints::default();
+    refuse_what_cannot_be_kept(
+        problem,
+        references,
+        constraints.unwrap_or(&fallback),
+        &user_rows,
+        Vec::new(),
+    )
+}
+
+mod near_geometry;
+pub(crate) use near_geometry::body_near_pin_labels;
+pub use near_geometry::{
+    BodyNearGridStep, body_near_grid_steps, constraint_report_at, near_geometry_spacing,
+};
 
 #[cfg(test)]
 mod tests;

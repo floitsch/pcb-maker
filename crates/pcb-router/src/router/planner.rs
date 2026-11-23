@@ -9,12 +9,12 @@ use super::*;
 impl Router {
     /// Plans a connection on the tile graph: Dijkstra over (layer, tile)
     /// from the source tiles to any target tile, where a tile costs more the
-    /// fuller it is. Returns the tiles on the path, grown by `margin` tiles.
+    /// fuller it is. Returns the target's state in the stored search tree.
     #[allow(
         clippy::too_many_arguments,
-        reason = "the search's state, its ends and the planner's settings, all read once"
+        reason = "the search state, ends and planner settings are all read once"
     )]
-    pub(super) fn plan_corridor(
+    pub(super) fn plan_tile_path(
         &self,
         arrays: &mut PlannerArrays,
         net: NetId,
@@ -22,9 +22,8 @@ impl Router {
         sources: &[Node],
         targets: &[(Node, u16)],
         hard: bool,
-        margin: usize,
         own_claimed: Option<&[u32]>,
-    ) -> Option<Vec<bool>> {
+    ) -> Option<usize> {
         let class = self.board.nets[net as usize].class;
         let layers = self.board.layer_count;
         let tiles = self.tiles_x * self.tiles_y;
@@ -130,7 +129,6 @@ impl Router {
             }};
         }
         let (tiles_x, tiles_y) = (self.tiles_x as i64, self.tiles_y as i64);
-        let mut reached = None;
         while let Some(key) = heap.pop() {
             let state = (key & u32::MAX as u64) as usize;
             let here = f32::from_bits((key >> 32) as u32);
@@ -138,8 +136,7 @@ impl Router {
                 continue;
             }
             if is_target[state] {
-                reached = Some(state);
-                break;
+                return Some(state);
             }
             let (layer, tile) = (state / tiles, state % tiles);
             let (x, y) = ((tile % self.tiles_x) as i64, (tile / self.tiles_x) as i64);
@@ -173,22 +170,34 @@ impl Router {
                 }
             }
         }
-        let mut state = reached?;
+        None
+    }
+
+    /// Widens a tile path by `margin` tiles. The same search tree also
+    /// serves the wider retry when the first lattice search fails.
+    pub(super) fn grow_corridor(
+        &self,
+        arrays: &PlannerArrays,
+        mut state: usize,
+        margin: usize,
+    ) -> Vec<bool> {
+        let tiles = self.tiles_x * self.tiles_y;
         let mut corridor = vec![false; tiles];
         loop {
             let tile = state % tiles;
             let (x, y) = (tile % self.tiles_x, tile / self.tiles_x);
+            let left = x.saturating_sub(margin);
+            let right = (x + margin).min(self.tiles_x - 1);
             for ty in y.saturating_sub(margin)..=(y + margin).min(self.tiles_y - 1) {
-                for tx in x.saturating_sub(margin)..=(x + margin).min(self.tiles_x - 1) {
-                    corridor[ty * self.tiles_x + tx] = true;
-                }
+                let row = ty * self.tiles_x;
+                corridor[row + left..=row + right].fill(true);
             }
-            if from[state] == u32::MAX {
+            if arrays.from[state] == u32::MAX {
                 break;
             }
-            state = from[state] as usize;
+            state = arrays.from[state] as usize;
         }
-        Some(corridor)
+        corridor
     }
 }
 
@@ -197,7 +206,7 @@ const ENTRY_UNKNOWN: u8 = 0;
 const ENTRY_WALL: u8 = 1;
 const ENTRY_KNOWN: u8 = 2;
 
-/// The tile planner's arrays (`plan_corridor`), kept in the thread's
+/// The tile planner's arrays (`plan_tile_path`), kept in the thread's
 /// scratch from plan to plan: until 2026-11-05 each plan allocated six
 /// arrays of the tile graph and its heap (a plan a search, 22 000 a
 /// route of a dense board; the fifth router round, docs/profiling.md, "Router rounds", item 5).

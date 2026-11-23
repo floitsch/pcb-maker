@@ -14,6 +14,15 @@ docs/agents.md in the pcb-maker repository.
 
 ## Workflow
 
+If the mechanical brief is ready, use
+`pcb-maker layout-kicad-schematic <schematic.kicad_sch> <id> <out> --constraints <constraints.json>`.
+It runs ordinary import and layout. Read `<out>/workflow.json` for the
+stage, exit code and next actions. Resolve its `outputs.result` and
+`outputs.layout_verdict` relative to `<out>` to use the project and
+verdict selected after any retry. Use `--mechanical-from` or `--layout-config` when you
+have a donor or layout settings. For an exploratory import, use the
+separate steps below.
+
 1. From a schematic: `pcb-maker import-kicad-netlist <dir>/<name>.kicad_sch <project-dir> <id>`
    writes the board, `constraints.json` and `layout.json`.
 2. Look at the board: `pcb-maker describe-kicad-board <project-dir> <id>`
@@ -42,17 +51,71 @@ their sources, the designer's route, the hot spots' pads and nets and the ladder
 `access` and `cause` stay `unknown`. Read it before any design change: where the designer's
 board routes the open nets (`reference.connected: true`), density is not the reason.
 
-Checking a result with `kicad-cli pcb drc` directly: add `--refill-zones` (the written
-zones are unfilled; without it pour pads count as unconnected).
+When checking a delivered board directly, run `kicad-cli pcb drc` on
+the saved file and repeat with `--refill-zones`. A difference in open
+connections means the saved and regenerated copper need separate review.
 
 Other commands: `drc-kicad-board` (KiCad's DRC, cached), `score-kicad-board`
 (quality measures and price), `repair-kicad-silkscreen`, `swap-kicad-pins`,
 `export-kicad-fab` (fab files without the DRC gate), `strip-kicad-tracks`,
 `strip-kicad-copper`. Output directories must not exist yet.
 
+`repair-kicad-opens <routed-dir> <id> --local <out>` searches available
+copper near native opens on a two-layer board. Pass a path to an alternate
+board in place of `--local` to try copper from another route of the same
+placement. Exit 0 means KiCad found
+fewer open connections with no new findings. Check `open-repair.json` for
+the remaining opens and the original findings.
+
+`compare-kicad-pour-policies <project-dir> <id> <out> <policies.json> auto <project-dir>/layout.json`
+runs each explicit `add_pours` policy with the full layout budget. Use the
+selected project in `pour-policies.json`. Exit 1 means no policy qualified
+under native checks. See `docs/agents.md` for the policy file and ranking.
+
+`repair-kicad-dangling <routed-dir> <id> <out>` checks whether one short
+router-generated pad stub can be removed with no new KiCad finding. The
+source is kept and `dangling-repair.json` records the check in the copy.
+
+`repair-kicad-via-short <routed-dir> <id> <placed-dir> <out>` tries a
+local detour around a shorted via. Supply the original placement so the
+command can identify generated tracks. Inspect `via-detour.json` for the
+native checks and repair outcome.
+
+`shorten-kicad-pad-path <routed-dir> <id> <out> --pads <REF:PAD> <REF:PAD>`
+tries a shorter connection between two pads on the same net and preserves
+shared branches. Use the output copy when `pad-path.json` records a
+shorter route that passed KiCad with both saved and refilled copper.
+If the result is `unchanged`, read its reason and the named native report.
+For capped library findings, restore the project's footprint libraries.
+If the matching libraries are already configured in KiCad, retry with
+`PCB_MAKER_KICAD_USER_LIBS=1` in a fresh output directory.
+
+To inspect a `near` constraint on a completed board, run
+`pcb-maker inspect-routing-run <run-dir> --near-paths`. Read the measured
+planar trace span, intervening pads and layer changes. A small placement
+distance can still leave the connection running through a distant header.
+For a capacitor supply pad and an IC power input, append
+`--decoupling-shortcut` to `shorten-kicad-pad-path` to try a direct
+connection while keeping existing copper. Use the report's pad names
+and check the delivered span in `pad-path.json`. The span excludes pad
+copper, via copper and vertical barrel length.
+
+`add-kicad-parallel-feed <routed-dir> <id> <out> --pads <REF:PAD> <REF:PAD> --layer <layer> --width-mm <width>`
+tries a second via-free path between two connected pads on the same net.
+Use it when a power analysis identifies a rail and load that need lower
+drop. Check `parallel-feed.json` for the accepted length and native
+verification, then rerun the electrical analysis on the returned PCB.
+
+`repair-kicad-necks <routed-dir> <id>` tries adding copper at narrow
+connections. For an approved hatch-hole area change, use
+`repair-kicad-necks <routed-dir> <id> --retain-clipped-hatch <fraction> <out>`.
+It publishes a separately checked copy with `hatched-neck-repair.json`.
+
 ## Read the verdict
 
-Every run writes `<out>/verdict.json`; the exit code says the same.
+Route, layout and placement write `<out>/verdict.json`, and their exit
+codes agree with the verdict. A pour comparison points to each layout's
+verdict from `pour-policies.json`.
 
 | Exit | `status` | Do |
 | --- | --- | --- |
@@ -97,9 +160,12 @@ the layout's own routes as `evidence_for_this_placement`);
 too little room is a hypothesis, not a finding (`routed.diagnostics.hot_spots`
 in `board-layout.json` says where nets fought, not why), so enlarge the
 outline, move parts apart or add layers only where the reference does not
-route the same nets; unplaced parts mean a fuller board than fits
-(`room.suggested_outline_mm`); missed constraints give `violation_mm`:
-relax or fix the part.
+route the same nets. For an unplaced part, read `board-placer.json`'s
+`unplaced_parts[].local_diagnosis`. A region's `fixed_region_cover` names
+the held footprints that block every allowed pose on that face. Review
+those holds and the assembly face before retrying. Check
+`room.suggested_outline_mm` when the outline can change. Missed constraints
+report their measured `violation_mm`.
 
 ## constraints.json
 

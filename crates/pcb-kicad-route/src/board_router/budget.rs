@@ -138,9 +138,8 @@ pub(crate) fn deadline_before_reserve(work_left: f64, reserve: f64, routers: usi
 /// or round under way (2026-10-21).
 pub(crate) const LADDER_WORK_TOLERANCE: f64 = 0.05;
 
-/// Route mode: the share of the ladder's budget the rung probes take
-/// together at most (each `probe_seconds`, 75 s, or less: the 4-layer
-/// intake boards probed 4 x 75 s on a 30 s budget).
+/// Route mode: the share of the ladder's budget targeted by the rung
+/// probes, before overhead and the first pass's minimum work.
 pub(crate) const PROBE_SHARE: f64 = 0.5;
 
 /// Route mode: no further attempt (rung, seeds, narrow-signal or
@@ -154,7 +153,7 @@ pub(crate) fn ladder_work_bound(budget: f64) -> f64 {
 }
 
 /// Route mode: the work each rung probe negotiates, `probe_seconds` or
-/// less, so that `rungs` probes take at most `PROBE_SHARE` of `budget`.
+/// less, to target `PROBE_SHARE` of `budget` across `rungs` probes.
 pub(crate) fn bounded_probe_seconds(probe_seconds: f64, budget: f64, rungs: usize) -> f64 {
     probe_seconds.min(PROBE_SHARE * budget / rungs.max(1) as f64)
 }
@@ -252,8 +251,8 @@ pub(crate) fn search_fraction(search: f64, router: f64) -> f64 {
 
 /// Which attempts of a ladder KiCad checks. An attempt's quality is the
 /// router's open count (unconnected terminals and internal violations)
-/// plus KiCad's unconnected items, then KiCad's starved thermals, then
-/// vias and copper (`open` in `route_kicad_board`); the router's count
+/// plus KiCad's unconnected items, then KiCad's starved thermals and
+/// native hard errors, then vias and copper. The router's count
 /// alone is a lower bound of the first, with no slack (KiCad's part only
 /// adds). An attempt whose router count already loses to the kept board's
 /// checked quality cannot win, and its check (10 to 50 s of kicad-cli on a
@@ -283,18 +282,29 @@ pub(crate) struct CheckGate {
 pub(crate) type RouterMeasure = (usize, usize, f64);
 
 /// A checked board's quality as the ladder compares boards: (open, starved
-/// thermals), vias, copper length.
-pub(crate) type CheckedQuality = ((usize, usize), usize, f64);
+/// thermals), native severity-error count, vias, copper length.
+pub(crate) type CheckedQuality = ((usize, usize), Option<usize>, usize, f64);
 
 /// Whether an attempt with router open count `count`, `vias` and `length_mm`
 /// can still beat `best` (an attempt's full open count is at least
-/// `count`). A tie on the open count leaves starved thermals and then
-/// vias and copper to decide.
+/// `count`). A tie on the open count leaves starved thermals, native
+/// errors, vias and copper to decide.
 pub(crate) fn could_win(count: usize, vias: usize, length_mm: f64, best: CheckedQuality) -> bool {
-    let ((open, starved), best_vias, best_length) = best;
+    could_win_at(count, vias, length_mm, best, true)
+}
+
+fn could_win_at(
+    count: usize,
+    vias: usize,
+    length_mm: f64,
+    best: CheckedQuality,
+    consider_errors: bool,
+) -> bool {
+    let ((open, starved), errors, best_vias, best_length) = best;
     count < open
         || (count == open
             && (starved > 0
+                || (consider_errors && errors != Some(0))
                 || (vias, length_mm)
                     .partial_cmp(&(best_vias, best_length))
                     .is_some_and(|order| order.is_lt())))
@@ -319,7 +329,9 @@ impl CheckGate {
         finishing: bool,
     ) -> bool {
         if finishing {
-            return best.is_none_or(|best| could_win(count, vias, length_mm, best))
+            // Don't start another check past the wall guard solely in the
+            // hope of an unseen improvement in its native findings.
+            return best.is_none_or(|best| could_win_at(count, vias, length_mm, best, false))
                 && self.kept.is_none_or(|kept| could_beat_kept(count, kept));
         }
         let Some(best) = best else {
@@ -373,10 +385,33 @@ pub(crate) fn check_attempt(
     result: &mut KiCadBoardRouterResult,
     directory: &Path,
     board_id: &str,
-) -> Result<(), String> {
+    shared_reuse_check: bool,
+    partial_reuse_check: bool,
+    capture_refill: bool,
+) -> Result<usize, String> {
     crate::mem_profile::phase("check");
     let started = std::time::Instant::now();
-    result.native = Some(verify_materialized_rung(directory, board_id)?);
+    let checks =
+        if shared_reuse_check && result.routable_connections == 0 && router_open(result) == 0 {
+            let (native, proof, checks) = verification::verify_closed_reuse_rung(
+                directory,
+                board_id,
+                partial_reuse_check,
+                capture_refill,
+            )?;
+            result.native = Some(native);
+            result.closed_reuse_drc = proof;
+            checks
+        } else if partial_reuse_check {
+            let (native, proof, checks) =
+                verification::verify_partial_reuse_rung(directory, board_id, capture_refill)?;
+            result.native = Some(native);
+            result.closed_reuse_drc = proof;
+            checks
+        } else {
+            result.native = Some(verify_materialized_rung(directory, board_id)?);
+            1
+        };
     result.native_verification_seconds = started.elapsed().as_secs_f64();
     result.diagnostics.starved_thermals = starved_thermal_diagnostics(directory);
     let drc_cache = crate::drc_cache_counts();
@@ -392,7 +427,8 @@ pub(crate) fn check_attempt(
         &report_path,
         serde_json::to_string_pretty(&*result).map_err(|error| error.to_string())?,
     )
-    .map_err(|error| format!("failed to write {}: {error}", report_path.display()))
+    .map_err(|error| format!("failed to write {}: {error}", report_path.display()))?;
+    Ok(checks)
 }
 
 /// `config` as the narrow-signal step routes it: signal nets at the

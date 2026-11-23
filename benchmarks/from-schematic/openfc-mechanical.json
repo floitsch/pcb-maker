@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "move_all": true,
+  "back": ["USB1"],
+  "place": [
+    {"part": "USB1", "origin": "absolute", "x": 166.7325, "y": 89.28, "angle": 270}
+  ],
+  "region": [
+    {"parts": ["U2"], "origin": "absolute", "x": [147.0, 159.5], "y": [80.5, 94.0]}
+  ]
+}

@@ -26,6 +26,37 @@ pub(super) fn keep_from(board: &core::Board, obstacle: &core::Obstacle, clearanc
     }
 }
 
+/// The differential gap governs paired tracks and vias. A fixed pad
+/// keeps the conductors' ordinary copper clearance, with any applicable
+/// pad override. The pair-wide conservative floor also covers other
+/// classes, so it is wider than the rule between these two nets.
+fn pair_keep_from(board: &core::Board, obstacle: &core::Obstacle, pair: &Pair) -> f64 {
+    let Some(net) = obstacle
+        .net
+        .filter(|net| [pair.positive, pair.negative].contains(net))
+    else {
+        return keep_from(board, obstacle, pair.clearance);
+    };
+    match core::rules::obstacle_kind(obstacle) {
+        Some(core::rules::PAD | core::rules::PLATED) => {
+            let other = if net == pair.positive {
+                pair.negative
+            } else {
+                pair.positive
+            };
+            keep_from(
+                board,
+                obstacle,
+                board.classes[board.nets[other as usize].class].clearance,
+            )
+        }
+        Some(core::rules::TRACK | core::rules::VIA) => {
+            keep_from(board, obstacle, pair.clearance).min(pair.gap)
+        }
+        _ => keep_from(board, obstacle, pair.clearance),
+    }
+}
+
 /// The obstacles that block tracks within `reach` of `at`.
 pub(super) fn obstacles_near(board: &core::Board, at: Point, reach: f64) -> Vec<usize> {
     scanned(board.obstacles.len());
@@ -102,7 +133,7 @@ pub(super) fn stubs_clear(
     tested(2 * (near.len() + board.outline.len()));
     (0..2).all(|polarity| {
         let (pad, end) = (pads[polarity], ends[polarity]);
-        let (own, other) = (nets[polarity], nets[1 - polarity]);
+        let own = nets[polarity];
         core::geometry::polygon_edges(&board.outline).all(|(a, b)| {
             core::geometry::segment_segment_distance(pad, end, a, b) >= half + board.edge_clearance
         }) && near.iter().all(|&index| {
@@ -118,10 +149,7 @@ pub(super) fn stubs_clear(
             {
                 return true;
             }
-            let mut keep = keep_from(board, obstacle, pair.clearance);
-            if obstacle.net == Some(other) {
-                keep = keep.min(pair.gap);
-            }
+            let keep = pair_keep_from(board, obstacle, pair);
             obstacle.shape.distance_to_segment(pad, end) >= half + keep - EPSILON
         })
     })
@@ -144,10 +172,7 @@ pub(super) fn end_clear(
         if obstacle.layers & layer == 0 {
             return true;
         }
-        let mut keep = keep_from(board, obstacle, pair.clearance);
-        if obstacle.net == Some(pair.positive) || obstacle.net == Some(pair.negative) {
-            keep = keep.min(pair.gap);
-        }
+        let keep = pair_keep_from(board, obstacle, pair);
         obstacle.shape.distance_to_segment(at, to) >= pair.width / 2.0 + keep
     })
 }

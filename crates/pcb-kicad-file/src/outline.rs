@@ -529,6 +529,15 @@ fn chain_pieces(
 }
 
 pub fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
+    board_loops_with_closure(pcb, false)
+}
+
+/// Requires every Edge.Cuts chain to close within KiCad's endpoint tolerance.
+pub fn board_loops_strict(pcb: &Expr) -> Result<BoardLoops, String> {
+    board_loops_with_closure(pcb, true)
+}
+
+fn board_loops_with_closure(pcb: &Expr, strict: bool) -> Result<BoardLoops, String> {
     let mut loops: Vec<Vec<[f64; 2]>> = Vec::new();
     let mut open: Vec<Vec<[f64; 2]>> = Vec::new();
     // Whether each loop and open piece is the board's own graphics.
@@ -637,15 +646,17 @@ pub fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
         open_on_board.resize(open.len(), on_board);
     }
 
-    let chained = match chain_pieces(open.clone(), open_on_board.clone()) {
-        Ok(chained) => chained,
-        // The chaining above snaps each end to the nearest one seen before
-        // and drops pieces shorter than its tolerance; outlines drawn from
-        // segments of 10-20 um (keyboard halves' traced cutouts, panels of
-        // thousands of segments) come apart under it although KiCad closes
-        // them. Then KiCad's own chaining decides.
-        Err(error) if error == NOT_CLOSED => chain_as_kicad(&open, &open_on_board)?,
-        Err(error) => return Err(error),
+    let chained = if strict {
+        chain_as_kicad(&open, &open_on_board)?
+    } else {
+        match chain_pieces(open.clone(), open_on_board.clone()) {
+            Ok(chained) => chained,
+            // The chaining above snaps each end to the nearest one seen
+            // before and drops pieces shorter than its tolerance. Short
+            // traced cutouts then use KiCad's own chaining.
+            Err(error) if error == NOT_CLOSED => chain_as_kicad(&open, &open_on_board)?,
+            Err(error) => return Err(error),
+        }
     };
     for (chain, on_board) in chained {
         loops.push(chain);

@@ -4,7 +4,7 @@
 
 use super::*;
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct KiCadRegionConstraint {
     /// References or glob patterns.

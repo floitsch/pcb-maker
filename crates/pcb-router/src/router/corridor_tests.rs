@@ -198,6 +198,7 @@ pub(super) fn pocketed_part(dy: f64) -> Board {
         });
     }
     Board {
+        fixed_pad_route_clearance: Default::default(),
         layer_count: 1,
         outline: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]],
         edge_clearance: 0.1,
@@ -403,6 +404,7 @@ pub(super) fn x2son4(centre: Point) -> Board {
         label: "U2.5".into(),
     });
     Board {
+        fixed_pad_route_clearance: Default::default(),
         layer_count: 1,
         outline: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]],
         edge_clearance: 0.1,
@@ -509,6 +511,7 @@ fn overlapped_pad(cover: f64, offset: Point) -> Board {
         label: label.into(),
     };
     Board {
+        fixed_pad_route_clearance: Default::default(),
         layer_count: 1,
         outline: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]],
         edge_clearance: 0.1,

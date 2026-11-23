@@ -108,6 +108,12 @@ pub(super) fn write_kept_board(
         &coupled,
     );
     let nets = emit_routes(&mut kept.pcb, &kept.board, result, layer_names, false)?;
+    let prepared_escapes = crate::board_router::emit_layout_row_escapes(
+        &mut kept.pcb,
+        &kept.board,
+        router_config,
+        layer_names,
+    )?;
     // The tuning patterns and the pairs' copper go into the board written
     // only: `pcb` is the placement the ladder routes again, without copper.
     let written;
@@ -122,6 +128,14 @@ pub(super) fn write_kept_board(
         written = copy;
         &written
     };
+    // Between two and three native check units, a check plus its own
+    // saved-fill reopen fits. A separate new refill and reopen would not.
+    let checks_left = ledger.left(ctx.work_deadline) / ctx.check_seconds;
+    let capture_refill = copper.has_pours
+        && ctx.config.save_zone_fills
+        && !ctx.config.stop_after_first_route
+        && (2.0..3.0).contains(&checks_left)
+        && !ctx.wall_passed();
     let mut routed = finish_routed_board(
         written_pcb,
         &kept.board,
@@ -136,7 +150,11 @@ pub(super) fn write_kept_board(
             0.0,
             first_route_seconds + move_started.elapsed().as_secs_f64(),
         ],
+        capture_refill,
     )?;
+    if prepared_escapes.is_some() {
+        routed.kept_copper = prepared_escapes;
+    }
     // The length reroute's work (`length_reroute`) counts as the layout's.
     ledger.work += lengths
         .iter()
@@ -154,13 +172,13 @@ pub(super) fn write_kept_board(
     .into();
     // KiCad's check of the board kept counts as work (`check_work`).
     if routed.native.is_some() {
-        ledger.work += ledger.checks.add(1);
+        ledger.work += ledger.checks.add(routed.kicad_checks_charged.max(1));
     }
     Ok((routed, labels))
 }
 
 /// The references of the fixed parts.
-fn fixed_parts(problem: &crate::board_placer::LoweredPlacement) -> BTreeSet<String> {
+pub(super) fn fixed_parts(problem: &crate::board_placer::LoweredPlacement) -> BTreeSet<String> {
     problem
         .references
         .iter()
@@ -174,7 +192,7 @@ fn fixed_parts(problem: &crate::board_placer::LoweredPlacement) -> BTreeSet<Stri
 /// and silkscreen graphics stay where the input put them
 /// (`keep_board_marks`), and the parts on them are reported (the `fixed`
 /// parts' not).
-fn place_part_labels(
+pub(super) fn place_part_labels(
     ctx: &LayoutContext,
     pcb: &mut Expr,
     fixed: &BTreeSet<String>,
@@ -245,11 +263,16 @@ fn report_pairs(
     pairs_left: f64,
 ) {
     let choice = ctx.router_config.diff_pairs_choice();
-    if choice.on {
+    if choice.on || !ctx.router_config.diff_pair_exclusions.is_empty() {
         let report = pairs_report.get_or_insert_with(crate::KiCadDiffPairs::default);
         report.on = choice.on;
         report.default = choice.default.to_string();
         report.reason = choice.reason;
+        report.record_exclusions(&ctx.router_config);
+    }
+    if choice.on
+        && let Some(report) = &mut pairs_report
+    {
         crate::board_router::measure_uncoupled(report, written_pcb);
         let fallen = report.fallen_back + report.partly_coupled;
         eprintln!(

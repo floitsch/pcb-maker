@@ -60,6 +60,7 @@ pub(crate) fn prepare<'a>(problem: &Problem, config: &'a Config) -> Fitted<'a> {
 pub(crate) struct Placing<'a> {
     pub(super) problem: &'a Problem,
     pub(super) config: &'a Config,
+    pub(crate) panel_edge_regions: Option<&'a [(usize, usize)]>,
     pub(super) fit_scale: [f64; 2],
     pub(super) start: Option<&'a Start>,
     pub(crate) skip_global: bool,
@@ -123,6 +124,7 @@ impl<'a> Placing<'a> {
         Placing {
             problem,
             config,
+            panel_edge_regions: None,
             fit_scale: fitted.fit_scale,
             start,
             skip_global,

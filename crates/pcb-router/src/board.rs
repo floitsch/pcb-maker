@@ -13,6 +13,14 @@ pub type ClassId = usize;
 /// Copper layers as a bit mask; bit 0 is the front layer.
 pub type LayerMask = u32;
 
+fn full_layer_mask(count: usize) -> LayerMask {
+    if count >= LayerMask::BITS as usize {
+        LayerMask::MAX
+    } else {
+        (1 << count) - 1
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RuleClass {
     pub trace_width: f64,
@@ -36,7 +44,7 @@ pub enum ObstacleKind {
     Hole,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Obstacle {
     pub shape: Shape,
     pub layers: LayerMask,
@@ -61,7 +69,7 @@ pub struct Obstacle {
     pub label: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Terminal {
     /// Where copper must end to be electrically connected.
     pub anchor: Point,
@@ -76,7 +84,7 @@ pub struct Terminal {
     pub label: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Net {
     pub name: String,
     pub class: ClassId,
@@ -85,7 +93,7 @@ pub struct Net {
 
 /// A copper pour: the net's copper fills `polygon` on `layer` wherever no
 /// other copper is in the way. Terminals touching it need no tracks.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Plane {
     pub net: NetId,
     /// The pour as a brush: `trace_width` is its minimum width and
@@ -151,7 +159,7 @@ pub struct Hatch {
     pub via_reliefs: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Board {
     pub layer_count: usize,
     /// Outer boundary; copper must stay inside.
@@ -164,6 +172,9 @@ pub struct Board {
     /// class's track is left with a stub of this width (a neck-down).
     pub neck_width: f64,
     pub obstacles: Vec<Obstacle>,
+    /// Winning custom clearance against a fixed pad's copper, for track
+    /// and via checks. A pad's own explicit override stays conservative.
+    pub fixed_pad_route_clearance: std::collections::BTreeMap<String, f64>,
     /// Indexed by `NetId`.
     pub nets: Vec<Net>,
     pub planes: Vec<Plane>,
@@ -315,6 +326,31 @@ impl Board {
 pub struct Attachment {
     pub data: Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
     pub give_up: Option<std::sync::Arc<dyn GiveUp>>,
+    /// A coupled run's synthetic net inherits clearance rules from both
+    /// original conductors, with each rule's item kinds and layers intact.
+    pub clearance_aliases: std::collections::BTreeMap<NetId, [NetId; 2]>,
+    /// Track gap of emitted coupled mates for the adapter's final check.
+    /// Keys are the two original conductors' IDs in ascending order.
+    pub verified_pair_track_gaps: std::collections::BTreeMap<(NetId, NetId), f64>,
+}
+
+impl PartialEq for Attachment {
+    fn eq(&self, other: &Self) -> bool {
+        fn same_handle<T: ?Sized>(
+            a: &Option<std::sync::Arc<T>>,
+            b: &Option<std::sync::Arc<T>>,
+        ) -> bool {
+            match (a, b) {
+                (None, None) => true,
+                (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b),
+                _ => false,
+            }
+        }
+        same_handle(&self.data, &other.data)
+            && same_handle(&self.give_up, &other.give_up)
+            && self.clearance_aliases == other.clearance_aliases
+            && self.verified_pair_track_gaps == other.verified_pair_track_gaps
+    }
 }
 
 impl std::fmt::Debug for Attachment {
@@ -500,7 +536,7 @@ impl PadSpokes {
 
 impl Board {
     pub fn all_layers(&self) -> LayerMask {
-        (1u32 << self.layer_count) - 1
+        full_layer_mask(self.layer_count)
     }
 
     /// How far the fill of `plane` keeps from its excluded region
@@ -549,6 +585,33 @@ impl Board {
     /// its override if it has one, else its net class's (and its local
     /// floor).
     pub fn copper_clearance(&self, class: &RuleClass, obstacle: &Obstacle) -> f64 {
+        if matches!(
+            crate::rules::obstacle_kind(obstacle),
+            Some(crate::rules::PAD | crate::rules::PLATED)
+        ) && obstacle.clearance_override.is_none()
+            && let Some(clearance) = self.fixed_pad_route_clearance.get(&obstacle.label)
+        {
+            return *clearance;
+        }
+        self.class_copper_clearance(class, obstacle)
+    }
+
+    /// Copper clearance to a recognized mate track or plated pad.
+    /// The gap can lower the class floor while preserving local rules.
+    pub fn pair_copper_clearance(&self, class: &RuleClass, obstacle: &Obstacle, gap: f64) -> f64 {
+        let local = obstacle.clearance_override.or_else(|| {
+            if obstacle.plated {
+                self.fixed_pad_route_clearance.get(&obstacle.label).copied()
+            } else {
+                None
+            }
+        });
+        self.copper_clearance(class, obstacle)
+            .min(gap)
+            .max(local.unwrap_or(obstacle.clearance))
+    }
+
+    fn class_copper_clearance(&self, class: &RuleClass, obstacle: &Obstacle) -> f64 {
         let obstacle_side = obstacle.clearance_override.unwrap_or_else(|| {
             let obstacle_class = obstacle.net.map_or(0.0, |net| {
                 self.classes[self.nets[net as usize].class].clearance
@@ -567,7 +630,7 @@ impl Board {
     pub fn fill_clearance(&self, class: &RuleClass, obstacle: &Obstacle) -> f64 {
         obstacle
             .clearance_override
-            .unwrap_or_else(|| self.copper_clearance(class, obstacle))
+            .unwrap_or_else(|| self.class_copper_clearance(class, obstacle))
     }
 }
 
@@ -652,14 +715,8 @@ impl Via {
 
     /// Its layers as a mask, on a board of `layers` copper layers.
     pub fn mask(&self, layers: usize) -> LayerMask {
-        self.span.map_or(
-            if layers >= 32 {
-                LayerMask::MAX
-            } else {
-                (1 << layers) - 1
-            },
-            |span| span.mask(),
-        )
+        self.span
+            .map_or_else(|| full_layer_mask(layers), |span| span.mask())
     }
 }
 
@@ -667,4 +724,17 @@ impl Via {
 pub struct NetRoute {
     pub segments: Vec<Segment>,
     pub vias: Vec<Via>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_last_layer_fills_the_mask_at_32_layers() {
+        assert_eq!(full_layer_mask(0), 0);
+        assert_eq!(full_layer_mask(2), 3);
+        assert_eq!(full_layer_mask(31), 0x7fff_ffff);
+        assert_eq!(full_layer_mask(32), LayerMask::MAX);
+    }
 }

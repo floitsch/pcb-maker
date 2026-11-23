@@ -46,6 +46,7 @@ fn two_nets(layer_count: usize) -> Board {
         pad([5.0, 5.55], 0.2, 1, None, "U1.1"),
     ];
     Board {
+        fixed_pad_route_clearance: Default::default(),
         layer_count,
         outline: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]],
         edge_clearance: 0.1,
@@ -133,6 +134,7 @@ fn a_pad_to_track_rule_keeps_tracks_from_pads_only() {
             kinds: kind_bit(TRACK, PAD),
             layers: 0,
             clearance: 0.5,
+            except_pads: Default::default(),
         }],
         ..NetRules::default()
     };
@@ -155,6 +157,7 @@ fn a_pad_to_track_rule_keeps_tracks_from_pads_only() {
                 kinds: kind_bit(TRACK, PAD),
                 layers: 0,
                 clearance: 0.5,
+                except_pads: Default::default(),
             }],
             ..NetRules::default()
         })),
@@ -164,6 +167,58 @@ fn a_pad_to_track_rule_keeps_tracks_from_pads_only() {
         router.stamps[0][0].trace_to_trace,
         base.stamps[0][0].trace_to_trace
     );
+}
+
+#[test]
+fn fixed_pad_exceptions_keep_the_class_rule_on_same_net_tracks() {
+    let mut board = two_nets(2);
+    board
+        .obstacles
+        .push(pad([3.0, 5.55], 0.2, 1, Some(1), "U9.1"));
+    board
+        .obstacles
+        .push(pad([7.0, 5.55], 0.2, 1, Some(1), "J11.1"));
+    let rules = NetRules {
+        clearances: vec![ClearanceRule {
+            first: Some(vec!["B".into()]),
+            second: Some(vec!["A".into()]),
+            kinds: ALL_KINDS,
+            layers: 1,
+            clearance: 0.6,
+            except_pads: ["U9.1".into()].into(),
+        }],
+        ..NetRules::default()
+    };
+    let (board, split) = crate::rules::ClassRules::split(&board, &rules);
+    let routes = vec![
+        NetRoute {
+            segments: vec![Segment {
+                start: [1.0, 5.0],
+                end: [9.0, 5.0],
+                layer: 0,
+                width: 0.25,
+            }],
+            vias: Vec::new(),
+        },
+        NetRoute::default(),
+    ];
+    let found = crate::verify::verify_with_rules(&board, &routes, Some(&split));
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].other, "J11.1");
+    assert_eq!(found[0].required, 0.6);
+    assert_eq!(
+        split.resolved.extra_on(
+            split.class_group[board.nets[0].class],
+            TRACK,
+            split.class_group[board.nets[1].class],
+            TRACK,
+            0,
+        ),
+        0.6,
+    );
+    let mut reverse = routes;
+    reverse[0].segments[0].layer = 1;
+    assert!(crate::verify::verify_with_rules(&board, &reverse, Some(&split)).is_empty());
 }
 
 #[test]
@@ -192,6 +247,7 @@ fn a_rule_between_two_sets_of_nets_splits_their_classes() {
             // Layer 1 only.
             layers: 0b10,
             clearance: 1.0,
+            except_pads: Default::default(),
         }],
         ..NetRules::default()
     };
@@ -336,6 +392,7 @@ fn rules_that_split_nothing_route_as_without_them() {
                 kinds: ALL_KINDS,
                 layers: 0,
                 clearance: 0.1,
+                except_pads: Default::default(),
             }],
             ..NetRules::default()
         },
@@ -365,6 +422,7 @@ fn the_stub_check_holds_the_rules_beyond_the_classes() {
             kinds: kind_bit(TRACK, TRACK),
             layers: 0,
             clearance: 0.127,
+            except_pads: Default::default(),
         }],
         ..NetRules::default()
     };

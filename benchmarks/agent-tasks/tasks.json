@@ -19,5 +19,5 @@
    "placer": {"fixed": ["U1", "C1", "C2", "U4", "C8", "C9", "U5", "C10", "C11", "RN1", "RN2", "RN3", "RN4", "RN5", "RN6", "RN7", "RN8", "J1", "J2", "J3", "J5", "J6", "JP1"]},
    "router": {},
    "expected_misses": [["near", "C5", "U3"], ["near", "C6", "U3"], ["relative", "J4", "U3"]],
-   "notes": "The breadboard fence's USB/ESP corner (benchmarks/fence/esp-usb-placement): module flush in the corner with its antenna beyond the top edge, USB-C below it opening outwards. C5/C6 cannot come within 6 mm of the module's pin 3 (the pad sits 8.4 mm inside its courtyard), and J4 cannot sit within 3 mm below the module with C5/C6 in between."}
+   "notes": "The breadboard fence's USB/ESP corner holds the module flush in the corner with its antenna beyond the top edge and USB-C below it opening outwards. At the reported module pose, a front-side C5 or C6 body stays at least 8.4 mm from pin 3. Their 6 mm limits and the 3 mm gap for J4 are expected misses in this brief."}
  ]}

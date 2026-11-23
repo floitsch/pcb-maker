@@ -32,15 +32,17 @@ impl Builder {
         Ok(())
     }
 
-    /// A via: a disc of its net on its layers (`via_layers`).
+    /// A via's copper and known drill on its physical span (`LayerTable::via_mask`).
     pub(super) fn existing_via(&mut self, ctx: &Context, item: &Expr) -> Result<(), String> {
         let net = self.item_net_id(ctx, item)?;
+        let center = form_xy(item, "at")?;
+        let layers = ctx.layers.via_mask(item);
         self.obstacles.push(core::Obstacle {
             shape: core::Shape::Circle {
-                center: form_xy(item, "at")?,
+                center,
                 radius: form_f64(item, "size", 1)? / 2.0,
             },
-            layers: via_layers(item, &ctx.layers),
+            layers,
             kind: core::ObstacleKind::Copper,
             net,
             clearance: 0.0,
@@ -50,6 +52,28 @@ impl Builder {
             blocks_vias: true,
             label: "existing via".into(),
         });
+        // A thin annulus can meet copper clearance while its drill does
+        // not. Like other plated holes, keep the net so its own tracks can
+        // connect and the configured same-net drill spacing applies.
+        if let Ok(drill) = form_f64(item, "drill", 1)
+            && drill > 0.0
+        {
+            self.obstacles.push(core::Obstacle {
+                shape: core::Shape::Circle {
+                    center,
+                    radius: drill / 2.0,
+                },
+                layers,
+                kind: core::ObstacleKind::Hole,
+                net,
+                clearance: 0.0,
+                clearance_override: None,
+                plated: false,
+                blocks_tracks: true,
+                blocks_vias: true,
+                label: "existing via hole".into(),
+            });
+        }
         Ok(())
     }
 

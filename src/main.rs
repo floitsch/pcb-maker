@@ -371,7 +371,7 @@ const COMMANDS: &[Command] = &[
     Command {
         name: "pad-exits-kicad-board",
         usage: Some(
-            "pad-exits-kicad-board <project-dir> <board-id> [router-config.json|auto] [--out <report.json>] [--repair]",
+            "pad-exits-kicad-board <project-dir> <board-id> [router-config.json|auto] [--out <report.json>] [--repair | --repair-config <pad-exits.json>]",
         ),
         run: lab_commands::cmd_pad_exits_kicad_board,
     },

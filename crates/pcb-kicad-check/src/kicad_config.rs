@@ -132,7 +132,7 @@ fn project_counts_library_findings(input: &Path, severities: &str, rules: &[&str
 }
 
 /// KiCad's settings directory name for `version` (`10.0.7` -> `10.0`).
-fn series(version: &str) -> Option<String> {
+pub(crate) fn series(version: &str) -> Option<String> {
     let mut parts = version.trim().split(|c: char| !c.is_ascii_digit());
     let major = parts.next().filter(|part| !part.is_empty())?;
     let minor = parts.next().filter(|part| !part.is_empty())?;

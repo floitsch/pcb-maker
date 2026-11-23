@@ -19,6 +19,17 @@ pub(super) struct BoardPieces {
     /// board-placer.json's `modules`: the breakaway modules of one board
     /// that hold their parts (`modules::hold_in_modules`).
     pub modules: Option<crate::modules::KiCadModulesReport>,
+    /// Exact component indices given a region by breakaway assignment.
+    pub module_regions: BTreeSet<usize>,
+}
+
+impl BoardPieces {
+    pub(super) fn is_whole(&self) -> bool {
+        self.copies.is_none()
+            && self.held_sub_boards.is_none()
+            && self.report.is_none()
+            && self.modules.is_none()
+    }
 }
 
 /// Finds the panel's copies and the sub-boards, and changes the problem
@@ -30,7 +41,77 @@ pub(super) fn place_in_pieces(
     lowered: &mut LoweredPlacement,
 ) -> Result<BoardPieces, String> {
     let config = &context.config;
-    let copies = if config.panel_copies {
+    let mut pieces = place_in_panel(config, pcb, lowered, false)?;
+    if let Some(action) = pieces
+        .report
+        .as_ref()
+        .and_then(|report| report.assignment_action())
+    {
+        eprintln!("warning: {action}");
+    }
+    // The breakaway modules of one board (`keep_in_modules`): not a
+    // panel's copies or sub-boards.
+    if config.keep_in_modules && pieces.copies.is_none() && pieces.report.is_none() {
+        let footprint_count = pcb
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("footprint"))
+            .count();
+        let prior_regions = lowered.problem.constraints.automatic_regions.clone();
+        pieces.modules = crate::modules::hold_in_modules(
+            pcb,
+            &mut lowered.problem,
+            footprint_count,
+            &lowered.poured,
+        )?;
+        pieces.module_regions = lowered
+            .problem
+            .constraints
+            .automatic_regions
+            .difference(&prior_regions)
+            .copied()
+            .collect();
+        if let Some(report) = &pieces.modules {
+            eprintln!(
+                "placer: modules: {} ({}), {} parts held in their module, {} without one; the assignment crosses modules {} times, tabs {} times, {} tracks over the tabs' capacity",
+                report.modules,
+                report.kind,
+                report.held,
+                report.unassigned,
+                report.crossings,
+                report.tab_crossings,
+                report.overflow
+            );
+        }
+    }
+    Ok(pieces)
+}
+
+/// Runs the same panel assignment stage as placement, with no search.
+pub fn check_sub_board_assignments(
+    source_directory: &Path,
+    board_id: &str,
+    config: &KiCadBoardPlacerConfig,
+) -> Result<Option<crate::sub_boards::KiCadSubBoardsReport>, String> {
+    if !config.sub_boards {
+        return Ok(None);
+    }
+    let PreparedBoard {
+        pcb,
+        config,
+        mut lowered,
+        ..
+    } = prepare_board(source_directory, board_id, config, None)?;
+    Ok(place_in_panel(&config, &pcb, &mut lowered, true)?.report)
+}
+
+fn place_in_panel(
+    config: &KiCadBoardPlacerConfig,
+    pcb: &Expr,
+    lowered: &mut LoweredPlacement,
+    check: bool,
+) -> Result<BoardPieces, String> {
+    let copies = if config.panel_copies && lowered.confirmed_sub_boards.is_none() {
         detect_copies(pcb, lowered)
     } else {
         None
@@ -43,6 +124,7 @@ pub(super) fn place_in_pieces(
         held_sub_boards: None,
         report: None,
         modules: None,
+        module_regions: BTreeSet::new(),
     };
     crate::outline_pieces::note_designed(None);
     // A panel of copies whose cells share net names (the PolyKybd
@@ -63,34 +145,7 @@ pub(super) fn place_in_pieces(
         }
     }
     if config.sub_boards {
-        place_sub_boards(config, pcb, lowered, &mut pieces)?;
-    }
-    // The breakaway modules of one board (`keep_in_modules`): not a
-    // panel's copies or sub-boards.
-    if config.keep_in_modules && pieces.copies.is_none() && pieces.report.is_none() {
-        let footprint_count = pcb
-            .children()
-            .iter()
-            .filter(|item| item.head() == Some("footprint"))
-            .count();
-        pieces.modules = crate::modules::hold_in_modules(
-            pcb,
-            &mut lowered.problem,
-            footprint_count,
-            &lowered.poured,
-        )?;
-        if let Some(report) = &pieces.modules {
-            eprintln!(
-                "placer: modules: {} ({}), {} parts held in their module, {} without one; the assignment crosses modules {} times, tabs {} times, {} tracks over the tabs' capacity",
-                report.modules,
-                report.kind,
-                report.held,
-                report.unassigned,
-                report.crossings,
-                report.tab_crossings,
-                report.overflow
-            );
-        }
+        place_sub_boards(config, pcb, lowered, &mut pieces, check)?;
     }
     Ok(pieces)
 }
@@ -141,6 +196,7 @@ fn place_sub_boards(
     pcb: &Expr,
     lowered: &mut LoweredPlacement,
     pieces: &mut BoardPieces,
+    check: bool,
 ) -> Result<(), String> {
     let footprint_count = pcb
         .children()
@@ -164,7 +220,19 @@ fn place_sub_boards(
         &lowered.problem,
         footprint_count,
         reference.as_ref(),
+        lowered.confirmed_sub_boards.as_ref(),
     )?;
+    let sheet_ownership = detected
+        .as_ref()
+        .filter(|_| check && pieces.copies.is_none())
+        .and_then(|sub| {
+            crate::sub_boards::sheet_ownership_preview(
+                pcb,
+                sub,
+                &lowered.problem,
+                &lowered.references,
+            )
+        });
     // No part on any piece (a netlist import's stack without
     // `--reference`): the pieces, tabs and frames from the outline
     // alone are reported, nothing else changes.
@@ -179,7 +247,7 @@ fn place_sub_boards(
             &lowered.references,
         );
         eprintln!(
-            "placer: sub-boards: the outline falls into {} pieces (cut by {}; {} frames or rails by their shape) and no part lies on any: {} movable parts without a board (give --reference or a region per board)",
+            "placer: sub-boards: the outline falls into {} pieces (cut by {}; {} frames or rails by their shape) and no part lies on any: {} movable parts without a board",
             report.pieces,
             report.cut_by.join(", "),
             report.frames.len(),
@@ -187,7 +255,9 @@ fn place_sub_boards(
         );
         pieces.report = Some(report);
     }
-    let sub = detected.filter(|sub| sub.count(&lowered.problem) >= 2 || sub.has_frames());
+    let sub = detected.filter(|sub| {
+        sub.count(&lowered.problem) >= 2 || sub.has_frames() || !sub.confirmed_parts.is_empty()
+    });
     if let (Some(copies), Some(sub)) = (&pieces.copies, &sub) {
         pieces.report = Some(keep_copies_off_frames(copies, sub, lowered));
     }
@@ -197,6 +267,9 @@ fn place_sub_boards(
         let (report, held) = hold_in_sub_boards(pcb, sub, lowered);
         pieces.report = Some(report);
         pieces.held_sub_boards = held;
+    }
+    if let Some(report) = &mut pieces.report {
+        report.sheet_ownership = sheet_ownership;
     }
     Ok(())
 }

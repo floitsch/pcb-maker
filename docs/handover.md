@@ -1,4 +1,4 @@
-# Hand-over (state as of 2026-11-11; measured by layout sweep v38, the nightly of 2026-11-11 on main c0e40c3)
+# Hand-over (state as of 2026-11-18; measured by layout sweep v45, the nightly of 2026-11-18 on main 3b27f2d)
 
 Read this first. It says what the tool does today, which benchmarks
 count, what is known to be wrong, how to work on the code and what still
@@ -62,22 +62,22 @@ The line below and the next paragraph are rewritten by the nightly;
 [benchmarks.md](benchmarks.md) has the table of the last 14 nights.
 
 <!-- nightly-state:begin -->
-**Nightly** 2026-11-11 (main c0e40c30d391, `build/nightly/2026-11-11/summary.md`): fingerprints identical; expansion 26/46 (strict 26), 556 open; short 9/12 (strict 9), 16 open; sweep 69/109 (strict 70), 1552 open; designer 75/109 (strict 76), 2672 open at 0.613; gap placement 67%, routing 33%.
+**Nightly** 2026-11-18 (main 3b27f2d0eb93, `build/nightly/2026-11-18/summary.md`): fingerprints identical; expansion 26/46 (strict 26), 556 open; short 9/12 (strict 9), 16 open; sweep 70/109 (strict 71), 1451 open; designer 75/109 (strict 76), 2677 open at 0.595; gap placement 61%, routing 39%.
 <!-- nightly-state:end -->
 
-**Layout sweep v38** (the nightly of 2026-11-11, main c0e40c3, written
-by the nightly): **70 of 109 pass the strict rule** (69 the per-type
-rule), 1552 unconnected in all, strict errors 15, no row cut or killed,
+**Layout sweep v45** (the nightly of 2026-11-18, main 3b27f2d, written
+by the nightly): **71 of 109 pass the strict rule** (70 the per-type
+rule), 1451 unconnected in all, strict errors 15, no row cut or killed,
 3 without a result; medians against the designer's board: vias x0.65,
-length x0.98, open 0.000 (mean 0.063), bends x1.01, stair-steps +33.5,
-crossings +1. Against the nightly of 2026-11-10: better 0, same 106,
-worse 0, strict passes 70 -> 70. The matched designer tier on the same
-binary (budget scale 0.613): 76 strict passes (75 per type); over the
-100 target boards placement 67 %, routing 33 % of the open connections
-(placement 75 %, routing 25 % without MegaDrive).
-`build/nightly/2026-11-11/`; table, gap split, the costliest placements
+length x0.98, open 0.000 (mean 0.055), bends x0.99, stair-steps +31,
+crossings +0.5. Against the nightly of 2026-11-17: better 0, same 106,
+worse 0, strict passes 71 -> 71. The matched designer tier on the same
+binary (budget scale 0.595): 76 strict passes (75 per type); over the
+100 target boards placement 61 %, routing 39 % of the open connections
+(placement 69 %, routing 31 % without MegaDrive).
+`build/nightly/2026-11-18/`; table, gap split, the costliest placements
 and the losers in
-[benchmarks.md](benchmarks.md#layout-sweep-v38-2026-11-11).
+[benchmarks.md](benchmarks.md#layout-sweep-v45-2026-11-18).
 
 The stages, all on the committed task list `benchmarks/agent-tasks/tasks/v7`:
 
@@ -122,20 +122,39 @@ class can enter. They stay in the sweep and are not worked on.
 
 ## Open problems, ranked
 
+The first commercial comparison replayed a published two-layer starter
+project against all six Quilter layouts. Both tools closed every connection.
+KiCad found zero new layout errors on pcb-maker's board, and all seven
+layouts retained the starter's 21 parity warnings. The archived project
+settings changed the design-rule outcome, so the
+[comparison](benchmarks.md#published-quilter-placement-and-routing-comparison)
+includes both sets of rules. The [schematic benchmark](../benchmarks/from-schematic/README.md)
+accepts those inputs directly and checks connectivity, DRC, schematic
+parity and the requested placement constraints. For a board returned by
+another tool, pass `--candidate-board` with the same brief to verify the
+PCB without changing its placement or routing. The 109-board sweep
+remains the broader regression test. The 12-board schematic tier uses
+the designer's board for footprints and side assignments. Its
+`pass_schematic` gate requires zero schematic parity findings. The
+November 20 cold run accepted six boards, and ten passed the historical
+strict routing check. [Per-board results](benchmarks.md#the-tiers)
+
 The direction (Florian, 2026-11-04): placement is most of what stays
 open, so one placement bet at a time, each judged by the placer-default
 protocol (below); a lever that loses or is null is removed, not kept as
 an off switch; a fresh-agent trial every few days.
 
-1. **Placement: two thirds of what stays open.** On the 100 target
-   boards our layouts leave 706 connections open where the same binary
-   routing the designer's placement leaves 233 (nightly of 2026-11-10).
-   The costliest: Batch_1 (142 against 2), protoesp (87 / 1), Glasgow
-   (85 / 17), the OpenESC 4in1 (79 / 12), the 4in1-mini (88 / 37),
-   SmartSpin2k (51 / 0); protoesp's parts landed in the wrong breakaway
-   module, which `keep_in_modules` fixes (22 to 2 open by the median of
-   nine seeds; placer.md, "Modules of one board"). Pinning the designer's
-   non-passive parts (about a quarter of the movable parts) recovers most
+1. **Placement accounts for 61% of open connections.** On the 100
+   target boards the November 18 layouts leave 605 connections open.
+   The same router leaves 238 on the designer's placements. Batch_1
+   accounts for 140 of that difference. Its input leaves 387 movable
+   parts without a sub-board assignment. Add `--check-sub-boards` to
+   the layout command to verify a reference
+   or an explicit region brief before running it. Other large gaps are
+   Glasgow (85 open against 17), the two OpenESC boards (79 / 12 and
+   88 / 37), and SmartSpin2k (51 / 0). Placing protoesp's parts in
+   their breakaway modules brought its November 18 layout to three open.
+   Pinning the designer's non-passive parts (about a quarter of the movable parts) recovers most
    of the designer's first-route advantage, and our objective accepts that
    arrangement: the search does not reach it. Two losses:
    - *The coarse arrangement* is decided by the global placement. Its
@@ -216,20 +235,34 @@ an off switch; a fresh-agent trial every few days.
    connection and the via spoke rules; the reverse 389 to 387, 290 of them on the
    four slab-pcb results (a shredded F.Cu pour joined by tracks, which the
    dump chains only roughly).
-10. **The near misses.** Of the 39 boards the sweep fails, 18 are within
+10. **The near misses.** Of the 38 boards the November 18 sweep fails, 19 are within
     five connections and five errors of clean. The list changes nightly;
     a diagnosis takes the night's list (`summary.md`, `diff-sweep.txt`).
 11. **The agent flow's gaps.** A crowded side (90 to 99 %) that no exact
     test calls hopeless still runs the placer's levels to the budget; the
-    placer does not choose sides by itself. Starters are missing for LED
+    placer does not choose sides by itself. On the 164-part OpenFC
+    [mechanical brief](../benchmarks/from-schematic/openfc-mechanical.json),
+    a matched 180 s experiment moved 93 unconstrained internal SMT parts
+    to the back. Parts without a legal pose fell from 54 to two, and
+    parts with no pose at all fell from 30 to one. Assigning six more
+    connectors to the back instead, in a separately specified brief,
+    gave a legal placement and routed 80 of 82 connections. A side
+    choice for an external connector needs an explicit mechanical
+    allowance. The remaining pair in the 93-part experiment was U2 and
+    Card1. The failed-placement report now shows that Card1 needs at least
+    15.79 mm and the widest strip beside U2's region is 15.21 mm under
+    the body model. Assigning Card1 alone to the back of that layout
+    cleared the placement failure. With the current import and hole
+    clearance checks, the fresh schematic run kept all 97 constraints,
+    routed 80 of 82, and had no cross-footprint DRC errors.
+    Starters are missing for LED
     bars and other arrays, thumb clusters and column stagger. No tabs or
     mouse bites between outline pieces, and no automatic size for a
     polygon outline. A netlist board gets no router starter config (a
     power class for rails, a GND pour on two layers). Rows cannot turn
     every other line by half a turn (a bank whose facing pads share a
     net). A template's row without a `place` leaves parts without a
-    place. `describe-kicad-board` does not say when a class holds no net
-    while nets of its name sit in Default.
+    place.
 12. **The schematic import's friction.** Libraries outside the project
     found nowhere get a `missing` line without candidates further up;
     legacy `.mod` libraries are not read (convert them with `kicad-cli fp

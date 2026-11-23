@@ -252,11 +252,7 @@ pub fn body_on_side(
 /// stores as absolute values) consistent. Returns the written pose.
 pub fn write_footprint_pose(footprint: &mut Expr, pose: core::Pose) -> Result<[f64; 3], String> {
     let current = form_at(footprint)?;
-    let at = [
-        (pose.position[0] * 1.0e6).round() / 1.0e6,
-        (pose.position[1] * 1.0e6).round() / 1.0e6,
-        normalize_angle(pose.angle),
-    ];
+    let at = written_footprint_pose(pose);
     let delta = normalize_angle(at[2] - current[2]);
     set_form_at(footprint, at)?;
     // Zones inside a footprint (a U.FL's keepout) are in board
@@ -292,6 +288,15 @@ pub fn write_footprint_pose(footprint: &mut Expr, pose: core::Pose) -> Result<[f
         }
     }
     Ok(at)
+}
+
+/// A pose at the precision and angle convention written to a KiCad PCB.
+pub fn written_footprint_pose(pose: core::Pose) -> [f64; 3] {
+    [
+        (pose.position[0] * 1.0e6).round() / 1.0e6,
+        (pose.position[1] * 1.0e6).round() / 1.0e6,
+        normalize_angle(pose.angle),
+    ]
 }
 
 /// Moves every `xy` point below `node` (board coordinates) from a

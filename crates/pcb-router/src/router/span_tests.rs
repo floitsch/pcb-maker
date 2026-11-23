@@ -81,6 +81,7 @@ fn walled_board(layers: usize, spans: Vec<ViaSpan>) -> Board {
         label: label.into(),
     };
     Board {
+        fixed_pad_route_clearance: Default::default(),
         layer_count: layers,
         outline: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]],
         edge_clearance: 0.1,

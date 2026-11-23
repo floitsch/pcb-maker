@@ -43,12 +43,16 @@ pub mod aesthetics;
 pub mod board_router;
 pub mod check_work;
 pub mod cost;
+mod dangling_repair;
 pub mod necks;
 pub mod net_classes;
+pub mod open_repair;
+mod pad_path;
 pub mod pin_swap;
 pub mod project_rules;
 pub mod quality;
 pub mod settings;
+pub mod via_detour;
 
 // What the route flow reads from below without a path.
 use pcb_kicad_check::drc_cache::drc_cache_counts;
@@ -67,8 +71,21 @@ pub use board_router::{
     write_kicad_board_without_tracks_except,
 };
 pub use cost::{KiCadCost, KiCadFabQuote};
-pub use necks::{NeckRepair, repair_kicad_necks};
+pub use dangling_repair::{DanglingRepair, repair_kicad_dangling};
+pub use necks::{
+    HatchedNeckRepair, NeckRepair, RoundContactBridge, SupplementalNeckRepair, repair_kicad_necks,
+    widen_kicad_neck_tracks,
+};
 pub use net_classes::KiCadNetClassRequest;
+pub use open_repair::{
+    OpenRepair, PlaneEscapeRepair, ProtectedEscape, has_plane_escape_open, repair_kicad_opens,
+    repair_kicad_opens_locally, repair_kicad_opens_on_nets, repair_kicad_plane_escape,
+};
+pub use pad_path::{
+    PadPathShortening, ParallelFeed, ParallelFeedFill, ParallelFeedPublisher,
+    add_kicad_parallel_feed, schematic_decoupling_pair, shorten_kicad_decoupling_path,
+    shorten_kicad_pad_path,
+};
 pub use pin_swap::{
     KiCadPinChange, KiCadPinSwapConfig, KiCadPinSwapEstimate, KiCadPinSwapResult, KiCadPinSwapSpec,
     read_pin_swap_spec, swap_kicad_pins, swap_kicad_pins_in_place,

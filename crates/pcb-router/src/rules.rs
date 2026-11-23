@@ -15,7 +15,7 @@
 //! tells apart have classes of their own (their `group`), and builds its
 //! stamps and static maps per pair of classes from `Resolved::extra`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::board::{Board, Obstacle, ObstacleKind, RuleClass};
 
@@ -113,6 +113,9 @@ pub struct ClearanceRule {
     /// The copper layers (bit per router layer); 0: every layer.
     pub layers: u32,
     pub clearance: f64,
+    /// Actual fixed pad labels outside this rule, on either side of the
+    /// net pair. Tracks and vias on those nets still keep the rule.
+    pub except_pads: BTreeSet<String>,
 }
 
 impl ClearanceRule {
@@ -131,6 +134,7 @@ pub struct Resolved {
     pub net_group: Vec<usize>,
     /// The group of items of no net.
     pub no_net_group: usize,
+    pad_groups: BTreeMap<String, BTreeMap<Option<crate::NetId>, usize>>,
     /// Per layer: its variant (layers the same rules hold on, with the same
     /// track widths, share one).
     pub layer_variant: Vec<usize>,
@@ -150,17 +154,32 @@ pub struct Resolved {
 impl Resolved {
     pub fn new(rules: &NetRules, board: &Board) -> Self {
         let layers = board.layer_count;
-        // Which side of which rule a net is on.
-        let member = |side: &Option<Vec<String>>, name: Option<&str>| match (side, name) {
-            (None, _) => true,
-            (Some(names), Some(name)) => names.iter().any(|known| known == name),
-            (Some(_), None) => false,
+        let net_name = |id: crate::NetId| board.nets[id as usize].name.as_str();
+        let names = |net: Option<crate::NetId>| {
+            let aliases = net
+                .and_then(|id| board.attachment.clearance_aliases.get(&id))
+                .map_or([None; 2], |ids| ids.map(|id| Some(net_name(id))));
+            [net.map(net_name), aliases[0], aliases[1]]
         };
-        let signature = |name: Option<&str>| -> Vec<bool> {
+        let signature = |net: Option<crate::NetId>, pad: Option<&str>| -> Vec<bool> {
+            let names = names(net);
+            let member = |side: &Option<Vec<String>>| {
+                side.as_ref().is_none_or(|members| {
+                    members
+                        .iter()
+                        .any(|known| names.contains(&Some(known.as_str())))
+                })
+            };
             rules
                 .clearances
                 .iter()
-                .flat_map(|rule| [member(&rule.first, name), member(&rule.second, name)])
+                .flat_map(|rule| {
+                    let exempt = pad.is_some_and(|label| rule.except_pads.contains(label));
+                    [
+                        !exempt && member(&rule.first),
+                        !exempt && member(&rule.second),
+                    ]
+                })
                 .collect()
         };
         let mut signatures: Vec<Vec<bool>> = Vec::new();
@@ -176,9 +195,30 @@ impl Resolved {
         let net_group: Vec<usize> = board
             .nets
             .iter()
-            .map(|net| group_of(signature(Some(&net.name))))
+            .enumerate()
+            .map(|(id, _)| group_of(signature(Some(id as crate::NetId), None)))
             .collect();
-        let no_net_group = group_of(signature(None));
+        let no_net_group = group_of(signature(None, None));
+        let except: BTreeSet<&str> = rules
+            .clearances
+            .iter()
+            .flat_map(|rule| rule.except_pads.iter().map(String::as_str))
+            .collect();
+        let mut pad_groups: BTreeMap<String, BTreeMap<_, _>> = BTreeMap::new();
+        if !except.is_empty() {
+            for obstacle in &board.obstacles {
+                if !matches!(obstacle_kind(obstacle), Some(PAD | PLATED))
+                    || !except.contains(obstacle.label.as_str())
+                {
+                    continue;
+                }
+                let group = group_of(signature(obstacle.net, Some(&obstacle.label)));
+                pad_groups
+                    .entry(obstacle.label.clone())
+                    .or_default()
+                    .insert(obstacle.net, group);
+            }
+        }
         let groups = signatures.len();
 
         let layer_widths: Vec<Vec<LayerWidth>> = board
@@ -280,6 +320,7 @@ impl Resolved {
             groups,
             net_group,
             no_net_group,
+            pad_groups,
             layer_variant,
             variants,
             variant_layer,
@@ -315,6 +356,12 @@ impl Resolved {
 
     /// The group of an obstacle's net.
     pub fn obstacle_group(&self, obstacle: &Obstacle) -> usize {
+        if let Some(groups) = self.pad_groups.get(&obstacle.label)
+            && matches!(obstacle_kind(obstacle), Some(PAD | PLATED))
+            && let Some(&group) = groups.get(&obstacle.net)
+        {
+            return group;
+        }
         obstacle
             .net
             .map_or(self.no_net_group, |net| self.net_group[net as usize])

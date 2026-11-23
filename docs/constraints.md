@@ -27,7 +27,8 @@ takes the constraints inline.
  "keepout":  [{"x": [30, 40], "y": [0, 10], "side": "front", "copper": true}],
  "back":     ["BT1", "R1?"],
  "hollow":   ["SHIELD1"],
- "near":     [{"part": "C1", "pin_of": "U1:48", "max_mm": 3},
+ "module_nonoverlap": [{"parts": ["U7", "U8"], "layer": "Eco2.User", "min_gap_mm": 0.5}],
+ "near":     [{"part": "C1", "pad": "1", "pin_of": "U1:48", "max_mm": 3},
               {"part": "U2", "part_of": "J4", "max_mm": 10}],
  "relative": [{"part": "J4", "below": "U3", "max_gap_mm": 3}],
  "group":    [{"parts": ["U3", "L1", "C5?"], "max_mm": 4}],
@@ -53,7 +54,9 @@ it is about one footprint: the one whose `uuid` the entry gives
 footprint's `uuid`, or `tstamp` in KiCad 5 to 7 files, as
 `describe-kicad-board` lists it), or without one, in turn: the n-th entry
 of that kind for the reference is about its n-th footprint in board
-order. A `uuid` no footprint of that reference has is an error. A
+order. A `uuid` no footprint of that reference has is an error. Exact
+`place` entries that resolve to the same footprint must agree on its
+position and on any specified angle. A
 `near` or `relative` entry for it is about its first footprint in board
 order, and its anchor (`pin_of`, `part_of`, `below`, ...) about the
 anchor reference's footprint that shares the most nets with that one
@@ -65,9 +68,9 @@ downwards, so `top` is the smaller y.
 | Key | Meaning | Kind |
 | --- | --- | --- |
 | `outline` | The board becomes a `width` × `height` rectangle, replacing the board's Edge.Cuts. `x`/`y` place its top-left corner (default: the old outline's corner; without one, centred on the footprints). Parts lying entirely off the new board are placed, not kept. A `polygon`, round corners (`corner_radius`), holes (`cutouts`) and several `pieces`: see [Outlines that are not rectangles](#outlines-that-are-not-rectangles). Leave out `width` and `height` and the board is sized from its parts: `area_factor` times their total body area, at `aspect` width/height (default 1.5), with both sides kept within 100 mm when the area allows (the cheap fabs' flat price, see [cost.md](cost.md)). Without `area_factor`, `layout-kicad-board` starts where designers do (2 on two layers, 1.5 on more: the medians of 616 open-source boards are 1.9 and 1.4) and grows the board by a quarter, up to three times, while the parts do not fit or a quick route leaves connections open; with `"shrink": true` it instead shrinks a board that routes by a fifth while it still routes (the smallest board). The sizes tried are in `board-layout.json` as `outline_sizing`; the size used is reported as `outline_mm`. | board |
-| `move_all` | Every footprint is placed, unless locked or named by `fixed`; mounting holes no constraint names go to the corners, then to the middle of the edges (reported as `edge` constraints). Use it for a board fresh from a netlist, or to lay out a placed board anew: where the parts start does not matter (lpc1311-target-v1 placed from the designer's positions and from one stack came out the same, part for part, 2026-10-26; the angles neither, [placer.md](placer.md)), so there is no need to stack them first. Without it, default rules keep parts that look deliberately placed: connectors at the edge, parts over the outline. | board |
+| `move_all` | Every footprint is placed, unless locked or named by `fixed`. Unspecified mounting holes get corner positions first, then edge positions. If a hole cannot fit at its preferred corner, the placer tries the adjoining edges. Selected edges appear in the constraint report. Use it for a board fresh from a netlist, or to lay out a placed board anew. The parts can start at their previous poses (lpc1311-target-v1 placed from the designer's positions and from one stack came out the same on 2026-10-26, [placer.md](placer.md)). Without `move_all`, default rules keep parts that look deliberately placed, such as connectors at the edge or parts over the outline. | board |
 | `fixed` | These parts keep the pose they have in the board file. | hard |
-| `place` | Where one part goes, in words or exactly. `at`: `left`, `right`, `top`, `bottom` (on that edge, as `edge` with the default 1 mm), `top-left`, `top-right`, `bottom-left`, `bottom-right` (in that corner), `center` (the middle third both ways), `left-half`, `right-half`, `top-half`, `bottom-half`, or `front`/`rear`. Or `x`, `y` (the footprint's origin; `origin` as for `region`) and optionally `angle`: the part is put there and kept (listed as kept, `place`, in board-layout.json's `constraints`). | hard |
+| `place` | Where one part goes, in words or exactly. `at`: `left`, `right`, `top`, `bottom` (on that edge, as `edge` with the default 1 mm), `top-left`, `top-right`, `bottom-left`, `bottom-right` (in that corner), `center` (the middle third both ways), `left-half`, `right-half`, `top-half`, `bottom-half`, or `front`/`rear`. Or give the footprint origin as `x` and `y` with optional `angle`. The part is held at that pose and reported in `constraints` in `board-layout.json`. If the board's perimeter is unfinished until held connectors move into place, use `"origin": "absolute"` for each footprint that contributes to it. The resulting `Edge.Cuts` graphics must close. | hard |
 | `add` | Parts the board needs and the schematic does not have: mounting holes plated on a net, a footprint for another switch, a test point. `import-kicad-netlist` puts them on the board (see [Parts the schematic does not have](#parts-the-schematic-does-not-have-add)); the layout keeps those with `x` and `y` there, as `place` does. | hard |
 | `device_front` | The board edge the device's front is at (`left`, `right`, `top`, `bottom`), so that `place` can say `front` (a button the user presses) and `rear` (the power jack). | board |
 | `rotation` | The part may only take these KiCad orientations (degrees). | hard |
@@ -76,9 +79,10 @@ downwards, so `top` is the smaller y.
 | `edge.overhang` | The part reaches beyond `overhang.edge` with its footprint's keepout zone (an ESP32 module's antenna). The keepout lies outside the board, flush with the edge; the rest of the body inside. Only orientations that point the keepout at that edge are allowed. The footprint must have a keepout zone. | hard |
 | `region` | The bodies stay inside the box. By default `x`/`y` are relative to the top-left corner of the outline's bounding box; `"origin": "absolute"` uses board coordinates. In place of `x` and `y`, `at` names a part of the outline's box in words: `left-half`, `right-half`, `top-half`, `bottom-half` or `center` (the middle third both ways), whatever size the outline gets (a keyboard half on an outline sized from the parts). | hard |
 | `keepout` | No part's body enters the box (`x`, `y` and `origin` as for `region`) on `side` `front`, `back` or `both` (default). With `"copper": true` no track, via or pour enters it either (under an antenna, for a label or a mechanical part). The box is written to the board as a KiCad rule area named `constraint keepout N`, so KiCad's DRC checks it too; placing again with the same constraints replaces it. A box that meets the courtyard of a part the placer keeps where it is (decided as the lowering decides it, `held_parts`: the placer's `fixed` and `fixed_patterns`, this file's `fixed` and parts it places with `x` and `y`, and by default locked parts, parts without a net and parts at the edge, unless `free`, a constraint naming them or `move_all` frees them) is written with footprints allowed: KiCad would report that part, put there on purpose; the placer keeps movable parts out by the area's name all the same, and with `"copper": true` tracks, vias and pours stay out for KiCad too (the held part's pads inside the box are then reached from outside it only). The input check warns of such a box before the run (the log and the verdict's next_actions), and of two held parts on top of each other (their courtyards on one side sharing half the smaller one, or their pads meeting on a copper layer), naming both. | hard |
-| `back`, `front` | These parts go on the bottom (top) side. A part on the other side is flipped as KiCad flips it (mirrored, layers swapped) before placement; it is then placed like any other. A part named in both is an error. | hard |
+| `back`, `front` | These parts go on the bottom (top) side. A part on the other side is flipped as KiCad flips it (mirrored, layers swapped) before placement. A locked part retains its origin unless another placement constraint moves it. Assigning its current face preserves the full locked pose. A part named in both is an error. | hard |
 | `hollow` | Only these parts' pads (and holes) block other parts; the rest of their courtyard may hold parts: a shield's outline around its headers, a module mounted above parts. Parts with holes (through-hole parts, mounting holes) still stay out of the courtyard, as KiCad's DRC forbids holes inside one; where the courtyard is drawn as several separate shapes (a Raspberry Pi outline marking only its connectors), only those shapes. KiCad's DRC will report the courtyard overlap it allows. Usually fixed as well. | hard |
-| `near` | The gap between the part's body and another part's body (`part_of`) or a pad (`pin_of`, `REF:PAD`) is at most `max_mm`. | soft |
+| `module_nonoverlap` | The mounted outlines of the listed modules must clear each other when mounted on the same face. Each must have a unique reference and a closed convex footprint contour on the specified graphics layer. See [Mounted module outlines](#mounted-module-outlines). | hard |
+| `near` | The gap between the part's body and another part's body (`part_of`) or a pad (`pin_of`, `REF:PAD`) is at most `max_mm`. Set `pad` to a pad number on `part` alongside `pin_of` to measure the straight-line distance between the two pad centres. With both pad identities, `minimize: true` requests the smallest feasible distance the placer can find. Each named pad must have one centre. | soft |
 | `group` | The parts (references or globs) stay together: each body within `max_mm` of the central part's body, `around` (default: the largest member). Reported as one `near` per member. | soft |
 | `row` | The parts (in the order given; a glob's parts in natural order, D2 before D10) lie in a line along the board's `axis` (`x`, default, or `y`), `pitch_mm` apart, turned alike. With `columns`, the parts fill a grid line by line (a keyboard's switches), the lines `row_pitch_mm` apart (default `pitch_mm`). The row is placed as one part: it moves and turns (by half turns) as a whole. Its parts keep, within the row, the angle they have on the board; for parts that stand a quarter turn from the row's line (vertical jacks down a narrow board) give the row the other axis and its first part a `rotation` a quarter turn from its angle: trial 6's eight jacks (12 x 18.2 mm) down a 110 mm eurorack board at 13.79 mm were `"axis": "x"` with `"rotation": [{"part": "J11", "angle": 90}]`, the parts given J11 first (with `"axis": "y"` the row was 114.7 mm long and refused); the refusal says so where the turned parts fit (since 2026-11-04). The row runs from its first part along the axis in that part's frame: `x` turned 90 degrees runs up the board (towards smaller y), 270 down, so a placed first part goes at the end the row leaves from; a `place` that sends the row off the board is refused (since 2026-11-04; trial 6's J4 placed at the top, turned 90, had its seven jacks 96 mm beyond the outline). Other constraints name its first part only, and then hold the whole row (`"below": "SW1"` is below the grid); naming another part of a row is an error. The exception: `near`'s `part_of` and `pin_of` may name any part of a row (a keyboard's diode at its switch), measured to that part's place in the row and reported against it. A pitch at which two members' pads meet, or pads of two nets come closer than the copper clearance (every member takes the first part's angle, so two lines of a bank face each other with opposite nets), is refused before the run with the pitch needed along the board's axis and the setting it is: `pitch_mm` for neighbours in a line, `row_pitch_mm` for two lines of a grid (since 2026-11-08; trial 8's bank of capacitors was told "pitch_mm" with the parts' size in their own frame while its lines were too close, and a row whose lines cleared by 0.1 mm left 16 clearance findings). `describe-kicad-board --constraints-template` writes the row for a bank of parts on two nets, with the pitches from their pads, in a `bank:` comment ([agents.md](agents.md#1-look-at-the-board)). | hard |
 | `apart` | Every body of `parts` stays at least `min_mm` from every body of `from` (references or globs): a temperature sensor away from the regulator, an audio input away from the switcher. Reported per pair. | soft |
@@ -99,6 +103,40 @@ relation, and router nudges may not make a violated one worse. When the
 geometry makes a soft constraint impossible, the placement comes as close as
 it can, and the report says by how much it misses.
 
+## Mounted module outlines
+
+Use `module_nonoverlap` when a plug-in board's footprint courtyard covers
+its connectors and a separate footprint graphics layer describes its full
+mounted body. Declare at least two exact, unique references per group.
+Choose modules that require clearance from one another on the same mounting
+face, such as two daughterboards mounted at the same height.
+
+Each footprint needs one closed convex contour without cutouts on the named
+layer. Lines, rectangles, polygons, arcs, circles and Bézier curves are
+supported. Curves use the same chord tolerance as board outlines. The layer
+can be written as `Eco2.User` or `User.Eco2`. Modules use their placed
+orientation and mounting face. Set `min_gap_mm` to the shortest
+contour-to-contour gap you need, including around corners. It defaults to
+zero, which permits touching contours. Other
+footprints, including parts beneath the modules, continue to use the board's
+ordinary placement checks.
+The host board's edges continue to use the existing footprint and pad rules.
+
+Legalization looks for seats for each pair together using the board geometry
+and the positions of held parts. A found pair is placed before the smaller
+footprints. Subsequent refinement can move either unheld module while
+keeping the declared clearance. On a whole board with several placement
+seeds, one seed also starts by arranging the other footprints around
+the planned module seats. It rechecks the result using the original
+placement constraints before selection.
+
+A report entry with `kind: "module_nonoverlap"` identifies both references
+and the graphics layer. `distance_mm` measures the shortest contour
+separation for modules on the same face. `violation_mm` gives the gap
+shortfall, including the separation required if the contours overlap.
+A missed gap between held modules makes placement incomplete. Move or
+rotate a module or update the holds and rerun placement.
+
 ## What comes back
 
 `board-placer.json` (placement) and `board-layout.json` (place and route)
@@ -109,10 +147,65 @@ list every constraint:
   {"kind": "edge", "part": "U3", "satisfied": true, "violation_mm": 0.0},
   {"kind": "overhang", "part": "U3", "satisfied": true, "violation_mm": 0.0},
   {"kind": "near", "part": "C5", "other": "U3", "satisfied": false, "violation_mm": 3.235},
+  {"kind": "near", "part": "C1", "other": "U1", "satisfied": true, "violation_mm": 0.0, "distance_mm": 2.46},
   {"kind": "rotation", "part": "J1", "satisfied": true, "violation_mm": 0.0},
   {"kind": "back", "part": "BT1", "satisfied": true, "violation_mm": 0.0}
 ]
 ```
+
+An explicit body-to-pin `near` row reports the measured
+`distance_mm` and checks the requested `max_mm` with a 1 nm numerical
+allowance. On a miss, `violation_mm` is the excess over the requested
+limit. The placement search still allows 0.05 mm for grid snapping.
+
+Pad-to-pad rows report `distance_mm` and a `pad_near` object with both pad
+identities, the unrounded distance, the requested limit and any overage.
+The centres follow each footprint's orientation and side. Placement and
+layout verdicts use `pad_near.satisfied`, with the same 1 nm allowance.
+The placement race and routing nudges preserve pad pairs that already
+meet their limit. Other relation types retain their existing tolerances.
+
+A missed numeric body-to-pin or pad-to-pin request may also have a
+`near_geometry` object. `minimum_at_target_pose_mm` is a lower bound
+using the target pose listed in `target_at`, the modeled footprint
+bodies and their sides, and the reported `body_spacing_mm`. It checks
+every allowed quarter-turn source orientation and uses the board's
+bounding box as the available area. `faces_without_room` identifies
+target faces that leave too little width or height for the source body.
+Other parts, cutouts and copper clearance can increase the distance.
+The verdict names the exact target pin. A different permitted target
+pose or source side can change the bound.
+
+Use `{"part":"C1","pad":"1","pin_of":"U1:48","minimize":true}`
+when the brief asks to get two pads as close as the placement permits.
+Omit `max_mm` for this objective. The placer tries allowed source angles
+and nearby body faces using the usual clearance and outline checks.
+It reports a `pad_near_objective` row with `pad_near.measured: true`,
+both pad identities and the unrounded distance. This row carries no
+distance requirement and cannot fail acceptance.
+
+With multiple placement seeds, the placer can try transferring local
+pad poses into another seed's more compact arrangement. It also tries
+bounded placement drafts using measured seed distances to guide the
+search. It checks each transfer against the original placement rules and
+uses a candidate only if it lowers modeled wirelength and no objective
+is farther away by more than 0.001 mm. When kept,
+`board-placer.json` records the parent and individual transfers in
+`pad_objective_composition`. `pad_objective_search_work_seconds` reports
+the extra placement work when the search runs.
+
+Set `"placer": {"tuning": {"refine_pad_near": true}}` in the layout settings
+to let movable sources of explicit pad-to-pad constraints take positions
+between grid points. The refinement uses the requested `max_mm` directly,
+keeps the original clearance and outline checks, and preserves the other
+relations. It keeps each source's side and angle and skips parts held at an
+edge or in a row.
+When a strict pad distance is missed and the source can move, the verdict
+offers this setting as a retry if it was off for the run.
+For a targeted placement retry, use the copper-free starter with exact
+`place` entries for the footprints whose previous poses you want to keep.
+Run layout into a fresh directory and compare the measured pad distances,
+total track length and KiCad check with the previous result.
 
 `back`, `front`, `rotation` and an edge's `opening_outwards` are kept by
 construction (the placer never changes a part's side or takes an angle
@@ -169,6 +262,44 @@ joins to fixed parts on one piece stay on that piece (as a `region`);
 `"keep_on_pieces": false` switches it off. (The placer option
 `bus_rows`, rows of identical bus parts, was off, won nothing and was
 removed on 2026-10-16; a placer config that sets it is rejected.)
+
+Use `sub_board` to confirm which physical panel piece holds particular
+electrical footprints. Each entry names exact footprint references and
+an absolute point in millimetres inside the piece:
+
+```json
+{"version": 1, "sub_board": [{"piece_at_mm": [14.5, 22.0], "parts": ["U4", "C18"]}]}
+```
+
+The point identifies an outline piece and leaves the listed parts free to
+move within it. Tabs and off-board points cannot identify a piece.
+The placement reports verify that the listed electrical pin centers lie on
+the chosen piece. Existing physical clearance, courtyard and overhang
+constraints still apply. Use `--check-sub-boards` beforehand to see
+pieces, assignments, and suggested entries backed by fixed sheet members.
+
+Use `placement_courtyard` to supply a measured envelope for a footprint
+side that lacks a KiCad courtyard. Each rectangular bound uses the
+front-mounted library footprint's local axes and origin:
+
+```json
+{
+  "version": 1,
+  "placement_courtyard": [
+    {"parts": ["SW1", "SW2"], "model_side": "front", "bounds_mm": [-6.835, -6.99, 8.196, -0.6]}
+  ]
+}
+```
+
+`bounds_mm` gives minimum X, minimum Y, maximum X, and maximum Y.
+`model_side` selects the courtyard side in that same library orientation.
+On a back-mounted footprint the model swaps the side and mirrors the
+local Y coordinates. The placer rotates the envelope with the footprint.
+The declaration can fill a missing side and keeps the pad, drill and
+opposite-side geometry. It cannot replace existing artwork on the
+declared courtyard layer or apply to a part declared `hollow`.
+`board-placer.json.placement_courtyard` records the declarations.
+The generated KiCad PCB still carries its original footprint geometry.
 
 The board's own texts and silkscreen graphics need no constraint: a
 visible board text or text box on F.SilkS, B.SilkS, F.Cu or B.Cu (by
@@ -493,10 +624,55 @@ schematic parity check leaves them out; their pads are routed like any
 other. The import reports each in `added`. The layout refuses an `add`
 part the board does not have (an input error that says to import again).
 
+## Allow additional parts on the back
+
+Set `placer.allow_back` in the layout settings to name front-side SMD
+parts that may go on the back. The list accepts references and glob
+patterns, for example `"allow_back": ["U2", "C*", "R*"]` inside the
+`placer` object. When the front exceeds the reported packing target
+(70% of estimated usable area), the placer can move permitted bodies to
+the rear until both sides fit the target or it exhausts the candidates.
+It can also use the rear when two same-side bodies cannot fit around a
+region. If only one eligible front-side part is unplaced after the
+normal search, the placer also checks
+for a rear fit with the other poses held. If it finds a fit without
+permission to use it, the verdict names the part to add to `allow_back`.
+A region constrains position on either face, so an eligible region part
+can change sides.
+The remaining placement and routing steps check the resulting board
+under the original constraints and project rules.
+
+Use `front` or `back` in the mechanical brief to require a particular
+side. `allow_back` leaves explicit sides and held poses in force, and
+skips through-hole and mixed-side footprints. The placement report
+lists the references selected for the rear side in `back_side_assignments`.
+
+When a single automatically selected rear footprint has no legal pose,
+layout can retry with that footprint on the front. It starts from the
+failed run's poses, recomputes the other allowed rear assignments, and
+keeps the retry only if all parts and placement requirements pass. Layout
+reserves one native check and plans the trial for up to 35 modeled
+seconds and 40% of the remaining work. A final bounded step can use
+additional work, which the layout charges in full. The
+`automatic_rear_retry` result records the outcome, work, and exact
+footprint. If the layout remains
+blocked, the verdict gives the corresponding edit to the brief's
+`front` list. The existing `allow_back` permissions still apply.
+
+On the 80 × 49 mm Glasgow holdout, the mechanical brief holds 14 poses.
+Permitting rear placement of `C*`, `R*` and `FB*` lets the placer
+select 94 passives and place all 257 footprints, with the estimated
+front utilization falling from 93.1% to 69.9%. With the 180-second
+modeled layout budget, KiCad still reports 70 open items.
+
+On the same board with no rear permission, the failed layout's
+`rear_placement_recovery.allow_back_additions` listed 162 eligible
+passives. A replay that approved those exact references selected the same
+94 and preserved all 14 held poses. When the brief explicitly required
+every remaining part on the front, the verdict omitted the suggestion.
+
 ## Not supported yet
 
-- Choosing sides automatically: parts stay on their side unless `back` or
-  `front` names them.
 - Routing intent in the constraints: differential pairs and length
   matching come from the project's custom rules and the router config
   (`diff_pairs`, `length_matching`; [agents.md](agents.md)), not from
@@ -536,8 +712,11 @@ below it on the same edge; the regulator between them. With its
 (56.8, 52.9). It meets every hard constraint and the distance limits for U2,
 C3 and C4. It reports two limits as missed:
 
-- **C5/C6 within 6 mm of U3 pin 3.** The pad sits 8.4 mm inside the
-  module's courtyard, so no part on the board can come that close; the
-  designer's own placement misses it by the same amount.
+- **C5/C6 within 6 mm of U3 pin 3.** At U3's reported pose on the front,
+  the left and top edges leave no room for either capacitor's body on
+  those faces. The nearest remaining face is below U3. The pad is 8.2 mm
+  from that face and the placement keeps 0.2 mm between the bodies, giving
+  an 8.4 mm lower bound on the front. A separate rear-mounted control for
+  C5/C6 keeps both 6 mm limits.
 - **J4 at most 3 mm below U3.** This conflicts with C5/C6 sitting between
   them.

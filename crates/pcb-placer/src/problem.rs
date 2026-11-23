@@ -121,6 +121,10 @@ pub struct Component {
     /// too, as it checks pads (osprey's AE1: its B.Cu polygon over the
     /// battery cutout's edge, 0.0 mm against 0.25).
     pub copper_graphics: Vec<[f64; 4]>,
+    /// Unassigned copper graphics on the footprint's own outer side.
+    /// They require clearance from pads and other unassigned copper on
+    /// that side even when the courtyard or blocking boxes may touch.
+    pub unassigned_copper_graphics: Vec<[f64; 4]>,
     /// For a footprint without a courtyard: its body as a courtyard would
     /// give it, the box of its pads, copper graphics and fabrication
     /// outline (else its silkscreen outline), KiCad's courtyard clearance

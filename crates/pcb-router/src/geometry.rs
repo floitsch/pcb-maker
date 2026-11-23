@@ -7,7 +7,7 @@
 pub type Point = [f64; 2];
 
 /// A filled copper or keepout shape. Distances are zero inside the shape.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Shape {
     Circle {
         center: Point,

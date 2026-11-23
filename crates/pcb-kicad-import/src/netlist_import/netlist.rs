@@ -54,8 +54,8 @@ pub(super) fn find_libraries(
 
 /// Nets by (reference, pin): name, pin function and type, and the number of
 /// named nets.
-pub(super) fn pin_nets(netlist: &Expr) -> (BTreeMap<(String, String), PinNet>, usize) {
-    let mut pins: BTreeMap<(String, String), PinNet> = BTreeMap::new();
+pub(super) fn pin_nets(netlist: &Expr) -> (PinNets, usize) {
+    let mut pins = PinNets::new();
     let mut nets = 0;
     if let Some(section) = netlist.child("nets") {
         for net in section
@@ -76,14 +76,11 @@ pub(super) fn pin_nets(netlist: &Expr) -> (BTreeMap<(String, String), PinNet>, u
                 else {
                     continue;
                 };
-                pins.insert(
-                    (reference, pin),
-                    (
-                        name.clone(),
-                        text_of(node, "pinfunction"),
-                        text_of(node, "pintype"),
-                    ),
-                );
+                pins.entry((reference, pin)).or_default().push((
+                    name.clone(),
+                    text_of(node, "pinfunction"),
+                    text_of(node, "pintype"),
+                ));
             }
         }
     }
@@ -105,14 +102,4 @@ pub(super) fn symbol_path_of(component: &Expr) -> Option<String> {
             format!("{sheet}/")
         }
     ))
-}
-
-/// Every symbol's path, so that a board footprint linked to one symbol is
-/// not taken for another of its reference.
-pub(super) fn symbol_paths(components: &[Expr]) -> BTreeSet<String> {
-    components
-        .iter()
-        .filter(|item| item.head() == Some("comp"))
-        .filter_map(symbol_path_of)
-        .collect()
 }

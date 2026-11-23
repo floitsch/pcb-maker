@@ -118,7 +118,10 @@ impl<'a> Finish<'a> {
                 eprintln!("diff pair link {} path {:?}", plan_link.net, path);
             }
             let (copper, alternative) = link_coppers(path.as_ref(), pair, plan_link);
-            let missing = missing_stubs(&self.restored, result, pair, plan_link);
+            let layers = copper.as_ref().map(LinkCopper::stub_layers);
+            let missing = layers.map_or_else(Vec::new, |layers| {
+                missing_stubs(&self.restored, result, pair, plan_link, layers)
+            });
             let stubs_joined = missing.is_empty();
             if copper.is_some() && !stubs_joined && debug() {
                 eprintln!(
@@ -128,8 +131,11 @@ impl<'a> Finish<'a> {
                     plan_link.fixed
                 );
             }
-            if copper.is_some() && !stubs_joined && pairs_why() {
-                self.open_stubs_why(result, plan_link, why);
+            if let Some(layers) = layers
+                && !stubs_joined
+                && pairs_why()
+            {
+                self.open_stubs_why(result, plan_link, layers, why);
             }
             // Its copper is checked with the others; the stubs it lacks are
             // routed after that (`repair_stubs`).
@@ -185,12 +191,21 @@ impl<'a> Finish<'a> {
     /// that does not reach the run, its geometry (`stub_why`) and, where
     /// its net is open, what keeps its pad from its stub's end
     /// (`stub_blocked`) with the hard repair's record and the dead pads.
-    fn open_stubs_why(&self, result: &core::RoutingResult, plan_link: &LinkPlan, why: &WhyRecord) {
+    fn open_stubs_why(
+        &self,
+        result: &core::RoutingResult,
+        plan_link: &LinkPlan,
+        layers: [[Option<usize>; 2]; 2],
+        why: &WhyRecord,
+    ) {
         let plan = self.plan;
         let (board, link) = (self.board, plan_link.link);
         let pair = &plan.pairs[plan_link.pair];
         for end in (0..2).filter(|&end| !plan_link.fixed[end]) {
             for (polarity, net) in [(0, pair.positive), (1, pair.negative)] {
+                let Some(layer) = layers[end][polarity] else {
+                    continue;
+                };
                 let line = stub_why(
                     &self.restored,
                     result,
@@ -198,7 +213,7 @@ impl<'a> Finish<'a> {
                     end,
                     polarity,
                     net,
-                    (pair.width, stub_reach(pair, result, net)),
+                    (pair.width, stub_reach(pair, result, net), layer),
                 );
                 if line.is_some() && result.status[net as usize] != core::NetStatus::Routed {
                     let blocked = stub_blocked(
@@ -345,12 +360,14 @@ fn link_copper_at(
             }
             // The stubs the link carries, from the pads.
             if plan_link.fixed[0]
+                && core::geometry::distance(plan_link.stubs[0][polarity], from) > EPSILON
                 && let Some(&(layer, _, _)) = segments.first()
             {
                 segments.insert(0, (layer, plan_link.stubs[0][polarity], from));
                 front += 1;
             }
             if plan_link.fixed[1]
+                && core::geometry::distance(plan_link.stubs[1][polarity], to) > EPSILON
                 && let Some(&(layer, _, _)) = segments.last()
             {
                 segments.push((layer, to, plan_link.stubs[1][polarity]));
@@ -361,7 +378,7 @@ fn link_copper_at(
             for polarity in 0..2 {
                 copper.vias[polarity].extend(crossing.vias[polarity].iter().copied());
             }
-            copper.crossovers += 1;
+            copper.crossovers += usize::from(crossing.vias.iter().any(|vias| vias.len() == 2));
         }
         copper
     })
@@ -463,17 +480,21 @@ pub(super) fn stub_reach(pair: &Pair, result: &core::RoutingResult, net: core::N
 /// The stubs (end, polarity) of a link's ends the router routes that do
 /// not reach their end of the run (`stub_joined`): each pad's stub must
 /// (else the run is an island and the pad open).
-fn missing_stubs(
+pub(super) fn missing_stubs(
     restored: &core::Board,
     result: &core::RoutingResult,
     pair: &Pair,
     plan_link: &LinkPlan,
+    layers: [[Option<usize>; 2]; 2],
 ) -> Vec<(usize, usize)> {
     (0..2)
         .filter(|&end| !plan_link.fixed[end])
         .flat_map(|end| [(end, 0), (end, 1)])
         .filter(|&(end, polarity)| {
             let net = [pair.positive, pair.negative][polarity];
+            let Some(layer) = layers[end][polarity] else {
+                return true;
+            };
             !stub_joined(
                 restored,
                 &result.routes[net as usize],
@@ -482,7 +503,7 @@ fn missing_stubs(
                     plan_link.pads[end][polarity],
                     plan_link.pads[1 - end][polarity],
                 ),
-                plan_link.stub_end(end, polarity, pair.width),
+                (layer, plan_link.stub_end(end, polarity, pair.width)),
                 stub_reach(pair, result, net),
             )
         })
@@ -511,13 +532,48 @@ pub(super) fn check_candidates(
     routes: &[core::NetRoute],
     pairs: &[Pair],
     candidates: &mut Candidates,
+    config: &KiCadBoardRouterConfig,
 ) -> Vec<Option<String>> {
+    let plated_gaps = candidates
+        .links
+        .iter()
+        .filter(|link| link.plated_gap)
+        .map(|link| {
+            let pair = &pairs[link.pair];
+            (
+                (
+                    pair.positive.min(pair.negative),
+                    pair.positive.max(pair.negative),
+                ),
+                pair.gap,
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let split = config
+        .net_rules
+        .as_deref()
+        .filter(|rules| !plated_gaps.is_empty() && !rules.is_empty())
+        .map(|rules| core::rules::ClassRules::split(restored, rules));
+    let (board, rules) = split
+        .as_ref()
+        .map_or((restored, None), |(board, rules)| (board, Some(rules)));
+    let check = |groups: &[Group]| {
+        super::check::refused_groups_with_pair_gaps(
+            board,
+            routes,
+            pairs,
+            groups,
+            0.0,
+            rules,
+            &plated_gaps,
+        )
+    };
     let groups: Vec<Group> = candidates
         .coppers
         .iter()
         .map(|(index, _, copper)| group_of(*index, copper))
         .collect();
-    let mut refused = refused_groups(restored, routes, pairs, &groups);
+    let mut refused = check(&groups);
     // A refused link with another clean copper (`centrelines`) is checked
     // again with it, beside every other link's, until one holds or none is
     // left.
@@ -540,7 +596,7 @@ pub(super) fn check_candidates(
                 group_of(*index, copper)
             })
             .collect();
-        let again = refused_groups(restored, routes, pairs, &second);
+        let again = check(&second);
         for position in 0..candidates.coppers.len() {
             if !swapped[position] {
                 continue;

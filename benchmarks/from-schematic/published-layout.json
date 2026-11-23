@@ -1,0 +1,56 @@
+{
+  "publication": "https://github.com/vertical-cloud-lab/powder-doser/issues/95#issuecomment-4723991102",
+  "run_date": "2026-06-10",
+  "board_id": "test_module_unplaced",
+  "source_commit": "cfea9ddb597c084dd4d8666bafe55d0c60d6df26",
+  "source_files": {
+    "test_module_unplaced.kicad_pcb": {
+      "sha256": "e0974f93db6d8d81b6f5a450126b5c24651cc53ca2d8ae6bf90b79dae6892ed2",
+      "git_blob": "e8ce58317a98e5e940f19b2ffd12568ee8d338aa",
+      "url": "https://raw.githubusercontent.com/vertical-cloud-lab/powder-doser/cfea9ddb597c084dd4d8666bafe55d0c60d6df26/paper/background/starter_board/test_module_unplaced.kicad_pcb"
+    },
+    "test_module_unplaced.kicad_pro": {
+      "sha256": "1855d2fca02f2d2916549e5cbefda0f497821b8a634baafeb3e4966c7a80eed5",
+      "git_blob": "aba658e8b16990e4fe44c70a1e7f1378ea5845b9",
+      "url": "https://raw.githubusercontent.com/vertical-cloud-lab/powder-doser/cfea9ddb597c084dd4d8666bafe55d0c60d6df26/paper/background/starter_board/test_module_unplaced.kicad_pro"
+    },
+    "test_module_unplaced.kicad_sch": {
+      "sha256": "02f9f08f849777d8cd0ca15d4510583d4858aff8f283dd8049a74964044710f3",
+      "git_blob": "28b78d94ecced685112b584814a2d4d61999b914",
+      "url": "https://raw.githubusercontent.com/vertical-cloud-lab/powder-doser/cfea9ddb597c084dd4d8666bafe55d0c60d6df26/paper/background/starter_board/test_module_unplaced.kicad_sch"
+    }
+  },
+  "returned_project_sha256": "2e2f1c0fb0898e9c98939e0aa84fc3d2410555901bd574aa169daeb735f88a93",
+  "candidates": [
+    {
+      "id": "quilter-1",
+      "url": "https://github.com/user-attachments/files/29022776/Quilter_test_module_unplaced.kicad_pcb_Candidate_1.zip",
+      "sha256": "5a634309961d264ff52e8f809bd4624ba4fe2df5086d17a5c632de9654849786"
+    },
+    {
+      "id": "quilter-2",
+      "url": "https://github.com/user-attachments/files/29022780/Quilter_test_module_unplaced.kicad_pcb_Candidate_2.zip",
+      "sha256": "aa40bd8449cac569fa84fbd533bc0ef1b173a984d4a2e5145abd5e30e4e7a270"
+    },
+    {
+      "id": "quilter-3",
+      "url": "https://github.com/user-attachments/files/29022778/Quilter_test_module_unplaced.kicad_pcb_Candidate_3.zip",
+      "sha256": "2cb7049a5d93fe67d7b431d6141867e100d1d2fc416ecb90b3d47846104e28e3"
+    },
+    {
+      "id": "quilter-4",
+      "url": "https://github.com/user-attachments/files/29022777/Quilter_test_module_unplaced.kicad_pcb_Candidate_4.zip",
+      "sha256": "2e9b11b5c48044cb5a1a089854b4145ffbb4e2b17bf5335ec2ec1553c34c12a0"
+    },
+    {
+      "id": "quilter-5",
+      "url": "https://github.com/user-attachments/files/29022775/Quilter_test_module_unplaced.kicad_pcb_Candidate_5.zip",
+      "sha256": "b2c073719004f9b9d2e5fdc20d9c660dd43817a8d2336b19fcb70dbcf9afd56e"
+    },
+    {
+      "id": "quilter-6",
+      "url": "https://github.com/user-attachments/files/29022779/Quilter_test_module_unplaced.kicad_pcb_Candidate_6.zip",
+      "sha256": "efa34a52629e9a661bdcde97c9687a0791898935959a501df49b1673073cebcb"
+    }
+  ]
+}

@@ -98,6 +98,23 @@ impl Router {
                 budget = budget.max(allowance);
             }
         }
+        // A caller reserving work to verify and save fills needs the
+        // leftover budget on the delivered PCB. A truncated polish can
+        // spend most of its allowance and still revert the round.
+        if self.config.via_reduction_rounds > 0
+            && self.config.require_via_reduction_budget
+            && self
+                .config
+                .deadline_work
+                .is_some_and(|end| end - self.deadline_used() < budget)
+        {
+            if self.config.verbose {
+                eprintln!(
+                    "via reduction: the {budget:.0}s polish does not fit before the reserved verification work"
+                );
+            }
+            return;
+        }
         let started = self.clock();
         let strict = self.config.strict_via_budget;
         let mut last_round: Option<f64> = None;

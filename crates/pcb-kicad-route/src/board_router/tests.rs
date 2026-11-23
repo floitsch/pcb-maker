@@ -1742,7 +1742,9 @@ mod pour_request_tests {
         let request = |layers: &[&str]| KiCadPourRequest {
             net: "GND".into(),
             layers: layers.iter().map(|layer| layer.to_string()).collect(),
+            region: None,
             clearance_mm: None,
+            thermal_bridge_width_mm: None,
             plane: false,
             keep_whole: Vec::new(),
         };
@@ -1756,12 +1758,54 @@ mod pour_request_tests {
         assert_eq!(zones.len(), 2);
         assert_eq!(form_atom(zones[1], "layer", 1), Some("F.Cu"));
         assert_eq!(node_net(zones[1]), Some("/GND"));
+        assert_eq!(
+            form_f64(zones[1].child("fill").unwrap(), "thermal_bridge_width", 1).unwrap(),
+            0.3
+        );
         let unknown = KiCadPourRequest {
             net: "VCC".into(),
             ..request(&["F.Cu"])
         };
         assert!(add_pour_zones(&mut pcb, &[unknown]).is_err());
         assert!(add_pour_zones(&mut pcb, &[request(&["In1.Cu"])]).is_err());
+    }
+
+    #[test]
+    fn a_pour_request_writes_its_thermal_spoke_width_and_rejects_invalid_widths() {
+        let input = r#"(kicad_pcb
+          (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+          (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+          (footprint "a" (at 5 5) (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "GND"))))"#;
+        let request = |width: f64| {
+            serde_json::from_value::<KiCadPourRequest>(serde_json::json!({
+                "net": "GND", "layers": ["F.Cu"], "clearance_mm": 0.5,
+                "thermal_bridge_width_mm": width
+            }))
+        };
+        let mut board = parse(input).unwrap();
+        add_pour_zones(&mut board, &[request(0.5).unwrap()]).unwrap();
+        let reopened = parse(&encode(&board).to_string()).unwrap();
+        let zone = reopened.child("zone").unwrap();
+        assert_eq!(form_f64(zone, "min_thickness", 1).unwrap(), 0.25);
+        let fill = zone.child("fill").unwrap();
+        assert_eq!(form_f64(fill, "thermal_gap", 1).unwrap(), 0.5);
+        assert_eq!(form_f64(fill, "thermal_bridge_width", 1).unwrap(), 0.5);
+
+        for width in [0.0, -0.5, 0.249, 3000.0] {
+            assert!(
+                request(width)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("thermal_bridge_width_mm")
+            );
+        }
+        let invalid = KiCadPourRequest {
+            thermal_bridge_width_mm: Some(f64::NAN),
+            ..request(0.5).unwrap()
+        };
+        let mut board = parse(input).unwrap();
+        assert!(add_pour_zones(&mut board, &[invalid]).is_err());
+        assert!(board.child("zone").is_none());
     }
 
     #[test]
@@ -1784,7 +1828,9 @@ mod pour_request_tests {
             let request = KiCadPourRequest {
                 net: "GND".into(),
                 layers: vec!["F.Cu".into(), "B.Cu".into()],
+                region: None,
                 clearance_mm: None,
+                thermal_bridge_width_mm: None,
                 plane: false,
                 keep_whole: Vec::new(),
             };
@@ -1848,10 +1894,25 @@ mod pour_request_tests {
         let pads = region_pads(&pcb, &layers).unwrap();
         let parts = keep_whole_parts(&pcb, &pads).unwrap();
         assert_eq!(
-            keep_whole_candidates(&parts, &pads, "GND", 1),
+            keep_whole_candidates(&parts, &pads, "GND", 1, None),
             vec!["U1".to_string()]
         );
-        assert!(keep_whole_candidates(&parts, &pads, "GND", 0).is_empty());
+        assert!(keep_whole_candidates(&parts, &pads, "GND", 0, None).is_empty());
+        let mut scoped = crate::board_router::KiCadBoundedTrackLength {
+            other_straight_track_mm: 1.0,
+            regions: vec![crate::board_router::KiCadRegionTrackLength {
+                zone_uuid: "bounded".into(),
+                bounds_mm: parts[0].2,
+                other_straight_track_mm: 1.0,
+            }],
+        };
+        assert_eq!(
+            keep_whole_candidates(&parts, &pads, "GND", 1, Some(&scoped)),
+            vec!["U1"]
+        );
+        // The same pad-free body region only partially overlaps this zone.
+        scoped.regions[0].bounds_mm[0] += 0.1;
+        assert!(keep_whole_candidates(&parts, &pads, "GND", 1, Some(&scoped)).is_empty());
     }
 
     #[test]
@@ -1872,7 +1933,9 @@ mod pour_request_tests {
         let plane = KiCadPourRequest {
             net: "GND".into(),
             layers: vec!["In1.Cu".into()],
+            region: None,
             clearance_mm: None,
+            thermal_bridge_width_mm: None,
             plane: true,
             keep_whole: Vec::new(),
         };
@@ -2763,7 +2826,7 @@ mod check_gate_tests {
     #[test]
     fn a_router_count_above_the_best_open_count_cannot_win() {
         // The full open count is the router's plus KiCad's: no slack.
-        let best = ((10, 0), 100, 500.0);
+        let best = ((10, 0), Some(0), 100, 500.0);
         assert!(could_win(9, 200, 900.0, best));
         assert!(!could_win(11, 10, 100.0, best));
         // A tie on the count: starved thermals, then vias and copper decide.
@@ -2771,7 +2834,9 @@ mod check_gate_tests {
         assert!(could_win(10, 100, 499.0, best));
         assert!(!could_win(10, 100, 500.0, best));
         assert!(!could_win(10, 101, 100.0, best));
-        assert!(could_win(10, 101, 100.0, ((10, 2), 100, 500.0)));
+        assert!(could_win(10, 101, 100.0, ((10, 2), Some(0), 100, 500.0)));
+        assert!(could_win(10, 101, 100.0, ((10, 0), Some(1), 100, 500.0)));
+        assert!(could_win(10, 101, 100.0, ((10, 0), None, 100, 500.0)));
     }
 
     #[test]
@@ -2782,13 +2847,13 @@ mod check_gate_tests {
             ..CheckGate::default()
         };
         assert!(gate.wants(50, 0, 0.0, None, false));
-        assert!(gate.wants(0, 500, 9000.0, Some(((0, 1), 10, 10.0)), false));
+        assert!(gate.wants(0, 500, 9000.0, Some(((0, 1), Some(0), 10, 10.0)), false));
     }
 
     #[test]
     fn route_mode_checks_every_attempt_that_could_win() {
         let mut gate = CheckGate::default();
-        let best = Some(((20, 0), 100, 500.0));
+        let best = Some(((20, 0), Some(0), 100, 500.0));
         for count in [5, 6, 7, 19] {
             assert!(gate.wants(count, 0, 0.0, best, false));
             gate.record((count, 0, 0.0));
@@ -2806,7 +2871,7 @@ mod check_gate_tests {
             kept: Some((20, 0)),
             ..CheckGate::default()
         };
-        let best = Some(((30, 1), 100, 500.0));
+        let best = Some(((30, 1), Some(0), 100, 500.0));
         // The ladder's first attempt: checked whatever its count.
         assert!(gate.wants(25, 100, 500.0, None, false));
         gate.record((25, 100, 500.0));
@@ -2839,7 +2904,7 @@ mod check_gate_tests {
         assert!(!gate.wants(25, 0, 0.0, None, true));
         // With a best, both: the top-two rule no longer applies (nothing
         // follows), the could-win rules do.
-        let best = Some(((18, 0), 100, 500.0));
+        let best = Some(((18, 0), Some(0), 100, 500.0));
         assert!(gate.wants(17, 0, 0.0, best, true));
         assert!(!gate.wants(19, 0, 0.0, best, true));
         // A kept board with starved thermals loses a tie to a clean one.
@@ -4104,6 +4169,7 @@ mod solid_starved_tests {
             complete: false,
             erc_violations: 0,
             drc_design_violations: findings,
+            schematic_parity_checked: false,
             schematic_parity_issues: 0,
             selected_net_unconnected_items: unconnected,
             intentional_no_connect_groups: 0,

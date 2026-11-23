@@ -42,6 +42,7 @@ fn component(name: &str, size: [f64; 2], pins: Vec<Pin>, fixed: bool) -> Compone
         tight_hollow: Vec::new(),
         hole_rings: Vec::new(),
         copper_graphics: Vec::new(),
+        unassigned_copper_graphics: Vec::new(),
         courtless: Vec::new(),
         slots: Vec::new(),
     }
@@ -96,6 +97,55 @@ fn board() -> Problem {
         pieces: Vec::new(),
         constraints: Default::default(),
     }
+}
+
+#[test]
+fn a_trapped_part_can_take_a_legal_gap_after_reseating_one_movable_neighbor() {
+    let mut problem = board();
+    let settings = PadExits {
+        factory: Arc::new(|| {
+            Box::new(|poses, parts| {
+                let pad = ClosedPad {
+                    part: 0,
+                    pad: "U1.2".into(),
+                    net: "B".into(),
+                    layer: 0,
+                    blocked_by: vec!["rule area".into()],
+                    blockers: Vec::new(),
+                    own_only: false,
+                };
+                let closed = parts.contains(&0) && poses[0].position != [20.0, 11.0];
+                Some((if closed { vec![pad] } else { Vec::new() }, 0))
+            })
+        }),
+        reach: 2.0,
+        candidates: 100,
+    };
+    let mut poses = problem.poses.clone();
+    let run = pcb_placer::exits::repair_entire_part;
+    assert!(
+        run(&problem, &mut poses, &[], &settings)
+            .unwrap()
+            .moves
+            .is_empty()
+    );
+    assert_eq!(poses, problem.poses);
+
+    problem.components[3].fixed = false;
+    let result = run(&problem, &mut poses, &[], &settings).unwrap();
+    assert_eq!(result.closed_before, 1);
+    assert!(result.closed.is_empty());
+    assert_eq!(
+        result
+            .moves
+            .iter()
+            .map(|moved| moved.part)
+            .collect::<Vec<_>>(),
+        [0, 3]
+    );
+    assert_eq!(poses[0].position, [20.0, 11.0]);
+    assert_eq!(&poses[1..3], &problem.poses[1..3]);
+    assert!(pcb_placer::legal::illegal_components(&problem, &poses).is_empty());
 }
 
 /// The router's answer as a stand-in: U1's pad 2 faces J3's pad and is

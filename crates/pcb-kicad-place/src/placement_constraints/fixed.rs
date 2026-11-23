@@ -6,7 +6,7 @@
 
 use super::*;
 
-/// Applies `move_all`: every part moves but locked ones, row members,
+/// Applies `move_all`: every part moves but locked or explicitly fixed ones, row members,
 /// artwork and parts nobody can name; mounting holes no constraint names
 /// go to the corners, then to the middle of the edges.
 pub(super) fn apply_move_all(
@@ -15,6 +15,7 @@ pub(super) fn apply_move_all(
     fixed: &[String],
     constrained: &BTreeSet<usize>,
     pinned: &[usize],
+    configured_fixed: &[usize],
 ) {
     // Parts without nets move too: from a netlist they sit in the stack
     // with the rest. Mounting holes nobody placed go to the corners, as
@@ -22,6 +23,7 @@ pub(super) fn apply_move_all(
     let named: BTreeSet<usize> = fixed
         .iter()
         .flat_map(|pattern| parts.matching(pattern))
+        .chain(configured_fixed.iter().copied())
         .collect();
     let mut spots = [
         vec![Edge::Top, Edge::Left],
@@ -34,10 +36,12 @@ pub(super) fn apply_move_all(
         vec![Edge::Right],
     ]
     .into_iter();
+    let mut hole_spots = Vec::new();
     for index in 0..parts.footprints {
         // Artwork (a logo) occupies nothing and stays.
         let component = &problem.components[index];
         if parts.locked[index]
+            || named.contains(&index)
             || parts.leaders.contains_key(&index)
             || component.side == core::Side::Neither
         {
@@ -53,28 +57,121 @@ pub(super) fn apply_move_all(
         let mounting_hole = component.pins.is_empty() && component.has_holes();
         if mounting_hole
             && !constrained.contains(&index)
-            && !named.contains(&index)
             && !pinned.contains(&index)
+            && let Some(sides) = spots.next()
         {
-            for side in spots.next().unwrap_or_default() {
-                problem.constraints.edges.push((index, side, 1.0 + 1.0e-3));
-            }
+            hole_spots.push((index, sides));
         }
         problem.components[index].fixed = false;
     }
+    let held: Vec<_> = problem
+        .components
+        .iter()
+        .enumerate()
+        .filter(|(part, component)| {
+            component.fixed || pinned.contains(part) || named.contains(part)
+        })
+        .map(|(part, _)| part)
+        .collect();
+    for (index, sides) in hole_spots {
+        apply_inferred_hole_edges(problem, index, &sides, &held);
+    }
 }
 
-/// Frees the parts the constraints say where to put (`constrained`) and
-/// the parts sent to a side: they move.
+/// Keep the default corner when it has room for a hole. If the outline
+/// or held parts cover it, try either adjoining edge before leaving the
+/// hole free. User-authored edges never enter this choice.
+fn apply_inferred_hole_edges(
+    problem: &mut core::Problem,
+    index: usize,
+    preferred: &[Edge],
+    held: &[usize],
+) {
+    const REACH: f64 = 1.001;
+    let first = problem.constraints.edges.len();
+    for sides in std::iter::once(preferred).chain(
+        (preferred.len() == 2)
+            .then(|| [&preferred[..1], &preferred[1..]])
+            .into_iter()
+            .flatten(),
+    ) {
+        problem
+            .constraints
+            .edges
+            .extend(sides.iter().map(|&side| (index, side, REACH)));
+        if hole_edge_has_room(problem, index, sides, held) {
+            return;
+        }
+        problem.constraints.edges.truncate(first);
+    }
+}
+
+fn hole_edge_has_room(
+    problem: &core::Problem,
+    index: usize,
+    sides: &[Edge],
+    held: &[usize],
+) -> bool {
+    let bounds = problem.bounds();
+    let component = &problem.components[index];
+    component
+        .angle_options
+        .iter()
+        .copied()
+        .chain([problem.poses[index].angle])
+        .any(|angle| {
+            let half = component.half_extent(angle);
+            let offsets = core::constraints::copper_edge_offsets(problem, index, angle);
+            let mut axes = [[0.0; 3]; 2];
+            for axis in 0..2 {
+                let (near, far) = if axis == 0 {
+                    (Edge::Left, Edge::Right)
+                } else {
+                    (Edge::Top, Edge::Bottom)
+                };
+                axes[axis] = if sides.contains(&near) {
+                    [0.1, 0.55, 0.99].map(|gap| bounds[axis] + offsets[axis] + half[axis] + gap)
+                } else if sides.contains(&far) {
+                    [0.1, 0.55, 0.99]
+                        .map(|gap| bounds[axis + 2] - offsets[axis + 2] - half[axis] - gap)
+                } else {
+                    [0.25, 0.5, 0.75]
+                        .map(|ratio| bounds[axis] + ratio * (bounds[axis + 2] - bounds[axis]))
+                };
+            }
+            axes[0].into_iter().any(|x| {
+                axes[1].into_iter().any(|y| {
+                    let pose = core::Pose {
+                        position: component.position_for_center([x, y], angle),
+                        angle,
+                    };
+                    core::legal::is_legal(
+                        problem,
+                        &problem.poses,
+                        index,
+                        pose,
+                        held.iter().copied(),
+                    )
+                })
+            })
+        })
+}
+
+/// Authored position constraints can move a locked part. A face-only
+/// constraint can flip it, but its origin remains held.
 pub(super) fn free_constrained(
     problem: &mut core::Problem,
     parts: &Parts,
     constraints: &KiCadPlacementConstraints,
     mut constrained: BTreeSet<usize>,
 ) {
-    // A part sent to a side is placed there.
     for pattern in constraints.back.iter().chain(&constraints.front) {
-        constrained.extend(parts.matching(pattern));
+        constrained.extend(
+            parts
+                .matching(pattern)
+                .into_iter()
+                .filter(|&index| !parts.locked[index]),
+        );
     }
     for index in constrained {
         problem.components[index].fixed = false;
@@ -108,15 +205,16 @@ pub(super) fn free_parts_off_the_outline(
     }
 }
 
-/// Fixes the parts `place` put at a pose (`pinned`) and those `fixed`
-/// names; a `fixed` glob that matches nothing is refused.
+/// Fixes authored poses, explicit placer holds and constraints-file
+/// `fixed` matches. A constraints glob that matches nothing is refused.
 pub(super) fn fix_pinned_and_fixed(
     problem: &mut core::Problem,
     parts: &Parts,
     pinned: &[usize],
     fixed: &[String],
+    configured_fixed: &[usize],
 ) -> Result<(), String> {
-    for index in pinned {
+    for index in pinned.iter().chain(configured_fixed) {
         problem.components[*index].fixed = true;
     }
     for pattern in fixed {

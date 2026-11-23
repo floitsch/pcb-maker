@@ -20,6 +20,9 @@
 
 use crate::problem::{Point, Problem};
 
+mod signal_anchor;
+pub use signal_anchor::{SignalAnchorSeed, signal_anchor_seed};
+
 /// Bound-to-bound linearisations at most.
 const ROUNDS: usize = 12;
 /// The rounds stop where no part moves more than this share of the
@@ -323,6 +326,7 @@ mod tests {
             tight_hollow: Vec::new(),
             hole_rings: Vec::new(),
             copper_graphics: Vec::new(),
+            unassigned_copper_graphics: Vec::new(),
             courtless: Vec::new(),
             slots: Vec::new(),
         }
@@ -372,6 +376,50 @@ mod tests {
         // The movable components in the chain's order.
         let links = (1..=6).map(|k| link[k]).collect();
         (problem, links)
+    }
+
+    #[test]
+    fn a_signal_seed_orients_a_movable_macro_between_held_pins() {
+        let (mut problem, _) = chain();
+        let (mut left, mut macro_part, mut right) = (part(0, true), part(1, false), part(2, true));
+        left.pins = (0..8)
+            .map(|net| Pin {
+                net,
+                offset: [0.0, 0.0],
+            })
+            .collect();
+        right.pins = (8..16)
+            .map(|net| Pin {
+                net,
+                offset: [0.0, 0.0],
+            })
+            .collect();
+        macro_part.pins = (0..16)
+            .map(|net| Pin {
+                net,
+                offset: [if net < 8 { -1.0 } else { 1.0 }, 0.0],
+            })
+            .collect();
+        macro_part.angle_options = vec![0.0, 90.0, 180.0, 270.0];
+        problem.components = vec![left, macro_part, right];
+        problem.net_weights = vec![1.0; 16];
+        problem.poses = [[8.0, 12.0], [0.0, 0.0], [26.0, 12.0]]
+            .map(|position| Pose {
+                position,
+                angle: 0.0,
+            })
+            .to_vec();
+        let (seed, work) = signal_anchor_seed(&problem, 10_000_000);
+        let seed = seed.unwrap();
+        assert_eq!(seed.part, 1);
+        assert_eq!(seed.pose.position, [17.0, 12.0]);
+        assert_eq!(seed.pose.angle, 0.0);
+        assert!(work > 0);
+        assert!(!problem.components[1].fixed);
+        assert_eq!(problem.poses[1].position, [0.0, 0.0]);
+        problem.components[0].fixed = false;
+        problem.components[2].fixed = false;
+        assert!(signal_anchor_seed(&problem, 10_000_000).0.is_none());
     }
 
     /// `quadratic_start` on `problem` from the common start (20, 15), the

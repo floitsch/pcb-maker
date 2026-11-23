@@ -31,12 +31,15 @@ pub(super) fn write_poses(
         .filter(|item| item.head() == Some("footprint"))
         .enumerate()
     {
-        uuids.push(crate::kicad_nets::footprint_uuid(footprint));
+        let uuid = crate::kicad_nets::footprint_uuid(footprint);
+        uuids.push(uuid.clone());
         let pose = placement.poses[index];
         let source_at = lowered.source_at[index];
         let at = write_footprint_pose(footprint, pose)?;
         footprints.push(KiCadPlacedFootprint {
             reference: lowered.references[index].clone(),
+            uuid,
+            side: footprint_mounting_side(footprint),
             fixed: lowered.problem.components[index].fixed,
             halo_mm: lowered.problem.components[index].halo,
             body_center: lowered.problem.components[index].center(pose),

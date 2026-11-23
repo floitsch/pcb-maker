@@ -1253,6 +1253,53 @@ const FREE: u32 = 0;
 /// `FloodGrid::blocked` of a cell pads of several nets (or of none) block.
 const SHARED: u32 = u32::MAX;
 
+/// Distance queries for large pad polygons, prepared once per raster stamp.
+/// Short pad outlines use the direct distance path.
+enum FloodDistance<'a> {
+    Polygon(core::geometry::PolygonIndex),
+    Union(Vec<(&'a core::Shape, Option<Self>)>),
+}
+
+impl<'a> FloodDistance<'a> {
+    fn new(shape: &'a core::Shape) -> Option<Self> {
+        // Smaller contours, including ordinary round custom pads, spend
+        // less time scanning their edges than querying an index.
+        const MIN_INDEXED_VERTICES: usize = 256;
+        match shape {
+            core::Shape::Polygon { points }
+                if points.len() >= MIN_INDEXED_VERTICES
+                    && points
+                        .iter()
+                        .flatten()
+                        .all(|coordinate| coordinate.is_finite()) =>
+            {
+                Some(Self::Polygon(core::geometry::PolygonIndex::new(points)))
+            }
+            core::Shape::Union { parts } => {
+                let parts: Vec<_> = parts.iter().map(|part| (part, Self::new(part))).collect();
+                parts
+                    .iter()
+                    .any(|(_, index)| index.is_some())
+                    .then_some(Self::Union(parts))
+            }
+            _ => None,
+        }
+    }
+
+    fn within(&self, point: [f64; 2], cap: f64) -> f64 {
+        match self {
+            Self::Polygon(index) => index.distance_within(point, cap).0,
+            Self::Union(parts) => parts.iter().fold(cap, |nearest, (part, index)| {
+                let distance = index.as_ref().map_or_else(
+                    || part.distance_to_point(point),
+                    |index| index.within(point, nearest),
+                );
+                nearest.min(distance)
+            }),
+        }
+    }
+}
+
 impl FloodGrid {
     fn new(pads: &[BoardPad], on_layer: &[usize], width: f64, clearance: f64, via: f64) -> Self {
         // A twentieth of the pitch, between 5 and 25 um.
@@ -1302,7 +1349,9 @@ impl FloodGrid {
                 .expect("a pad index in 32 bits");
             let reach = reach_of(index);
             let via_reach = via_reach_of(index);
-            let aabb = pad.shape.aabb().inflated(reach.max(via_reach));
+            let cap = reach.max(via_reach);
+            let distance_index = FloodDistance::new(&pad.shape);
+            let aabb = pad.shape.aabb().inflated(cap);
             let x0 = ((aabb.minimum[0] - origin[0]) / step).floor().max(0.0) as usize;
             let y0 = ((aabb.minimum[1] - origin[1]) / step).floor().max(0.0) as usize;
             let x1 = (((aabb.maximum[0] - origin[0]) / step).ceil() as usize).min(size[0] - 1);
@@ -1316,7 +1365,14 @@ impl FloodGrid {
                     // at 0.1499 mm between 0.8 mm balls of 0.35 mm) has
                     // no cell centre in it otherwise. The test errs
                     // towards a way out (no via) by up to a cell.
-                    let gap = pad.shape.distance_to_point(point) + step;
+                    // Distances at or beyond both reaches make the same
+                    // decision. Preserve the addition before comparison
+                    // so borderline cells keep the same rounding.
+                    let distance = distance_index.as_ref().map_or_else(
+                        || pad.shape.distance_to_point(point),
+                        |index| index.within(point, cap),
+                    );
+                    let gap = distance + step;
                     if gap < via_reach {
                         via_fits[y * size[0] + x] = false;
                     }
@@ -1508,8 +1564,8 @@ impl FloodGrid {
                 from(y * width + x, &mut reached);
             }
         }
-        for cell in 0..width * height {
-            if self.via_fits[cell] {
+        for (cell, &fits) in self.via_fits[..width * height].iter().enumerate() {
+            if fits {
                 from(cell, &mut reached);
             }
         }
@@ -2130,6 +2186,40 @@ mod tests {
                         *reached,
                         "{pitch} mm, {name}, cell {cell}"
                     );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn indexed_flood_distance_keeps_track_and_via_cells() {
+        let polygon = core::Shape::Polygon {
+            points: (0..360)
+                .map(|i| {
+                    let angle = (i as f64).to_radians();
+                    let radius = 2.0 + 0.7 * (angle * 6.0).sin();
+                    [radius * angle.cos(), radius * angle.sin()]
+                })
+                .collect(),
+        };
+        let simple = core::Shape::Circle {
+            center: [2.8, 1.0],
+            radius: 0.4,
+        };
+        let shape = core::Shape::Union {
+            parts: vec![simple.clone(), polygon],
+        };
+        let index = FloodDistance::new(&shape).expect("index the complex pad primitive");
+        assert!(FloodDistance::new(&simple).is_none());
+        let step = 0.025;
+        let reaches = [0.125_f64, 0.2, 0.42, 0.5];
+        for i in -120..=120 {
+            for j in -120..=120 {
+                let point = [i as f64 * step, j as f64 * step];
+                let direct = shape.distance_to_point(point) + step;
+                let indexed = index.within(point, reaches[3]) + step;
+                for reach in reaches {
+                    assert_eq!(direct < reach, indexed < reach, "{point:?} at {reach}");
                 }
             }
         }

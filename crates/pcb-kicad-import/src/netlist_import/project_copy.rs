@@ -1,10 +1,11 @@
 // Copyright (C) 2026 Toit contributors.
 
-//! The schematic's side of an import: the netlist kicad-cli exports, the
-//! project files and libraries copied next to the board, and the footprint
-//! names the copied sheets are brought to.
+//! Export the schematic netlist and copy project files and libraries next to
+//! the imported board.
 
 use super::*;
+use std::io::{ErrorKind, Write};
+use std::path::Component;
 
 /// Exports the netlist of the schematic `input` to `<output>/<board_id>.net`
 /// with kicad-cli and copies the project next to it.
@@ -34,10 +35,232 @@ pub(super) fn export_schematic(
             String::from_utf8_lossy(&result.stderr)
         )));
     }
-    copy_project_files(input, project, output, board_id)?;
-    copy_nested_sheets(project, output)?;
-    copy_table_libraries(project, output)?;
+    let same_project = fs::canonicalize(project)
+        .ok()
+        .is_some_and(|source| fs::canonicalize(output).is_ok_and(|target| source == target));
+    copy_project_files(input, project, output, board_id, same_project)?;
+    if !same_project {
+        copy_nested_sheets(project, output)?;
+        copy_table_libraries(project, output)?;
+        package_external_footprint_libraries(project, output)?;
+    }
     Ok(path)
+}
+
+/// Package authored parent-relative native libraries as local model inventories.
+/// A distinct library already available at the rebased URI belongs to the
+/// output project. Only the copied source entry may be repointed.
+fn package_external_footprint_libraries(project: &Path, output: &Path) -> Result<(), String> {
+    let (Ok(project), Ok(output)) = (fs::canonicalize(project), fs::canonicalize(output)) else {
+        return Ok(());
+    };
+    let table = output.join("fp-lib-table");
+    if fs::symlink_metadata(&table).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        return Ok(());
+    }
+    let Some(original) = read_optional_table(&table)? else {
+        return Ok(());
+    };
+    let Ok(mut copied @ Expr::List(_)) = parse(&original) else {
+        return Ok(());
+    };
+    if copied.head() != Some("fp_lib_table") {
+        return Ok(());
+    }
+    let Ok(source) = fs::read_to_string(project.join("fp-lib-table"))
+        .map_err(|error| error.to_string())
+        .and_then(|text| parse(&text))
+    else {
+        return Ok(());
+    };
+    if source.head() != Some("fp_lib_table") {
+        return Ok(());
+    }
+    let mut names = BTreeMap::new();
+    for entry in copied.children() {
+        if let Some(name) = form_atom(entry, "name", 1).filter(|_| entry.head() == Some("lib")) {
+            *names.entry(name.to_owned()).or_insert(0) += 1;
+        }
+    }
+    let Expr::List(items) = &mut copied else {
+        unreachable!()
+    };
+    let mut changed = false;
+    for entry in items.iter_mut().filter(|entry| entry.head() == Some("lib")) {
+        let (Some(nickname), Some(uri)) = (form_atom(entry, "name", 1), form_atom(entry, "uri", 1))
+        else {
+            continue;
+        };
+        if names[nickname] != 1
+            || file_name_error(nickname).is_some()
+            || form_atom(entry, "type", 1) != Some("KiCad")
+        {
+            continue;
+        }
+        let Some(relative) = uri
+            .strip_prefix("${KIPRJMOD}/")
+            .or_else(|| uri.strip_prefix("$(KIPRJMOD)/"))
+        else {
+            continue;
+        };
+        if relative.contains('$') {
+            continue;
+        }
+        let relative = Path::new(relative);
+        if relative.is_absolute()
+            || !relative
+                .components()
+                .any(|part| part == Component::ParentDir)
+            || relative.extension().is_none_or(|ext| ext != "pretty")
+        {
+            continue;
+        }
+        let mut authored = source.children().iter().filter(|item| {
+            item.head() == Some("lib") && form_atom(item, "name", 1) == Some(nickname)
+        });
+        if authored.next() != Some(entry) || authored.next().is_some() {
+            continue;
+        }
+        let authored_folder = project.join(relative);
+        let Ok(folder) = fs::canonicalize(&authored_folder) else {
+            continue;
+        };
+        if folder.starts_with(&project)
+            || folder.starts_with(&output)
+            || output.starts_with(&folder)
+            || !fs::symlink_metadata(&authored_folder).is_ok_and(|meta| meta.is_dir())
+        {
+            continue;
+        }
+        match fs::canonicalize(output.join(relative)) {
+            Ok(rebased) if rebased == folder => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            _ => continue,
+        }
+        let Some(models) = native_model_inventory(&folder) else {
+            continue;
+        };
+        let destination = new_local_library(&output, nickname)?;
+        for (file, bytes) in models {
+            write_new_model(&destination.join(file), &bytes, |existing| {
+                existing == bytes
+            })?;
+        }
+        let folder_name = destination.file_name().expect("local library folder");
+        let uri = quote(&format!("${{KIPRJMOD}}/{}", folder_name.to_string_lossy()));
+        let Expr::List(parts) = entry else {
+            unreachable!()
+        };
+        parts.retain(|item| item.head() != Some("uri"));
+        parts.push(parse(&format!("(uri {uri})"))?);
+        changed = true;
+    }
+    if changed {
+        if read_optional_table(&table)?.as_deref() != Some(&original) {
+            return Err(crate::exit::input_error(format!(
+                "{} changed during import. Keep its current entries and retry",
+                table.display()
+            )));
+        }
+        write_atomically(&table, format!("{}\n", encode(&copied)).as_bytes())?;
+    }
+    Ok(())
+}
+
+fn native_model_inventory(folder: &Path) -> Option<Vec<(std::ffi::OsString, Vec<u8>)>> {
+    let mut models = Vec::new();
+    for item in fs::read_dir(folder).ok()? {
+        let item = item.ok()?;
+        let path = item.path();
+        if path.extension().is_none_or(|ext| ext != "kicad_mod") {
+            continue;
+        }
+        if !item.file_type().ok()?.is_file() {
+            return None;
+        }
+        models.push((item.file_name(), fs::read(path).ok()?));
+    }
+    (!models.is_empty()).then_some(models)
+}
+
+/// Keep rules already supplied for the output board. Otherwise take the
+/// input's companion file, or the originating schematic's rules for a
+/// netlist exported elsewhere. KiCad selects the file by the board stem.
+pub(super) fn copy_custom_rules(
+    input: &Path,
+    output: &Path,
+    board_id: &str,
+    project: &Path,
+    netlist: Option<&Expr>,
+) -> Result<(), String> {
+    let target = output.join(format!("{board_id}.kicad_dru"));
+    let source_schematic = netlist
+        .and_then(|netlist| netlist.child("design"))
+        .and_then(|design| text_of(design, "source"))
+        .map(PathBuf::from)
+        .filter(|source| {
+            source
+                .extension()
+                .is_some_and(|extension| extension == "kicad_sch" || extension == "sch")
+        });
+    let companions = std::iter::once(input.with_extension("kicad_dru"))
+        .chain(
+            source_schematic
+                .iter()
+                .map(|source| project.join(source).with_extension("kicad_dru")),
+        )
+        .chain(
+            source_schematic
+                .as_deref()
+                .and_then(Path::file_name)
+                .map(|name| project.join(name).with_extension("kicad_dru")),
+        );
+    copy_first_companion(companions, &target)
+}
+
+/// Use a netlist's explicit sibling project before measuring footprint
+/// clearances. Its embedded schematic path does not select the project.
+pub(super) fn copy_netlist_project(
+    input: &Path,
+    output: &Path,
+    board_id: &str,
+) -> Result<(), String> {
+    copy_first_companion(
+        std::iter::once(input.with_extension("kicad_pro")),
+        &output.join(format!("{board_id}.kicad_pro")),
+    )
+}
+
+fn copy_first_companion(
+    sources: impl IntoIterator<Item = PathBuf>,
+    target: &Path,
+) -> Result<(), String> {
+    if target.symlink_metadata().is_ok() {
+        return Ok(());
+    }
+    for source in sources {
+        let contents = match fs::read(&source) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == ErrorKind::NotFound => continue,
+            Err(error) => return Err(format!("failed to read {}: {error}", source.display())),
+        };
+        let mut file = match fs::File::options()
+            .write(true)
+            .create_new(true)
+            .open(target)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => return Ok(()),
+            Err(error) => return Err(format!("failed to create {}: {error}", target.display())),
+        };
+        if let Err(error) = file.write_all(&contents) {
+            drop(file);
+            let _ = fs::remove_file(target);
+            return Err(format!("failed to write {}: {error}", target.display()));
+        }
+        break;
+    }
+    Ok(())
 }
 
 /// The project travels with the board: schematic sheets (the root
@@ -47,6 +270,7 @@ fn copy_project_files(
     project: &Path,
     output: &Path,
     board_id: &str,
+    same_project: bool,
 ) -> Result<(), String> {
     let stem = input
         .file_stem()
@@ -72,7 +296,13 @@ fn copy_project_files(
         } else {
             continue;
         };
-        fs::copy(&path, output.join(target)).map_err(|error| error.to_string())?;
+        if !same_project || std::ffi::OsStr::new(&target) != path.file_name().unwrap_or_default() {
+            if target == "fp-lib-table" {
+                copy_first_companion(std::iter::once(path), &output.join(target))?;
+            } else {
+                fs::copy(&path, output.join(target)).map_err(|error| error.to_string())?;
+            }
+        }
     }
     Ok(())
 }
@@ -145,74 +375,129 @@ fn copy_table_libraries(project: &Path, output: &Path) -> Result<(), String> {
             }) {
                 continue;
             }
-            copy_library_tree(
-                &project.join(relative),
-                &output.join(relative),
-                project,
-                output,
-            )?;
-        }
-    }
-    Ok(())
-}
-
-/// For each footprint id the libraries know under another name, the new name
-/// most symbols got: the copied schematic names a footprint id once for all
-/// its symbols.
-pub(super) fn most_common_renames(
-    renamed: &BTreeMap<(String, String), usize>,
-) -> BTreeMap<String, String> {
-    let mut most: BTreeMap<String, (usize, String)> = BTreeMap::new();
-    for ((old, new), count) in renamed {
-        let entry = most.entry(old.clone()).or_insert((0, String::new()));
-        if *count > entry.0 {
-            *entry = (*count, new.clone());
-        }
-    }
-    most.into_iter().map(|(old, (_, new))| (old, new)).collect()
-}
-
-/// The copied schematic links the footprints the board has, so the new
-/// project checks clean (the original is left as it is).
-pub(super) fn rename_footprints_in_sheets(
-    output: &Path,
-    renamed: &BTreeMap<String, String>,
-) -> Result<(), String> {
-    let mut folders = vec![output.to_path_buf()];
-    while let Some(folder) = folders.pop() {
-        for path in fs::read_dir(&folder)
-            .map_err(|error| error.to_string())?
-            .flatten()
-            .map(|entry| entry.path())
-        {
-            if path.is_dir() {
-                folders.push(path);
-            } else if path
-                .extension()
-                .is_some_and(|extension| extension == "kicad_sch")
-            {
-                let text = fs::read_to_string(&path)
-                    .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-                let mut changed = text.clone();
-                for (old, new) in renamed {
-                    changed = changed.replace(
-                        &format!("(property \"Footprint\" \"{old}\""),
-                        &format!("(property \"Footprint\" \"{new}\""),
-                    );
-                    // KiCad 6 schematics repeat it per instance
-                    // (`symbol_instances`), and that one wins: the
-                    // parity check found 43 mismatches on 0xcb-static.
-                    changed = changed.replace(
-                        &format!("(footprint \"{old}\")"),
-                        &format!("(footprint \"{new}\")"),
-                    );
-                }
-                if changed != text {
-                    fs::write(&path, changed)
-                        .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
-                }
+            let destination = output.join(relative);
+            if table == "fp-lib-table" && form_atom(lib, "type", 1) == Some("Legacy") {
+                copy_legacy_library(&project.join(relative), &destination, project, output)?;
+            } else {
+                copy_library_tree(&project.join(relative), &destination, project, output)?;
             }
         }
     }
     Ok(())
+}
+
+fn copy_legacy_library(
+    source: &Path,
+    target: &Path,
+    project: &Path,
+    output: &Path,
+) -> Result<(), String> {
+    let (Ok(source), Ok(project), Ok(output)) = (
+        fs::canonicalize(source),
+        fs::canonicalize(project),
+        fs::canonicalize(output),
+    ) else {
+        return Ok(());
+    };
+    let Some(parent) = target.parent() else {
+        return Ok(());
+    };
+    if !source.starts_with(project)
+        || !source.is_file()
+        || !parent
+            .ancestors()
+            .find_map(|ancestor| fs::canonicalize(ancestor).ok())
+            .is_some_and(|ancestor| ancestor.starts_with(output))
+    {
+        return Ok(());
+    }
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+    copy_first_companion(std::iter::once(source), target)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parent_relative_pretty_packages_the_inventory_and_keeps_existing_output() {
+        let root = temporary_next_to(&std::env::temp_dir().join("portable-footprints"));
+        let project = root.join("original/project");
+        let library = root.join("original/library.pretty");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir(&library).unwrap();
+        let model = r#"(footprint "F" (layer "F.Cu"))"#;
+        for file in ["Model.kicad_mod", "Spare.kicad_mod"] {
+            fs::write(library.join(file), model).unwrap();
+        }
+        let table = r#"(fp_lib_table (version 7) (lib (name "Sensor") (type "KiCad")
+            (uri "${KIPRJMOD}/../library.pretty") (options "KiCad") (descr "source inventory")))"#;
+        fs::write(project.join("fp-lib-table"), table).unwrap();
+        let output = root.join("packaged/project");
+        let existing = output.join("Sensor.pretty");
+        fs::create_dir_all(&existing).unwrap();
+        fs::write(existing.join("Model.kicad_mod"), "user model").unwrap();
+        fs::write(output.join("fp-lib-table"), table).unwrap();
+        package_external_footprint_libraries(&project, &output).unwrap();
+        let portable = fs::read_to_string(output.join("fp-lib-table")).unwrap();
+        assert_eq!(portable.matches(r#"(name "Sensor")"#).count(), 1);
+        assert!(portable.contains("${KIPRJMOD}/Sensor-2.pretty"));
+        assert!(portable.contains(r#"(descr "source inventory")"#));
+        assert!(portable.contains(r#"(options "KiCad")"#));
+        let copied = output.join("Sensor-2.pretty");
+        for file in ["Model.kicad_mod", "Spare.kicad_mod"] {
+            assert_eq!(fs::read_to_string(copied.join(file)).unwrap(), model);
+        }
+        assert_eq!(
+            fs::read_to_string(existing.join("Model.kicad_mod")).unwrap(),
+            "user model"
+        );
+        assert_eq!(
+            fs::read_to_string(project.join("fp-lib-table")).unwrap(),
+            table
+        );
+        package_external_footprint_libraries(&project, &output).unwrap();
+        assert_eq!(
+            fs::read_to_string(output.join("fp-lib-table")).unwrap(),
+            portable
+        );
+        assert!(!output.join("Sensor-3.pretty").exists());
+
+        let collision = root.join("conflict/project");
+        let caller_library = root.join("conflict/library.pretty");
+        fs::create_dir_all(&collision).unwrap();
+        fs::create_dir(&caller_library).unwrap();
+        fs::write(caller_library.join("Model.kicad_mod"), "other inventory").unwrap();
+        fs::write(collision.join("fp-lib-table"), table).unwrap();
+        package_external_footprint_libraries(&project, &collision).unwrap();
+        assert_eq!(
+            fs::read_to_string(collision.join("fp-lib-table")).unwrap(),
+            table
+        );
+        assert_eq!(
+            fs::read_to_string(caller_library.join("Model.kicad_mod")).unwrap(),
+            "other inventory"
+        );
+        assert!(!collision.join("Sensor.pretty").exists());
+
+        #[cfg(unix)]
+        {
+            let output = root.join("linked/project");
+            fs::create_dir_all(&output).unwrap();
+            fs::write(output.join("fp-lib-table"), table).unwrap();
+            std::os::unix::fs::symlink(
+                caller_library.join("Model.kicad_mod"),
+                library.join("Forbidden.kicad_mod"),
+            )
+            .unwrap();
+            package_external_footprint_libraries(&project, &output).unwrap();
+            assert_eq!(
+                fs::read_to_string(output.join("fp-lib-table")).unwrap(),
+                table
+            );
+            assert!(!output.join("Sensor.pretty").exists());
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
 }
