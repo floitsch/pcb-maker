@@ -677,6 +677,7 @@ fn diagonal_channel(notch: bool) -> (Router, [f64; 2]) {
         label: label.into(),
     };
     let board = Board {
+        fixed_pad_route_clearance: Default::default(),
         layer_count: 1,
         outline: vec![[0.0, 0.0], [8.0, 0.0], [8.0, 8.0], [0.0, 8.0]],
         edge_clearance: 0.1,
@@ -790,6 +791,7 @@ fn walled_in_pad() -> Router {
         })
         .collect();
     let board = Board {
+        fixed_pad_route_clearance: Default::default(),
         layer_count: 1,
         outline: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]],
         edge_clearance: 0.1,
@@ -874,6 +876,7 @@ fn halves(apart_trees: bool) -> Router {
         })
         .collect();
     let board = Board {
+        fixed_pad_route_clearance: Default::default(),
         layer_count: 1,
         outline: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]],
         edge_clearance: 0.1,
@@ -1024,6 +1027,7 @@ fn crossed_net_on(layers: usize) -> Router {
         });
     }
     let board = Board {
+        fixed_pad_route_clearance: Default::default(),
         layer_count: layers,
         outline: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]],
         edge_clearance: 0.1,
@@ -1229,28 +1233,33 @@ fn the_planner_plans_as_with_new_arrays() {
             let own: Vec<u32> = (0..layers * tiles).map(|_| next(30) as u32).collect();
             let own_claimed = (round % 2 == 0).then_some(own.as_slice());
             let net = next(3) as NetId;
-            let planned = router.plan_corridor(
+            let reached = router.plan_tile_path(
                 &mut arrays,
                 net,
                 &router.nets[net as usize],
                 &sources,
                 &targets,
                 hard,
-                margin,
                 own_claimed,
             );
-            let reference = planner_reference(
-                &router,
-                net,
-                &router.nets[net as usize],
-                &sources,
-                &targets,
-                hard,
-                margin,
-                own_claimed,
-            );
-            found += planned.is_some() as usize;
-            assert_eq!(planned, reference, "{layers} layers, round {round}");
+            found += reached.is_some() as usize;
+            for margin in [margin, margin + 3] {
+                let planned = reached.map(|state| router.grow_corridor(&arrays, state, margin));
+                let reference = planner_reference(
+                    &router,
+                    net,
+                    &router.nets[net as usize],
+                    &sources,
+                    &targets,
+                    hard,
+                    margin,
+                    own_claimed,
+                );
+                assert_eq!(
+                    planned, reference,
+                    "{layers} layers, round {round}, margin {margin}"
+                );
+            }
         }
         assert!(found > 100, "{found} plans found");
     }
@@ -1483,6 +1492,7 @@ fn board(
     solid_pads: Vec<String>,
 ) -> Board {
     Board {
+        fixed_pad_route_clearance: Default::default(),
         layer_count,
         outline: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]],
         edge_clearance: 0.1,
@@ -1512,6 +1522,78 @@ fn board(
         attachment: Default::default(),
         via_spans: Vec::new(),
     }
+}
+
+#[test]
+fn an_offset_stack_contact_does_not_emit_a_stub_to_the_other_layers_pad_center() {
+    let ball = [2.0, 5.0];
+    let contact = [2.55, 5.35];
+    let target = [8.0, 5.35];
+    let mut obstacles = vec![
+        copper(rect(ball, [0.2, 0.2]), 0, "U1.B2"),
+        copper(
+            Shape::Circle {
+                center: contact,
+                radius: 0.2,
+            },
+            0,
+            "U1.B2 far contact",
+        ),
+        copper(rect(target, [0.3, 0.3]), 0, "U2.1"),
+    ];
+    obstacles[0].layers = 1;
+    obstacles[1].layers = 2;
+    obstacles[2].layers = 2;
+    let mut first = terminal(0, ball, "U1.B2");
+    first.layers = 3;
+    let mut second = terminal(2, target, "U2.1");
+    second.layers = 2;
+    let mut board = board(
+        2,
+        obstacles,
+        vec![Net {
+            name: "LINK".into(),
+            class: 0,
+            terminals: vec![first, second],
+        }],
+        Vec::new(),
+        Vec::new(),
+    );
+    board.classes[0].layers = 2;
+    board.merged_pads.push(crate::board::MergedPad {
+        net: 0,
+        host: 0,
+        pad: 1,
+        anchor: ball,
+        layers: 2,
+        padstack: true,
+    });
+    let result = route(
+        &board,
+        &Config {
+            pitches: vec![0.1],
+            cleanup_passes: 0,
+            via_reduction_rounds: 0,
+            bend_round: false,
+            ..Config::default()
+        },
+    );
+    assert_eq!(result.status, [NetStatus::Routed]);
+    let route = &result.routes[0];
+    assert!(route.vias.is_empty());
+    assert!(
+        route
+            .segments
+            .iter()
+            .all(|segment| segment.layer == 1 && segment.start != ball && segment.end != ball),
+        "{:?}",
+        route.segments
+    );
+    assert!(route.segments.iter().any(|segment| {
+        [segment.start, segment.end]
+            .into_iter()
+            .any(|point| well_inside(&board.obstacles[1].shape, point))
+    }));
 }
 
 #[test]
@@ -2630,6 +2712,28 @@ fn the_fill_probe_finds_brush_centres_between_the_nodes() {
     assert!(!probe.fits(0, [5.0, 5.0], &[]));
     assert!(probe.fill_at(0, [5.0, 5.0]));
     assert!(!probe.fill_at(0, [4.85, 5.0]));
+}
+
+#[test]
+fn a_fixed_pad_route_rule_overrides_class_clearance_for_routes_only() {
+    let mut board = board(1, Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    board.fixed_pad_route_clearance.insert("J1.1".into(), 0.2);
+    let class = RuleClass {
+        clearance: 0.4,
+        trace_width: 0.2,
+        via_diameter: 0.45,
+        via_drill: 0.25,
+        layers: 0,
+    };
+    let mut pad = copper(rect([5.0, 5.0], [0.3, 0.3]), 0, "J1.1");
+    pad.net = None;
+    assert_eq!(board.copper_clearance(&class, &pad), 0.2);
+    assert_eq!(board.fill_clearance(&class, &pad), 0.4);
+    pad.clearance_override = Some(0.5);
+    assert_eq!(board.copper_clearance(&class, &pad), 0.5);
+    pad.label = "J1.2".into();
+    pad.clearance_override = None;
+    assert_eq!(board.copper_clearance(&class, &pad), 0.4);
 }
 
 #[test]
@@ -5135,6 +5239,7 @@ fn pin_row_board(left: f64, s_start: f64) -> Board {
         })
         .collect();
     Board {
+        fixed_pad_route_clearance: Default::default(),
         layer_count: 1,
         outline: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]],
         edge_clearance: 0.1,
@@ -5918,6 +6023,7 @@ fn walled_pair(bounded: &str) -> RoutingResult {
         });
     }
     let board = Board {
+        fixed_pad_route_clearance: Default::default(),
         layer_count: 1,
         outline: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]],
         edge_clearance: 0.1,
@@ -6014,6 +6120,7 @@ fn preferring_net(preferred: LayerMask) -> RoutingResult {
         terminals.push(at);
     }
     let board = Board {
+        fixed_pad_route_clearance: Default::default(),
         layer_count: 2,
         outline: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]],
         edge_clearance: 0.1,
@@ -6396,6 +6503,7 @@ fn hug_board() -> Router {
         });
     }
     let board = Board {
+        fixed_pad_route_clearance: Default::default(),
         layer_count: 1,
         outline: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]],
         edge_clearance: 0.1,

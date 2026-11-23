@@ -189,51 +189,10 @@ pub(super) fn pieces(
     let (o, n) = (own.len(), route.segments.len());
     let total = o + n + route.vias.len();
     let mut parent: Vec<usize> = (0..total).collect();
-    let joined = |a: usize, b: usize| -> bool {
-        let segment = |index: usize| &route.segments[index - o];
-        let via = |index: usize| &route.vias[index - o - n];
-        match (a < o, a >= o && a < o + n, b < o, b >= o && b < o + n) {
-            (true, _, true, _) => false,
-            (true, _, _, true) | (_, true, true, _) => {
-                let (obstacle, track) = if a < o {
-                    (own[a], segment(b))
-                } else {
-                    (own[b], segment(a))
-                };
-                obstacle.layers & (1 << track.layer) != 0
-                    && obstacle.shape.distance_to_segment(track.start, track.end)
-                        <= track.width / 2.0 + 1.0e-6
-            }
-            (true, _, _, false) | (_, false, true, _) => {
-                let (obstacle, hole) = if a < o {
-                    (own[a], via(b))
-                } else {
-                    (own[b], via(a))
-                };
-                obstacle.shape.distance_to_point(hole.at) <= hole.diameter / 2.0 + 1.0e-6
-            }
-            (_, true, _, true) => {
-                let (x, y) = (segment(a), segment(b));
-                x.layer == y.layer
-                    && core::geometry::segment_segment_distance(x.start, x.end, y.start, y.end)
-                        <= (x.width + y.width) / 2.0 + 1.0e-6
-            }
-            (_, true, _, false) | (_, false, _, true) => {
-                let (track, hole) = if a < o + n {
-                    (segment(a), via(b))
-                } else {
-                    (segment(b), via(a))
-                };
-                core::geometry::point_segment_distance(hole.at, track.start, track.end)
-                    <= (track.width + hole.diameter) / 2.0 + 1.0e-6
-            }
-            (_, false, _, false) => false,
-        }
-    };
     let skip = without.map(|index| o + index);
     for a in 0..total {
         for b in a + 1..total {
-            if Some(a) != skip && Some(b) != skip && joined(a, b) {
+            if Some(a) != skip && Some(b) != skip && copper_touches(route, own, a, b) {
                 let (x, y) = (root(&mut parent, a), root(&mut parent, b));
                 if x != y {
                     parent[x.max(y)] = x.min(y);
@@ -244,6 +203,385 @@ pub(super) fn pieces(
     (0..total)
         .filter(|&item| Some(item) != skip && root(&mut parent, item) == item)
         .count()
+}
+
+fn copper_touches(route: &core::NetRoute, own: &[&core::Obstacle], a: usize, b: usize) -> bool {
+    let (a, b) = (a.min(b), a.max(b));
+    let (o, n) = (own.len(), route.segments.len());
+    let segment = |index: usize| &route.segments[index - o];
+    let via = |index: usize| &route.vias[index - o - n];
+    match (a < o, a >= o && a < o + n, b < o, b >= o && b < o + n) {
+        (true, _, true, _) => false,
+        (true, _, _, true) | (_, true, true, _) => {
+            let (obstacle, track) = if a < o {
+                (own[a], segment(b))
+            } else {
+                (own[b], segment(a))
+            };
+            obstacle.layers & (1 << track.layer) != 0
+                && obstacle.shape.distance_to_segment(track.start, track.end)
+                    <= track.width / 2.0 + 1.0e-6
+        }
+        (true, _, _, false) | (_, false, true, _) => {
+            let (obstacle, hole) = if a < o {
+                (own[a], via(b))
+            } else {
+                (own[b], via(a))
+            };
+            obstacle.shape.distance_to_point(hole.at) <= hole.diameter / 2.0 + 1.0e-6
+        }
+        (_, true, _, true) => {
+            let (x, y) = (segment(a), segment(b));
+            x.layer == y.layer
+                && core::geometry::segment_segment_distance(x.start, x.end, y.start, y.end)
+                    <= (x.width + y.width) / 2.0 + 1.0e-6
+        }
+        (_, true, _, false) | (_, false, _, true) => {
+            let (track, hole) = if a < o + n {
+                (segment(a), via(b))
+            } else {
+                (segment(b), via(a))
+            };
+            core::geometry::point_segment_distance(hole.at, track.start, track.end)
+                <= (track.width + hole.diameter) / 2.0 + 1.0e-6
+        }
+        (_, false, _, false) => false,
+    }
+}
+
+/// Cut one redundant ordinary branch of a generated two-terminal pair net.
+/// The kept pair copper is protected. Accept the trial only if every
+/// remaining conductor and both original pads still form one piece.
+pub(super) fn prune_parallel_branch(
+    board: &core::Board,
+    input_obstacles: usize,
+    route: &mut core::NetRoute,
+    net: core::NetId,
+) -> bool {
+    const MAX_ORDINARY_SEGMENTS: usize = 64;
+    const MAX_TOTAL_ITEMS: usize = 160;
+    let [first, second] = board.nets[net as usize].terminals.as_slice() else {
+        return false;
+    };
+    if first.pad == second.pad
+        || route.segments.is_empty()
+        || route.segments.len() > MAX_ORDINARY_SEGMENTS
+        || route.vias.iter().any(|via| via.span.is_some())
+        || board.planes.iter().any(|plane| plane.net == net)
+    {
+        return false;
+    }
+
+    // Exclude nets with any authored copper besides the original two pads.
+    // In particular, never prune tracks/vias taken from an input project.
+    let original = &board.obstacles[..input_obstacles];
+    let own: Vec<_> = original
+        .iter()
+        .filter(|obstacle| obstacle.net == Some(net) && obstacle.kind == core::ObstacleKind::Copper)
+        .collect();
+    if own.len() != 2
+        || ![first.pad, second.pad].into_iter().all(|pad| {
+            original
+                .get(pad)
+                .is_some_and(|obstacle| own.iter().any(|own| std::ptr::eq(*own, obstacle)))
+        })
+    {
+        return false;
+    }
+
+    let Some(pair) = kept_pair_copper(board, input_obstacles, net) else {
+        return false;
+    };
+    let all = |ordinary: &core::NetRoute| {
+        let mut joined = ordinary.clone();
+        joined.segments.extend(pair.segments.iter().cloned());
+        joined.vias.extend(pair.vias.iter().cloned());
+        joined
+    };
+    let joined = all(route);
+    let count = |route: &core::NetRoute, without| {
+        let n = route.segments.len() + route.vias.len() + own.len();
+        tested(n.saturating_mul(n.saturating_sub(1)) / 2);
+        pieces(route, &own, without)
+    };
+    if pair.segments.is_empty()
+        || joined.segments.len() + joined.vias.len() > MAX_TOTAL_ITEMS
+        || count(&joined, None) != 1
+        || pieces(&pair, &[], None) != 1
+    {
+        return false;
+    }
+    let mut by_length: Vec<_> = route
+        .segments
+        .iter()
+        .enumerate()
+        .map(|(index, segment)| (index, core::geometry::distance(segment.start, segment.end)))
+        .collect();
+    by_length.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+    let Some((index, _)) = by_length
+        .into_iter()
+        .find(|(index, _)| count(&joined, Some(*index)) == 1)
+    else {
+        return false;
+    };
+
+    let Some(trial) = connected_launches(route, &joined, &own, index) else {
+        return false;
+    };
+    if count(&all(&trial), None) != 1 {
+        return false;
+    }
+    *route = trial;
+    true
+}
+
+fn kept_pair_copper(
+    board: &core::Board,
+    input_obstacles: usize,
+    net: core::NetId,
+) -> Option<core::NetRoute> {
+    let mut pair = core::NetRoute::default();
+    for obstacle in board.obstacles[input_obstacles..]
+        .iter()
+        .filter(|obstacle| obstacle.net == Some(net) && obstacle.kind == core::ObstacleKind::Copper)
+    {
+        match (&obstacle.shape, obstacle.label.as_str()) {
+            (&core::Shape::Capsule { start, end, radius }, "existing track")
+                if obstacle.layers.count_ones() == 1 =>
+            {
+                pair.segments.push(core::Segment {
+                    layer: obstacle.layers.trailing_zeros() as usize,
+                    start,
+                    end,
+                    width: 2.0 * radius,
+                });
+            }
+            (&core::Shape::Circle { center, radius }, "existing via")
+                if obstacle.layers == board.all_layers() =>
+            {
+                pair.vias.push(core::Via {
+                    at: center,
+                    diameter: 2.0 * radius,
+                    drill: 0.0,
+                    span: None,
+                });
+            }
+            _ => return None,
+        }
+    }
+    Some(pair)
+}
+
+/// Remove an ordinary leaf whose tip lies inside a parallel generated
+/// track of the same net. Fallback can leave that overlap where it rejoins
+/// a partly coupled pair, and KiCad can flag the overlapping tip.
+pub(super) fn prune_fallback_overlap(
+    board: &core::Board,
+    input_obstacles: usize,
+    route: &mut core::NetRoute,
+    net: core::NetId,
+) -> bool {
+    const MAX_COPPER_ITEMS: usize = 160;
+    const CONTACT_SLACK: f64 = 1.0e-6;
+    if route.segments.is_empty()
+        || route.vias.iter().any(|via| via.span.is_some())
+        || board.planes.iter().any(|plane| plane.net == net)
+    {
+        return false;
+    }
+    let Some(pair) = kept_pair_copper(board, input_obstacles, net) else {
+        return false;
+    };
+    if pair.segments.is_empty() {
+        return false;
+    }
+    let own: Vec<_> = board.obstacles[..input_obstacles]
+        .iter()
+        .filter(|obstacle| obstacle.net == Some(net) && obstacle.kind == core::ObstacleKind::Copper)
+        .collect();
+    let total =
+        own.len() + route.segments.len() + route.vias.len() + pair.segments.len() + pair.vias.len();
+    if total > MAX_COPPER_ITEMS {
+        return false;
+    }
+    let generated = || route.segments.iter().chain(&pair.segments).enumerate();
+    let contacts_tip = |excluded: [usize; 2], track: &core::Segment, point: Point| {
+        own.iter().any(|obstacle| {
+            obstacle.layers & (1 << track.layer) != 0
+                && obstacle.shape.distance_to_point(point) <= track.width / 2.0 + CONTACT_SLACK
+        }) || route.vias.iter().chain(&pair.vias).any(|via| {
+            norm(sub(via.at, point)) <= (via.diameter + track.width) / 2.0 + CONTACT_SLACK
+        }) || generated().any(|(other, segment)| {
+            !excluded.contains(&other)
+                && segment.layer == track.layer
+                && core::geometry::point_segment_distance(point, segment.start, segment.end)
+                    <= (segment.width + track.width) / 2.0 + CONTACT_SLACK
+        })
+    };
+    let mut joined = None;
+    let mut candidates = route.segments.iter().enumerate();
+    let Some((index, _)) = candidates.find(|&(index, track)| {
+        tested(route.segments.len() + pair.segments.len());
+        let direction = sub(track.end, track.start);
+        let cover = |(other, kept): (usize, &core::Segment)| {
+            let along = sub(kept.end, kept.start);
+            if other == index
+                || kept.layer != track.layer
+                || norm(along) <= norm(direction) + CONTACT_SLACK
+                || kept.width + CONTACT_SLACK < track.width
+                || cross(unit(along), unit(direction)).abs() > CONTACT_SLACK
+                || [track.start, track.end].into_iter().any(|point| {
+                    core::geometry::point_segment_distance(point, kept.start, kept.end)
+                        > kept.width / 2.0 + CONTACT_SLACK
+                })
+            {
+                return false;
+            }
+            tested(2 * total);
+            [track.start, track.end]
+                .into_iter()
+                .any(|point| !contacts_tip([index, other], track, point))
+        };
+        if !generated().any(cover) {
+            return false;
+        }
+        let (all, count) = joined.get_or_insert_with(|| {
+            let mut all = route.clone();
+            all.segments.extend_from_slice(&pair.segments);
+            all.vias.extend_from_slice(&pair.vias);
+            tested(total * (total - 1) / 2);
+            let count = pieces(&all, &own, None);
+            (all, count)
+        });
+        tested(total * (total - 1) / 2);
+        pieces(all, &own, Some(index)) == *count
+    }) else {
+        return false;
+    };
+    route.segments.remove(index);
+    true
+}
+
+/// Find a separate path from each pad to one end of the preserved run.
+/// Unused generated copper can be dropped even if it still touches a live
+/// stub at one end. Neither path can reach its launch through the other
+/// pad or the middle of the coupled run.
+fn connected_launches(
+    ordinary: &core::NetRoute,
+    joined: &core::NetRoute,
+    own: &[&core::Obstacle],
+    cut: usize,
+) -> Option<core::NetRoute> {
+    let count = own.len();
+    let ordinary_segments = count..count + ordinary.segments.len();
+    let pair_start = ordinary_segments.end;
+    let pair_end = count + joined.segments.len() - 1;
+    let ordinary_vias = pair_end + 1..pair_end + 1 + ordinary.vias.len();
+    let items = pair_end + 1 + joined.vias.len();
+    let cut = count + cut;
+    let steps = |id: usize| {
+        if ordinary_segments.contains(&id) {
+            let track = &ordinary.segments[id - count];
+            Some(core::geometry::distance(track.start, track.end))
+        } else {
+            ordinary_vias.contains(&id).then_some(1.0e-6)
+        }
+    };
+    let search = |source: usize, goal: usize| {
+        let mut distance = vec![f64::INFINITY; items];
+        let mut parent = vec![None; items];
+        let mut seen = vec![false; items];
+        distance[source] = 0.0;
+        loop {
+            let current = (0..items)
+                .filter(|&id| !seen[id] && distance[id].is_finite())
+                .min_by(|&a, &b| distance[a].total_cmp(&distance[b]))?;
+            if current == goal {
+                let mut path = BTreeSet::new();
+                let mut node = current;
+                while let Some(previous) = parent[node] {
+                    if node != goal {
+                        path.insert(node);
+                    }
+                    node = previous;
+                }
+                return Some(path);
+            }
+            seen[current] = true;
+            for next in (0..items).filter(|&id| !seen[id] && id != cut) {
+                let Some(step) = (if next == goal { Some(0.0) } else { steps(next) }) else {
+                    continue;
+                };
+                tested(1);
+                let path = distance[current] + step;
+                if path < distance[next] && centreline_contact(joined, own, current, next) {
+                    distance[next] = path;
+                    parent[next] = Some(current);
+                }
+            }
+        }
+    };
+    let attachment = |pads: [usize; 2]| {
+        let first = search(pads[0], pair_start)?;
+        let second = search(pads[1], pair_end)?;
+        first
+            .is_disjoint(&second)
+            .then(|| first.union(&second).copied().collect::<BTreeSet<_>>())
+    };
+    let kept = attachment([0, 1]).or_else(|| attachment([1, 0]))?;
+    Some(core::NetRoute {
+        segments: ordinary
+            .segments
+            .iter()
+            .cloned()
+            .enumerate()
+            .filter_map(|(index, item)| kept.contains(&(count + index)).then_some(item))
+            .collect(),
+        vias: ordinary
+            .vias
+            .iter()
+            .cloned()
+            .enumerate()
+            .filter_map(|(index, item)| {
+                kept.contains(&(ordinary_vias.start + index))
+                    .then_some(item)
+            })
+            .collect(),
+    })
+}
+
+/// The launch must still have a centreline connection through each
+/// ordinary piece. Copper overlap alone can make a small launch connector
+/// look redundant, even though dropping it leaves a seam in the trace.
+fn centreline_contact(route: &core::NetRoute, own: &[&core::Obstacle], a: usize, b: usize) -> bool {
+    const SLACK_MM: f64 = 1.0e-6;
+    let (a, b) = (a.min(b), a.max(b));
+    let pads = own.len();
+    let track_end = pads + route.segments.len();
+    if a < pads {
+        return (pads..track_end).contains(&b) && {
+            let pad = own[a];
+            let track = &route.segments[b - pads];
+            pad.layers & (1 << track.layer) != 0
+                && pad.shape.distance_to_segment(track.start, track.end) <= SLACK_MM
+        };
+    }
+    if a >= track_end {
+        return false;
+    }
+    let track = &route.segments[a - pads];
+    if b >= track_end {
+        let via = &route.vias[b - track_end];
+        return core::geometry::point_segment_distance(via.at, track.start, track.end)
+            <= via.diameter / 2.0 + SLACK_MM;
+    }
+    let other = &route.segments[b - pads];
+    track.layer == other.layer
+        && [[track, other], [other, track]].into_iter().any(|[a, b]| {
+            [a.start, a.end]
+                .into_iter()
+                .any(|end| core::geometry::point_segment_distance(end, b.start, b.end) <= SLACK_MM)
+        })
 }
 
 /// Removes `net`'s tracks with an end that joins nothing else of the net
@@ -333,14 +671,15 @@ pub(super) fn prune_dangling(board: &core::Board, route: &mut core::NetRoute, ne
 /// time, each only where the net's copper stays in as many pieces, and
 /// then what joins nothing (`prune_dangling`): the pad keeps one way to
 /// the run, not also its old route to the link's other end or through
-/// other pads.
+/// other pads. Returns whether a short tip of the replaced launch was
+/// also removed.
 pub(super) fn cut_old_connection(
     board: &core::Board,
     route: &mut core::NetRoute,
     net: core::NetId,
     pad: Point,
     new: &[core::Segment],
-) {
+) -> bool {
     // The net's kept copper (the links' tracks and vias) as tracks and
     // vias, so that the pieces join along it; its pads and other copper as
     // they are.
@@ -384,7 +723,7 @@ pub(super) fn cut_old_connection(
         all.vias.extend(kept.vias.iter().cloned());
         all
     };
-    let mut cut = false;
+    let mut cut_ends = Vec::new();
     loop {
         let all = joined_with_kept(route);
         let before = pieces(&all, &own, None);
@@ -401,13 +740,133 @@ pub(super) fn cut_old_connection(
         });
         match loop_at_pad {
             Some(index) => {
-                route.segments.remove(index);
-                cut = true;
+                let removed = route.segments.remove(index);
+                cut_ends.extend([removed.start, removed.end].map(|end| (removed.layer, end)));
             }
             None => break,
         }
     }
-    if cut {
-        prune_dangling(board, route, net);
+    if cut_ends.is_empty() {
+        return false;
+    }
+    prune_dangling(board, route, net);
+    let joined = joined_with_kept(route);
+    let tip = obsolete_launch_tip(route, &joined, &own, new, &cut_ends);
+    if let Some(index) = tip {
+        route.segments.remove(index);
+    }
+    tip.is_some()
+}
+
+/// One end of a short segment can keep overlapping the replacement track
+/// after the old path is cut, though neither centerline reaches its former
+/// joint. Remove only that old tip, with the replacement launch protected.
+fn obsolete_launch_tip(
+    ordinary: &core::NetRoute,
+    joined: &core::NetRoute,
+    own: &[&core::Obstacle],
+    replacement: &[core::Segment],
+    cut_ends: &[(usize, Point)],
+) -> Option<usize> {
+    let count = own.len() + joined.segments.len() + joined.vias.len();
+    if count > 160 {
+        return None;
+    }
+    let near = |a, b| core::geometry::distance(a, b) <= EPSILON;
+    let trial_pieces = |without| {
+        tested(count.saturating_mul(count.saturating_sub(1)) / 2);
+        pieces(joined, own, without)
+    };
+    ordinary
+        .segments
+        .iter()
+        .enumerate()
+        .find_map(|(index, track)| {
+            if replacement.contains(track)
+                || core::geometry::distance(track.start, track.end) > 2.0 * track.width + EPSILON
+                || own.iter().any(|pad| {
+                    pad.layers & (1 << track.layer) != 0
+                        && pad.shape.distance_to_segment(track.start, track.end)
+                            <= track.width / 2.0 + EPSILON
+                })
+                || joined.vias.iter().any(|via| {
+                    core::geometry::point_segment_distance(via.at, track.start, track.end)
+                        <= (track.width + via.diameter) / 2.0 + EPSILON
+                })
+            {
+                return None;
+            }
+            let endpoint_touches = |point, center_only| {
+                joined.segments.iter().enumerate().any(|(other, segment)| {
+                    other != index
+                        && segment.layer == track.layer
+                        && core::geometry::point_segment_distance(point, segment.start, segment.end)
+                            <= segment.width / 2.0
+                                + if center_only { 0.0 } else { track.width / 2.0 }
+                                + EPSILON
+                })
+            };
+            let is_tip = [(track.start, track.end), (track.end, track.start)]
+                .into_iter()
+                .any(|(end, other)| {
+                    cut_ends
+                        .iter()
+                        .any(|&(layer, cut)| layer == track.layer && near(end, cut))
+                        && !endpoint_touches(end, true)
+                        && endpoint_touches(other, false)
+                });
+            (is_tip && trial_pieces(Some(index)) == trial_pieces(None)).then_some(index)
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_old_cut_tip_is_removed_only_when_its_replacement_holds() {
+        let segment = |start, end| core::Segment {
+            layer: 0,
+            start,
+            end,
+            width: 0.1,
+        };
+        let tip = segment([3.0, 2.04], [3.19, 2.09]);
+        let live = segment([2.0, 2.0], [5.0, 2.0]);
+        let route = core::NetRoute {
+            segments: vec![tip.clone(), live.clone()],
+            ..Default::default()
+        };
+        let cuts = [(0, tip.end)];
+        assert_eq!(
+            obsolete_launch_tip(&route, &route, &[], std::slice::from_ref(&live), &cuts),
+            Some(0)
+        );
+        assert_eq!(
+            obsolete_launch_tip(&route, &route, &[], &[tip.clone(), live.clone()], &cuts),
+            None
+        );
+        assert_eq!(
+            obsolete_launch_tip(&route, &route, &[], std::slice::from_ref(&live), &[]),
+            None
+        );
+        let disconnected_trial = core::NetRoute {
+            segments: vec![
+                tip.clone(),
+                live.clone(),
+                segment([3.19, 2.17], [4.0, 2.17]),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(
+            obsolete_launch_tip(
+                &disconnected_trial,
+                &disconnected_trial,
+                &[],
+                &[live],
+                &cuts
+            ),
+            None
+        );
     }
 }

@@ -60,6 +60,7 @@ mod crossover;
 mod detect;
 mod diagnosis;
 mod fallback;
+mod fallback_lengths;
 mod finish;
 mod give_up;
 mod launch;
@@ -76,9 +77,10 @@ mod return_vias;
 mod rules;
 mod skew;
 mod stubs;
+mod transition;
 mod work;
 
-pub(crate) use self::plan::{link_name, plan_pairs};
+pub(crate) use self::plan::{isolated_pair_plan_failure, link_name, plan_pairs};
 pub use self::report::*;
 use self::{
     candidates::*, centreline::*, check::*, clearance::*, crossover::*, detect::*, diagnosis::*,
@@ -87,6 +89,7 @@ use self::{
 };
 pub use self::{
     fallback::{pairs_fallback_short, pairs_fallback_work},
+    fallback_lengths::measure_fallback_lengths,
     finish::finish_pairs,
     measure::measure_uncoupled,
     pair_copper::write_pair_copper,

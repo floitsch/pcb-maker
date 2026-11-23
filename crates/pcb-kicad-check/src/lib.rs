@@ -36,6 +36,8 @@ pub mod native_report;
 pub mod proc_memory;
 pub mod verification;
 pub mod verification_preview;
+pub mod verified_fill_cache;
+pub mod width_witness;
 pub mod work_rate;
 
 use native_report::{

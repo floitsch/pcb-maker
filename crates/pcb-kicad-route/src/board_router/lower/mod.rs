@@ -40,7 +40,7 @@ mod tracks;
 mod warnings;
 
 pub use self::layers::LayerTable;
-pub(crate) use self::layers::{item_layer_names, via_layers};
+pub(crate) use self::layers::item_layer_names;
 pub use self::own_copper::WalledPad;
 use self::{context::*, graphics::*, layers::*, mask::*, planes::limit_exclusive_planes};
 pub(crate) use self::{
@@ -278,6 +278,7 @@ impl Builder {
                 hole_to_hole: config.hole_to_hole_clearance_mm,
                 classes,
                 obstacles,
+                fixed_pad_route_clearance: config.fixed_pad_route_clearance.clone(),
                 nets,
                 planes,
                 solid_pads: {

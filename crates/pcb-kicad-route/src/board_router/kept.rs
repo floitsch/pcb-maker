@@ -21,6 +21,10 @@
 use super::*;
 use pcb_router as core;
 
+mod tips;
+use tips::RequestedTips;
+pub(super) use tips::{RetainedPadTip, RetainedPadTips};
+
 /// What route mode kept of the board's own copper (`kept_copper` in
 /// `board-router.json`).
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -39,6 +43,9 @@ pub struct KiCadKeptCopper {
     /// Pieces of kept copper on no pad of their net (and on a net without
     /// a pour): terminals the router connects.
     pub floating: usize,
+    /// Explicit retained access points used by the detailed router.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retained_pad_tips: Option<tips::RetainedPadTips>,
 }
 
 /// The board's top-level track segments, arcs and vias.
@@ -101,6 +108,28 @@ const TOUCH: f64 = 1.0e-5;
 /// piece (`Board::terminal_copper`), not only its first: a pair's coupled
 /// run is joined to the pads at both of its ends.
 pub(crate) fn keep_existing_copper(board: &mut core::Board, whole_pieces: bool) -> KiCadKeptCopper {
+    keep_with_access(board, whole_pieces, None)
+}
+
+pub(super) fn keep_for_route(
+    board: &mut core::Board,
+    pcb: &Expr,
+    config: &KiCadBoardRouterConfig,
+) -> KiCadKeptCopper {
+    if config.retained_pad_tips.is_empty() {
+        return keep_existing_copper(board, false);
+    }
+    let mut requested = RequestedTips::new(pcb, &config.retained_pad_tips);
+    let mut report = keep_with_access(board, false, Some(&mut requested));
+    report.retained_pad_tips = Some(requested.report());
+    report
+}
+
+fn keep_with_access(
+    board: &mut core::Board,
+    whole_pieces: bool,
+    mut tips: Option<&mut RequestedTips>,
+) -> KiCadKeptCopper {
     let mut report = KiCadKeptCopper::default();
     let mut kept_by_net: BTreeMap<core::NetId, Vec<usize>> = BTreeMap::new();
     for (index, obstacle) in board.obstacles.iter().enumerate() {
@@ -236,6 +265,23 @@ pub(crate) fn keep_existing_copper(board: &mut core::Board, whole_pieces: bool) 
             report
                 .nets_complete
                 .push(board.nets[net as usize].name.clone());
+        }
+        if let Some(tips) = tips.as_deref_mut() {
+            let mut roots = BTreeMap::<usize, Option<usize>>::new();
+            for (offset, &obstacle) in kept.iter().enumerate() {
+                let piece = root(&mut parent, first_kept + offset);
+                if piece < terminals {
+                    roots
+                        .entry(piece)
+                        .and_modify(|one| *one = None)
+                        .or_insert(Some(obstacle));
+                }
+            }
+            for (piece, obstacle) in roots {
+                if let Some(obstacle) = obstacle {
+                    tips.retarget(board, net, renumbered[piece], obstacle);
+                }
+            }
         }
         // With `whole_pieces`, a terminal reaches the kept copper of its
         // piece: a route to it may end anywhere on that copper.

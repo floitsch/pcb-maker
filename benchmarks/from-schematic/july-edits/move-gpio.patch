@@ -1,0 +1,21 @@
+--- test_module_unplaced.kicad_sch
++++ test_module_unplaced.kicad_sch
+@@ -1089,3 +1089,3 @@
+   )
+-  (global_label "HAPT_EN" (shape input) (at 96.03 71.59 180) (fields_autoplaced)
++  (global_label "HAPT_ENABLE" (shape input) (at 96.03 71.59 180) (fields_autoplaced)
+     (effects (font (size 1.27 1.27)) (justify left))
+@@ -1093,6 +1093,6 @@
+   )
+-  (wire (pts (xy 101.11 74.13) (xy 96.03 74.13))
++  (wire (pts (xy 101.11 53.81) (xy 96.03 53.81))
+     (stroke (width 0) (type default)) (uuid "00000000-0000-0000-0004-c9a92348a9a9")
+   )
+-  (global_label "SERVO_SIG" (shape input) (at 96.03 74.13 180) (fields_autoplaced)
++  (global_label "SERVO_SIG" (shape input) (at 96.03 53.81 180) (fields_autoplaced)
+     (effects (font (size 1.27 1.27)) (justify left))
+@@ -1190,3 +1190,3 @@
+   )
+-  (global_label "HAPT_EN" (shape input) (at 196.03 45.08 180) (fields_autoplaced)
++  (global_label "HAPT_ENABLE" (shape input) (at 196.03 45.08 180) (fields_autoplaced)
+     (effects (font (size 1.27 1.27)) (justify left))

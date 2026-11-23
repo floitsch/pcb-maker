@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "move_all": true,
+  "front": [
+    "*"
+  ],
+  "near": [
+    {
+      "part": "C1",
+      "pin_of": "U1:3",
+      "max_mm": 6.0,
+      "pad": "1"
+    },
+    {
+      "part": "C2",
+      "pin_of": "U2:22",
+      "max_mm": 6.0,
+      "pad": "1"
+    },
+    {
+      "part": "C3",
+      "pin_of": "U5:16",
+      "max_mm": 6.0,
+      "pad": "1"
+    }
+  ],
+  "place": [
+    {
+      "part": "J1",
+      "x": 4.445,
+      "y": 81.28,
+      "angle": 180.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "M1",
+      "x": -0.635,
+      "y": 25.4,
+      "angle": 90.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "M2",
+      "x": 99.06,
+      "y": 29.21,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "M3",
+      "x": 50.165,
+      "y": 42.545,
+      "angle": 270.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "SOL1",
+      "x": 0.0,
+      "y": 48.26,
+      "angle": 180.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "SR1",
+      "x": 91.44,
+      "y": 89.535,
+      "angle": 270.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "U1",
+      "x": 79.375,
+      "y": 64.135,
+      "angle": 270.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "U2",
+      "x": 29.845,
+      "y": 22.86,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "U3",
+      "x": 6.35,
+      "y": 8.89,
+      "angle": 90.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "U4",
+      "x": 8.89,
+      "y": 63.5,
+      "angle": 90.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "U5",
+      "x": 74.295,
+      "y": 22.225,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "U6",
+      "x": 56.515,
+      "y": 77.47,
+      "angle": 0.0,
+      "origin": "absolute"
+    }
+  ]
+}

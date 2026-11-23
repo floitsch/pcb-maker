@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Toit contributors.
+// Copyright (C) 2026 Florian Loitsch.
 
 //! The pads a route wired through their own footprint's copper, as the
 //! verdict reports them (`walled_pads` in verdict.json).
@@ -175,7 +175,7 @@ fn routed_copper(pcb: &Expr, layers: &LayerTable) -> Vec<RoutedItem> {
         let (points, mask) = match head {
             Some("via") => (
                 point("at").into_iter().collect(),
-                via_layers(item, layers).max(1),
+                layers.via_mask(item).max(1),
             ),
             Some("arc") => (
                 ["start", "mid", "end"]

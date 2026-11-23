@@ -11,7 +11,9 @@ use pcb_router as core;
 /// via beside the run on each side of the straight track, and comes up on
 /// its far side; the run starts past it, its centreline beside the
 /// straight track. KiCad's gap check sees the straight track and the
-/// diving net's tracks beside it a gap apart, as in the run.
+/// diving net's tracks beside it a gap apart, as in the run. The same
+/// representation carries the explicit tracks and vias of a paired
+/// transition, whose conductors keep their order.
 #[derive(Clone, Debug)]
 pub(super) struct Crossover {
     /// The run's start past the crossover (on its centreline).

@@ -1369,6 +1369,7 @@ mod tests {
     /// A board of `nets` empty nets on `layers` layers.
     fn board_of(nets: usize, layers: usize) -> Board {
         Board {
+            fixed_pad_route_clearance: Default::default(),
             layer_count: layers,
             outline: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]],
             edge_clearance: 0.2,

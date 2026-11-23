@@ -1477,13 +1477,9 @@ fn the_place_check_places_alike_in_check_mode() {
 }
 
 #[test]
-#[ignore = "fails on main at 20956b3: placement_constraints::HeldParts reads the placer config's fixed lists only, not constraints.json's fixed"]
 fn a_keepout_over_a_part_fixed_by_the_constraints_file_is_warned_of() {
-    // The same keepout as above, with the parts fixed by the constraints'
-    // own `fixed` (docs/constraints.md's format) instead of the placer
-    // config's lists: the placer keeps J1 where it is all the same, but
-    // the rule area is written with footprints not allowed (KiCad then
-    // reports J1) and nothing is warned of.
+    // The brief fixes J1 under the keepout. Report that conflict and
+    // preserve the held footprint when writing the KiCad rule area.
     let root = scratch("keepout-constraints");
     let source = project("f1", &root);
     let placer = root.join("placer.json");

@@ -20,6 +20,9 @@ pub struct KiCadBoardDescription {
     /// nets are in it, and the custom rules' widths per layer and closed
     /// layers for its nets (each net's class is in `nets`).
     pub classes: Vec<crate::class_view::KiCadClassRow>,
+    /// Nets in Default whose names match an unused project class.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub class_assignment_suggestions: Vec<KiCadClassAssignmentSuggestion>,
     /// The project's custom rules (`.kicad_dru`) as the router reads them:
     /// every constraint with its `status` (`applied`, `approximated`,
     /// `no_effect`, `not_routing`, `unmodelled`, `skipped`) and `detail`,
@@ -54,6 +57,70 @@ pub struct KiCadBoardDescription {
     /// for a board of one piece.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sub_boards: Option<crate::sub_boards::KiCadDescribedPieces>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct KiCadClassAssignmentSuggestion {
+    /// The net as the router and KiCad name it, respectively.
+    pub net: String,
+    pub kicad_net: String,
+    pub current_class: String,
+    pub current_track_width_mm: Option<f64>,
+    pub current_clearance_mm: Option<f64>,
+    /// The unused class and the geometry the project states for it.
+    pub class: String,
+    pub class_track_width_mm: Option<f64>,
+    pub class_clearance_mm: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub netclass_pattern: Option<KiCadNetClassPattern>,
+    pub action: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct KiCadNetClassPattern {
+    pub netclass: String,
+    pub pattern: String,
+}
+
+fn class_assignment_suggestions(
+    report: &crate::project_rules::KiCadProjectRulesReport,
+    nets: &[KiCadDescribedNet],
+    kicad_net_names: &BTreeMap<String, String>,
+) -> Vec<KiCadClassAssignmentSuggestion> {
+    let assigned = crate::class_view::assigned_classes(report);
+    nets.iter()
+        .filter_map(|net| {
+            let (class, [track_width, clearance]) =
+                crate::class_view::matching_unused_class(report, &assigned, &net.name)?;
+            let kicad_net = &kicad_net_names[&net.name];
+            // KiCad tries both an anchored regex and a wildcard. A plain
+            // name works in both; other names get a schematic directive.
+            let netclass_pattern = kicad_net
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'/' | b'-'))
+                .then(|| KiCadNetClassPattern {
+                    netclass: class.to_string(),
+                    pattern: kicad_net.clone(),
+                });
+            let action = if netclass_pattern.is_some() {
+                "If this is the intended class, add netclass_pattern to net_settings.netclass_patterns in the .kicad_pro and describe the board again to confirm the assignment."
+            } else {
+                "If this is the intended class, assign it to this net with a schematic net class directive, update the board from the schematic, and describe the board again to confirm the assignment."
+            };
+            Some(KiCadClassAssignmentSuggestion {
+                net: net.name.clone(),
+                kicad_net: kicad_net.clone(),
+                current_class: net.class.clone(),
+                current_track_width_mm: net.track_width_mm,
+                current_clearance_mm: net.clearance_mm,
+                class: class.to_string(),
+                class_track_width_mm: track_width,
+                class_clearance_mm: clearance,
+                netclass_pattern,
+                action: action.into(),
+            })
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -421,6 +488,7 @@ pub fn describe_kicad_board(
     .ok();
     let mut footprints = Vec::new();
     let mut nets: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut kicad_net_names = BTreeMap::new();
     // General-purpose pads per part: (part, value, pad, function, glob, net).
     let mut general: Vec<(String, String, String, String, String, String)> = Vec::new();
     // Pads by electrical type: (part, value, pad, pin name, unit, type, net).
@@ -470,12 +538,14 @@ pub fn describe_kicad_board(
                 pad.children().get(2).and_then(Expr::atom),
                 Some("thru_hole" | "np_thru_hole")
             );
-            let net = node_net(pad)
-                .filter(|raw| names.routable(raw))
-                .map(|raw| names.normalize(raw).to_string());
-            if let Some(net) = &net {
+            let raw_net = node_net(pad).filter(|raw| names.routable(raw));
+            let net = raw_net.map(|raw| names.normalize(raw).to_string());
+            if let (Some(net), Some(raw_net)) = (&net, raw_net) {
                 nets.entry(net.clone())
-                    .or_default()
+                    .or_insert_with(|| {
+                        kicad_net_names.insert(net.clone(), unescape(raw_net).into_owned());
+                        Vec::new()
+                    })
                     .push(format!("{reference}:{name}"));
                 let function = form_atom(pad, "pinfunction", 1).unwrap_or("");
                 if !function.is_empty() {
@@ -707,6 +777,11 @@ pub fn describe_kicad_board(
     let net_names: Vec<String> = nets.iter().map(|net| net.name.clone()).collect();
     Ok(KiCadBoardDescription {
         classes: crate::class_view::class_rows(&report, &net_names),
+        class_assignment_suggestions: class_assignment_suggestions(
+            &report,
+            &nets,
+            &kicad_net_names,
+        ),
         custom_rules: report.custom_rules.clone(),
         unmodelled_rules: report.unmodelled.clone(),
         board_id: board_id.into(),
@@ -801,6 +876,71 @@ mod tests {
         let json = serde_json::to_value(&description).unwrap();
         assert_eq!(json["classes"][3]["layer_widths_mm"]["In1.Cu"], 0.1);
         assert!(json["classes"][0].get("layer_widths_mm").is_none());
+        assert!(json.get("class_assignment_suggestions").is_none());
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn an_unused_class_suggestion_assigns_the_exact_native_net() {
+        let (directory, project) = crate::class_view::tests::impedance_project("suggestion");
+        let board = directory.join("board.kicad_pcb");
+        let input = fs::read_to_string(&board).unwrap();
+        fs::write(
+            &board,
+            input
+                .replace(r#""VBAT""#, r#""/vBaT-1""#)
+                .replace(r#""SDA""#, r#""/SDA.?*""#),
+        )
+        .unwrap();
+        let mut settings: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&project).unwrap()).unwrap();
+        let classes = settings["net_settings"]["classes"].as_array_mut().unwrap();
+        classes.extend([
+            serde_json::json!({"name": "VBAT-1", "track_width": 2.0, "clearance": 0.3}),
+            serde_json::json!({"name": "SDA.?*", "track_width": 0.15}),
+        ]);
+        fs::write(&project, serde_json::to_string(&settings).unwrap()).unwrap();
+
+        let description = describe_kicad_board(&directory, "board").unwrap();
+        let json = serde_json::to_value(&description).unwrap();
+        let suggestions = json["class_assignment_suggestions"].as_array().unwrap();
+        assert_eq!(suggestions.len(), 2);
+        let [special, suggestion] = suggestions.as_slice() else {
+            unreachable!();
+        };
+        assert_eq!(special["net"], "SDA.?*");
+        assert!(special.get("netclass_pattern").is_none());
+        assert!(
+            special["action"]
+                .as_str()
+                .unwrap()
+                .contains("schematic net class directive")
+        );
+        assert_eq!(suggestion["net"], "vBaT-1");
+        assert_eq!(suggestion["kicad_net"], "/vBaT-1");
+        assert_eq!(suggestion["current_class"], "Default");
+        assert_eq!(suggestion["current_track_width_mm"], 0.2);
+        assert_eq!(suggestion["current_clearance_mm"], 0.2);
+        assert_eq!(suggestion["class"], "VBAT-1");
+        assert_eq!(suggestion["class_track_width_mm"], 2.0);
+        assert_eq!(suggestion["class_clearance_mm"], 0.3);
+        assert_eq!(
+            suggestion["netclass_pattern"],
+            serde_json::json!({"netclass": "VBAT-1", "pattern": "/vBaT-1"})
+        );
+        settings["net_settings"]["netclass_patterns"]
+            .as_array_mut()
+            .unwrap()
+            .push(suggestion["netclass_pattern"].clone());
+        fs::write(&project, serde_json::to_string(&settings).unwrap()).unwrap();
+
+        let updated = describe_kicad_board(&directory, "board").unwrap();
+        assert_eq!(updated.class_assignment_suggestions.len(), 1);
+        let net = |name: &str| updated.nets.iter().find(|net| net.name == name).unwrap();
+        assert_eq!(net("vBaT-1").class, "VBAT-1");
+        assert_eq!(net("vBaT-1").track_width_mm, Some(2.0));
+        assert_eq!(net("vBaT-1").clearance_mm, Some(0.3));
+        assert_eq!(net("SDA.?*").class, "Default");
         fs::remove_dir_all(&directory).unwrap();
     }
 

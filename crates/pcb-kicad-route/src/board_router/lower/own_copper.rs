@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Toit contributors.
+// Copyright (C) 2026 Florian Loitsch.
 
 //! A footprint's own copper graphics where they wall its pads: an
 //! antenna's feed inside the antenna's polygon, a microphone's ground pads

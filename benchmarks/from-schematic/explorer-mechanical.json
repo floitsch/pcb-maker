@@ -1,0 +1,265 @@
+{
+  "version": 1,
+  "move_all": true,
+  "front": [
+    "FID1",
+    "FID2",
+    "FID3",
+    "H1",
+    "H2",
+    "H3",
+    "H4",
+    "J1",
+    "J10",
+    "J11",
+    "J2",
+    "J3",
+    "J4",
+    "J5",
+    "J6",
+    "J7",
+    "J8",
+    "J9",
+    "SW1",
+    "SW2",
+    "SW3",
+    "SW4",
+    "SW5"
+  ],
+  "back": [],
+  "place": [
+    {
+      "part": "FID1",
+      "x": 137.3,
+      "y": 61.3,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "FID2",
+      "x": 143.8,
+      "y": 122.3,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "FID3",
+      "x": 46.3,
+      "y": 151.7,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "H1",
+      "x": 48.05,
+      "y": 63.05,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "H2",
+      "x": 141.95,
+      "y": 63.05,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "H3",
+      "x": 141.95,
+      "y": 156.95,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "H4",
+      "x": 48.05,
+      "y": 156.95,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J1",
+      "x": 55.0,
+      "y": 111.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J10",
+      "x": 97.5,
+      "y": 155.95,
+      "angle": 180.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J11",
+      "x": 125.0,
+      "y": 155.95,
+      "angle": 180.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J2",
+      "x": 107.0,
+      "y": 98.8,
+      "angle": -90.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J3",
+      "x": 140.3,
+      "y": 80.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J4",
+      "x": 92.5,
+      "y": 64.0,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J5",
+      "x": 100.24,
+      "y": 78.625,
+      "angle": -90.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J6",
+      "x": 114.5,
+      "y": 96.3,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J7",
+      "x": 65.0,
+      "y": 68.0,
+      "angle": 180.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J8",
+      "x": 125.0,
+      "y": 68.0,
+      "angle": 180.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J9",
+      "x": 70.0,
+      "y": 155.95,
+      "angle": 180.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "SW1",
+      "x": 47.9,
+      "y": 119.97,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "SW2",
+      "x": 82.88,
+      "y": 101.65,
+      "angle": 180.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "SW3",
+      "x": 109.385,
+      "y": 80.27,
+      "angle": 90.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "SW4",
+      "x": 127.24,
+      "y": 80.27,
+      "angle": 90.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "SW5",
+      "x": 117.68,
+      "y": 80.27,
+      "angle": 90.0,
+      "origin": "absolute"
+    }
+  ],
+  "add": [
+    {
+      "part": "G_UKCA",
+      "from_board": true,
+      "board_reference": "G***",
+      "x": 115.44,
+      "y": 107.58,
+      "angle": 0.0,
+      "side": "front",
+      "origin": "absolute"
+    },
+    {
+      "part": "G_CE",
+      "from_board": true,
+      "board_reference": "G***",
+      "x": 123.44,
+      "y": 107.58516,
+      "angle": 0.0,
+      "side": "front",
+      "origin": "absolute"
+    },
+    {
+      "part": "G_AnyShake",
+      "from_board": true,
+      "board_reference": "G***",
+      "x": 68.3,
+      "y": 132.0,
+      "angle": 0.0,
+      "side": "front",
+      "origin": "absolute"
+    },
+    {
+      "part": "G_RoHS",
+      "from_board": true,
+      "board_reference": "G***",
+      "x": 107.44,
+      "y": 107.569522,
+      "angle": 0.0,
+      "side": "front",
+      "origin": "absolute"
+    },
+    {
+      "part": "G_North",
+      "from_board": true,
+      "board_reference": "G***",
+      "x": 86.0,
+      "y": 134.2,
+      "angle": 0.0,
+      "side": "front",
+      "origin": "absolute"
+    },
+    {
+      "part": "G_FCC",
+      "from_board": true,
+      "board_reference": "G***",
+      "x": 132.44,
+      "y": 107.572661,
+      "angle": 0.0,
+      "side": "front",
+      "origin": "absolute"
+    },
+    {
+      "part": "G_GitHub",
+      "from_board": true,
+      "board_reference": "G***",
+      "x": 61.566074,
+      "y": 136.489786,
+      "angle": 0.0,
+      "side": "front",
+      "origin": "absolute"
+    }
+  ]
+}

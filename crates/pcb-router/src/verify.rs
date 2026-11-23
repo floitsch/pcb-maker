@@ -6,7 +6,7 @@
 //! lattice and of the occupancy maps: it only sees segments, vias, obstacles
 //! and the outline, and measures true distances between them.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::board::{Board, NetId, NetRoute, ObstacleKind};
 use crate::geometry::{
@@ -19,8 +19,12 @@ pub struct Violation {
     pub net: NetId,
     /// Index into the net's segments, or `None` for one of its vias.
     pub segment: Option<usize>,
+    /// Index into the net's vias when it is a via.
+    pub via: Option<usize>,
     /// The other routed segment involved, if any.
     pub other_segment: Option<(NetId, usize)>,
+    /// The other routed via involved, if any.
+    pub other_via: Option<(NetId, usize)>,
     pub other: String,
     pub layer: usize,
     pub at: Point,
@@ -35,21 +39,27 @@ enum Item {
     Obstacle { index: usize },
 }
 
+#[derive(Clone, Copy)]
+enum RoutedIndex {
+    Segment(usize),
+    Via(usize),
+}
+
 /// Well under KiCad's DRC epsilon (0.5 µm): positions are written in
 /// nanometres, and two tracks at exactly their clearance are legal.
 const TOLERANCE: f64 = 1.0e-5;
 const BUCKET: f64 = 2.0;
 
 /// A routed item as a centreline and a copper radius: start, end, radius,
-/// the layer (`None`: a via), a via's drill radius, the index of the
-/// segment it is and its layers (a via's: every layer, or its span's).
+/// the layer (`None`: a via), a via's drill radius, its index and its
+/// layers (a via's: every layer, or its span's).
 type RoutedItem = (
     Point,
     Point,
     f64,
     Option<usize>,
     Option<f64>,
-    Option<usize>,
+    RoutedIndex,
     crate::board::LayerMask,
 );
 
@@ -76,8 +86,40 @@ pub fn verify_with_rules(
     routes: &[NetRoute],
     rules: Option<&crate::rules::ClassRules>,
 ) -> Vec<Violation> {
+    verify_with_track_gaps(board, routes, rules, &BTreeMap::new())
+}
+
+/// Final verification when the caller has emitted coupled copper. Keys
+/// in `track_gaps` are the two mates' IDs in ascending order. The gap can
+/// lower only their base track-to-track clearance, including a track held
+/// as an obstacle. Scoped rules and local floors still apply.
+pub fn verify_with_track_gaps(
+    board: &Board,
+    routes: &[NetRoute],
+    rules: Option<&crate::rules::ClassRules>,
+    track_gaps: &BTreeMap<(NetId, NetId), f64>,
+) -> Vec<Violation> {
+    verify_with_pair_gaps(board, routes, rules, track_gaps, &BTreeMap::new())
+}
+
+/// Check fixed launches with the known pairs' plated pad gaps in addition
+/// to any track gaps. Only tracks against an owned mate pad use these
+/// gaps. Explicit local and project clearance rules still apply.
+pub fn verify_with_pair_gaps(
+    board: &Board,
+    routes: &[NetRoute],
+    rules: Option<&crate::rules::ClassRules>,
+    track_gaps: &BTreeMap<(NetId, NetId), f64>,
+    plated_gaps: &BTreeMap<(NetId, NetId), f64>,
+) -> Vec<Violation> {
     let widths = rules.filter(|rules| rules.has_layer_widths());
-    let mut verifier = Verifier::new(board, routes, rules.filter(|rules| rules.clearances));
+    let mut verifier = Verifier::new(
+        board,
+        routes,
+        rules.filter(|rules| rules.clearances),
+        track_gaps,
+        plated_gaps,
+    );
     for (net, route) in routes.iter().enumerate() {
         let net = net as NetId;
         let class_index = board.nets[net as usize].class;
@@ -99,6 +141,8 @@ struct Verifier<'a> {
     routes: &'a [NetRoute],
     /// The rules beyond the classes, when they ask clearances.
     rules: Option<&'a crate::rules::ClassRules>,
+    track_gaps: &'a BTreeMap<(NetId, NetId), f64>,
+    plated_gaps: &'a BTreeMap<(NetId, NetId), f64>,
     /// The obstacles and routed items by `BUCKET` square, each in every
     /// bucket within the largest clearance of its box.
     index: HashMap<(i64, i64), Vec<Item>>,
@@ -117,8 +161,7 @@ struct Checked {
     layer: Option<usize>,
     /// A via's drill radius.
     drill: Option<f64>,
-    /// The index of the segment it is.
-    own_segment: Option<usize>,
+    index: RoutedIndex,
     layer_mask: crate::board::LayerMask,
     /// Its kind for the rules (`TRACK` or `VIA`).
     own_kind: usize,
@@ -129,7 +172,7 @@ struct Checked {
 
 impl Checked {
     fn new(board: &Board, net: NetId, item: RoutedItem) -> Self {
-        let (start, end, radius, layer, drill, own_segment, layer_mask) = item;
+        let (start, end, radius, layer, drill, index, layer_mask) = item;
         let class_index = board.nets[net as usize].class;
         Self {
             net,
@@ -140,7 +183,7 @@ impl Checked {
             radius,
             layer,
             drill,
-            own_segment,
+            index,
             layer_mask,
             own_kind: if layer.is_some() {
                 crate::rules::TRACK
@@ -167,19 +210,19 @@ fn routed_items(board: &Board, route: &NetRoute) -> Vec<RoutedItem> {
                 segment.width / 2.0,
                 Some(segment.layer),
                 None,
-                Some(index),
+                RoutedIndex::Segment(index),
                 1 << segment.layer,
             )
         })
         .collect();
-    items.extend(route.vias.iter().map(|via| {
+    items.extend(route.vias.iter().enumerate().map(|(index, via)| {
         (
             via.at,
             via.at,
             via.diameter / 2.0,
             None,
             Some(via.drill / 2.0),
-            None,
+            RoutedIndex::Via(index),
             via.mask(board.layer_count),
         )
     }));
@@ -193,6 +236,8 @@ impl<'a> Verifier<'a> {
         board: &'a Board,
         routes: &'a [NetRoute],
         rules: Option<&'a crate::rules::ClassRules>,
+        track_gaps: &'a BTreeMap<(NetId, NetId), f64>,
+        plated_gaps: &'a BTreeMap<(NetId, NetId), f64>,
     ) -> Self {
         let max_clearance = board
             .classes
@@ -247,9 +292,25 @@ impl<'a> Verifier<'a> {
             board,
             routes,
             rules,
+            track_gaps,
+            plated_gaps,
             index,
             violations: Vec::new(),
         }
+    }
+
+    fn mate_track_gap(&self, item: &Checked, other: Option<NetId>) -> Option<f64> {
+        Self::mate_gap(self.track_gaps, item, other)
+    }
+
+    fn mate_gap(
+        gaps: &BTreeMap<(NetId, NetId), f64>,
+        item: &Checked,
+        other: Option<NetId>,
+    ) -> Option<f64> {
+        let other = other.filter(|_| item.own_kind == crate::rules::TRACK)?;
+        gaps.get(&(item.net.min(other), item.net.max(other)))
+            .copied()
     }
 
     /// The clearance the rules ask beyond the classes between an item of
@@ -278,8 +339,8 @@ impl<'a> Verifier<'a> {
     fn report(
         &mut self,
         net: NetId,
-        segment: Option<usize>,
-        other_segment: Option<(NetId, usize)>,
+        index: RoutedIndex,
+        other_routed: Option<(NetId, RoutedIndex)>,
         other: String,
         layer: usize,
         at: Point,
@@ -289,8 +350,22 @@ impl<'a> Verifier<'a> {
         if actual + TOLERANCE < required {
             self.violations.push(Violation {
                 net,
-                segment,
-                other_segment,
+                segment: match index {
+                    RoutedIndex::Segment(index) => Some(index),
+                    RoutedIndex::Via(_) => None,
+                },
+                via: match index {
+                    RoutedIndex::Via(index) => Some(index),
+                    RoutedIndex::Segment(_) => None,
+                },
+                other_segment: match other_routed {
+                    Some((net, RoutedIndex::Segment(index))) => Some((net, index)),
+                    _ => None,
+                },
+                other_via: match other_routed {
+                    Some((net, RoutedIndex::Via(index))) => Some((net, index)),
+                    _ => None,
+                },
                 other,
                 layer,
                 at,
@@ -306,7 +381,7 @@ impl<'a> Verifier<'a> {
         for (index, segment) in route.segments.iter().enumerate() {
             self.report(
                 net,
-                Some(index),
+                RoutedIndex::Segment(index),
                 None,
                 "track width".into(),
                 segment.layer,
@@ -332,7 +407,7 @@ impl<'a> Verifier<'a> {
             .fold(f64::INFINITY, f64::min);
         self.report(
             item.net,
-            item.own_segment,
+            item.index,
             None,
             "board edge".into(),
             item.report_layer,
@@ -415,7 +490,17 @@ impl<'a> Verifier<'a> {
         let distance = obstacle.shape.distance_to_segment(start, end);
         let required = match obstacle.kind {
             ObstacleKind::Copper => {
-                let clearance = board.copper_clearance(&item.class, obstacle);
+                let gap = match crate::rules::obstacle_kind(obstacle) {
+                    Some(crate::rules::TRACK) => self.mate_track_gap(item, obstacle.net),
+                    Some(crate::rules::PLATED) => {
+                        Self::mate_gap(self.plated_gaps, item, obstacle.net)
+                    }
+                    _ => None,
+                };
+                let clearance = gap.map_or_else(
+                    || board.copper_clearance(&item.class, obstacle),
+                    |gap| board.pair_copper_clearance(&item.class, obstacle, gap),
+                );
                 match (self.rules, layer) {
                     (None, _) => clearance,
                     (Some(rules), Some(layer)) => clearance.max(rules.obstacle_extra(
@@ -436,7 +521,7 @@ impl<'a> Verifier<'a> {
         };
         self.report(
             net,
-            item.own_segment,
+            item.index,
             None,
             obstacle.label.clone(),
             item.report_layer,
@@ -449,7 +534,7 @@ impl<'a> Verifier<'a> {
         if let (Some(drill), ObstacleKind::Copper) = (item.drill, obstacle.kind) {
             self.report(
                 net,
-                item.own_segment,
+                item.index,
                 None,
                 format!("{} (via hole)", obstacle.label),
                 item.report_layer,
@@ -461,7 +546,7 @@ impl<'a> Verifier<'a> {
         if let (Some(drill), ObstacleKind::Hole) = (item.drill, obstacle.kind) {
             self.report(
                 net,
-                item.own_segment,
+                item.index,
                 None,
                 format!("{} (hole to hole)", obstacle.label),
                 item.report_layer,
@@ -483,10 +568,9 @@ impl<'a> Verifier<'a> {
         }
         let other_class = board.classes[board.nets[other as usize].class];
         let distance = segment_segment_distance(item.start, item.end, segment.start, segment.end);
-        let required = item
-            .class
-            .clearance
-            .max(other_class.clearance)
+        let clearance = item.class.clearance.max(other_class.clearance);
+        let required = clearance
+            .min(self.mate_track_gap(item, Some(other)).unwrap_or(clearance))
             .max(self.extra(
                 net,
                 item.own_kind,
@@ -496,8 +580,8 @@ impl<'a> Verifier<'a> {
             ));
         self.report(
             net,
-            item.own_segment,
-            Some((other, index)),
+            item.index,
+            Some((other, RoutedIndex::Segment(index))),
             board.nets[other as usize].name.clone(),
             segment.layer,
             item.at,
@@ -507,8 +591,8 @@ impl<'a> Verifier<'a> {
         if let Some(drill) = item.drill {
             self.report(
                 net,
-                item.own_segment,
-                Some((other, index)),
+                item.index,
+                Some((other, RoutedIndex::Segment(index))),
                 format!("{} (via hole)", board.nets[other as usize].name),
                 segment.layer,
                 item.at,
@@ -545,8 +629,8 @@ impl<'a> Verifier<'a> {
             .max(self.extra(net, item.own_kind, other, crate::rules::VIA, item.layer));
         self.report(
             net,
-            item.own_segment,
-            None,
+            item.index,
+            Some((other, RoutedIndex::Via(index))),
             format!("via of {}", board.nets[other as usize].name),
             item.report_layer,
             item.at,
@@ -556,8 +640,8 @@ impl<'a> Verifier<'a> {
         if let Some(drill) = item.drill {
             self.report(
                 net,
-                item.own_segment,
-                None,
+                item.index,
+                Some((other, RoutedIndex::Via(index))),
                 format!("via hole of {}", board.nets[other as usize].name),
                 item.report_layer,
                 item.at,
@@ -566,8 +650,8 @@ impl<'a> Verifier<'a> {
             );
             self.report(
                 net,
-                item.own_segment,
-                None,
+                item.index,
+                Some((other, RoutedIndex::Via(index))),
                 format!(
                     "via of {} (hole clearance)",
                     board.nets[other as usize].name
@@ -582,8 +666,8 @@ impl<'a> Verifier<'a> {
         // from this copper.
         self.report(
             net,
-            item.own_segment,
-            None,
+            item.index,
+            Some((other, RoutedIndex::Via(index))),
             format!(
                 "via hole of {} (hole clearance)",
                 board.nets[other as usize].name

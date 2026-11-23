@@ -586,9 +586,7 @@ fn flip_clusters(
         return false;
     }
     for (stretch, &(wire, first, last)) in stretches.iter().enumerate() {
-        for step in first..=last {
-            topology.wires[wire].layers[step] = best_layer[stretch];
-        }
+        topology.wires[wire].layers[first..=last].fill(best_layer[stretch]);
     }
     true
 }

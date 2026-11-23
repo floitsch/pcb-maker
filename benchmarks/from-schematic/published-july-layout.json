@@ -1,0 +1,94 @@
+{
+  "run_date": "2026-07-14",
+  "board_id": "test_module_unplaced",
+  "source_commit": "4753e47ba117a72513efc445e93751283cd54d30",
+  "returned_commit": "a829d3d335f143ae6ca536c6bd7ee7740afe7ad9",
+  "review": {
+    "sha256": "f763749b4a1b8da54fc0893b7276970b69dc1439928d000d3c74696030551578",
+    "git_blob": "e9cc550babd97c777cbc9ae4a08d69d7d902cb9c",
+    "url": "https://raw.githubusercontent.com/vertical-cloud-lab/powder-doser/a829d3d335f143ae6ca536c6bd7ee7740afe7ad9/paper/background/24-quilter-run2-candidate-evaluation.md"
+  },
+  "authored_placement_intent": "https://github.com/vertical-cloud-lab/powder-doser/pull/76#issuecomment-4930225373",
+  "source_files": {
+    "test_module_unplaced.kicad_pcb": {
+      "sha256": "f42bca74e0cef5652fc484df20e67f5b798783564c3eb8f0bb8caca204ed08af",
+      "git_blob": "8b66fb71534e02dda2a8e0c32150e1fa03e707be",
+      "url": "https://raw.githubusercontent.com/vertical-cloud-lab/powder-doser/4753e47ba117a72513efc445e93751283cd54d30/paper/background/starter_board/test_module_unplaced.kicad_pcb"
+    },
+    "test_module_unplaced.kicad_pro": {
+      "sha256": "1855d2fca02f2d2916549e5cbefda0f497821b8a634baafeb3e4966c7a80eed5",
+      "git_blob": "aba658e8b16990e4fe44c70a1e7f1378ea5845b9",
+      "url": "https://raw.githubusercontent.com/vertical-cloud-lab/powder-doser/4753e47ba117a72513efc445e93751283cd54d30/paper/background/starter_board/test_module_unplaced.kicad_pro"
+    },
+    "test_module_unplaced.kicad_sch": {
+      "sha256": "b70830cb796ac13d0acd329bcc9b36d7df564e59e665d3b4d4b00f2424f70169",
+      "git_blob": "29607e977203308efb3ed0d0a78336d6098bf52c",
+      "url": "https://raw.githubusercontent.com/vertical-cloud-lab/powder-doser/4753e47ba117a72513efc445e93751283cd54d30/paper/background/starter_board/test_module_unplaced.kicad_sch"
+    }
+  },
+  "candidates": {
+    "candidate_1": {
+      "test_module_unplaced.kicad_pcb": {
+        "sha256": "7444b2ae99a51ce733c347eb0769e8d0b35f3015a49d394a10deeec6cf5b0848",
+        "git_blob": "37f68f8d51b32501e66baf2636f94f841af61350",
+        "url": "https://raw.githubusercontent.com/vertical-cloud-lab/powder-doser/a829d3d335f143ae6ca536c6bd7ee7740afe7ad9/paper/background/starter_board/quilter_candidates_run2/candidate_1/test_module_unplaced.kicad_pcb"
+      },
+      "test_module_unplaced.kicad_pro": {
+        "sha256": "84396a8879cf2289180d11c088c79976c5f039f20dff36fc87895bd55fe297eb",
+        "git_blob": "44d00bd5301773203795dce8fb40e4ef00b59624",
+        "url": "https://raw.githubusercontent.com/vertical-cloud-lab/powder-doser/a829d3d335f143ae6ca536c6bd7ee7740afe7ad9/paper/background/starter_board/quilter_candidates_run2/candidate_1/test_module_unplaced.kicad_pro"
+      }
+    },
+    "candidate_2": {
+      "test_module_unplaced.kicad_pcb": {
+        "sha256": "334a762dc7a055d33506a161da5a3b934d0e0e3ebba03931d241c14c8c52f1c6",
+        "git_blob": "cd722d40f4e35a26826d47f06cba493532178c99",
+        "url": "https://raw.githubusercontent.com/vertical-cloud-lab/powder-doser/a829d3d335f143ae6ca536c6bd7ee7740afe7ad9/paper/background/starter_board/quilter_candidates_run2/candidate_2/test_module_unplaced.kicad_pcb"
+      },
+      "test_module_unplaced.kicad_pro": {
+        "sha256": "84396a8879cf2289180d11c088c79976c5f039f20dff36fc87895bd55fe297eb",
+        "git_blob": "44d00bd5301773203795dce8fb40e4ef00b59624",
+        "url": "https://raw.githubusercontent.com/vertical-cloud-lab/powder-doser/a829d3d335f143ae6ca536c6bd7ee7740afe7ad9/paper/background/starter_board/quilter_candidates_run2/candidate_2/test_module_unplaced.kicad_pro"
+      }
+    },
+    "candidate_3": {
+      "test_module_unplaced.kicad_pcb": {
+        "sha256": "b7e976ac7b323d7722a365dedeb0498a9efc9fe15356771ac3f0ada3bf8b361f",
+        "git_blob": "bca25578b30026391a4109292ad6d6a9d3c6f3ee",
+        "url": "https://raw.githubusercontent.com/vertical-cloud-lab/powder-doser/a829d3d335f143ae6ca536c6bd7ee7740afe7ad9/paper/background/starter_board/quilter_candidates_run2/candidate_3/test_module_unplaced.kicad_pcb"
+      },
+      "test_module_unplaced.kicad_pro": {
+        "sha256": "84396a8879cf2289180d11c088c79976c5f039f20dff36fc87895bd55fe297eb",
+        "git_blob": "44d00bd5301773203795dce8fb40e4ef00b59624",
+        "url": "https://raw.githubusercontent.com/vertical-cloud-lab/powder-doser/a829d3d335f143ae6ca536c6bd7ee7740afe7ad9/paper/background/starter_board/quilter_candidates_run2/candidate_3/test_module_unplaced.kicad_pro"
+      }
+    },
+    "candidate_5": {
+      "test_module_unplaced.kicad_pcb": {
+        "sha256": "fc8b3362c54217ef8066f2e5b5661a374b63a55f7b4da0d673bacbb0e1d26b5f",
+        "git_blob": "b49d54a1101e0e9c1f130a4ebf975f04a106aea9",
+        "url": "https://raw.githubusercontent.com/vertical-cloud-lab/powder-doser/a829d3d335f143ae6ca536c6bd7ee7740afe7ad9/paper/background/starter_board/quilter_candidates_run2/candidate_5/test_module_unplaced.kicad_pcb"
+      },
+      "test_module_unplaced.kicad_pro": {
+        "sha256": "84396a8879cf2289180d11c088c79976c5f039f20dff36fc87895bd55fe297eb",
+        "git_blob": "44d00bd5301773203795dce8fb40e4ef00b59624",
+        "url": "https://raw.githubusercontent.com/vertical-cloud-lab/powder-doser/a829d3d335f143ae6ca536c6bd7ee7740afe7ad9/paper/background/starter_board/quilter_candidates_run2/candidate_5/test_module_unplaced.kicad_pro"
+      }
+    },
+    "candidate_6": {
+      "test_module_unplaced.kicad_pcb": {
+        "sha256": "4b426746dd3534048607a5a320e82e79276c36b1b28b8ac9a0dceccbb9124f28",
+        "git_blob": "bfca4733abba802dd805359e8cfdeeb27ea1f0e1",
+        "url": "https://raw.githubusercontent.com/vertical-cloud-lab/powder-doser/a829d3d335f143ae6ca536c6bd7ee7740afe7ad9/paper/background/starter_board/quilter_candidates_run2/candidate_6/test_module_unplaced.kicad_pcb"
+      },
+      "test_module_unplaced.kicad_pro": {
+        "sha256": "84396a8879cf2289180d11c088c79976c5f039f20dff36fc87895bd55fe297eb",
+        "git_blob": "44d00bd5301773203795dce8fb40e4ef00b59624",
+        "url": "https://raw.githubusercontent.com/vertical-cloud-lab/powder-doser/a829d3d335f143ae6ca536c6bd7ee7740afe7ad9/paper/background/starter_board/quilter_candidates_run2/candidate_6/test_module_unplaced.kicad_pro"
+      }
+    }
+  },
+  "missing_candidates": {
+    "candidate_4": "The published attachment link was malformed; candidate 4 is absent from the archive."
+  }
+}

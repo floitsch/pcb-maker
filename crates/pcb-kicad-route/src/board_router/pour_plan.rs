@@ -5,6 +5,14 @@
 
 use super::*;
 
+mod region;
+pub use region::{KiCadPourRegion, refresh_pour_regions};
+pub(crate) use region::{PAD_REGION_PREFIX, region_name};
+use region::{pad_region_polygon, region_uuid};
+
+const MIN_POUR_WIDTH_MM: f64 = 0.25;
+const DEFAULT_THERMAL_BRIDGE_WIDTH_MM: f64 = 0.3;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct KiCadPourRequest {
@@ -12,9 +20,19 @@ pub struct KiCadPourRequest {
     pub net: String,
     /// Copper layers, such as `B.Cu`.
     pub layers: Vec<String>,
+    /// Limit the zone to a box around the named pads in the current placement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<KiCadPourRegion>,
     /// Clearance between the pour and other nets (default 0.3 mm).
     #[serde(default)]
     pub clearance_mm: Option<f64>,
+    /// Thermal relief spoke width (default 0.3 mm, minimum 0.25 mm).
+    #[serde(
+        default,
+        deserialize_with = "read_thermal_bridge_width",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub thermal_bridge_width_mm: Option<f64>,
     /// A plane (default false): no track of any net on these layers, only
     /// vias through them, so the pour stays whole on every rung of the
     /// ladder (exclusive_planes holds only on some). A rule area keeping
@@ -31,6 +49,26 @@ pub struct KiCadPourRequest {
     /// lowers it by its name).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub keep_whole: Vec<KiCadKeepWhole>,
+}
+
+fn check_thermal_bridge_width(width: f64) -> Result<f64, String> {
+    let max_mm = f64::from(i32::MAX) / 1.0e6;
+    if !(MIN_POUR_WIDTH_MM..=max_mm).contains(&width) {
+        return Err(format!(
+            "add_pours thermal_bridge_width_mm must be at least {MIN_POUR_WIDTH_MM} mm and fit KiCad's dimension range"
+        ));
+    }
+    Ok(width)
+}
+
+fn read_thermal_bridge_width<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<f64>::deserialize(deserializer)?
+        .map(check_thermal_bridge_width)
+        .transpose()
+        .map_err(serde::de::Error::custom)
 }
 
 /// A region where a pour stays whole (`KiCadPourRequest::keep_whole`):
@@ -181,7 +219,9 @@ pub fn planned_pours(
         requests.push(KiCadPourRequest {
             net: ground,
             layers: vec![inner[0].clone()],
+            region: None,
             clearance_mm: None,
+            thermal_bridge_width_mm: None,
             plane: false,
             keep_whole: Vec::new(),
         });
@@ -192,7 +232,9 @@ pub fn planned_pours(
         requests.push(KiCadPourRequest {
             net: rail,
             layers: vec![inner[inner.len() - 1].clone()],
+            region: None,
             clearance_mm: None,
+            thermal_bridge_width_mm: None,
             plane: false,
             keep_whole: Vec::new(),
         });
@@ -200,14 +242,28 @@ pub fn planned_pours(
     Ok(requests)
 }
 
-/// Adds a zone over the board outline for every request.
+/// Adds a zone over the board outline or a requested pad region.
 pub fn add_pour_zones(pcb: &mut Expr, requests: &[KiCadPourRequest]) -> Result<(), String> {
     let net_names = NetNames::of(pcb);
     if requests.is_empty() {
         return Ok(());
     }
+    if let Some(request) = requests
+        .iter()
+        .find(|request| request.region.is_some() && request.plane)
+    {
+        return Err(format!(
+            "pour for {:?}: a pad region cannot reserve a whole plane",
+            request.net
+        ));
+    }
     let outline = outline::board_loops(pcb)?.outline;
     let layers = LayerTable::from_pcb(pcb)?;
+    let pads = if requests.iter().any(|request| request.region.is_some()) {
+        region_pads(pcb, &layers)?
+    } else {
+        Vec::new()
+    };
     let mut nets = BTreeSet::new();
     for footprint in pcb
         .children()
@@ -224,8 +280,8 @@ pub fn add_pour_zones(pcb: &mut Expr, requests: &[KiCadPourRequest]) -> Result<(
             }
         }
     }
-    // Zones the board already has, by (net, layer): a requested pour that
-    // exists already is not added twice. A zone on a layer set (`F&B.Cu`,
+    // Whole-board requests respect existing zones by (net, layer).
+    // A zone on a layer set (`F&B.Cu`,
     // `*.Cu`, a list) has each of its layers (the trial's board A wrote a
     // second F.Cu zone over its F&B.Cu one, 2026-10-26).
     let mut existing = BTreeSet::new();
@@ -245,22 +301,36 @@ pub fn add_pour_zones(pcb: &mut Expr, requests: &[KiCadPourRequest]) -> Result<(
         }
     }
     let mut zones = Vec::new();
+    let mut region_ids = BTreeSet::new();
+    let mut requested_modes = BTreeMap::new();
     let names: BTreeSet<String> = pcb
         .children()
         .iter()
         .filter(|item| item.head() == Some("zone"))
         .filter_map(|zone| form_atom(zone, "name", 1).map(str::to_string))
         .collect();
-    let points: Vec<String> = outline
+    let points = outline
         .iter()
         .map(|point| format!("(xy {} {})", point[0], point[1]))
-        .collect();
+        .collect::<Vec<_>>()
+        .join(" ");
     for request in requests {
         let net = [request.net.clone(), format!("/{}", request.net)]
             .into_iter()
             .find(|name| nets.contains(name))
             .ok_or_else(|| format!("pour for {:?}: no pad has that net", request.net))?;
         let clearance = request.clearance_mm.unwrap_or(0.3);
+        let region = request
+            .region
+            .as_ref()
+            .map(|region| pad_region_polygon(region, net_names.normalize(&net), &pads))
+            .transpose()?;
+        let pour_points = region.as_deref().unwrap_or(&points);
+        let thermal_bridge_width = check_thermal_bridge_width(
+            request
+                .thermal_bridge_width_mm
+                .unwrap_or(DEFAULT_THERMAL_BRIDGE_WIDTH_MM),
+        )?;
         for layer in &request.layers {
             if layers.index(layer).is_none() {
                 return Err(format!(
@@ -268,11 +338,18 @@ pub fn add_pour_zones(pcb: &mut Expr, requests: &[KiCadPourRequest]) -> Result<(
                     request.net
                 ));
             }
-            // A stable identifier from the request.
-            let mut hash = 0xcbf2_9ce4_8422_2325u64;
-            for byte in net.bytes().chain(layer.bytes()) {
-                hash = (hash ^ byte as u64).wrapping_mul(0x100_0000_01b3);
+            let key = (net_names.normalize(&net).to_string(), layer.clone());
+            let regional = request.region.is_some();
+            if requested_modes
+                .insert(key.clone(), regional)
+                .is_some_and(|mode| mode != regional)
+            {
+                return Err(format!(
+                    "pour for {net:?} on {layer}: choose either a whole-board zone or pad regions"
+                ));
             }
+            // A stable identifier from the request.
+            let hash = pour_hash(&net, layer);
             let name = format!("plane {} {layer}", net_names.normalize(&net));
             if request.plane && !names.contains(&name) {
                 let hash = hash.rotate_left(17) ^ 0x9e37_79b9_7f4a_7c15;
@@ -287,7 +364,7 @@ pub fn add_pour_zones(pcb: &mut Expr, requests: &[KiCadPourRequest]) -> Result<(
                     hash & 0xfff,
                     (hash >> 12) & 0xfff,
                     hash & 0xffff_ffff_ffff,
-                    points.join(" ")
+                    points
                 ))?);
             }
             if !request.keep_whole.is_empty() {
@@ -315,27 +392,54 @@ pub fn add_pour_zones(pcb: &mut Expr, requests: &[KiCadPourRequest]) -> Result<(
                     ))?);
                 }
             }
-            if existing.contains(&(net_names.normalize(&net).to_string(), layer.clone())) {
-                eprintln!(
-                    "pour for {} on {layer}: the board has one already",
-                    request.net
-                );
-                continue;
-            }
-            zones.push(parse(&format!(
-                "(zone (net {net:?}) (layer {layer:?}) (uuid \"{:08x}-{:04x}-4{:03x}-8{:03x}-{:012x}\") (hatch edge 0.5) \
-                 (connect_pads (clearance {clearance})) (min_thickness 0.25) \
-                 (fill yes (thermal_gap {clearance}) (thermal_bridge_width 0.3) (island_removal_mode 0)) \
-                 (polygon (pts {})))",
-                hash >> 32,
-                (hash >> 16) & 0xffff,
-                hash & 0xfff,
-                (hash >> 12) & 0xfff,
-                hash & 0xffff_ffff_ffff,
-                points.join(" ")
-            ))?);
+            let identity = if let Some(region) = &request.region {
+                let id = region_uuid(&net, layer, region);
+                if !region_ids.insert(id.clone()) {
+                    return Err(format!(
+                        "pour for {net:?} on {layer}: more than one region uses the same anchor pads"
+                    ));
+                }
+                let name = region_name(&key.0, layer);
+                let mut matching = pcb
+                    .children()
+                    .iter()
+                    .filter(|item| form_atom(item, "uuid", 1) == Some(id.as_str()));
+                if let Some(old) = matching.next() {
+                    if matching.next().is_some()
+                        || old.head() != Some("zone")
+                        || node_net(old) != Some(net.as_str())
+                        || form_atom(old, "layer", 1) != Some(layer.as_str())
+                        || form_atom(old, "name", 1) != Some(name.as_str())
+                    {
+                        return Err(format!(
+                            "pour for {net:?} on {layer}: region identity already belongs to another PCB item"
+                        ));
+                    }
+                    continue;
+                }
+                existing.insert(key);
+                format!("(uuid {id:?}) (name {name:?})")
+            } else {
+                if !existing.insert(key) {
+                    eprintln!(
+                        "pour for {} on {layer}: the board has one already",
+                        request.net
+                    );
+                    continue;
+                }
+                format!("(uuid {:?})", zone_uuid(hash))
+            };
+            zones.push(solid_pour(
+                &format!("{net:?}"),
+                layer,
+                &identity,
+                clearance,
+                thermal_bridge_width,
+                pour_points,
+            )?);
         }
     }
+    refresh_pour_regions(pcb, requests)?;
     let Expr::List(items) = pcb else {
         return Err("PCB root is not a list".into());
     };
@@ -355,12 +459,85 @@ pub fn add_pour_zones(pcb: &mut Expr, requests: &[KiCadPourRequest]) -> Result<(
     Ok(())
 }
 
+fn solid_pour(
+    net_field: &str,
+    layer: &str,
+    identity: &str,
+    clearance: f64,
+    thermal_bridge_width: f64,
+    points: &str,
+) -> Result<Expr, String> {
+    parse(&format!(
+        "(zone (net {net_field}) (layer {layer:?}) {identity} (hatch edge 0.5) \
+         (connect_pads (clearance {clearance})) (min_thickness {MIN_POUR_WIDTH_MM}) \
+         (fill yes (thermal_gap {clearance}) (thermal_bridge_width {thermal_bridge_width}) (island_removal_mode 0)) \
+         (polygon (pts {points})))",
+    ))
+}
+
+/// Forms one solid zone using the same fill settings as `add_pours`.
+pub fn local_pour_zone(
+    net: &str,
+    layer: &str,
+    endpoints: [&str; 2],
+    [x0, y0, x1, y1]: [f64; 4],
+) -> Result<(String, Expr), String> {
+    let extent = f64::from(i32::MAX) / 1.0e6;
+    if !(x0 < x1 && y0 < y1)
+        || [x0, x1, y0, y1]
+            .into_iter()
+            .any(|n| !(-extent..=extent).contains(&n))
+    {
+        return Err("local pour bounds do not fit KiCad's coordinate range".into());
+    }
+    let identity = zone_uuid(pour_hash(
+        net,
+        &format!("{layer} local {} {}", endpoints[0], endpoints[1]),
+    ));
+    let label = format!("(uuid {identity:?}) (name \"local repair pour\")");
+    let points = format!(
+        "(xy {x0:.6} {y0:.6}) (xy {x1:.6} {y0:.6}) (xy {x1:.6} {y1:.6}) (xy {x0:.6} {y1:.6})"
+    );
+    let net = kicad_sexpr::quote(&kicad_sexpr::unescape(net));
+    Ok((
+        identity,
+        solid_pour(
+            &net,
+            layer,
+            &label,
+            0.3,
+            DEFAULT_THERMAL_BRIDGE_WIDTH_MM,
+            &points,
+        )?,
+    ))
+}
+
+fn pour_hash(net: &str, layer: &str) -> u64 {
+    net.bytes()
+        .chain(layer.bytes())
+        .fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x100_0000_01b3)
+        })
+}
+
+fn zone_uuid(hash: u64) -> String {
+    format!(
+        "{:08x}-{:04x}-4{:03x}-8{:03x}-{:012x}",
+        hash >> 32,
+        (hash >> 16) & 0xffff,
+        hash & 0xfff,
+        (hash >> 12) & 0xfff,
+        hash & 0xffff_ffff_ffff
+    )
+}
+
 /// A pad of a board for the keep_whole checks: `REF:NUMBER`, its part, its
 /// net (normalized; none for a pad without one), its centre and its copper
 /// layers.
 pub(crate) struct RegionPad {
     pub label: String,
     pub reference: String,
+    unique_reference: bool,
     pub net: Option<String>,
     pub center: [f64; 2],
     pub mask: pcb_router::LayerMask,
@@ -370,11 +547,15 @@ pub(crate) struct RegionPad {
 pub(crate) fn region_pads(pcb: &Expr, layers: &LayerTable) -> Result<Vec<RegionPad>, String> {
     let net_names = NetNames::of(pcb);
     let mut pads = Vec::new();
-    for footprint in pcb
+    let parts = pcb
         .children()
         .iter()
-        .filter(|item| item.head() == Some("footprint"))
-    {
+        .filter(|item| item.head() == Some("footprint"));
+    let mut references = BTreeMap::<String, usize>::new();
+    for name in parts.clone().filter_map(footprint_reference) {
+        *references.entry(name).or_default() += 1;
+    }
+    for footprint in parts {
         let reference = footprint_reference(footprint).unwrap_or_default();
         let at = form_at(footprint)?;
         for pad in footprint
@@ -394,6 +575,7 @@ pub(crate) fn region_pads(pcb: &Expr, layers: &LayerTable) -> Result<Vec<RegionP
             pads.push(RegionPad {
                 label: format!("{reference}:{number}"),
                 reference: reference.clone(),
+                unique_reference: references.get(&reference) == Some(&1),
                 net: node_net(pad)
                     .filter(|net| !net.is_empty())
                     .map(|net| net_names.normalize(net).to_string()),
@@ -530,9 +712,27 @@ pub(crate) fn keep_whole_candidates(
     pads: &[RegionPad],
     net: &str,
     layer: usize,
+    bounded: Option<&super::pour_quality::KiCadBoundedTrackLength>,
 ) -> Vec<String> {
+    let mut occurrences = BTreeMap::new();
+    if bounded.is_some() {
+        for (reference, _, _) in parts {
+            *occurrences.entry(reference.as_str()).or_insert(0) += 1;
+        }
+    }
     let mut candidates: Vec<&(String, usize, [f64; 4])> = parts
         .iter()
+        .filter(|(reference, _, region)| {
+            bounded.is_none_or(|bounded| {
+                // A single part selector must identify the proposed region.
+                occurrences.get(reference.as_str()) == Some(&1)
+                    && !reference.contains(['*', '?', '[', ']'])
+                    && bounded.regions.iter().any(|zone| {
+                        let [x0, y0, x1, y1] = zone.bounds_mm;
+                        x0 <= region[0] && y0 <= region[1] && x1 >= region[2] && y1 >= region[3]
+                    })
+            })
+        })
         .filter(|(_, _, region)| foreign_pads_in(pads, net, layer, *region).next().is_none())
         .collect();
     candidates.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));

@@ -53,23 +53,37 @@ impl Builder {
                 expansion,
             } = opening;
             let reach = (mask_reach + margin).max(ctx.mask.mask_to_copper + expansion);
-            let Some(first) = shapes.first() else {
+            let pieces: Vec<_> = shapes
+                .iter()
+                .map(|shape| (shape, shape.aabb().inflated(margin)))
+                .collect();
+            let Some(bounds) = pieces
+                .iter()
+                .map(|(_, bounds)| *bounds)
+                .reduce(core::geometry::Aabb::union)
+            else {
                 continue;
             };
-            let bounds = shapes
-                .iter()
-                .skip(1)
-                .fold(first.aabb(), |bounds, shape| bounds.union(shape.aabb()))
-                .inflated(margin);
             let mut exposed: BTreeSet<core::NetId> = self
                 .obstacles
                 .iter()
-                .filter(|obstacle| {
-                    obstacle.kind == core::ObstacleKind::Copper
-                        && obstacle.layers & (1 << layer) != 0
-                        && obstacle.shape.aabb().intersects(bounds)
+                .filter_map(|obstacle| {
+                    let net = obstacle.net?;
+                    if obstacle.kind != core::ObstacleKind::Copper
+                        || obstacle.layers & (1 << layer) == 0
+                    {
+                        return None;
+                    }
+                    let copper = obstacle.shape.aabb();
+                    // An oblique track can overlap the opening's bounding
+                    // box without exposing any copper through the mask.
+                    (copper.intersects(bounds)
+                        && pieces.iter().any(|(shape, piece)| {
+                            copper.intersects(*piece)
+                                && core::verify::shape_distance(shape, &obstacle.shape) <= margin
+                        }))
+                    .then_some(net)
                 })
-                .filter_map(|obstacle| obstacle.net)
                 .collect();
             let center = [
                 (bounds.minimum[0] + bounds.maximum[0]) / 2.0,

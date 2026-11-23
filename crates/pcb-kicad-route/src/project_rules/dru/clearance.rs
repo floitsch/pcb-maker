@@ -220,7 +220,12 @@ pub(super) fn lower_net_clearance(
     }
     let other_kinds = other_kinds(board);
     let tables = kind_tables(m, &other_kinds, &matched);
-    let Some(raise) = raised_groups(m, &other_kinds, &truth, &matched, &tables) else {
+    let Some(raise) = m
+        .except_pads
+        .is_empty()
+        .then(|| raised_groups(m, &other_kinds, &truth, &matched, &tables))
+        .flatten()
+    else {
         lower_pair_rule(lowered, rule, constraint, m, value, &matched, &tables);
         return;
     };
@@ -531,6 +536,7 @@ fn lower_pair_rule(
                 kinds,
                 layers: mask,
                 clearance: value,
+                except_pads: m.except_pads.clone(),
             };
             if !lowered.pair_clearances.contains(&pair) {
                 lowered.pair_clearances.push(pair);
@@ -571,6 +577,14 @@ fn lower_pair_rule(
         kinds_text.join(", "),
         layers_text
     );
+    let detail = if m.except_pads.is_empty() {
+        detail
+    } else {
+        format!(
+            "{detail}, excluding {} fixed pad labels by footprint and later rules",
+            m.except_pads.len()
+        )
+    };
     lowered.note(rule, constraint, "applied", detail);
 }
 

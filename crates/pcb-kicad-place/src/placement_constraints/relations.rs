@@ -15,7 +15,15 @@ pub struct KiCadNearConstraint {
     /// A pad, `REF:PAD`: the gap between the body and the pad centre.
     #[serde(default)]
     pub pin_of: Option<String>,
-    pub max_mm: f64,
+    /// A pad on `part`: measure centre to centre with `pin_of`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pad: Option<String>,
+    /// An explicit limit. Omit it to request `minimize` instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_mm: Option<f64>,
+    /// Prefer a shorter pad-to-pad distance without an acceptance limit.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub minimize: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -111,14 +119,94 @@ pub(super) fn apply_near(
     constrained: &mut BTreeSet<usize>,
 ) -> Result<(), String> {
     for entry in entries {
+        let max = match (entry.max_mm, entry.minimize, entry.pad.is_some()) {
+            (Some(mm), false, _) => Some(mm.max(0.0)),
+            (None, true, true) => None,
+            _ => {
+                return Err(format!(
+                    "near constraint for {} needs max_mm or minimize: true with a pad and pin_of",
+                    entry.part
+                ));
+            }
+        };
         let part = parts.find(&entry.part)?;
         let anchor = near_anchor(problem, parts, entry, part)?;
-        problem.constraints.relations.push(Relation::Near {
-            part,
-            anchor,
-            max: entry.max_mm.max(0.0),
-        });
-        constrained.insert(part);
+        let relation = if let Some(pad) = &entry.pad {
+            let Some((_, anchor_pad)) = entry.pin_of.as_deref().and_then(|pin| pin.split_once(':'))
+            else {
+                return Err(format!(
+                    "near constraint for {} needs pin_of when pad is set",
+                    entry.part
+                ));
+            };
+            let source = pad_anchor(parts, part, pad)
+                .ok_or_else(|| format!("near constraint: {} has no pad {pad:?}", entry.part))?;
+            Relation::PadNear {
+                source,
+                anchor,
+                max,
+                pad_numbers: Some([pad.clone(), anchor_pad.to_owned()]),
+            }
+        } else {
+            Relation::Near {
+                part,
+                anchor,
+                max: max.expect("a body near constraint has a limit"),
+            }
+        };
+        constrained.insert(relation.parts()[0].expect("a near relation has a part"));
+        problem.constraints.relations.push(relation);
+    }
+    Ok(())
+}
+
+/// A pad number can name several copper shapes. A centre-to-centre
+/// constraint needs one point; reject distinct centres before the ordinary
+/// pin lookup takes the first shape for each pad number.
+pub(crate) fn validate_near_pads(
+    pcb: &Expr,
+    constraints: &KiCadPlacementConstraints,
+) -> Result<(), String> {
+    let mut named = BTreeSet::new();
+    for entry in &constraints.near {
+        if let Some(pad) = entry.pad.as_deref() {
+            named.insert((entry.part.as_str(), pad));
+            named.extend(entry.pin_of.as_deref().and_then(|pin| pin.split_once(':')));
+        }
+    }
+    if named.is_empty() {
+        return Ok(());
+    }
+    for footprint in pcb
+        .children()
+        .iter()
+        .filter(|child| child.head() == Some("footprint"))
+    {
+        let Some(reference) = footprint_reference(footprint) else {
+            continue;
+        };
+        let mut centers = BTreeMap::new();
+        for pad in footprint
+            .children()
+            .iter()
+            .filter(|child| child.head() == Some("pad"))
+        {
+            let Some(number) = pad.children().get(1).and_then(Expr::atom) else {
+                continue;
+            };
+            if !named.contains(&(reference.as_str(), number)) {
+                continue;
+            }
+            let [x, y, _] = form_at(pad)?;
+            if centers
+                .insert(number, [x, y])
+                .is_some_and(|previous| previous != [x, y])
+            {
+                return Err(format!(
+                    "near constraint names {reference}:{number}, which has multiple pad centres"
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -154,18 +242,8 @@ fn near_anchor(
                 .split_once(':')
                 .ok_or_else(|| format!("pin_of {pin:?} is not REF:PAD"))?;
             let index = any(reference)?;
-            let offset = parts.pads[index]
-                .get(pad)
-                .ok_or_else(|| format!("pin_of {pin:?}: {reference} has no pad {pad:?}"))?;
-            match (parts.leaders.get(&index), parts.places.get(&index)) {
-                (Some(leader), Some(place)) => Anchor::Area(
-                    *leader,
-                    index,
-                    [offset[0] + place.offset[0], offset[1] + place.offset[1]],
-                    [0.0, 0.0],
-                ),
-                _ => Anchor::Point(index, *offset),
-            }
+            pad_anchor(parts, index, pad)
+                .ok_or_else(|| format!("pin_of {pin:?}: {reference} has no pad {pad:?}"))?
         }
         _ => {
             return Err(format!(
@@ -175,6 +253,21 @@ fn near_anchor(
         }
     };
     Ok(anchor)
+}
+
+fn pad_anchor(parts: &Parts, index: usize, pad: &str) -> Option<Anchor> {
+    let offset = *parts.pads[index].get(pad)?;
+    Some(
+        match (parts.leaders.get(&index), parts.places.get(&index)) {
+            (Some(leader), Some(place)) => Anchor::Area(
+                *leader,
+                index,
+                [offset[0] + place.offset[0], offset[1] + place.offset[1]],
+                [0.0, 0.0],
+            ),
+            _ => Anchor::Point(index, offset),
+        },
+    )
 }
 
 /// Applies `group`: every member's body within `max_mm` of the central

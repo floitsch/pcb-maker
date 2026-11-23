@@ -21,20 +21,31 @@ use crate::canonical_order::footprint_items;
 use crate::labels::without_copper_texts;
 use crate::pin_swap::{KiCadPinSwapComponent, KiCadPinSwapGroup};
 use crate::placement_constraints::{
-    KiCadConstraintStatus, constraint_report, default_area_factor, resolve_constraints,
+    KiCadConstraintStatus, default_area_factor, resolve_constraints,
 };
 use pcb_kicad_file::footprint_bodies::write_footprint_pose;
 use pcb_placer as placer;
 use pcb_router as core;
 
+mod additive_repair;
+pub use additive_repair::LayoutOpenRepair;
 mod candidates;
+mod generated_pad_via;
+pub use generated_pad_via::LayoutGeneratedPadViaRecovery;
 mod ladder;
 mod moves;
+mod near_copper;
+pub use near_copper::LayoutBodyNearGridRetry;
 mod placement;
+mod placement_evidence;
 mod polish;
 mod race;
 mod report;
+mod reuse;
 mod setup;
+mod unchanged_hatch;
+pub use unchanged_hatch::LayoutUnchangedHatchRecovery;
+mod via_detour;
 mod write;
 
 /// The layout settings: the keys an agent sets at the top level, the tuning
@@ -45,6 +56,22 @@ mod write;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(remote = "Self", deny_unknown_fields, default)]
 pub struct KiCadBoardLayoutConfig {
+    /// A previous board named by the command for a guarded reuse trial.
+    #[serde(skip)]
+    pub reuse_routes: Option<PathBuf>,
+    /// Inferred body spacing can use the usual courtyard model for a trial.
+    #[serde(skip)]
+    pub body_near_inferred_spacing: bool,
+    /// Work explicitly reserved by the CLI from the declared total.
+    /// `total_seconds` is the remaining budget for the ordinary layout.
+    #[serde(skip)]
+    pub plane_escape_budget: Option<f64>,
+    /// Work reserved from the declared total for one diagnosed pad-launch retry.
+    #[serde(skip)]
+    pub terminal_launch_budget: Option<f64>,
+    /// Exact `REF:PAD` endpoints for short tip generation during the reserved retry.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub terminal_launch_pads: Vec<String>,
     /// Footprint moves to try after the first full route.
     pub moves: usize,
     /// Once every connection is routed, moves only polish (fewer vias,
@@ -82,6 +109,10 @@ pub struct KiCadBoardLayoutConfig {
     /// The footprints' Reference and Value fields on the silkscreen, placed
     /// after routing where KiCad's silkscreen checks find nothing.
     pub silkscreen: KiCadSilkscreenConfig,
+    /// Save and verify KiCad's zone copper on the returned PCB when time
+    /// remains. False skips only the stored-fill handoff for fast iterations.
+    /// Native routing verification still uses a refill.
+    pub save_zone_fills: bool,
     /// A measurement mode (off by default; docs/benchmarks.md, "The
     /// ladder of placer measurements"): the layout ends after
     /// its first route. Sizing, placement, the race and the first route
@@ -415,6 +446,8 @@ fn swappable_spec(pcb: &Expr, swappable: &[KiCadSwappable]) -> Result<KiCadPinSw
 impl Default for KiCadBoardLayoutConfig {
     fn default() -> Self {
         Self {
+            reuse_routes: None,
+            body_near_inferred_spacing: false,
             moves: 40,
             polish_seconds: 60.0,
             total_seconds: 1500.0,
@@ -424,6 +457,10 @@ impl Default for KiCadBoardLayoutConfig {
             swappable: Vec::new(),
             free_dimension: None,
             silkscreen: KiCadSilkscreenConfig::default(),
+            save_zone_fills: true,
+            plane_escape_budget: None,
+            terminal_launch_budget: None,
+            terminal_launch_pads: Vec::new(),
             stop_after_first_route: false,
             tuning: KiCadLayoutTuning::default(),
         }
@@ -532,8 +569,8 @@ pub struct KiCadBoardLayoutMove {
 pub struct KiCadBoardLayoutResult {
     pub board_id: String,
     /// The work up to the final ladder (sizing, placement, routes and
-    /// moves, KiCad's check of the board kept), in seconds of an idle
-    /// machine: what the budget counts.
+    /// moves, KiCad's check of the board kept) plus publication of saved
+    /// fills, in seconds of an idle machine: what the budget counts.
     pub work_seconds: f64,
     /// The work one KiCad check counts (`check_work`, modelled from the
     /// board), the checks counted (the board kept, the ladders' attempts,
@@ -542,6 +579,28 @@ pub struct KiCadBoardLayoutResult {
     pub kicad_check_seconds: f64,
     pub kicad_checks_charged: usize,
     pub kicad_check_work_seconds: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fill_publication: Option<crate::FillPublication>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_open_repair: Option<LayoutOpenRepair>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generated_pad_via_recovery: Option<LayoutGeneratedPadViaRecovery>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body_near_grid_retry: Option<LayoutBodyNearGridRetry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unchanged_hatch_width_repair: Option<LayoutUnchangedHatchRecovery>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub via_detour: Option<crate::ViaDetourRepair>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plane_escape: Option<crate::PlaneEscapeRepair>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plane_escape_reserved_seconds: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_launch_retry: Option<pcb_kicad_route::open_repair::TerminalLaunchRetry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_launch_advice: Option<pcb_kicad_route::open_repair::TerminalLaunchAdvice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prepared_row_escape_advice: Option<pcb_kicad_route::open_repair::PreparedRowEscapeAdvice>,
     pub placement_seconds: f64,
     pub first_route_seconds: f64,
     /// The work up to the end of the first route (sizing, placement and
@@ -605,19 +664,34 @@ pub struct KiCadBoardLayoutResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub race: Option<KiCadRaceReport>,
     /// Pads without a way out (`pad_exits`, absent when off) of the
-    /// placement routed (the race's pick; placed/board-placer.json's are
-    /// the placer's first-ranked one's).
+    /// placement first routed (the race's pick before any layout moves).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pad_exits: Option<crate::board_placer::KiCadPadExitsReport>,
     pub pin_swaps: Option<KiCadPinSwapResult>,
     /// Every placement constraint with whether the final placement keeps it.
     pub constraints: Vec<KiCadConstraintStatus>,
+    /// Tentative previous poses considered against the current placement brief.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub route_reuse_placement: Option<KiCadRouteReusePlacement>,
     pub routed: KiCadBoardRouterResult,
     /// What the wall clock cut short (`pcb_router::router::WALL_CUTS`)
     /// rather than the work: the layout then depends on the machine's
     /// load. Empty when the work decided everything.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub cut: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct KiCadRouteReusePlacement {
+    /// Previous poses proposed in the warm trial.
+    pub moved_to_previous: usize,
+    pub relocated_new_footprints: usize,
+    pub work_seconds: f64,
+    /// Nets with multiple electrical contacts on the accepted saved board.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub saved_routable_nets: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1218,6 +1292,7 @@ pub fn layout_placer_config(
         || (placer_config.length_minima
             && crate::board_router::length_floor_nets(router_config).is_some())
         || placer_config.bga_room
+        || !router_config.excluded_pair_connections.is_empty()
     {
         placer_config.router_rules = Some(std::sync::Arc::new(router_config.clone()));
     }
@@ -1291,17 +1366,8 @@ pub fn placement_check_config(
     config: &KiCadBoardLayoutConfig,
     router_config: &KiCadBoardRouterConfig,
 ) -> Result<KiCadBoardPlacerConfig, String> {
-    let with_classes;
-    let router_config = if router_config.net_classes.is_empty() {
-        router_config
-    } else {
-        let board = source_directory.join(format!("{board_id}.kicad_pcb"));
-        let text = fs::read_to_string(&board)
-            .map_err(|error| format!("failed to read {}: {error}", board.display()))?;
-        with_classes = crate::net_classes::with_net_classes(router_config, &parse(&text)?)
-            .map_err(crate::exit::input_error)?;
-        &with_classes
-    };
+    let board_settings = router_config.with_board_settings(source_directory, board_id)?;
+    let router_config = board_settings.as_ref();
     let mut placer_config = layout_placer_config(config, router_config, source_directory)?;
     if pre_ranks(config, router_config) {
         placer_config.tuning.placement_seeds = race_placement_seeds(config, &placer_config);
@@ -1456,6 +1522,63 @@ pub fn layout_kicad_board(
         first_relaxation,
         copper,
     } = placement::prepare_placed_board(&ctx, &placement, &mut placer_config)?;
+    let (reuse, reuse_placement) = if let Some(prior) = &config.reuse_routes {
+        let trial = reuse::try_reuse(
+            &ctx,
+            &mut ledger,
+            prior,
+            &pcb,
+            &problem,
+            &placer_config,
+            &first_relaxation,
+            &placement.attached_marks,
+        )?;
+        if let Some(warmed) = trial.accepted {
+            let evidence = placement_evidence::capture(
+                &ctx,
+                &placement,
+                &warmed.pcb,
+                &warmed.problem,
+                &first_relaxation,
+                placement_evidence::Selection::Reused,
+            )?;
+            placement_evidence::publish(&ctx, &warmed.pcb, evidence)?;
+            let digest = placement_digest(
+                &encode(&warmed.pcb),
+                &warmed.problem,
+                &[],
+                &placer_config,
+                pin_swaps.as_ref(),
+                ledger.work,
+                ledger.pool_excess,
+            );
+            let layout_work = ledger.work;
+            return report::finish_report(
+                &ctx,
+                &mut ledger,
+                report::ReportParts {
+                    placement: &placement,
+                    problem: &warmed.problem,
+                    relaxation: &first_relaxation,
+                    outline_sizing,
+                    pin_swaps,
+                    placement_digest: digest,
+                    race: race::RaceOutcome::empty(),
+                    first_route: warmed.first_route,
+                    moves: Vec::new(),
+                    labels: warmed.labels,
+                    layout_work,
+                    final_ladder_budget_seconds: None,
+                    routed: warmed.routed,
+                    route_reuse_placement: Some(trial.placement),
+                    prepublished_fill: warmed.prepublished_fill,
+                },
+            );
+        }
+        (Some(trial.evidence), Some(trial.placement))
+    } else {
+        (None, None)
+    };
     let (core_config, board, first_started) =
         race::lower_first_route(&ctx, &mut ledger, &pcb, &copper)?;
     let mut kept = candidates::Kept {
@@ -1463,8 +1586,9 @@ pub fn layout_kicad_board(
         board,
         problem,
         placer_config,
+        relaxation: first_relaxation.clone(),
     };
-    let mut candidates = candidates::race_candidates(&placement, &kept.problem.problem.poses);
+    let mut candidates = candidates::race_candidates(&placement, &kept.problem.problem);
     let placement_digest = candidates::digest(&kept, &candidates, pin_swaps.as_ref(), &ledger);
     candidates::pre_rank(
         &ctx,
@@ -1535,7 +1659,19 @@ pub fn layout_kicad_board(
         &kept.board,
         trials.polished,
         judgement.many_open,
+        copper.has_pours,
     );
+    let placement_evidence = placement_evidence::capture(
+        &ctx,
+        &placement,
+        &kept.pcb,
+        &kept.problem,
+        &kept.relaxation,
+        placement_evidence::Selection::Routed {
+            race: &race,
+            kept_moves: trials.moves.iter().filter(|trial| trial.kept).count(),
+        },
+    )?;
     let (routed, labels) = write::write_kept_board(
         &ctx,
         &mut ledger,
@@ -1546,6 +1682,7 @@ pub fn layout_kicad_board(
         first_route.seconds,
         move_started,
     )?;
+    placement_evidence::publish(&ctx, &kept.pcb, placement_evidence)?;
     let current = ladder::quality(&routed, &ctx.output_directory.join("result"));
     let layout_work = ledger.work;
     // The ladder below builds routers of its own (probes side by side,
@@ -1557,23 +1694,18 @@ pub fn layout_kicad_board(
         ctx.elapsed(),
         ledger.work
     );
-    let (routed, final_ladder_budget_seconds) = ladder::final_steps(
-        &ctx,
-        &mut ledger,
-        &kept.pcb,
-        routed,
-        current,
-        &judgement,
-        &copper,
-    )?;
-    // The placement file should show the final poses too.
-    placement::write_placement_without_copper(&ctx, &kept.pcb)?;
+    let (mut routed, final_ladder_budget_seconds) =
+        ladder::final_steps(&ctx, &mut ledger, routed, current, &judgement, &copper)?;
+    if let Some(reuse) = reuse {
+        reuse::write_evidence(&ctx.output_directory.join("result"), &mut routed, reuse)?;
+    }
     report::finish_report(
         &ctx,
-        &ledger,
+        &mut ledger,
         report::ReportParts {
             placement: &placement,
-            kept: &kept,
+            problem: &kept.problem,
+            relaxation: &kept.relaxation,
             outline_sizing,
             pin_swaps,
             placement_digest,
@@ -1584,6 +1716,8 @@ pub fn layout_kicad_board(
             layout_work,
             final_ladder_budget_seconds,
             routed,
+            route_reuse_placement: reuse_placement,
+            prepublished_fill: None,
         },
     )
 }
@@ -1686,6 +1820,19 @@ mod budget_tests {
         assert!(!KiCadBoardLayoutConfig::default().stop_after_first_route);
         let config: KiCadBoardLayoutConfig = serde_json::from_str("{}").unwrap();
         assert!(!config.stop_after_first_route);
+    }
+
+    #[test]
+    fn saved_zone_fill_publication_can_be_deferred() {
+        let default: KiCadBoardLayoutConfig = serde_json::from_str("{}").unwrap();
+        let deferred: KiCadBoardLayoutConfig =
+            serde_json::from_str(r#"{"save_zone_fills": false}"#).unwrap();
+        assert!(default.save_zone_fills);
+        assert!(!deferred.save_zone_fills);
+        assert_eq!(
+            serde_json::to_value(deferred).unwrap()["save_zone_fills"],
+            false
+        );
     }
 
     #[test]
@@ -1989,6 +2136,8 @@ mod budget_tests {
         };
         let result = layout_kicad_board(&source, "board", &root.join("out"), &config, &router);
         let written = fs::read_to_string(root.join("out/result/board.kicad_pcb"));
+        let reported: serde_json::Value =
+            crate::fs_util::read_typed_json(&root.join("out/result/board-router.json")).unwrap();
         fs::remove_dir_all(&root).ok();
         let result = result.unwrap();
         // The board written has the pair's copper: tracks of both nets.
@@ -1999,6 +2148,23 @@ mod budget_tests {
                 "{net}"
             );
         }
+        let copper = result
+            .routed
+            .saved_copper
+            .expect("the saved copper inventory");
+        assert_eq!(
+            reported["saved_copper"],
+            serde_json::to_value(copper).unwrap()
+        );
+        let written = parse(&written).unwrap();
+        assert_eq!(
+            copper.segments,
+            written
+                .children()
+                .iter()
+                .filter(|item| { item.head() == Some("segment") })
+                .count()
+        );
         result
     }
 
@@ -2018,6 +2184,9 @@ mod budget_tests {
         assert_eq!(pairs.links, 1);
         assert_eq!((pairs.coupled, pairs.fallen_back), (1, 0), "{pairs:?}");
         assert!(pairs.coupled_mm > 20.0, "{pairs:?}");
+        let saved = on.routed.saved_copper.unwrap();
+        assert!(saved.track_length_mm >= 2.0 * pairs.coupled_mm);
+        assert!(saved.track_length_mm > on.routed.length_mm);
         assert_eq!(on.routed.unconnected_terminals, 0);
         let off = pair_layout(None);
         assert!(off.routed.diff_pairs.is_none());

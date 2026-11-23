@@ -4,6 +4,7 @@
 //! today's form, its properties and ids.
 
 use super::*;
+use pcb_kicad_file::kicad_nets::fp_text_value_index;
 
 /// A deterministic UUID from text (version 4 layout).
 pub(super) fn uuid_of(text: &str) -> String {
@@ -46,11 +47,15 @@ pub(super) fn legacy_texts_to_properties(
             (Some("fp_text"), Some("value")) => "Value",
             _ => continue,
         };
+        let value_index = fp_text_value_index(parts);
         let mut converted = vec![Expr::Atom("property".into()), Expr::Atom(requote(name))];
-        converted.extend(parts.get(2).cloned());
+        converted.extend(parts.get(value_index).cloned());
+        if value_index == 3 {
+            converted.push(parse("(locked yes)")?);
+        }
         let mut hidden = false;
         let mut unlocked = false;
-        for part in parts.iter().skip(3) {
+        for part in parts.iter().skip(value_index + 1) {
             match part {
                 Expr::Atom(atom) if atom == "hide" => hidden = true,
                 Expr::List(at) if part.head() == Some("at") => {
@@ -178,20 +183,96 @@ pub(super) fn set_property(
 
 /// Gives every UUID inside a footprint instance its own value (library
 /// files carry one set for all instances; KiCad makes new ones when it
-/// adds a footprint). KiCad 6 and 7 files call them `tstamp`.
+/// adds a footprint). Update group member links along with the IDs they
+/// point at. KiCad 6 and 7 use `tstamp` for items and `id` for groups.
 pub(super) fn renew_uuids(item: &mut Expr, owner: &str) {
+    let renew = |id: &mut Expr| {
+        if let Some(old) = id.atom() {
+            *id = Expr::Atom(requote(&uuid_of(&format!(
+                "{owner} {}",
+                old.to_ascii_lowercase()
+            ))));
+        }
+    };
     let mut pending = vec![item];
     while let Some(item) = pending.pop() {
         let Expr::List(items) = item else {
             continue;
         };
-        if matches!(items.first().and_then(Expr::atom), Some("uuid" | "tstamp"))
-            && let Some(old) = items.get(1).and_then(Expr::atom).map(str::to_owned)
-        {
-            items[1] = Expr::Atom(format!("\"{}\"", uuid_of(&format!("{owner} {old}"))));
-            continue;
+        match items.first().and_then(Expr::atom) {
+            Some("uuid" | "tstamp") => {
+                if let Some(id) = items.get_mut(1) {
+                    renew(id);
+                }
+                continue;
+            }
+            Some("group") => {
+                for field in items.iter_mut().skip(2) {
+                    let Expr::List(values) = field else { continue };
+                    match values.first().and_then(Expr::atom) {
+                        Some("members") => values.iter_mut().skip(1).for_each(renew),
+                        Some("id") => {
+                            if let Some(id) = values.get_mut(1) {
+                                renew(id);
+                            }
+                        }
+                        _ => (),
+                    }
+                }
+            }
+            _ => (),
         }
         pending.extend(items.iter_mut());
+    }
+}
+
+/// Gives pads from legacy libraries and boards an ID before KiCad assigns
+/// one at load time. Pad numbers can repeat or be empty, so use their order
+/// within each footprint instance. Keep existing IDs for DRC exclusions.
+pub(super) fn fill_pad_uuids(board: &mut Expr) {
+    let mut used = BTreeSet::new();
+    let mut pending = vec![&*board];
+    while let Some(item) = pending.pop() {
+        if matches!(item.head(), Some("uuid" | "tstamp"))
+            && let Some(id) = item.children().get(1).and_then(Expr::atom)
+        {
+            used.insert(id.trim_matches('"').to_ascii_lowercase());
+        }
+        pending.extend(item.children());
+    }
+
+    let Expr::List(items) = board else { return };
+    let mut instances = BTreeMap::<String, usize>::new();
+    for footprint in items
+        .iter_mut()
+        .filter(|item| item.head() == Some("footprint"))
+    {
+        let owner = form_atom(footprint, "uuid", 1)
+            .unwrap_or_default()
+            .to_owned();
+        let instance = instances.entry(owner.clone()).or_default();
+        let Expr::List(children) = footprint else {
+            continue;
+        };
+        for (index, pad) in children
+            .iter_mut()
+            .filter(|item| item.head() == Some("pad"))
+            .enumerate()
+        {
+            if pad.child("uuid").is_some() || pad.child("tstamp").is_some() {
+                continue;
+            }
+            let Expr::List(parts) = pad else { continue };
+            let id = (0..)
+                .map(|retry| uuid_of(&format!("pad {owner} {instance} {index} {retry}")))
+                .find(|id| used.insert(id.clone()))
+                .unwrap();
+            parts.push(Expr::List(vec![
+                Expr::Atom("uuid".into()),
+                Expr::Atom(requote(&id)),
+            ]));
+        }
+        *instance += 1;
     }
 }
 
@@ -220,4 +301,33 @@ pub(super) fn text_of(node: &Expr, head: &str) -> Option<String> {
 /// A string `text_of` read, as an atom again.
 pub(super) fn requote(escaped: &str) -> String {
     format!("\"{escaped}\"")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn copying_a_grouped_footprint_remaps_items_and_nested_members_together() {
+        let mut part = parse(
+            r#"(footprint "model"
+                (pad "1" smd rect (size 1 1) (tstamp ABCD))
+                (group "inner" (id "inner1") (members "abcd"))
+                (group "outer" (uuid "outer1") (members "inner1")))"#,
+        )
+        .unwrap();
+        let original = part.clone();
+        renew_uuids(&mut part, "J1");
+        let items = &part.children()[2..];
+        let pad = form_atom(&items[0], "tstamp", 1).unwrap();
+        let inner = form_atom(&items[1], "id", 1).unwrap();
+        assert_ne!(pad, "ABCD");
+        assert_ne!(inner, "inner1");
+        assert_ne!(form_atom(&items[2], "uuid", 1), Some("outer1"));
+        assert_eq!(form_atom(&items[1], "members", 1), Some(pad));
+        assert_eq!(form_atom(&items[2], "members", 1), Some(inner));
+        assert!(crate::board_footprints::same_library_model(
+            &part, &original
+        ));
+    }
 }

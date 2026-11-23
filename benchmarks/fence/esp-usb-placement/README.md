@@ -44,10 +44,36 @@ b=benchmarks/fence/esp-usb-placement
 target/release/pcb-maker layout-kicad-board $b fence-esp32 build/fence-esp-usb auto $b/layout.json
 ```
 
-The distance limits of C5 and C6 to U3 pin 3 cannot be met: the pin lies
-inside the module's courtyard. The agent task `esp-usb-corner`
-([../../agent-tasks/README.md](../../agent-tasks/README.md)) poses the same
-corner with those two limits listed as expected misses.
+With the module at its reported corner pose, the board edges leave no
+room for C5 or C6 to approach pin 3 from the left or top on the front
+face. The nearest accessible face gives a lower bound of 8.400 mm from
+either capacitor body to pin 3 at the modeled 0.200 mm body spacing.
+Each requested limit is 6 mm. The placement verdict records the bound,
+target pose and blocked faces so an agent can identify which mechanical
+assumption to revisit. The original single-sided corner retains both
+expected misses in the [agent task](../../agent-tasks/README.md).
+
+When assembly permits rear-side decoupling, the same brief can put C5
+and C6 on the back. To reproduce this variant from the original input:
+
+```sh
+b=benchmarks/fence/esp-usb-placement
+mkdir -p build
+jq --slurpfile brief "$b/constraints.json" \
+  '.total_seconds=120 | .placer.constraints=($brief[0] + {"back":["C5","C6"]})' \
+  "$b/layout.json" > build/fence-esp-rear.json
+PCB_WORK_RATE=3.15e6,150e6 RAYON_NUM_THREADS=4 \
+  target/release/pcb-maker layout-kicad-board "$b" fence-esp32 \
+  build/fence-esp-rear auto build/fence-esp-rear.json
+```
+
+At this budget the one-shot run kept all 13 reported placement constraints,
+including both original 6 mm limits, and connected 107/107. KiCad reported
+zero errors, opens and schematic parity findings with both stored and
+refilled zones. The run consumed 88.83 modeled seconds. The original
+front-side brief at the same budget also connected every net. Its final
+C5 and C6 distances were 8.686 mm and 9.527 mm, and it missed the C4
+proximity and J4 gap constraints as well.
 
 ## Passing
 

@@ -1,0 +1,191 @@
+{
+  "version": 1,
+  "move_all": true,
+  "front": [
+    "SW2",
+    "CN10",
+    "CN20",
+    "SW1",
+    "H2",
+    "H3",
+    "H4",
+    "SW3",
+    "CN6",
+    "FID1",
+    "FID2",
+    "FID3",
+    "FID4",
+    "P1",
+    "H1"
+  ],
+  "back": [],
+  "place": [
+    {
+      "part": "SW2",
+      "origin": "absolute",
+      "x": 116.25,
+      "y": 115.0,
+      "angle": 180.0
+    },
+    {
+      "part": "CN10",
+      "origin": "absolute",
+      "x": 52.8,
+      "y": 66.5,
+      "angle": -90.0
+    },
+    {
+      "part": "CN20",
+      "origin": "absolute",
+      "x": 96.7,
+      "y": 56.1,
+      "angle": 180.0
+    },
+    {
+      "part": "SW1",
+      "origin": "absolute",
+      "x": 118.0,
+      "y": 62.0,
+      "angle": 180.0
+    },
+    {
+      "part": "H2",
+      "origin": "absolute",
+      "x": 52.45,
+      "y": 137.5,
+      "angle": 0.0
+    },
+    {
+      "part": "H3",
+      "origin": "absolute",
+      "x": 145.5,
+      "y": 52.05,
+      "angle": 0.0
+    },
+    {
+      "part": "H4",
+      "origin": "absolute",
+      "x": 145.85,
+      "y": 138.25,
+      "angle": 0.0
+    },
+    {
+      "part": "SW3",
+      "origin": "absolute",
+      "x": 118.0,
+      "y": 78.95,
+      "angle": 180.0
+    },
+    {
+      "part": "CN6",
+      "origin": "absolute",
+      "x": 137.23,
+      "y": 87.04,
+      "angle": 180.0
+    },
+    {
+      "part": "FID1",
+      "origin": "absolute",
+      "x": 71.1,
+      "y": 59.0,
+      "angle": 0.0
+    },
+    {
+      "part": "FID2",
+      "origin": "absolute",
+      "x": 129.7,
+      "y": 69.6,
+      "angle": 0.0
+    },
+    {
+      "part": "FID3",
+      "origin": "absolute",
+      "x": 116.25,
+      "y": 115.2,
+      "angle": 0.0
+    },
+    {
+      "part": "FID4",
+      "origin": "absolute",
+      "x": 57.45,
+      "y": 124.45,
+      "angle": 0.0
+    },
+    {
+      "part": "P1",
+      "origin": "absolute",
+      "x": 127.0,
+      "y": 127.0,
+      "angle": 0.0
+    },
+    {
+      "part": "H1",
+      "origin": "absolute",
+      "x": 51.25,
+      "y": 54.75,
+      "angle": 0.0
+    }
+  ],
+  "add": [
+    {
+      "part": "Mechanical_1",
+      "from_board": true,
+      "board_reference": "H1",
+      "origin": "absolute",
+      "x": 95.4,
+      "y": 54.59,
+      "angle": 0.0,
+      "side": "front"
+    },
+    {
+      "part": "Mechanical_2",
+      "from_board": true,
+      "board_reference": "H1",
+      "origin": "absolute",
+      "x": 98.0,
+      "y": 54.61,
+      "angle": 0.0,
+      "side": "front"
+    },
+    {
+      "part": "Mechanical_3",
+      "from_board": true,
+      "board_reference": "H1",
+      "origin": "absolute",
+      "x": 55.75,
+      "y": 100.0,
+      "angle": 90.0,
+      "side": "front"
+    },
+    {
+      "part": "Mechanical_4",
+      "from_board": true,
+      "board_reference": "G***",
+      "origin": "absolute",
+      "x": 138.15,
+      "y": 69.4,
+      "angle": -90.0,
+      "side": "front"
+    },
+    {
+      "part": "Mechanical_5",
+      "from_board": true,
+      "board_reference": "G***",
+      "origin": "absolute",
+      "x": 126.1,
+      "y": 69.6,
+      "angle": 180.0,
+      "side": "back"
+    },
+    {
+      "part": "Mechanical_6",
+      "from_board": true,
+      "board_reference": "H1",
+      "origin": "absolute",
+      "x": 55.75,
+      "y": 87.0,
+      "angle": 90.0,
+      "side": "front"
+    }
+  ]
+}

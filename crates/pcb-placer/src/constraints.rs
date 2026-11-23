@@ -18,6 +18,11 @@
 use crate::problem::{Point, Pose, Problem};
 use std::collections::BTreeSet;
 
+mod module_envelopes;
+mod near_geometry;
+pub use module_envelopes::{ModuleEnvelope, ModuleEnvelopePair};
+pub use near_geometry::{NearGeometry, near_geometry_at};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Edge {
     Left,
@@ -57,6 +62,13 @@ impl Anchor {
             Anchor::Body(index) | Anchor::Point(index, _) | Anchor::Area(index, ..) => *index,
         }
     }
+
+    pub fn reported_part(&self) -> usize {
+        match self {
+            Anchor::Area(_, member, ..) => *member,
+            other => other.part(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -66,6 +78,16 @@ pub enum Relation {
         part: usize,
         anchor: Anchor,
         max: f64,
+    },
+    /// Two pad centres (a `Point` or zero-sized row `Area`) are at most
+    /// `max` apart in Euclidean distance. With no limit, minimize the
+    /// distance as a placement objective.
+    PadNear {
+        source: Anchor,
+        anchor: Anchor,
+        max: Option<f64>,
+        /// A board adapter may supply the source and target pad numbers.
+        pad_numbers: Option<[String; 2]>,
     },
     /// `part` lies on `side` of `anchor`'s body (`Bottom`: below it), does
     /// not overlap it, overlaps its extent along the other axis, and the gap
@@ -159,6 +181,7 @@ impl Relation {
                     }
                 }),
             ],
+            Relation::PadNear { source, anchor, .. } => [Some(source.part()), Some(anchor.part())],
             Relation::Beside { part, anchor, .. } | Relation::Apart { part, anchor, .. } => {
                 [Some(*part), Some(*anchor)]
             }
@@ -181,6 +204,7 @@ impl Relation {
 
 #[derive(Clone, Debug, Default)]
 pub struct Constraints {
+    pub module_envelopes: Vec<ModuleEnvelopePair>,
     /// The body lies within the distance of this board edge. On a
     /// constrained side the body may touch the edge itself (no edge margin:
     /// a courtyard may reach the board edge; copper clearance is the
@@ -282,6 +306,9 @@ pub struct Constraints {
     /// outline: bodies keep off them too, not only copper (a window in the
     /// board; a designer's slot may hold a connector's pegs).
     pub solid_cutouts: Vec<usize>,
+    /// Board rule areas that prohibit pads on all copper layers. Their
+    /// polygon excludes pads without a board-edge clearance margin.
+    pub pad_rule_areas: Vec<usize>,
     /// Fixed obstacles that give way (the board's own texts and
     /// silkscreen graphics), in ascending order: parts keep off them, and
     /// a part that finds no room elsewhere at a level may lie on them
@@ -402,7 +429,9 @@ impl Constraints {
         self.linked.clear();
         for relation in &self.relations {
             let anchors: Vec<usize> = match relation {
-                Relation::Near { anchor, .. } => vec![anchor.part()],
+                Relation::Near { anchor, .. } | Relation::PadNear { anchor, .. } => {
+                    vec![anchor.part()]
+                }
                 Relation::NearAny { anchors, .. } => anchors.iter().map(Anchor::part).collect(),
                 _ => continue,
             };
@@ -464,6 +493,13 @@ impl Constraints {
             && self.regions.is_empty()
             && self.overhangs.is_empty()
             && self.relations.is_empty()
+            && self.module_envelopes.is_empty()
+    }
+
+    pub(crate) fn has_module_pair(&self, part: usize, other: usize) -> bool {
+        self.module_envelopes
+            .iter()
+            .any(|pair| pair.contains(part, other))
     }
 
     pub fn overhang(&self, index: usize) -> Option<(Edge, [f64; 4])> {
@@ -948,6 +984,13 @@ fn anchor_point(problem: &Problem, poses: &[Pose], anchor: Anchor) -> (Point, Po
     }
 }
 
+fn pad_near_distance(problem: &Problem, poses: &[Pose], source: Anchor, anchor: Anchor) -> f64 {
+    box_gap(
+        anchor_point(problem, poses, source),
+        anchor_point(problem, poses, anchor),
+    )
+}
+
 /// The band or box a body must stay in, from the edge and region
 /// constraints on `index`, as limits for its body box: [min x, min y, max x,
 /// max y] of the body's extent.
@@ -1114,7 +1157,7 @@ pub fn clamp_center(problem: &Problem, index: usize, center: &mut Point, half: P
     }
 }
 
-/// Relations missed by less than this (grid snapping) count as kept.
+/// Search tolerates this much relation error for grid snapping.
 pub const RELATION_TOLERANCE: f64 = 0.05;
 
 /// How far (mm) a relation is missed.
@@ -1127,7 +1170,19 @@ pub fn relation_violation(problem: &Problem, poses: &[Pose], relation: &Relation
     }
 }
 
-fn raw_relation_violation(problem: &Problem, poses: &[Pose], relation: &Relation) -> f64 {
+/// The gap measured by an authored `near` row with a body source.
+pub fn body_near_distance(problem: &Problem, poses: &[Pose], part: usize, anchor: Anchor) -> f64 {
+    box_gap(
+        body(problem, part, poses[part]),
+        anchor_point(problem, poses, anchor),
+    )
+}
+
+pub(crate) fn raw_relation_violation(
+    problem: &Problem,
+    poses: &[Pose],
+    relation: &Relation,
+) -> f64 {
     match relation {
         Relation::Apart { part, anchor, min } => {
             let gap = box_gap(
@@ -1155,12 +1210,15 @@ fn raw_relation_violation(problem: &Problem, poses: &[Pose], relation: &Relation
             )
         }
         Relation::Near { part, anchor, max } => {
-            let gap = box_gap(
-                body(problem, *part, poses[*part]),
-                anchor_point(problem, poses, *anchor),
-            );
+            let gap = body_near_distance(problem, poses, *part, *anchor);
             (gap - max).max(0.0)
         }
+        Relation::PadNear {
+            source,
+            anchor,
+            max,
+            ..
+        } => (pad_near_distance(problem, poses, *source, *anchor) - max.unwrap_or(0.0)).max(0.0),
         Relation::Beside {
             part,
             anchor,
@@ -1214,6 +1272,7 @@ pub fn relation_work(problem: &Problem, index: usize) -> u64 {
         .filter(|relation| relation.involves(index))
         .map(|relation| match relation {
             Relation::NearAny { anchors, .. } => 1 + 4 * anchors.len() as u64,
+            Relation::PadNear { .. } => 9,
             _ => 5,
         })
         .sum()
@@ -1296,6 +1355,7 @@ pub fn anchor_leader(problem: &Problem, poses: &[Pose], index: usize) -> Option<
     for relation in &constraints.relations {
         let anchor = match relation {
             Relation::Near { part, anchor, .. } if *part == index => *anchor,
+            Relation::PadNear { source, anchor, .. } if source.part() == index => *anchor,
             Relation::NearAny { part, anchors, .. } if *part == index => {
                 work += 4 * anchors.len() as u64;
                 let own = body(problem, index, poses[index]);
@@ -1341,6 +1401,7 @@ pub fn anchor_shift(
     for relation in &constraints.relations {
         let anchor = match relation {
             Relation::Near { part, anchor, .. } if *part == index => *anchor,
+            Relation::PadNear { source, anchor, .. } if source.part() == index => *anchor,
             Relation::NearAny { part, anchors, .. } if *part == index => {
                 work += 4 * anchors.len() as u64;
                 let own = body(problem, index, from[index]);
@@ -1431,6 +1492,15 @@ pub fn add_relation_gradient(
                 };
                 push(other, [-unit[0], -unit[1]]);
             }
+            Relation::PadNear { source, anchor, .. } => {
+                let (a, _) = anchor_point(problem, poses, *source);
+                let (b, _) = anchor_point(problem, poses, *anchor);
+                let delta = [a[0] - b[0], a[1] - b[1]];
+                let length = delta[0].hypot(delta[1]).max(1.0e-9);
+                let unit = [delta[0] / length, delta[1] / length];
+                push(source.part(), unit);
+                push(anchor.part(), [-unit[0], -unit[1]]);
+            }
             Relation::Beside {
                 part,
                 anchor,
@@ -1505,6 +1575,80 @@ pub struct Status {
     pub satisfied: bool,
     /// Millimetres by which the constraint is missed.
     pub violation: f64,
+    /// A pad proximity relation's centre-to-centre distance in millimetres.
+    pub distance: Option<f64>,
+    /// Unrounded evidence for an explicit pad proximity relation.
+    pub pad_near: Option<PadNearStatus>,
+}
+
+#[derive(Clone, Debug)]
+pub struct PadNearStatus {
+    pub distance: f64,
+    pub max: Option<f64>,
+    pub overage: Option<f64>,
+    pub satisfied: Option<bool>,
+    pub pad_numbers: Option<[String; 2]>,
+    /// Whether the source can be refined independently. Seating and
+    /// clearance are checked separately by the refinement.
+    pub refinable: bool,
+}
+
+/// KiCad geometry is stored in integer nanometres. The strict comparison
+/// allows one nanometre between the modeled and emitted coordinates.
+pub fn near_limit_kept(distance: f64, limit: f64) -> bool {
+    distance <= limit + 0.000_001
+}
+
+/// Count missed explicit pad limits, then sum their unrounded overages.
+/// A measured proximity objective does not contribute to this key.
+pub fn pad_near_requirements_key(statuses: &[Status]) -> (usize, f64) {
+    statuses
+        .iter()
+        .filter_map(|status| status.pad_near.as_ref())
+        .filter(|near| near.satisfied == Some(false))
+        .fold((0, 0.0), |(count, excess), near| {
+            (count + 1, excess + near.overage.unwrap_or(0.0))
+        })
+}
+
+/// Would changing the whole placement keep every explicit pad limit that
+/// already holds, and move no missed pair farther from its limit?
+pub fn keeps_pad_near_requirements(problem: &Problem, before: &[Pose], after: &[Pose]) -> bool {
+    let constraints = &problem.constraints;
+    let authored = constraints
+        .relations
+        .len()
+        .saturating_sub(constraints.automatic);
+    constraints.relations[..authored].iter().all(|relation| {
+        let Relation::PadNear {
+            source,
+            anchor,
+            max: Some(limit),
+            ..
+        } = relation
+        else {
+            return true;
+        };
+        let distance = |poses: &[Pose]| pad_near_distance(problem, poses, *source, *anchor);
+        let after = distance(after);
+        near_limit_kept(after, *limit) || after <= distance(before)
+    })
+}
+
+pub(crate) fn pad_near_refinable(problem: &Problem, source: Anchor, anchor: Anchor) -> bool {
+    let index = source.part();
+    index != anchor.part()
+        && !problem.components[index].fixed
+        && !problem
+            .constraints
+            .edges
+            .iter()
+            .any(|(part, _, _)| *part == index)
+        && !problem
+            .constraints
+            .followers
+            .iter()
+            .any(|follower| follower.part == index || follower.leader == index)
 }
 
 /// Every constraint with whether it holds at `poses`.
@@ -1519,6 +1663,8 @@ pub fn report(problem: &Problem, poses: &[Pose]) -> Vec<Status> {
             other: None,
             satisfied: violation <= 1.0e-6,
             violation,
+            distance: None,
+            pad_near: None,
         });
     }
     for (part, _, _) in &constraints.overhangs {
@@ -1529,6 +1675,8 @@ pub fn report(problem: &Problem, poses: &[Pose]) -> Vec<Status> {
             other: None,
             satisfied: violation <= 1.0e-6,
             violation,
+            distance: None,
+            pad_near: None,
         });
     }
     for (part, _) in &constraints.regions {
@@ -1539,23 +1687,50 @@ pub fn report(problem: &Problem, poses: &[Pose]) -> Vec<Status> {
             other: None,
             satisfied: violation <= 1.0e-6,
             violation,
+            distance: None,
+            pad_near: None,
         });
     }
     let own = constraints.relations.len() - constraints.automatic.min(constraints.relations.len());
     for relation in &constraints.relations[..own] {
-        let violation = relation_violation(problem, poses, relation);
+        let objective = matches!(relation, Relation::PadNear { max: None, .. });
+        let violation = if objective {
+            0.0
+        } else {
+            relation_violation(problem, poses, relation)
+        };
         let [part, other] = relation.parts();
         // A row member's place names the member, not the row's first part.
-        let other = match relation {
-            Relation::Near {
-                anchor: Anchor::Area(_, member, ..),
-                ..
-            } => Some(*member),
-            _ => other,
+        let (part, other, pad_near) = match relation {
+            Relation::Near { anchor, .. } => (part, Some(anchor.reported_part()), None),
+            Relation::PadNear {
+                source,
+                anchor,
+                max,
+                pad_numbers,
+            } => {
+                let distance = pad_near_distance(problem, poses, *source, *anchor);
+                (
+                    Some(source.reported_part()),
+                    Some(anchor.reported_part()),
+                    Some(PadNearStatus {
+                        distance,
+                        max: *max,
+                        overage: max.map(|limit| (distance - limit).max(0.0)),
+                        satisfied: max.map(|limit| near_limit_kept(distance, limit)),
+                        pad_numbers: pad_numbers.clone(),
+                        refinable: pad_near_refinable(problem, *source, *anchor),
+                    }),
+                )
+            }
+            _ => (part, other, None),
         };
         statuses.push(Status {
             kind: match relation {
-                Relation::Near { .. } | Relation::NearAny { .. } => "near",
+                Relation::PadNear { max: None, .. } => "pad_near_objective",
+                Relation::Near { .. } | Relation::PadNear { .. } | Relation::NearAny { .. } => {
+                    "near"
+                }
                 Relation::Beside { .. } => "relative",
                 Relation::Apart { .. } => "apart",
                 Relation::Within { .. } => "length",
@@ -1564,6 +1739,8 @@ pub fn report(problem: &Problem, poses: &[Pose]) -> Vec<Status> {
             other,
             satisfied: violation <= 1.0e-6,
             violation,
+            distance: pad_near.as_ref().map(|pair| pair.distance),
+            pad_near,
         });
     }
     statuses
@@ -1604,6 +1781,8 @@ pub fn report_kept(problem: &Problem, poses: &[Pose]) -> Vec<Status> {
                 other: None,
                 satisfied: side && turned && moved <= 1.0e-3,
                 violation: if moved > 1.0e-3 { moved } else { 0.0 },
+                distance: None,
+                pad_near: None,
             }
         })
         .collect()
@@ -1713,6 +1892,17 @@ fn grid_phase(problem: &Problem, index: usize, at: Point, angle: f64) -> Point {
 /// just off the anchor's body on the relation's side (relative), or far
 /// enough from the anchor the way the part lies already (apart).
 pub fn relation_target(problem: &Problem, poses: &[Pose], relation: &Relation) -> Point {
+    let index = relation.parts()[0].expect("a relation always has a part");
+    relation_target_at(problem, poses, relation, poses[index].angle)
+}
+
+/// Target body centre with the moving part turned to `angle`.
+pub fn relation_target_at(
+    problem: &Problem,
+    poses: &[Pose],
+    relation: &Relation,
+    angle: f64,
+) -> Point {
     match relation {
         Relation::Apart { part, anchor, min } => {
             let (a, ah) = body(problem, *part, poses[*part]);
@@ -1728,6 +1918,22 @@ pub fn relation_target(problem: &Problem, poses: &[Pose], relation: &Relation) -
             [b[0] + unit[0] * distance, b[1] + unit[1] * distance]
         }
         Relation::Near { anchor, .. } => anchor_point(problem, poses, *anchor).0,
+        Relation::PadNear { source, anchor, .. } => {
+            let component = &problem.components[source.part()];
+            let local = match source {
+                Anchor::Point(_, local) | Anchor::Area(_, _, local, _) => *local,
+                Anchor::Body(_) => component.body_center,
+            };
+            let [x, y] = anchor_point(problem, poses, *anchor).0;
+            let [dx, dy] = component.offset(
+                [
+                    component.body_center[0] - local[0],
+                    component.body_center[1] - local[1],
+                ],
+                angle,
+            );
+            [x + dx, y + dy]
+        }
         Relation::NearAny { part, anchors, .. } => {
             let own = body(problem, *part, poses[*part]);
             anchors

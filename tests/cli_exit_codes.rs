@@ -70,6 +70,7 @@ fn help_lists_the_agent_commands_and_the_exit_codes() {
     for needle in [
         "route-kicad-board",
         "layout-kicad-board",
+        "layout-kicad-schematic",
         "place-kicad-board",
         "Exit codes",
         "  3  incomplete and cut short",
@@ -79,6 +80,7 @@ fn help_lists_the_agent_commands_and_the_exit_codes() {
     for command in [
         "route-kicad-board",
         "layout-kicad-board",
+        "layout-kicad-schematic",
         "place-kicad-board",
         "import-kicad-netlist",
     ] {
@@ -99,6 +101,199 @@ fn help_lists_the_agent_commands_and_the_exit_codes() {
         ),
         0
     );
+}
+
+#[test]
+fn schematic_layout_reports_conflicting_constraints_before_import() {
+    let root = scratch("schematic-layout-constraints");
+    let destination = root.join("run");
+    let schematic = root.join("t.kicad_sch");
+    let brief = root.join("brief.json");
+    let layout = root.join("layout.json");
+    fs::write(&schematic, "(kicad_sch)").unwrap();
+    fs::write(&brief, r#"{"version":1}"#).unwrap();
+    fs::write(&layout, r#"{"placer":{"constraints":"other-brief.json"}}"#).unwrap();
+    let output = binary()
+        .args(["layout-kicad-schematic"])
+        .arg(schematic)
+        .arg("t")
+        .arg(&destination)
+        .arg("--constraints")
+        .arg(brief)
+        .arg("--layout-config")
+        .arg(layout)
+        .output()
+        .unwrap();
+    assert_eq!(code(&output), 2, "{}", stderr(&output));
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(destination.join("workflow.json")).unwrap()).unwrap();
+    assert_eq!(report["stage"], "prepare");
+    assert_eq!(report["status"], "usage_error");
+    assert_eq!(report["exit_code"], 2);
+    assert!(
+        report["next_actions"][0]
+            .as_str()
+            .unwrap()
+            .contains("placer.constraints")
+    );
+    assert!(!destination.join("project").exists());
+    assert!(!destination.join("layout").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_single_boards_assignment_check_needs_no_kicad_or_output_directory() {
+    let root = scratch("check-sub-boards");
+    let project = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/f1");
+    let destination = root.join("layout");
+    let output = binary()
+        .env("PATH", "")
+        .env("PCB_WORK_RATE", "invalid")
+        .arg("layout-kicad-board")
+        .arg(project)
+        .arg("f1")
+        .arg(&destination)
+        .arg("--check-sub-boards")
+        .output()
+        .unwrap();
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["check"], "sub_board_assignments");
+    assert_eq!(report["enabled"], true);
+    assert_eq!(report["status"], "complete");
+    assert!(report["sub_boards"].is_null());
+    assert_eq!(report["next_actions"], serde_json::json!([]));
+    assert!(!destination.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_layout_placement_seed_override_matches_the_same_seed_in_config() {
+    let root = scratch("layout-placement-seed");
+    let project = project(&root);
+    let source = |seed: u64| {
+        let config = serde_json::json!({
+            "total_seconds": 30, "moves": 0, "polish_seconds": 0,
+            "placer": {"fixed": ["J3"], "tuning": {"seed": seed, "placement_seeds": 1}},
+            "tuning": {"congestion_score": "none"}
+        });
+        let path = root.join(format!("config-{seed}.json"));
+        fs::write(&path, config.to_string()).unwrap();
+        path
+    };
+    let run = |name, config: &Path, override_seed: &[&str]| {
+        let destination = root.join(name);
+        let output = binary()
+            .env("PCB_SKIP_NATIVE", "1")
+            .env("PCB_WORK_RATE", "3.15e6,150e6")
+            .env("PCB_ROUTER_NO_WALL_GUARD", "1")
+            .arg("layout-kicad-board")
+            .arg(&project)
+            .arg("t")
+            .arg(&destination)
+            .arg("auto")
+            .arg(config)
+            .args(override_seed)
+            .output()
+            .unwrap();
+        (output, destination)
+    };
+    let original = source(7);
+    let original_contents = fs::read(&original).unwrap();
+    let explicit = source(101);
+    let (invalid, dir) = run("invalid", &original, &["--placement-seed", "-1"]);
+    assert_eq!(code(&invalid), 2, "{}", stderr(&invalid));
+    assert!(stderr(&invalid).contains("--placement-seed needs a non-negative 64-bit integer"));
+    assert!(!dir.exists());
+    let (override_run, override_dir) = run("override", &original, &["--placement-seed", "101"]);
+    let (explicit_run, explicit_dir) = run("explicit", &explicit, &[]);
+    for run in [&override_run, &explicit_run] {
+        assert_eq!(code(run), 1, "{}", stderr(run));
+    }
+    let read = |dir: &Path, file| -> serde_json::Value {
+        serde_json::from_slice(&fs::read(dir.join(file)).unwrap()).unwrap()
+    };
+    let placed_path = "placed/board-placer.json";
+    let placed_override = read(&override_dir, placed_path);
+    let placed_explicit = read(&explicit_dir, placed_path);
+    assert_eq!(placed_override["seed_kept"], 101);
+    assert_eq!(placed_override["seed_kept"], placed_explicit["seed_kept"]);
+    assert_eq!(
+        placed_override,
+        read(&override_dir, "result/board-placer.json")
+    );
+    assert!(placed_override.get("selected_placement").is_none());
+    assert!(!override_dir.join("initial-placement").exists());
+    assert!(
+        placed_override["footprints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["side"] == "front")
+    );
+    let layout_path = "board-layout.json";
+    let override_digest = read(&override_dir, layout_path)["placement_digest"].clone();
+    assert!(override_digest.is_string());
+    assert_eq!(
+        override_digest,
+        read(&explicit_dir, layout_path)["placement_digest"]
+    );
+    assert_eq!(fs::read(&original).unwrap(), original_contents);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_layout_stopped_by_placement_reports_reuse_as_skipped() {
+    let root = scratch("reuse-placement-blocked");
+    let project = project(&root);
+    let board = project.join("t.kicad_pcb");
+    let prior = root.join("prior.kicad_pcb");
+    fs::copy(&board, &prior).unwrap();
+    let config = root.join("layout.json");
+    fs::write(
+        &config,
+        r#"{
+            "total_seconds": 2,
+            "placer": {
+                "constraints": {
+                    "version": 1,
+                    "move_all": true,
+                    "keepout": [{"x": [0, 20], "y": [0, 20]}]
+                },
+                "tuning": {"placement_seeds": 1}
+            },
+            "tuning": {"congestion_score": "none"}
+        }"#,
+    )
+    .unwrap();
+    let destination = root.join("layout");
+    let output = binary()
+        .env("PCB_SKIP_NATIVE", "1")
+        .env("PCB_WORK_RATE", "3.15e6,150e6")
+        .env("PCB_ROUTER_NO_WALL_GUARD", "1")
+        .arg("layout-kicad-board")
+        .arg(&project)
+        .arg("t")
+        .arg(&destination)
+        .arg("auto")
+        .arg(&config)
+        .arg("--reuse-routes")
+        .arg(&prior)
+        .output()
+        .unwrap();
+    assert_eq!(code(&output), 1, "{}", stderr(&output));
+    assert!(!destination.join("board-layout.json").exists());
+    let verdict: serde_json::Value =
+        serde_json::from_slice(&fs::read(destination.join("verdict.json")).unwrap()).unwrap();
+    assert_eq!(
+        verdict["route_reuse"],
+        serde_json::json!({
+            "status": "skipped", "reason": "the initial placement has unplaced or illegal footprints",
+            "retained_nets": 0, "retained_segments": 0, "retained_arcs": 0,
+            "retained_vias": 0, "restored_poses": 0
+        })
+    );
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -1126,6 +1321,217 @@ fn drc_exits_by_the_findings_that_count_and_caches_the_report() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[test]
+fn local_open_repair_keeps_the_cross_gap_open_on_the_panel() {
+    if !Command::new("kicad-cli")
+        .arg("version")
+        .output()
+        .is_ok_and(|output| output.status.success())
+    {
+        eprintln!("skipping native panel repair: kicad-cli is unavailable");
+        return;
+    }
+    let root = scratch("local-open-repair-panel");
+    let outline = |geometry: &str| {
+        format!(r#"({geometry} (stroke (width 0.05) (type default)) (layer "Edge.Cuts"))"#)
+    };
+    let tab = outline(
+        "gr_poly (pts (xy 0 0) (xy 12 0) (xy 12 4.5) (xy 15 4.5) (xy 15 0) (xy 27 0) (xy 27 10) (xy 15 10) (xy 15 5.5) (xy 12 5.5) (xy 12 10) (xy 0 10)) (fill none)",
+    );
+    let rectangle = outline("gr_rect (start 0 0) (end 27 10)");
+    for (name, outline, panel) in [("tab", tab, true), ("rectangle", rectangle, false)] {
+        let source = root.join(name);
+        fs::create_dir(&source).unwrap();
+        let path = source.join("board.kicad_pcb");
+        let mut board = format!(
+            r#"(kicad_pcb (version 20241229) (generator "pcbnew")
+  (general (thickness 1.6)) (paper "A4")
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
+  {outline}
+"#
+        );
+        for (index, x) in [3, 8, 22].into_iter().enumerate() {
+            board.push_str(&format!(
+                r#"  (footprint "test" (layer "F.Cu") (at {x} 5)
+    (uuid "1b0aa000-13dd-462e-9898-234e65f5ff0{index}")
+    (property "Reference" "J{index}" (at 0 -2) (layer "F.SilkS")
+      (effects (font (size 1 1) (thickness 0.15))))
+    (pad "1" smd circle (at 0 0) (size 1 1) (layers "F.Cu") (net "/TARGET")
+      (uuid "ef2ff1e8-13dd-462e-9898-234e65f5ff0{index}")))
+"#
+            ));
+        }
+        board.push_str(")\n");
+        fs::write(&path, &board).unwrap();
+        fs::write(source.join("board.kicad_pro"), "{}\n").unwrap();
+        let output_dir = root.join(format!("{name}-repaired"));
+        let output = binary()
+            .env("PCB_MAKER_CACHE_DIR", root.join("cache"))
+            .arg("repair-kicad-opens")
+            .arg(&source)
+            .args(["board", "--local"])
+            .arg(&output_dir)
+            .args(["--net", "/TARGET"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            code(&output),
+            0,
+            "{}\n{}",
+            stderr(&output),
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let report: serde_json::Value =
+            serde_json::from_slice(&fs::read(output_dir.join("open-repair.json")).unwrap())
+                .unwrap();
+        assert_eq!(report["status"], "improved");
+        assert_eq!(report["drc_refilled_zones"], false);
+        assert_eq!(report["opens_before"], if panel { 1 } else { 2 });
+        assert_eq!(report["opens_after"], 0);
+        if panel {
+            assert_eq!(report["panel_before"]["excluded_across"], 1);
+            assert_eq!(report["panel_after"]["excluded_across"], 1);
+            assert_eq!(report["panel_before"]["raw_opens"], 2);
+            assert_eq!(report["panel_after"]["raw_opens"], 1);
+            assert_eq!(report["panel_after"]["pieces"][0]["opens"], 0);
+            assert_eq!(report["panel_after"]["pieces"][1]["opens"], 0);
+            assert_eq!(report["trials"][0]["panel_piece"], 1);
+        } else {
+            assert!(report.get("panel_before").is_none());
+            assert!(report.get("panel_after").is_none());
+            for (net, expected_opens) in [("/TARGET", 0), ("/OTHER", 2)] {
+                let selected = root.join(format!("donor-{expected_opens}-opens"));
+                let run = binary()
+                    .env("PCB_MAKER_CACHE_DIR", root.join("cache"))
+                    .arg("repair-kicad-opens")
+                    .arg(&source)
+                    .arg("board")
+                    .arg(output_dir.join("board.kicad_pcb"))
+                    .arg(&selected)
+                    .args(["--net", net])
+                    .output()
+                    .unwrap();
+                assert_eq!(
+                    code(&run),
+                    i32::from(expected_opens > 0),
+                    "{}",
+                    stderr(&run)
+                );
+                let evidence: serde_json::Value =
+                    serde_json::from_slice(&fs::read(selected.join("open-repair.json")).unwrap())
+                        .unwrap();
+                assert_eq!(evidence["requested_nets"], serde_json::json!([net]));
+                assert_eq!(evidence["opens_after"], expected_opens);
+                if expected_opens > 0 {
+                    assert_eq!(
+                        fs::read_to_string(selected.join("board.kicad_pcb")).unwrap(),
+                        board
+                    );
+                }
+            }
+        }
+        assert_eq!(fs::read_to_string(path).unwrap(), board);
+        assert!(
+            fs::read_to_string(output_dir.join("board.kicad_pcb"))
+                .unwrap()
+                .starts_with(board.strip_suffix(")\n").unwrap())
+        );
+        assert_eq!(
+            fs::read_to_string(output_dir.join("board.kicad_pro")).unwrap(),
+            "{}\n"
+        );
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn an_island_stitch_refuses_reports_that_collide_with_the_board_or_repair() {
+    let root = scratch("zone-stitch-paths");
+    let project = project(&root);
+    let board = project.join("t.kicad_pcb");
+    let settings = project.join("t.kicad_pro");
+    let schematic = project.join("t.kicad_sch");
+    let child = project.join("sheets/child.kicad_sch");
+    let tables = [project.join("fp-lib-table"), project.join("sym-lib-table")];
+    let original = fs::read(&board).unwrap();
+    fs::write(&settings, "{}").unwrap();
+    fs::create_dir_all(child.parent().unwrap()).unwrap();
+    for input in [&schematic, &child, &tables[0], &tables[1]] {
+        fs::write(input, "project input").unwrap();
+    }
+    let occupied_scratch = root.join("occupied.project");
+    fs::create_dir(&occupied_scratch).unwrap();
+    fs::write(occupied_scratch.join("input"), "kept").unwrap();
+    let repair = root.join("repaired");
+    for (report, message) in [
+        (repair.join("drc.json"), "beside the repair output"),
+        (repair.join("../drc.json"), "beside the repair output"),
+        (board.clone(), "would replace a project input file"),
+        (settings.clone(), "would replace a project input file"),
+        (schematic.clone(), "would replace a project input file"),
+        (child.clone(), "would replace a project input file"),
+        (tables[0].clone(), "would replace a project input file"),
+        (tables[1].clone(), "would replace a project input file"),
+        (root.join("occupied.json"), "temporary project path"),
+    ] {
+        let output = binary()
+            .env("PATH", "")
+            .arg("drc-kicad-board")
+            .arg(&project)
+            .arg("t")
+            .arg(report)
+            .arg("--stitch-zone-island")
+            .arg(&repair)
+            .output()
+            .unwrap();
+        assert_eq!(code(&output), 2, "{}", stderr(&output));
+        assert!(stderr(&output).contains(message), "{}", stderr(&output));
+        assert!(!repair.exists());
+        assert_eq!(fs::read(&board).unwrap(), original);
+        assert_eq!(fs::read_to_string(&settings).unwrap(), "{}");
+        for input in [&schematic, &child, &tables[0], &tables[1]] {
+            assert_eq!(fs::read_to_string(input).unwrap(), "project input");
+        }
+        assert_eq!(
+            fs::read_to_string(occupied_scratch.join("input")).unwrap(),
+            "kept"
+        );
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn an_island_stitch_accepts_relative_report_and_output_paths() {
+    let root = scratch("zone-stitch-relative-paths");
+    let project = project(&root);
+    let bin = fake_kicad(&root, &drc_report(serde_json::json!([])), 0);
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    fs::create_dir(root.join("results")).unwrap();
+    for (report, repair) in [
+        ("before.json", "repaired"),
+        ("reports/before.json", "results/repaired"),
+    ] {
+        let output = binary()
+            .current_dir(&root)
+            .env("PATH", &path)
+            .env("PCB_MAKER_CACHE_DIR", root.join("cache"))
+            .args(["drc-kicad-board"])
+            .arg(&project)
+            .args(["t", report, "--stitch-zone-island", repair])
+            .output()
+            .unwrap();
+        assert_eq!(code(&output), 0, "{report}: {}", stderr(&output));
+        assert!(root.join(report).is_file());
+        assert!(!root.join(repair).exists());
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
 /// A DRC report of the test board (`t.kicad_pcb`) with `violations`.
 #[cfg(unix)]
 fn drc_report(violations: serde_json::Value) -> serde_json::Value {
@@ -1133,6 +1539,285 @@ fn drc_report(violations: serde_json::Value) -> serde_json::Value {
         "date": "2026-10-21T12:00:00", "kicad_version": "10.0.7", "coordinate_units": "mm",
         "included_severities": ["error", "warning", "exclusion"], "violations": violations,
         "unconnected_items": [], "schematic_parity": []})
+}
+
+#[test]
+#[cfg(unix)]
+fn a_natively_connected_kept_board_preserves_its_bytes_and_reports_stored_connectivity() {
+    use serde_json::json;
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = scratch("native-kept-plane");
+    let source = project(&root);
+    let board = source.join("t.kicad_pcb");
+    fs::write(source.join("t.kicad_pro"), "{}").unwrap();
+    let original = fs::read_to_string(&board).unwrap();
+    let mut refilled = drc_report(json!([]));
+    refilled["ignored_checks"] = json!([]);
+    let mut unfilled = refilled.clone();
+    unfilled["unconnected_items"] = json!([{
+        "type":"unconnected_items", "severity":"error",
+        "description":"Missing connection between items", "items":[]
+    }]);
+    let checker = root.join("kicad-cli");
+    fs::write(
+        &checker,
+        format!(
+            r#"#!/bin/sh
+if [ "$1" = version ]; then echo 10.0.7; exit 0; fi
+all=no
+refill=no
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --all-track-errors) all=yes ;;
+    --refill-zones) refill=yes ;;
+    --save-board) exit 11 ;;
+    --output) shift; report="$1"; board="$2"; break ;;
+  esac
+  shift
+done
+[ "$all" = yes ] || exit 12
+if [ "$refill" = yes ] && [ -n "$PCB_TEST_TAKES_ROUTE_OUTPUT" ]; then
+  mkdir "$PCB_TEST_TAKES_ROUTE_OUTPUT" || exit 13
+  printf 'another invocation' > "$PCB_TEST_TAKES_ROUTE_OUTPUT/verdict.json"
+fi
+if [ "$refill" = yes ] || grep -q filled_polygon "$board"; then
+  cat > "$report" <<'REFILLED'
+{refilled}
+REFILLED
+else
+  cat > "$report" <<'UNFILLED'
+{unfilled}
+UNFILLED
+fi
+"#
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&checker, fs::Permissions::from_mode(0o700)).unwrap();
+
+    for (case, stored_open_items) in [("stored", 0), ("refill_only", 1), ("concurrent", 0)] {
+        let points = "(pts (xy 1 1) (xy 19 1) (xy 19 19) (xy 1 19))";
+        let fill = if stored_open_items == 0 {
+            format!("(filled_polygon (layer \"B.Cu\") {points})")
+        } else {
+            String::new()
+        };
+        let input = format!(
+            "{}\n  (zone (net \"/TARGET\") (layer \"B.Cu\") (polygon {points}) {fill}))\n",
+            original.trim_end().strip_suffix(')').unwrap()
+        );
+        fs::write(&board, &input).unwrap();
+        let destination = root.join(case);
+        let mut command = binary();
+        command.env_remove("PCB_TEST_TAKES_ROUTE_OUTPUT");
+        if case == "concurrent" {
+            command.env("PCB_TEST_TAKES_ROUTE_OUTPUT", &destination);
+        }
+        let output = command
+            .env("PCB_KICAD_CLI", &checker)
+            .env_remove("PCB_SKIP_NATIVE")
+            .arg("route-kicad-board")
+            .arg(&source)
+            .arg("t")
+            .arg(&destination)
+            .args(["auto", "--reference", "none"])
+            .output()
+            .unwrap();
+        assert_eq!(fs::read_to_string(&board).unwrap(), input);
+        if case == "concurrent" {
+            assert_eq!(code(&output), 2, "{}", stderr(&output));
+            assert_eq!(
+                fs::read_to_string(destination.join("verdict.json")).unwrap(),
+                "another invocation"
+            );
+            assert!(!destination.join("t.kicad_pcb").exists());
+            continue;
+        }
+        assert_eq!(code(&output), 0, "{}", stderr(&output));
+        assert_eq!(
+            fs::read_to_string(destination.join("t.kicad_pcb")).unwrap(),
+            input
+        );
+        let report: serde_json::Value =
+            serde_json::from_slice(&fs::read(destination.join("verdict.json")).unwrap()).unwrap();
+        let evidence = &report["input_connectivity"];
+        assert_eq!(evidence["status"], "unchanged");
+        assert_eq!(evidence["refilled_open_items"], 0);
+        assert_eq!(evidence["stored_open_items"], stored_open_items);
+        assert_eq!(evidence.get("retry_argv").is_some(), stored_open_items != 0);
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn a_fill_handoff_reopens_the_saved_bytes_before_publishing() {
+    use serde_json::json;
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = scratch("save-filled");
+    let project = project(&root);
+    let board = project.join("t.kicad_pcb");
+    let original = fs::read(&board).unwrap();
+    for (name, content) in [
+        ("t.kicad_pro", "{}"),
+        ("t.kicad_dru", "(version 1)"),
+        ("t.kicad_sch", "(kicad_sch)"),
+        ("sheets/child.kicad_sch", "(kicad_sch)"),
+        ("parts.pretty/Part.kicad_mod", "(footprint Part)"),
+        ("drc.json", "old report"),
+        ("verdict.json", "old verdict"),
+    ] {
+        let file = project.join(name);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(file, content).unwrap();
+    }
+    let cli = root.join("kicad-cli");
+    fs::write(
+        &cli,
+        r#"#!/bin/sh
+if [ "$1" = version ]; then echo 10.0.8; exit 0; fi
+parity=no
+refill=no
+save=no
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --schematic-parity) parity=yes ;;
+    --refill-zones) refill=yes ;;
+    --save-board) save=yes ;;
+    --output) shift; report="$1"; input="$2"; break ;;
+  esac
+  shift
+done
+[ "$parity" = yes ] && [ "$refill" = "$save" ] || exit 55
+if [ "$save" = yes ]; then
+  printf '\n' >> "$input"
+  cp "$PCB_TEST_FILL/refilled.json" "$report"
+  [ "$PCB_TEST_FILL_CONFIRM" = yes ] && echo 'Saved board'
+elif cmp -s "$input" "$PCB_TEST_FILL_SOURCE"; then
+  cp "$PCB_TEST_FILL/before.json" "$report"
+else
+  cp "$PCB_TEST_FILL/reopened.json" "$report"
+fi
+if grep -q 'net_conflict' "$report"; then
+  echo 'Found 1 schematic parity issues'
+else
+  echo 'Found 0 schematic parity issues'
+fi
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&cli, fs::Permissions::from_mode(0o700)).unwrap();
+    for (name, expected, confirm) in [
+        ("clean", 0, "yes"),
+        ("inherited", 1, "yes"),
+        ("different", 4, "yes"),
+        ("malformed", 4, "yes"),
+        ("unconfirmed", 4, "no"),
+    ] {
+        let data = root.join(name);
+        fs::create_dir(&data).unwrap();
+        let mut refilled = drc_report(json!([]));
+        if name == "inherited" {
+            refilled["schematic_parity"] = json!([{"type": "net_conflict", "description": "existing", "severity": "error", "items": []}]);
+        }
+        let mut before = refilled.clone();
+        before["unconnected_items"] = json!([{"type": "unconnected_items", "description": "old fill", "severity": "error", "items": []}]);
+        let mut reopened = refilled.clone();
+        match name {
+            "different" => reopened["unconnected_items"] = before["unconnected_items"].clone(),
+            "malformed" => reopened["unconnected_items"] = json!([{"type": "unconnected_items"}]),
+            _ => (),
+        }
+        for (kind, report) in [
+            ("before.json", before),
+            ("refilled.json", refilled),
+            ("reopened.json", reopened),
+        ] {
+            fs::write(data.join(kind), report.to_string()).unwrap();
+        }
+        let report = format!("{name}/report.json");
+        let output = format!("{name}/new/filled");
+        let child = binary()
+            .current_dir(&root)
+            .env("PCB_KICAD_CLI", &cli)
+            .env("PCB_MAKER_LEDGER", "off")
+            .env("PCB_TEST_FILL", &data)
+            .env("PCB_TEST_FILL_SOURCE", &board)
+            .env("PCB_TEST_FILL_CONFIRM", confirm)
+            .arg("drc-kicad-board")
+            .arg(&project)
+            .args(["t", &report, "--save-filled", &output])
+            .output()
+            .unwrap();
+        assert_eq!(code(&child), expected, "{name}: {}", stderr(&child));
+        let output = root.join(output);
+        assert_eq!(fs::read(&board).unwrap(), original);
+        if expected == 4 {
+            assert!(!output.exists());
+            assert!(!root.join(report).exists());
+            assert_eq!(fs::read_dir(output.parent().unwrap()).unwrap().count(), 0);
+            continue;
+        }
+        assert!(root.join(report).is_file());
+        assert_ne!(fs::read(output.join("t.kicad_pcb")).unwrap(), original);
+        for name in [
+            "t.kicad_pro",
+            "t.kicad_dru",
+            "t.kicad_sch",
+            "sheets/child.kicad_sch",
+            "parts.pretty/Part.kicad_mod",
+        ] {
+            assert_eq!(
+                fs::read(output.join(name)).unwrap(),
+                fs::read(project.join(name)).unwrap()
+            );
+        }
+        assert!(!output.join("verdict.json").exists());
+        let summary: serde_json::Value =
+            serde_json::from_slice(&fs::read(output.join("fill-handoff.json")).unwrap()).unwrap();
+        assert_eq!(summary["source_as_stored"]["opens"], 1);
+        assert_eq!(summary["saved_as_stored"]["opens"], 0);
+        assert_eq!(summary["schematic_parity_checked"], true);
+        if expected == 1 {
+            assert_eq!(
+                summary["inherited_findings"]["schematic_parity"]["net_conflict"],
+                1
+            );
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_fill_handoff_refuses_output_paths_that_would_touch_the_source() {
+    let root = scratch("save-filled-paths");
+    let project = project(&root);
+    let board = project.join("t.kicad_pcb");
+    let original = fs::read(&board).unwrap();
+    let fill = root.join("fill");
+    for (report, output) in [
+        (board.clone(), fill.clone()),
+        (root.join("report.json"), project.join("fill")),
+        (fill.join("report.json"), fill.clone()),
+    ] {
+        let child = binary()
+            .env("PATH", "")
+            .arg("drc-kicad-board")
+            .arg(&project)
+            .arg("t")
+            .arg(report)
+            .arg("--save-filled")
+            .arg(output)
+            .output()
+            .unwrap();
+        assert_eq!(code(&child), 2, "{}", stderr(&child));
+    }
+    assert_eq!(fs::read(&board).unwrap(), original);
+    assert!(!fill.exists());
+    assert!(!project.join("fill").exists());
+    fs::remove_dir_all(root).unwrap();
 }
 
 /// A fake kicad-cli on the PATH for the neck repair: every DRC reports

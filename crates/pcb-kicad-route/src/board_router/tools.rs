@@ -126,8 +126,8 @@ pub fn write_kicad_board_without_tracks_except(
                 .retain(|child| !matches!(child.head(), Some("filled_polygon" | "fill_segments")));
         }
     }
-    // KiCad refuses a board with items on undefined layers; the stripped
-    // board loads like the routed one will (koeg-board's Rescue layer).
+    // Resolve layers like the routed board does, including the old Rescue
+    // layer on koeg-board.
     move_undefined_layers(&mut pcb);
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent)

@@ -77,6 +77,58 @@ fn terminal(label: &str, pad: usize, anchor: [f64; 2], layers: core::LayerMask) 
 }
 
 #[test]
+fn kept_via_drill_clearance_uses_its_span_and_net() {
+    let pcb = board(
+        FOUR,
+        r#"(via blind (at 10 10) (size 0.35) (drill 0.2) (layers "F.Cu" "In1.Cu") (net "VIA"))
+           (via (at 4 4) (size 0.35) (drill 0.2) (layers "F.Cu" "B.Cu") (net "VIA"))
+           (via (at 4 5) (size 0.35) (drill 0) (layers "F.Cu" "B.Cu") (net "VIA"))
+           (via (at 4 6) (size 0.35) (layers "F.Cu" "B.Cu") (net "VIA"))
+           (footprint "t" (at 2 10) (property "Reference" "J1")
+             (pad "1" smd circle (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net "SIG")))"#,
+    );
+    let config = KiCadBoardRouterConfig {
+        default_rules: Some(KiCadConnectionRoutingRules {
+            trace_width_mm: 0.09,
+            clearance_mm: 0.09,
+            via_size_mm: 0.35,
+            via_drill_mm: 0.2,
+        }),
+        hole_clearance_mm: 0.2,
+        ..Default::default()
+    };
+    let board = lower(&pcb, &config, false).unwrap().board;
+    let net = |name| board.nets.iter().position(|net| net.name == name).unwrap();
+    let (via, signal) = (net("VIA"), net("SIG"));
+    let holes: Vec<_> = board
+        .obstacles
+        .iter()
+        .filter(|obstacle| obstacle.kind == core::ObstacleKind::Hole)
+        .collect();
+    assert_eq!(holes.len(), 2);
+    assert_eq!(holes[0].net, Some(via as core::NetId));
+    assert_eq!(holes[0].layers, 0b0011);
+    assert_eq!(holes[1].layers, 0b1111);
+    let check = |net: usize, layer: usize, y: f64| {
+        let mut routes = vec![core::NetRoute::default(); board.nets.len()];
+        routes[net].segments.push(core::Segment {
+            layer,
+            start: [8.0, y],
+            end: [12.0, y],
+            width: 0.09,
+        });
+        core::verify(&board, &routes)
+    };
+    let findings = check(signal, 0, 10.325);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].other, "existing via hole");
+    assert!((findings[0].actual - 0.18).abs() < 1.0e-9);
+    assert!(check(signal, 0, 10.375).is_empty());
+    assert!(check(signal, 3, 10.325).is_empty());
+    assert!(check(via, 0, 10.325).is_empty());
+}
+
+#[test]
 fn nets_of_the_same_rules_share_a_class() {
     let pcb = board(FOUR, "");
     let config = KiCadBoardRouterConfig {
@@ -223,6 +275,40 @@ fn a_mask_opening_belongs_to_the_one_net_it_exposes() {
 }
 
 #[test]
+fn a_diagonal_tracks_box_is_not_exposed_copper() {
+    let pcb = board(FOUR, "");
+    let config = config();
+    let ctx = Context::new(&pcb, &config, true).unwrap();
+    let opening = |center| MaskOpening {
+        shapes: vec![square(center, 0.5)],
+        layer: 0,
+        kind: "fp_poly".into(),
+        margin: 0.0,
+        expansion: 0.0,
+    };
+    let trace = |start, end| core::Shape::Capsule {
+        start,
+        end,
+        radius: 0.075,
+    };
+    let near = trace([3.0, 5.0], [5.0, 7.0]);
+    assert!(near.aabb().intersects(square([5.0, 5.0], 0.5).aabb()));
+    let mut builder = Builder {
+        obstacles: vec![
+            copper(square([5.0, 5.0], 0.2), 1, Some(0)),
+            copper(near, 1, Some(1)),
+            copper(square([10.0, 5.0], 0.2), 1, Some(0)),
+            copper(trace([8.0, 4.0], [12.0, 6.0]), 1, Some(1)),
+        ],
+        mask_openings: vec![opening([5.0, 5.0]), opening([10.0, 5.0])],
+        ..Builder::default()
+    };
+    builder.place_mask_openings(&ctx, &[]);
+    assert_eq!(builder.obstacles[4].net, Some(0));
+    assert_eq!(builder.obstacles[5].net, None);
+}
+
+#[test]
 fn a_net_tie_joins_its_groups_or_by_the_legacy_keyword_all_its_pads() {
     let footprint = |forms: &str| {
         parse(&format!(
@@ -289,16 +375,13 @@ fn holes_and_via_layers() {
     let layers = LayerTable::from_pcb(&pcb).unwrap();
     let via =
         |forms: &str| parse(&format!("(via {forms} (at 1 1) (size 0.6) (drill 0.3))")).unwrap();
+    assert_eq!(layers.via_mask(&via(r#"(layers "F.Cu" "B.Cu")"#)), 0b1111);
     assert_eq!(
-        via_layers(&via(r#"(layers "F.Cu" "B.Cu")"#), &layers),
-        0b1111
-    );
-    assert_eq!(
-        via_layers(&via(r#"blind (layers "F.Cu" "In1.Cu")"#), &layers),
+        layers.via_mask(&via(r#"blind (layers "F.Cu" "In1.Cu")"#)),
         0b0011
     );
     assert_eq!(
-        via_layers(&via(r#"buried (layers "In2.Cu" "In1.Cu")"#), &layers),
+        layers.via_mask(&via(r#"buried (layers "In2.Cu" "In1.Cu")"#)),
         0b0110
     );
     // A round drill is a circle, an oval one a capsule along its long axis

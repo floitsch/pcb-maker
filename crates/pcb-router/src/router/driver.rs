@@ -116,6 +116,11 @@ impl Router {
         self.scratch.expansions
     }
 
+    /// Search through the end of the first negotiation pass, once completed.
+    pub fn first_iteration_expansions(&self) -> u64 {
+        self.first_iteration_expansions
+    }
+
     /// The work done so far, in seconds of an idle machine (search
     /// expansions at `expansions_per_second()`): budgets measured in it do
     /// not depend on how busy the machine is.

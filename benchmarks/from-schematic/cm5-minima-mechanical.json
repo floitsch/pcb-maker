@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "move_all": true,
+  "back": [
+    "C503",
+    "CN1",
+    "D403",
+    "Module301",
+    "Module302",
+    "R102",
+    "R103",
+    "R104",
+    "R107",
+    "R108",
+    "R403",
+    "SW101",
+    "U1",
+    "U401",
+    "U402"
+  ],
+  "place": [
+    {
+      "part": "H101",
+      "origin": "absolute",
+      "x": 80.75,
+      "y": 57.0,
+      "angle": 0.0
+    },
+    {
+      "part": "H102",
+      "origin": "absolute",
+      "x": 78.15,
+      "y": 23.35,
+      "angle": 0.0
+    },
+    {
+      "part": "H103",
+      "origin": "absolute",
+      "x": 133.15,
+      "y": 23.35,
+      "angle": 0.0
+    },
+    {
+      "part": "H104",
+      "origin": "absolute",
+      "x": 133.15,
+      "y": 81.35,
+      "angle": 0.0
+    },
+    {
+      "part": "H105",
+      "origin": "absolute",
+      "x": 78.15,
+      "y": 81.35,
+      "angle": 0.0
+    },
+    {
+      "part": "J1",
+      "origin": "absolute",
+      "x": 88.9,
+      "y": 36.15,
+      "angle": -90.0
+    },
+    {
+      "part": "J101",
+      "origin": "absolute",
+      "x": 86.15,
+      "y": 50.7,
+      "angle": 180.0
+    },
+    {
+      "part": "J501",
+      "origin": "absolute",
+      "x": 99.09,
+      "y": 72.07,
+      "angle": 0.0
+    },
+    {
+      "part": "J701",
+      "origin": "absolute",
+      "x": 113.6,
+      "y": 30.725,
+      "angle": 0.0
+    },
+    {
+      "part": "M701",
+      "origin": "absolute",
+      "x": 113.6,
+      "y": 58.975,
+      "angle": 0.0
+    },
+    {
+      "part": "M702",
+      "origin": "absolute",
+      "x": 113.6,
+      "y": 70.85,
+      "angle": 0.0
+    },
+    {
+      "part": "Module301",
+      "origin": "absolute",
+      "x": 127.25,
+      "y": 77.6,
+      "angle": 180.0
+    },
+    {
+      "part": "Module302",
+      "origin": "absolute",
+      "x": 127.25,
+      "y": 77.6,
+      "angle": 180.0
+    },
+    {
+      "part": "SW101",
+      "origin": "absolute",
+      "x": 130.18,
+      "y": 72.88,
+      "angle": -90.0
+    },
+    {
+      "part": "SW501",
+      "origin": "absolute",
+      "x": 130.57,
+      "y": 66.27,
+      "angle": 0.0
+    },
+    {
+      "part": "USB701",
+      "origin": "absolute",
+      "x": 86.15,
+      "y": 62.25,
+      "angle": 180.0
+    }
+  ]
+}

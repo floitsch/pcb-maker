@@ -415,7 +415,7 @@ fn length_windows(
 /// board-placer.json's `length_rules`: per net the placer held
 /// (`LoweredPlacement::length_rules`), its window and its pins' nearest
 /// and farthest octilinear distance across parts at `poses`.
-pub(crate) fn length_rule_report(
+pub fn length_rule_report(
     lowered: &LoweredPlacement,
     poses: &[core::Pose],
 ) -> Vec<KiCadLengthRuleReport> {

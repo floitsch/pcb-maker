@@ -71,6 +71,15 @@ pub(super) struct Launch {
     pub room: f64,
 }
 
+impl Launch {
+    pub fn stub_layer(&self) -> core::LayerMask {
+        self.crossover
+            .as_ref()
+            .and_then(|lead| lead.segments[0].first())
+            .map_or(self.layers, |&(layer, ..)| 1 << layer)
+    }
+}
+
 /// Where a neighbouring pair's link end launches (`launch` on the board
 /// before any link's copper): its straight stubs from the pads to the
 /// stubs' ends and its run's lead. A crossover keeps its clearance from
@@ -560,8 +569,34 @@ impl<'a> LaunchSearch<'a> {
         ];
         let found = crossover(board, near, pair, (start, outward, side), (ends, e), layers)?;
         let run_start = found.run_start;
-        let lead = LEAD * self.d;
-        let at = add(run_start, scale(outward, lead));
+        // Its fixed copper is reserved on the conductors' own nets.
+        // The search terminal is on the link net, so it needs enough
+        // room beyond that copper for its envelope and a lattice node.
+        let shortest = LEAD * self.d;
+        let step = ((self.lead - shortest) / LAUNCH_STEP).ceil() as usize;
+        let clear = |at: Point| {
+            let required = half + LAUNCH_MARGIN;
+            found
+                .segments
+                .iter()
+                .flatten()
+                .filter(|(layer, ..)| 1 << layer == layers)
+                .all(|&(_, a, b)| {
+                    core::geometry::point_segment_distance(at, a, b)
+                        >= required + pair.width / 2.0 + class.clearance
+                })
+                && found.vias.iter().flatten().all(|&via| {
+                    core::geometry::distance(at, via)
+                        >= required
+                            + (pair.via_diameter / 2.0 + class.clearance)
+                                .max(pair.via_drill / 2.0 + board.hole_clearance)
+                })
+        };
+        let (lead, at) = (0..=step).find_map(|index| {
+            let lead = shortest + index as f64 * LAUNCH_STEP;
+            let at = add(run_start, scale(outward, lead));
+            clear(at).then_some((lead, at))
+        })?;
         // Past the crossover the run's centreline lies beside the
         // straight net, off the pads' middle: its lead keeps the room
         // too.

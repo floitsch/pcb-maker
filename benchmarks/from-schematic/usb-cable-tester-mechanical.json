@@ -1,0 +1,208 @@
+{
+  "version": 1,
+  "move_all": true,
+  "place": [
+    {
+      "part": "J1",
+      "x": 46.521321,
+      "y": 38.321321,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J2",
+      "x": 62.621321,
+      "y": 42.421321,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J3",
+      "x": 51.296321,
+      "y": 2.621321,
+      "angle": 180.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J4",
+      "x": 42.021321,
+      "y": 5.621321,
+      "angle": 180.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J5",
+      "x": 61.521421,
+      "y": 6.021321,
+      "angle": 180.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "H3",
+      "x": 71.021321,
+      "y": 3.021321,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "H4",
+      "x": 71.021321,
+      "y": 45.021321,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "U1",
+      "x": 63.221321,
+      "y": 24.021321,
+      "angle": 270.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "D2",
+      "x": 49.138021,
+      "y": 15.539621,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "D24",
+      "x": 34.621321,
+      "y": 25.021321,
+      "angle": 90.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "D31",
+      "x": 27.021321,
+      "y": 25.021321,
+      "angle": 90.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "D39",
+      "x": 24.521321,
+      "y": 25.021321,
+      "angle": 90.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "D40",
+      "x": 3.521321,
+      "y": 25.021321,
+      "angle": 90.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "D41",
+      "x": 9.021321,
+      "y": 25.021321,
+      "angle": 90.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "D42",
+      "x": 6.521321,
+      "y": 25.021321,
+      "angle": 90.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "D43",
+      "x": 32.021321,
+      "y": 25.021321,
+      "angle": 90.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "D44",
+      "x": 29.521321,
+      "y": 25.021321,
+      "angle": 90.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "D45",
+      "x": 19.521321,
+      "y": 21.521321,
+      "angle": 90.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "D46",
+      "x": 19.521321,
+      "y": 25.021321,
+      "angle": 270.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "D47",
+      "x": 17.021321,
+      "y": 25.021321,
+      "angle": 270.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "D48",
+      "x": 17.021321,
+      "y": 21.521321,
+      "angle": 90.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "D49",
+      "x": 14.521321,
+      "y": 21.521321,
+      "angle": 90.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "D50",
+      "x": 14.521321,
+      "y": 25.021321,
+      "angle": 270.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "D51",
+      "x": 12.021321,
+      "y": 25.021321,
+      "angle": 270.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "D52",
+      "x": 12.021321,
+      "y": 21.521321,
+      "angle": 90.0,
+      "origin": "absolute"
+    }
+  ],
+  "front": [
+    "J1",
+    "J2",
+    "J3",
+    "J4",
+    "J5",
+    "H3",
+    "H4",
+    "U1",
+    "D2",
+    "D24",
+    "D31",
+    "D39",
+    "D40",
+    "D41",
+    "D42",
+    "D43",
+    "D44",
+    "D45",
+    "D46",
+    "D47",
+    "D48",
+    "D49",
+    "D50",
+    "D51",
+    "D52"
+  ]
+}

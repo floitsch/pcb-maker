@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "comment": "Independently authored 4 mm by 4 mm front-side enclosure rib. Routing underneath the rib is permitted.",
+  "move_all": true,
+  "place": [
+    {"part": "SW2", "origin": "absolute", "x": 140.285384, "y": 103.374883, "angle": 90}
+  ],
+  "keepout": [
+    {"origin": "absolute", "side": "front", "x": [119.5, 123.5], "y": [136, 140], "copper": false}
+  ]
+}

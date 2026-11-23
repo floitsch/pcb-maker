@@ -119,28 +119,25 @@ impl LayerTable {
             .collect();
         self.mask_of(names.into_iter())
     }
-}
 
-/// The copper layers of a via: a through via's every layer, a blind,
-/// buried or micro via's (`(via blind ... (layers "F.Cu" "In1.Cu"))`)
-/// the layers from its first to its last. The router's own vias are
-/// through vias; another via is copper on its own layers only.
-pub(crate) fn via_layers(via: &Expr, layers: &LayerTable) -> core::LayerMask {
-    let ends: Vec<usize> = via
-        .child("layers")
-        .map(Expr::children)
-        .unwrap_or_default()
-        .iter()
-        .skip(1)
-        .filter_map(Expr::atom)
-        .filter_map(|name| layers.index(name.trim_matches('"')))
-        .collect();
-    match ends.as_slice() {
-        [first, last] => {
-            let (low, high) = ((*first).min(*last), (*first).max(*last));
-            (low..=high).fold(0, |mask, layer| mask | 1 << layer)
+    /// Every copper layer in a via's span, including the intermediate layers.
+    pub(crate) fn via_mask(&self, via: &Expr) -> core::LayerMask {
+        let ends: Vec<usize> = via
+            .child("layers")
+            .map(Expr::children)
+            .unwrap_or_default()
+            .iter()
+            .skip(1)
+            .filter_map(Expr::atom)
+            .filter_map(|name| self.index(name.trim_matches('"')))
+            .collect();
+        match ends.as_slice() {
+            [first, last] => {
+                let (low, high) = ((*first).min(*last), (*first).max(*last));
+                (low..=high).fold(0, |mask, layer| mask | 1 << layer)
+            }
+            _ => self.all(),
         }
-        _ => layers.all(),
     }
 }
 

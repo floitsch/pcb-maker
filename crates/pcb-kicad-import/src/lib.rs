@@ -42,6 +42,11 @@ pub mod netlist_import;
 pub use constraints_template::constraints_template;
 pub use key_matrix::{KiCadStarterHalf, KiCadStarterReport};
 pub use netlist_import::{
-    KiCadNetlistImport, import_kicad_netlist, import_kicad_netlist_from,
-    import_kicad_netlist_options, import_kicad_netlist_with,
+    KiCadDuplicatePinBinding, KiCadExcludedMechanicalObject, KiCadFootprintIdChange,
+    KiCadImportClearanceEvidence, KiCadImportNetclassGap, KiCadImportedMechanicalAddition,
+    KiCadImportedMechanicalLock, KiCadImportedMechanicalObject, KiCadImportedMechanics,
+    KiCadImportedStackup, KiCadMechanicalFiducial, KiCadMechanicalMetadataUuid,
+    KiCadMechanicalPlatedDrill, KiCadNetlistImport, KiCadNetlistImportOptions,
+    KiCadUnmatchedMechanicalLock, import_kicad_netlist, import_kicad_netlist_from,
+    import_kicad_netlist_options, import_kicad_netlist_with, import_kicad_netlist_with_options,
 };

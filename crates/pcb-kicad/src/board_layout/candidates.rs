@@ -19,6 +19,7 @@ pub(super) struct Kept {
     pub board: core::Board,
     pub problem: crate::board_placer::LoweredPlacement,
     pub placer_config: KiCadBoardPlacerConfig,
+    pub relaxation: placer::Relaxation,
 }
 
 impl Kept {
@@ -33,6 +34,7 @@ impl Kept {
         self.placer_config.tight_bodies = Some(relaxation.tight);
         self.problem = lower_placement(&self.pcb, &self.placer_config)?;
         relaxation.apply(&mut self.problem.problem);
+        self.relaxation = relaxation.clone();
         Ok(())
     }
 }
@@ -46,6 +48,8 @@ pub(super) struct Candidates {
     /// `congestion.scores`; without a pre-ranking, the kept one and the
     /// others in seed order).
     pub labels: Vec<usize>,
+    /// Pool indices after zero map to these indices in the placer's alternatives.
+    pub alternative_indices: Vec<usize>,
     /// Per placement of the pool (the kept one, then the others in the
     /// placer's order), its pads without a way out (`pad_exits`; `None`
     /// off): the report follows the placement the race keeps.
@@ -70,19 +74,23 @@ pub(super) fn alike(a: &[placer::Pose], b: &[placer::Pose]) -> bool {
 }
 
 /// The indices of the `alternatives` (poses, relaxation, how far they miss
-/// the constraints) that race the kept placement (`kept`, missing by
-/// `missed`): those that keep the constraints as well and differ from
-/// every placement before them.
+/// the constraints) that race the kept placement: those that keep the exact
+/// pad limits and the other constraints as well and differ from every
+/// placement before them.
 pub(super) fn distinct_alternatives(
-    kept: &[placer::Pose],
+    problem: &placer::Problem,
     missed: f64,
     alternatives: &[(Vec<placer::Pose>, placer::Relaxation, f64)],
 ) -> Vec<usize> {
-    let mut seen = vec![kept.to_vec()];
+    let kept = &problem.poses;
+    let mut seen = vec![kept.as_slice()];
     let mut chosen = Vec::new();
     for (index, (poses, _, other_missed)) in alternatives.iter().enumerate() {
-        if *other_missed <= missed + 1.0e-6 && !seen.iter().any(|known| alike(known, poses)) {
-            seen.push(poses.clone());
+        if *other_missed <= missed + 1.0e-6
+            && placer::constraints::keeps_pad_near_requirements(problem, kept, poses)
+            && !seen.iter().any(|known| alike(known, poses))
+        {
+            seen.push(poses);
             chosen.push(index);
         }
     }
@@ -94,7 +102,7 @@ pub(super) fn distinct_alternatives(
 /// every pool placement's pads without a way out.
 pub(super) fn race_candidates(
     placement: &KiCadBoardPlacerResult,
-    kept: &[placer::Pose],
+    problem: &placer::Problem,
 ) -> Candidates {
     // What the user asked for comes first: only placements that keep the
     // constraints as well as the kept one race it. Seeds that placed alike
@@ -107,13 +115,15 @@ pub(super) fn race_candidates(
         .sum();
     let mut others = Vec::new();
     let mut pool_exits = vec![placement.pad_exits.clone()];
-    for index in distinct_alternatives(kept, missed, &placement.alternatives) {
+    let alternative_indices = distinct_alternatives(problem, missed, &placement.alternatives);
+    for &index in &alternative_indices {
         let (poses, relaxation, _) = &placement.alternatives[index];
         others.push((poses.clone(), relaxation.clone()));
         pool_exits.push(placement.alternative_exits.get(index).cloned().flatten());
     }
     Candidates {
         labels: (0..=others.len()).collect(),
+        alternative_indices,
         others,
         pool_exits,
         congestion: None,
@@ -210,7 +220,24 @@ pub(super) fn pre_rank(
         copper.connect,
     )?;
     let crossings = seed_crossings(&kept.placer_config, &kept.problem, &pool);
-    let order = probe_order(&ranked.order, crossings.as_deref(), &pool);
+    let has_pad_objective = kept
+        .problem
+        .problem
+        .constraints
+        .relations
+        .iter()
+        .any(|relation| {
+            matches!(
+                relation,
+                placer::constraints::Relation::PadNear { max: None, .. }
+            )
+        });
+    let order = probe_order(
+        &ranked.order,
+        crossings.as_deref(),
+        &pool,
+        has_pad_objective,
+    );
     let keep: Vec<usize> = order.iter().copied().take(probes).collect();
     eprintln!(
         "placement pre-ranking ({}): {} placements scored in {:.2} s (lowering {:.2} s, scoring {:.2} s); probing {:?} (scores {:?})",
@@ -226,7 +253,7 @@ pub(super) fn pre_rank(
     );
     if keep[0] != 0 {
         let (poses, relaxation) = &pool[keep[0]];
-        let candidate = posed(&kept.pcb, poses)?;
+        let candidate = posed(&kept.pcb, poses, &ctx.router_config.add_pours)?;
         let plan_work;
         (kept.board, plan_work) = lower_for_route(
             &without_copper_texts(&candidate, config.placer.keep_board_marks),
@@ -275,11 +302,13 @@ fn seed_crossings(
 /// The order the race probes the pool in: the score's ranking (`ranked`),
 /// with the crossings by the sum of the two ranks (a tie to the better
 /// score), and a placement that needed courtyards touching or parts on
-/// marks after every one that did not.
+/// marks after every one that did not. An explicit pad-distance objective
+/// also keeps the placer's choice first among equally relaxed placements.
 pub(super) fn probe_order(
     ranked: &[usize],
     crossings: Option<&[u64]>,
     pool: &[OtherPlacement],
+    prefer_placer: bool,
 ) -> Vec<usize> {
     // A placement that needed courtyards touching is a last resort
     // whatever its score: it is probed only when too few others are
@@ -312,6 +341,7 @@ pub(super) fn probe_order(
         (
             pool[*index].1.courtyard_spacing,
             pool[*index].1.on_marks.len(),
+            prefer_placer && *index != 0,
         )
     });
     order
@@ -383,6 +413,7 @@ pub(super) fn limit_race(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use placer::constraints::{Anchor, Relation};
 
     fn pose(x: f64, y: f64, angle: f64) -> placer::Pose {
         placer::Pose {
@@ -408,6 +439,19 @@ mod tests {
         }
     }
 
+    fn pad_pair_problem() -> placer::Problem {
+        let pcb = parse(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+                (gr_rect (start 0 0) (end 40 20) (layer "Edge.Cuts"))
+                (footprint "A" (layer "F.Cu") (at 10 10) (property "Reference" "A1")
+                    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu")))
+                (footprint "B" (layer "F.Cu") (at 16 10) (property "Reference" "B1")
+                    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu"))))"#,
+        )
+        .unwrap();
+        lower_placement(&pcb, &Default::default()).unwrap().problem
+    }
+
     #[test]
     fn placements_alike_within_a_micrometre_and_a_full_turn_count_once() {
         let a = [pose(1.0, 2.0, 90.0)];
@@ -421,7 +465,8 @@ mod tests {
 
     #[test]
     fn only_distinct_placements_that_keep_the_constraints_as_well_race() {
-        let kept = vec![pose(0.0, 0.0, 0.0)];
+        let mut problem = pad_pair_problem();
+        problem.poses = vec![pose(0.0, 0.0, 0.0)];
         let alternatives = vec![
             // As the kept one: not again.
             (vec![pose(0.0, 0.0, 0.0)], relaxation(false, 0), 0.0),
@@ -432,8 +477,42 @@ mod tests {
             (vec![pose(5.0, 0.0, 0.0)], relaxation(false, 0), 0.5),
             (vec![pose(0.0, 7.0, 0.0)], relaxation(false, 0), 0.5),
         ];
-        assert_eq!(distinct_alternatives(&kept, 0.5, &alternatives), vec![1, 4]);
-        assert_eq!(distinct_alternatives(&kept, 0.0, &alternatives), vec![1]);
+        assert_eq!(
+            distinct_alternatives(&problem, 0.5, &alternatives),
+            vec![1, 4]
+        );
+        assert_eq!(distinct_alternatives(&problem, 0.0, &alternatives), vec![1]);
+    }
+
+    #[test]
+    fn tolerated_numeric_pad_misses_cannot_enter_the_routing_race() {
+        let mut problem = pad_pair_problem();
+        let anchor = problem.poses[0];
+        let near = |max| Relation::PadNear {
+            source: Anchor::Point(1, [0.0, 0.0]),
+            anchor: Anchor::Point(0, [0.0, 0.0]),
+            max,
+            pad_numbers: None,
+        };
+        problem.constraints.relations = vec![near(Some(6.0))];
+        let alternatives = [
+            (
+                vec![anchor, pose(16.005814, 10.0, 0.0)],
+                relaxation(false, 0),
+                0.0,
+            ),
+            (
+                vec![anchor, pose(15.995, 10.0, 0.0)],
+                relaxation(false, 0),
+                0.0,
+            ),
+        ];
+        assert_eq!(distinct_alternatives(&problem, 0.0, &alternatives), vec![1]);
+        problem.constraints.relations = vec![near(None)];
+        assert_eq!(
+            distinct_alternatives(&problem, 0.0, &alternatives),
+            vec![0, 1]
+        );
     }
 
     #[test]
@@ -445,15 +524,20 @@ mod tests {
             (Vec::new(), relaxation(false, 0)),
         ];
         // The score ranks 1, 2, 3, 0.
-        assert_eq!(probe_order(&[1, 2, 3, 0], None, &pool), vec![3, 0, 2, 1]);
+        assert_eq!(
+            probe_order(&[1, 2, 3, 0], None, &pool, false),
+            vec![3, 0, 2, 1]
+        );
         // With the crossings: by the sum of the ranks, ties to the score.
         // Score ranks: 1:0, 2:1, 3:2, 0:3; crossings rank 0:0, 3:1, 2:2,
         // 1:3. Sums: 0:3, 1:3, 2:3, 3:3: the score's order.
-        let order = probe_order(&[1, 2, 3, 0], Some(&[1, 9, 5, 2]), &pool);
+        let order = probe_order(&[1, 2, 3, 0], Some(&[1, 9, 5, 2]), &pool, false);
         assert_eq!(order, vec![3, 0, 2, 1]);
+        let order = probe_order(&[1, 2, 3, 0], Some(&[1, 9, 5, 2]), &pool, true);
+        assert_eq!(order, vec![0, 3, 2, 1]);
         // Score ranks 3:0, 0:1, 1:2, 2:3; crossings rank 0:0, 1:1, 3:2,
         // 2:3. Sums 0:1, 3:2, 1:3, 2:6: the crossings put 0 first.
-        let order = probe_order(&[3, 0, 1, 2], Some(&[1, 2, 9, 7]), &pool);
+        let order = probe_order(&[3, 0, 1, 2], Some(&[1, 2, 9, 7]), &pool, false);
         assert_eq!(order, vec![0, 3, 2, 1]);
     }
 }

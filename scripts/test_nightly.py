@@ -366,7 +366,7 @@ def git_in(directory, *arguments):
 
 def docs_checkout(tmp_path):
     """A main checkout with the documents above, pushed to a bare origin."""
-    subprocess.run(["git", "init", "--quiet", "--bare", str(tmp_path / "origin.git")], check=True)
+    subprocess.run(["git", "init", "--quiet", "--bare", "-b", "main", str(tmp_path / "origin.git")], check=True)
     main = tmp_path / "main"
     subprocess.run(["git", "init", "--quiet", "-b", "main", str(main)], check=True)
     git_in(main, "config", "user.email", "nightly@example.com")

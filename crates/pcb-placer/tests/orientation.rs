@@ -39,6 +39,7 @@ fn component(name: &str, size: [f64; 2], pins: Vec<Pin>, fixed: bool) -> Compone
         tight_hollow: Vec::new(),
         hole_rings: Vec::new(),
         copper_graphics: Vec::new(),
+        unassigned_copper_graphics: Vec::new(),
         courtless: Vec::new(),
         slots: Vec::new(),
     }

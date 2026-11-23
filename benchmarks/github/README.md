@@ -150,8 +150,17 @@ Freerouting against our cold route, headless (never start the jar without
 benchmarks/github/freerouting.py build/freerouting --ours
 ```
 
-Results are in [docs/benchmarks.md](../../docs/benchmarks.md); the
-current ones are summarised in [docs/handover.md](../../docs/handover.md).
+The adapter uses KiCad to import the session and adds its native
+segments, arcs and vias to the supplied PCB. The original file version,
+footprints, outline, zone definitions and project rules are preserved.
+Legacy numbered nets use the original board's net table. The adapter
+checks the imported copper by reopening the result in KiCad. It reports
+an import failure for a requested placement or net change, a change to
+existing copper, or a copper feature that the original file format
+cannot represent.
+
+Results are in [docs/benchmarks.md](../../docs/benchmarks.md) and
+summarized in [docs/handover.md](../../docs/handover.md).
 
 ## KiCadRoutingTools (`kicadroutingtools.py`)
 

@@ -371,7 +371,7 @@ const COMMANDS: &[Command] = &[
     Command {
         name: "pad-exits-kicad-board",
         usage: Some(
-            "pad-exits-kicad-board <project-dir> <board-id> [router-config.json|auto] [--out <report.json>] [--repair]",
+            "pad-exits-kicad-board <project-dir> <board-id> [router-config.json|auto] [--out <report.json>] [--repair | --repair-config <pad-exits.json>]",
         ),
         run: lab_commands::cmd_pad_exits_kicad_board,
     },
@@ -419,6 +419,13 @@ const COMMANDS: &[Command] = &[
         name: "sub-boards-kicad-board",
         usage: Some("sub-boards-kicad-board <board.kicad_pcb>"),
         run: lab_commands::cmd_sub_boards_kicad_board,
+    },
+    Command {
+        name: "modules-kicad-board",
+        usage: Some(
+            "modules-kicad-board <project-dir> <board-id> [layout-config.json|placer-config.json] [--designer <designer.kicad_pcb>]",
+        ),
+        run: lab_commands::cmd_modules_kicad_board,
     },
     Command {
         name: "repair-kicad-silkscreen",

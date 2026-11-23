@@ -152,7 +152,7 @@ pub struct KiCadLayerGeometryRule {
 /// the highest priority first, `KiCadProjectRulesReport::net_classes`) the
 /// first whose own width the project states (`class_values`), else
 /// "Default" (a net in no class, or in classes that set only clearances).
-pub(crate) fn width_class<'a>(
+pub fn width_class<'a>(
     classes: Option<&'a Vec<String>>,
     class_values: &BTreeMap<String, [Option<f64>; 2]>,
 ) -> &'a str {
@@ -615,6 +615,8 @@ pub fn resolve_project_rules(
         default_rules,
         wide,
         net_rules,
+        footprint_pad_clearance: BTreeMap::new(),
+        fixed_pad_route_clearance: BTreeMap::new(),
         // The nets whose width a custom rule's opt gives on every layer:
         // the narrow-signal step keeps them (`ruled_widths`).
         ruled_widths: BTreeSet::new(),
@@ -632,40 +634,39 @@ pub fn resolve_project_rules(
         apply_lowered(&mut resolved, lowered, &board, &keys, board_minimum);
         pair_custom_rules = rules;
     }
+    let copper = copper_layer_names(&pcb);
+    let diff_pair_rules = diff_pair_rules(
+        &pair_facts,
+        &keys,
+        &pair_classes,
+        (&pair_custom_rules, &copper),
+        &mut resolved,
+        setup.minimum("min_track_width").max(floor.unwrap_or(0.0)),
+        &severities,
+    );
     let Resolved {
         connection_rules,
         default_rules,
         wide,
         net_rules,
         ruled_widths,
+        footprint_pad_clearance,
+        mut fixed_pad_route_clearance,
         mut report,
     } = resolved;
+    for clearance in fixed_pad_route_clearance.values_mut() {
+        *clearance = clearance.max(setup.minimum("min_clearance"));
+    }
 
-    let diff_pair_rules = diff_pair_rules(
-        &pair_facts,
-        &keys,
-        &pair_classes,
-        &pair_custom_rules,
-        &copper_layer_names(&pcb),
-        |key: &str| connection_rules.get(key).cloned(),
-        setup.minimum("min_track_width").max(floor.unwrap_or(0.0)),
-    );
-    let length_rules = length_rules(
-        &pair_facts,
-        &keys,
-        &pair_custom_rules,
-        &copper_layer_names(&pcb),
-        &severities,
-    );
+    let length_rules = length_rules(&pair_facts, &keys, &pair_custom_rules, &copper, &severities);
     let track_disallowed = track_disallowed(
         &pair_facts,
         &keys,
         &pair_custom_rules,
-        &copper_layer_names(&pcb),
+        &copper,
         &severities,
         &mut report,
     );
-    let copper = copper_layer_names(&pcb);
     report.layer_geometry_rules = layer_geometry_rules(&pair_custom_rules, &copper);
     report.track_disallowed_layers = layer_names(&track_disallowed, &copper);
     let mut config = KiCadBoardRouterConfig {
@@ -677,6 +678,8 @@ pub fn resolve_project_rules(
         neck_width_mm: Some(wide.neck),
         connection_rules,
         default_rules: Some(default_rules),
+        footprint_pad_clearance,
+        fixed_pad_route_clearance,
         // KiCad's built-in board setup applies when the project is silent.
         edge_clearance_mm: wide.edge_clearance,
         hole_clearance_mm: wide.hole_clearance,
@@ -1243,6 +1246,8 @@ struct Resolved {
     default_rules: KiCadConnectionRoutingRules,
     wide: BoardWide,
     net_rules: pcb_router::NetRules,
+    footprint_pad_clearance: BTreeMap<String, f64>,
+    fixed_pad_route_clearance: BTreeMap<String, f64>,
     /// The nets whose width a custom rule's opt gives on every layer.
     ruled_widths: BTreeSet<String>,
     report: KiCadProjectRulesReport,
@@ -1267,6 +1272,45 @@ fn read_custom_rules(
             None
         }
         Ok(rules) => Some(rules),
+    }
+}
+
+/// Read the authored rules from the project selected for local repair.
+/// Modelled track rules alone cannot certify absent coupling constraints.
+pub(crate) struct LocalPairRequirements(Vec<dru::Rule>);
+
+impl LocalPairRequirements {
+    pub fn read(board: &Path) -> Option<Self> {
+        match fs::read_to_string(board.with_extension("kicad_dru")) {
+            Ok(text) => dru::parse_rules(&text).ok().map(Self),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(Self(Vec::new())),
+            Err(_) => None,
+        }
+    }
+
+    pub fn protects(
+        &self,
+        actual: [&str; 2],
+        keys: [&str; 2],
+        copper: &[String],
+        rules: &KiCadBoardRouterConfig,
+    ) -> bool {
+        if self.0.is_empty() {
+            return false;
+        }
+        let Some(project) = &rules.project_rules else {
+            return true;
+        };
+        let [Some(first), Some(second)] = [0, 1].map(|index| {
+            Some(dru::NetFacts {
+                name: actual[index].into(),
+                classes: project.net_classes.get(keys[index])?.clone(),
+                diff_pair: Some(diff_pair_of(actual[index]).map(|(_, base, _)| base)),
+            })
+        }) else {
+            return true;
+        };
+        dru::may_constrain_pair(&self.0, [&first, &second], copper)
     }
 }
 
@@ -1306,6 +1350,36 @@ fn board_facts(
         neck_width: resolved.wide.neck,
         connection_floor_warnings: floor_mode() == FloorMode::ErrorsAndWarnings,
         areas: named_areas(pcb),
+        footprint_pads: pcb
+            .children()
+            .iter()
+            .filter(|item| {
+                matches!(item.head(), Some("footprint" | "module")) && item.child("pad").is_some()
+            })
+            .filter_map(|item| Some((footprint_reference(item)?, item)))
+            .fold(
+                BTreeMap::<String, BTreeSet<String>>::new(),
+                |mut all, (reference, item)| {
+                    let pads = item
+                        .children()
+                        .iter()
+                        .filter(|item| item.head() == Some("pad"))
+                        .flat_map(|pad| {
+                            let name = pad
+                                .children()
+                                .get(1)
+                                .and_then(Expr::atom)
+                                .unwrap_or("")
+                                .trim_matches('"');
+                            let label = format!("{reference}.{name}");
+                            let variant =
+                                pad.child("padstack").map(|_| format!("{label} padstack"));
+                            [Some(label), variant].into_iter().flatten()
+                        });
+                    all.entry(reference.clone()).or_default().extend(pads);
+                    all
+                },
+            ),
     }
 }
 
@@ -1335,8 +1409,8 @@ fn apply_lowered(
         report.via_minimums[1].max(lowered.via_drill_min_all),
         report.via_minimums[2].max(lowered.annulus_min_all),
     ];
-    for index in 0..board.nets.len() {
-        if lowered.width_opt[index].is_some() {
+    for (index, width) in lowered.width_opt[..board.nets.len()].iter().enumerate() {
+        if width.is_some() {
             resolved.ruled_widths.insert(key(index));
         }
     }
@@ -1389,10 +1463,13 @@ fn apply_lowered(
                 kinds: pair.kinds,
                 layers: pair.layers,
                 clearance: pair.clearance,
+                except_pads: pair.except_pads.clone(),
             });
     }
     report.pad_clearance_mm =
         (lowered.pad_clearance_all > 0.0).then_some(lowered.pad_clearance_all);
+    resolved.footprint_pad_clearance = lowered.footprint_pad_clearance;
+    resolved.fixed_pad_route_clearance = lowered.fixed_pad_route_clearance;
     report.custom_rules = lowered.report;
     report.unmodelled.extend(lowered.unmodelled);
 }
@@ -1484,6 +1561,14 @@ pub fn router_config_over_project(
     let named = named_rule_keys(&file);
     let mut config = KiCadBoardRouterConfig::from_json(file)?;
     let names_classes = named.contains("connection_rules") || named.contains("default_rules");
+    config.route_reuse_clearance_unverified = names_classes
+        || [
+            "edge_clearance_mm",
+            "hole_clearance_mm",
+            "hole_to_hole_clearance_mm",
+        ]
+        .iter()
+        .any(|key| named.contains(*key));
     let project = match project {
         Ok(project) => project,
         Err(error) if !names_classes => return Err(error),
@@ -1548,6 +1633,10 @@ pub fn router_config_over_project(
         report.overrides = overrides;
     }
     config.net_rules = project.net_rules;
+    config.footprint_pad_clearance = project.footprint_pad_clearance;
+    if !names_classes {
+        config.fixed_pad_route_clearance = project.fixed_pad_route_clearance;
+    }
     config.diff_pair_rules = project.diff_pair_rules;
     config.length_rules = project.length_rules;
     config.track_disallowed = project.track_disallowed;
@@ -1726,10 +1815,10 @@ fn diff_pair_rules(
     facts: &[dru::NetFacts],
     keys: &[String],
     classes: &[PairClass],
-    rules: &[dru::Rule],
-    copper: &[String],
-    connection: impl Fn(&str) -> Option<KiCadConnectionRoutingRules>,
+    (rules, copper): (&[dru::Rule], &[String]),
+    resolved: &mut Resolved,
     min_width: f64,
+    severities: &BTreeMap<String, String>,
 ) -> BTreeMap<String, crate::board_router::KiCadDiffPairRule> {
     let names = keys_by_name(facts, keys);
     let pick = |picked: &Option<dru::Picked>, base: f64| match picked {
@@ -1740,6 +1829,7 @@ fn diff_pair_rules(
         None => base,
     };
     let mut out = BTreeMap::new();
+    let mut applied_widths = BTreeSet::new();
     for (index, (fact, key)) in facts.iter().zip(keys).enumerate() {
         let Some((partner, base, _)) = diff_pair_of(&fact.name) else {
             continue;
@@ -1747,7 +1837,7 @@ fn diff_pair_rules(
         let Some(&partner) = names.get(partner.as_str()) else {
             continue;
         };
-        let Some(current) = connection(key) else {
+        let Some(current) = resolved.connection_rules.get(key) else {
             continue;
         };
         let class = &classes[index];
@@ -1764,8 +1854,26 @@ fn diff_pair_rules(
             Some(gap) if gap < current.clearance_mm => gap,
             _ => current.clearance_mm,
         };
+        let mut ordinary_widths = Vec::with_capacity(copper.len());
         for layer in copper {
             let width = dru::track_constraint(rules, &paired, layer, copper, "track_width");
+            ordinary_widths.push(width.as_ref().and_then(|width| {
+                // The generic resolver does not know pair membership. If
+                // knowing it changes the winning rule, its dimensions
+                // apply to ordinary tracks too, even with coupling off.
+                let unpaired = dru::track_constraint(rules, fact, layer, copper, "track_width");
+                if unpaired.as_ref() == Some(width) {
+                    return None;
+                }
+                applied_widths.insert(width.rule.clone());
+                let connection_min =
+                    pair_connection_width(rules, &paired, layer, copper, severities);
+                Some(pcb_router::LayerWidth {
+                    min: width.min.unwrap_or(0.0).max(min_width).max(connection_min),
+                    max: width.max.unwrap_or(f64::INFINITY),
+                    opt: width.opt,
+                })
+            }));
             let gap = dru::track_constraint(rules, &paired, layer, copper, "diff_pair_gap");
             let uncoupled =
                 dru::track_constraint(rules, &paired, layer, copper, "diff_pair_uncoupled");
@@ -1826,9 +1934,70 @@ fn diff_pair_rules(
                     Some(rule.max_uncoupled.map_or(max, |known: f64| known.min(max)));
             }
         }
+        replace_pair_widths(&mut resolved.net_rules, key, ordinary_widths);
         out.insert(key.clone(), rule);
     }
+    for entry in &mut resolved.report.custom_rules {
+        if entry.constraint == "track_width"
+            && entry.status == "unmodelled"
+            && applied_widths.contains(&entry.rule)
+        {
+            entry.status = "applied".into();
+            entry.detail = "per-layer track widths for the matching pair nets".into();
+            let prefix = format!("track_width ('{}'", entry.rule);
+            resolved
+                .report
+                .unmodelled
+                .retain(|line| !line.starts_with(&prefix));
+        }
+    }
     out
+}
+
+/// A separate connection width floor survives a replacement track width.
+fn pair_connection_width(
+    rules: &[dru::Rule],
+    net: &dru::NetFacts,
+    layer: &str,
+    copper: &[String],
+    severities: &BTreeMap<String, String>,
+) -> f64 {
+    let default_severity = dru::finding_severity("connection_width", severities);
+    dru::track_rule(rules, net, layer, copper, "connection_width")
+        .filter(|(index, _)| {
+            let severity = rules[*index]
+                .severity
+                .as_deref()
+                .unwrap_or(&default_severity);
+            severity == "error"
+                || (severity == "warning" && floor_mode() == FloorMode::ErrorsAndWarnings)
+        })
+        .and_then(|(_, picked)| picked.min)
+        .unwrap_or(0.0)
+}
+
+/// Transfer the generic floor to unchanged layers. It may include an
+/// earlier track-width rule which the winning pair rule supersedes.
+fn replace_pair_widths(
+    rules: &mut pcb_router::NetRules,
+    key: &str,
+    widths: Vec<Option<pcb_router::LayerWidth>>,
+) {
+    if !widths.iter().any(Option::is_some) {
+        return;
+    }
+    let floor = rules.width_floor.remove(key).unwrap_or(0.0);
+    let layers = rules
+        .layer_widths
+        .entry(key.to_string())
+        .or_insert_with(|| vec![pcb_router::LayerWidth::ANY; widths.len()]);
+    for (layer, width) in layers.iter_mut().zip(widths) {
+        if let Some(width) = width {
+            *layer = width;
+        } else {
+            layer.min = layer.min.max(floor);
+        }
+    }
 }
 
 /// Per net of `facts` by its name (as KiCad shows it), its key (`keys`,
@@ -2168,6 +2337,63 @@ mod tests {
     }
 
     #[test]
+    fn a_project_footprint_clearance_floor_applies_only_to_matching_pad_obstacles() {
+        let rules = r#"(version 1)
+          (rule connector (condition "A.memberOfFootprint('J1') || B.memberOfFootprint('J1')")
+            (constraint clearance (min 0.2mm)))"#;
+        let (directory, project) = project_directory(
+            "footprint-clearance",
+            r#"{"net_settings": {"classes": [{"name": "Default", "clearance": 0.127}]}}"#,
+            Some(rules),
+        );
+        let pcb = directory.join("board.kicad_pcb");
+        let text = r#"(kicad_pcb
+          (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
+          (gr_rect (start 0 0) (end 20 10) (stroke (width 0.05) (type default)) (layer "Edge.Cuts"))
+          (footprint "same" (layer "F.Cu") (at 5 5)
+            (property "Reference" "J1")
+            (pad "1" smd circle (at 0 0) (size 1 1) (layers "F.Cu") (clearance 0.15))
+            (pad "2" smd circle (at 2 0) (size 1 1) (layers "F.Cu") (clearance 0.32))
+            (pad "3" smd circle (at -2 0) (size 1 1) (layers "F.Cu")))
+          (footprint "same" (layer "F.Cu") (at 15 5)
+            (property "Reference" "J10")
+            (pad "1" smd circle (at 0 0) (size 1 1) (layers "F.Cu") (clearance 0.15))
+            (pad "2" smd circle (at 0 2) (size 1 1) (layers "F.Cu") (net "LINK"))
+            (pad "3" smd circle (at -2 0) (size 1 1) (layers "F.Cu")))
+          (footprint "peer" (layer "F.Cu") (at 5 7)
+            (property "Reference" "J2")
+            (pad "1" smd circle (at 0 0) (size 1 1) (layers "F.Cu") (net "LINK"))))"#;
+        fs::write(&pcb, text).unwrap();
+        let config = router_config_over_project(
+            serde_json::json!({"tuning":{"via_cost":0.5}}),
+            resolve_project_rules(&project, &pcb),
+        )
+        .unwrap();
+        assert_eq!(
+            config.footprint_pad_clearance,
+            BTreeMap::from([("J1".into(), 0.2)])
+        );
+        let board = crate::board_router::lower(&parse(text).unwrap(), &config, false)
+            .unwrap()
+            .board;
+        let by_label = |label| {
+            let pad = board
+                .obstacles
+                .iter()
+                .find(|pad| pad.label == label)
+                .unwrap();
+            assert!(pad.net.is_none());
+            (pad.clearance, pad.clearance_override)
+        };
+        assert_eq!(by_label("J1.1"), (0.2, Some(0.2)));
+        assert_eq!(by_label("J1.2"), (0.2, Some(0.32)));
+        assert_eq!(by_label("J1.3"), (0.2, None));
+        assert_eq!(by_label("J10.1"), (0.127, Some(0.15)));
+        assert_eq!(by_label("J10.3"), (0.127, None));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn differential_pairs_are_named_as_kicad_names_them() {
         let pair = diff_pair_of;
         assert_eq!(pair("D+"), Some(("D-".into(), "D".into(), true)));
@@ -2383,8 +2609,14 @@ mod tests {
         // Default's pair settings for D+ and D-; the rule's pattern does
         // not take them.
         assert_eq!(rules["D-"].layers, vec![(0.2, 0.18); 3]);
-        // Without the switch, the rule stays unmodelled in the report.
+        // Width rules apply even without coupling. The gap and uncoupled
+        // limits need the paired router.
         let report = config.project_rules.as_ref().unwrap();
+        assert!(report.custom_rules.iter().any(|rule| {
+            rule.rule == "pairs outer"
+                && rule.constraint == "track_width"
+                && rule.status == "applied"
+        }));
         assert!(
             report
                 .custom_rules
@@ -2408,6 +2640,16 @@ mod tests {
         );
         // The pair's nets route at the pair's width.
         assert_eq!(paired.connection_rules["TX_P"].trace_width_mm, 0.17);
+        let widths = &config.net_rules.as_ref().unwrap().layer_widths;
+        let outer = pcb_router::LayerWidth {
+            min: 0.17,
+            max: 0.17,
+            opt: None,
+        };
+        for net in ["TX_P", "TX_N"] {
+            assert_eq!(widths[net], [outer, pcb_router::LayerWidth::ANY, outer]);
+        }
+        assert!(!widths.contains_key("D-"));
         // The rule's diff_pair_gap asks for the pair coupled; the class's
         // pair settings do not (D+, D-).
         assert_eq!(
@@ -2435,6 +2677,42 @@ mod tests {
             assert!(!choice.on);
             assert_eq!(choice.default, "off");
         }
+        let width_only = r#"(version 1)
+            (rule "earlier track floor"
+              (condition "A.NetName == '/TX_P' || A.NetName == '/TX_N'")
+              (constraint track_width (min 0.22mm)))
+            (rule "pairs outer" (layer outer) (condition "A.inDiffPair('/TX')")
+              (constraint track_width (min 0.17mm) (max 0.17mm)))
+            (rule "pairs back" (layer "B.Cu") (condition "A.inDiffPair('/TX')")
+              (constraint track_width (min 0.14mm) (max 0.17mm)))
+            (rule "back connection width" (layer "B.Cu") (severity error)
+              (condition "A.NetName == '/TX_P' || A.NetName == '/TX_N'")
+              (constraint connection_width (min 0.16mm)))"#;
+        fs::write(path.with_extension("kicad_dru"), width_only).unwrap();
+        let mut config = resolve_project_rules(&path, &board).unwrap();
+        config.diff_pairs_by_need = true;
+        if std::env::var_os("PCB_ROUTER_DIFF_PAIRS").is_none() {
+            assert!(!config.diff_pairs_on());
+        }
+        let widths = &config.net_rules.as_ref().unwrap().layer_widths;
+        for net in ["TX_P", "TX_N"] {
+            assert_eq!(widths[net][0], outer);
+            assert_eq!(widths[net][1].min, 0.22);
+            assert_eq!(
+                widths[net][2],
+                pcb_router::LayerWidth { min: 0.16, ..outer }
+            );
+            assert!(
+                !config
+                    .net_rules
+                    .as_ref()
+                    .unwrap()
+                    .width_floor
+                    .contains_key(net)
+            );
+        }
+        assert_eq!(config.connection_rules["TX_P"].trace_width_mm, 0.22);
+        assert!(!widths.contains_key("D-"));
         fs::remove_dir_all(&directory).unwrap();
     }
 

@@ -15,7 +15,8 @@ not spliced itself). With `--binary` the designer's own board is checked
 with its drc-kicad-board (the DRC cache answers) where a run kept no
 bridges, so that the strict rule's pre-bridged openings are judged as a
 run of today would; without it they are judged from the stored files
-alone.
+alone. Use `--check-stored` to run KiCad without refill when a schematic
+row needs saved connectivity evidence and has no verified fill publication.
 
 Each judged row keeps the run's fields and gets `native`, `pass` and the
 strict rule's fields anew, with `rejudged_from` (the log its files are
@@ -120,7 +121,7 @@ class StoredBaseline(run.StrictBaseline):
         return self.bridges() if callable(self.bridges) else self.bridges
 
 
-def judge(shown, row, work, log, bridges=None):
+def judge(shown, row, work, log, bridges=None, check_stored=False):
     """`shown` (the run's row) judged again from `row`'s run's files in
     `work`."""
     judged = {key: value for key, value in shown.items() if key not in STRICT_FIELDS}
@@ -134,16 +135,24 @@ def judge(shown, row, work, log, bridges=None):
     judged["pass"] = compare.passes(judged)
     unexpected = judged.get("unexpected_misses") or []
     run.strict_row(judged, run.strict_native(directory, StoredBaseline(work, bridges)), unexpected)
+    if judged.get("mode") == "schematic":
+        layout = run.harness_common.read_json(work / "layout/board-layout.json")
+        board_id = layout.get("board_id") if isinstance(layout, dict) else None
+        run.record_schematic_acceptance(judged, work, board_id, check_stored=check_stored)
     return judged
 
 
 def summary(rows):
     """compare.py's measures of judged rows (the run's summary.json's
     continuous part), with the pass counts and the strict rule."""
-    return {"objectives": compare.objectives(rows), "normalised": compare.normalised(rows),
-            "passes": sum(1 for row in rows if row.get("pass")),
-            "passes_strict": sum(1 for row in rows if row.get("pass_strict")),
-            "strict_rule": run.STRICT_RULE, "rows": len(rows)}
+    result = {"objectives": compare.objectives(rows), "normalised": compare.normalised(rows),
+              "passes": sum(1 for row in rows if row.get("pass")),
+              "passes_strict": sum(1 for row in rows if row.get("pass_strict")),
+              "strict_rule": run.STRICT_RULE, "rows": len(rows)}
+    schematic = [row for row in rows if row.get("mode") == "schematic"]
+    if schematic:
+        result["schematic_acceptance"] = run.schematic_acceptance_summary(schematic)
+    return result
 
 
 def killed(row):
@@ -160,6 +169,8 @@ def main():
                              "designer bridges (the DRC cache answers)")
     parser.add_argument("--designer-cache", type=Path, default=run.ROOT / "build/rejudge-designer-drc",
                         help="where those reports are kept")
+    parser.add_argument("--check-stored", action="store_true",
+                        help="run native DRC without refill for schematic rows with no saved verification")
     parser.add_argument("--output", type=Path, help="write the judged rows here and the summary beside them")
     arguments = parser.parse_args()
     chain = chain_of(arguments.logs)
@@ -180,19 +191,25 @@ def main():
                 if task is not None:
                     def bridges(task=task):
                         return designer_bridges(arguments.binary, task, arguments.designer_cache)
-            judged = judge(shown, row, work, log, bridges)
+            judged = judge(shown, row, work, log, bridges, check_stored=arguments.check_stored)
             if judged is None:
                 missing.append(name)
         if judged is None:
-            rows.append(shown)
-            continue
+            judged = shown
+            if shown.get("mode") == "schematic":
+                judged = {**shown, "stored_copper": None, "parity_checked": False,
+                          "pass_schematic": False if shown.get("pass_schematic") is False else None}
         rows.append(judged)
-        if bool(shown.get("pass")) != judged["pass"] or bool(shown.get("pass_strict")) != judged["pass_strict"]:
+        if (bool(shown.get("pass")) != bool(judged.get("pass"))
+            or bool(shown.get("pass_strict")) != bool(judged.get("pass_strict"))
+            or shown.get("pass_schematic") is not judged.get("pass_schematic")):
             changed.append((name, shown, judged))
     for name, shown, judged in changed:
-        print(f"{name}: pass {bool(shown.get('pass'))} -> {judged['pass']}, pass_strict "
-              f"{bool(shown.get('pass_strict'))} -> {judged['pass_strict']}; strict new "
-              f"{shown.get('new_findings_strict')} -> {judged.get('new_findings_strict')}")
+        acceptance = (f"; pass_schematic {shown.get('pass_schematic')} -> {judged.get('pass_schematic')}"
+                      if judged.get("mode") == "schematic" else "")
+        print(f"{name}: pass {bool(shown.get('pass'))} -> {judged.get('pass')}, pass_strict "
+              f"{bool(shown.get('pass_strict'))} -> {judged.get('pass_strict')}; strict new "
+              f"{shown.get('new_findings_strict')} -> {judged.get('new_findings_strict')}{acceptance}")
     if missing:
         print(f"{len(missing)} rows with a result have no stored KiCad report (kept as they were): {missing[:5]}")
     totals = summary(rows)

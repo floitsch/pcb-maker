@@ -5,12 +5,19 @@
 
 use super::*;
 
+mod refill;
+use self::refill::Capture;
+pub use self::refill::CheckedRefill;
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct VerificationReport {
     pub board_id: String,
     pub complete: bool,
     pub erc_violations: usize,
     pub drc_design_violations: usize,
+    /// An admitted native check included schematic parity.
+    #[serde(default)]
+    pub schematic_parity_checked: bool,
     pub schematic_parity_issues: usize,
     pub selected_net_unconnected_items: usize,
     pub intentional_no_connect_groups: usize,
@@ -25,7 +32,7 @@ pub const KICAD_VERIFICATION_CACHE_ENV: &str = "PCB_MAKER_KICAD_VERIFICATION_CAC
 
 pub const KICAD_VERIFICATION_CACHE_EVENTS_ENV: &str = "PCB_MAKER_KICAD_VERIFICATION_CACHE_EVENTS";
 
-const KICAD_VERIFICATION_CACHE_SCHEMA_VERSION: u32 = 1;
+const KICAD_VERIFICATION_CACHE_SCHEMA_VERSION: u32 = 2;
 
 const KICAD_VERIFICATION_POLICY: &str = "verify-materialized-rung-v2:erc-without-library-warnings:drc-all:schematic-parity:intentional-no-connect-groups";
 
@@ -81,6 +88,373 @@ pub fn verify_materialized_rung(
     })
 }
 
+/// The ordinary final layout check may keep the fill it just verified for
+/// its own publication. A failed optional capture is charged separately.
+pub fn verify_layout_rung(
+    directory: &Path,
+    board_id: &str,
+) -> Result<(VerificationReport, Option<CheckedRefill>, usize), String> {
+    if !native_drc_uses_english() || env::var_os(KICAD_VERIFICATION_CACHE_ENV).is_some() {
+        return verify_materialized_rung(directory, board_id).map(|report| (report, None, 1));
+    }
+    let board = directory.join(format!("{board_id}.kicad_pcb"));
+    let drc_path = directory.join("drc.json");
+    match refill::capture_layout(directory, &board, &drc_path) {
+        Capture::Verified(drc, snapshot) => {
+            let receipt = file_sha256(&drc_path)
+                .ok()
+                .map(|report_sha256| CheckedRefill {
+                    snapshot,
+                    drc: drc.clone(),
+                    report_name: "drc.json",
+                    report_sha256,
+                });
+            verification_preview::capture(directory, board_id, || {
+                verify_with_schematic(directory, board_id, true, SchematicDrc::Checked(drc))
+            })
+            .map(|report| (report, receipt, 1))
+        }
+        fallback => verify_materialized_rung(directory, board_id).map(|report| {
+            (
+                report,
+                None,
+                1 + usize::from(matches!(fallback, Capture::Failed)),
+            )
+        }),
+    }
+}
+
+/// Finalize evidence for a layout's additive copper repair. Its private
+/// project contains the selected board's unchanged schematic and ERC,
+/// and the repair stage's freshly checked DRC for the exact new board.
+pub fn record_verified_additive_board(
+    directory: &Path,
+    board_id: &str,
+    parity_requested: bool,
+) -> Result<VerificationReport, String> {
+    verification_preview::capture(directory, board_id, || {
+        let erc = read_json(&directory.join("erc.json"))?;
+        let drc = read_json(&directory.join("drc.json"))?;
+        write_verification_report(directory, board_id, &erc, &drc, parity_requested)
+    })
+}
+
+/// Proof that a fresh all-track parity DRC applies to this routed project.
+/// It can travel with a selected attempt when the ladder renames its directory.
+#[derive(Clone, Debug)]
+pub struct ClosedReuseDrc {
+    inputs: ClosedReuseInputs,
+    report: String,
+    report_name: &'static str,
+    partial: bool,
+    captured_refill: Option<std::sync::Arc<refill::Snapshot>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ClosedReuseInputs {
+    parent: PathBuf,
+    project: String,
+    native: String,
+    refill: bool,
+}
+
+pub(crate) fn local_library_table(table: &Expr) -> bool {
+    let suffix = match table.head() {
+        Some("fp_lib_table") => "pretty",
+        Some("sym_lib_table") => "kicad_sym",
+        _ => return false,
+    };
+    table
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("lib"))
+        .all(|item| {
+            let Some(relative) =
+                form_atom(item, "uri", 1).and_then(|uri| uri.strip_prefix("${KIPRJMOD}/"))
+            else {
+                return false;
+            };
+            form_atom(item, "type", 1) == Some("KiCad")
+                && !relative.contains(['$', '\\'])
+                && Path::new(relative).extension().is_some_and(|ext| ext == suffix)
+                && Path::new(relative).components().all(|item| {
+                    matches!(item, std::path::Component::Normal(part) if !part.to_string_lossy().starts_with('.'))
+                })
+        })
+}
+
+fn closed_reuse_inputs(
+    directory: &Path,
+    board_id: &str,
+    partial: bool,
+    key: impl FnOnce(&Path, bool) -> Result<String, String>,
+) -> Option<ClosedReuseInputs> {
+    let board = directory.join(format!("{board_id}.kicad_pcb"));
+    let pcb = parse(&fs::read_to_string(&board).ok()?).ok()?;
+    let refill = pcb.child("zone").is_some();
+    if partial {
+        // The usual check repairs duplicate-priority pours and null panel
+        // edges before refilling. Its input must match the unmodified trial.
+        if refill && check_repairs::needs_repair(pcb) {
+            return None;
+        }
+    } else {
+        let footprints = pcb
+            .children()
+            .iter()
+            .filter(|item| matches!(item.head(), Some("footprint" | "module")));
+        // Preserve the closed-copper path's existing zone eligibility.
+        if pcb
+            .children()
+            .iter()
+            .chain(footprints.flat_map(Expr::children))
+            .any(|item| item.head() == Some("zone") && item.child("keepout").is_none())
+        {
+            return None;
+        }
+    }
+    let schematic = directory.join(format!("{board_id}.kicad_sch"));
+    // Relative sheet dependencies may resolve outside the project directory.
+    if parse(&fs::read_to_string(schematic).ok()?)
+        .ok()?
+        .child("sheet")
+        .is_some()
+    {
+        return None;
+    }
+    for name in ["fp-lib-table", "sym-lib-table"] {
+        let path = directory.join(name);
+        if path.is_file() && !local_library_table(&parse(&fs::read_to_string(path).ok()?).ok()?) {
+            return None;
+        }
+    }
+    match kicad_cache_input_sha256(directory).ok()? {
+        KiCadCacheInput::Cacheable(project) => Some(ClosedReuseInputs {
+            parent: directory.parent()?.canonicalize().ok()?,
+            project,
+            native: key(&board, refill).ok()?,
+            refill,
+        }),
+        KiCadCacheInput::Bypassed(_) => None,
+    }
+}
+
+impl ClosedReuseDrc {
+    /// Whether the ordinary board verification used this same report.
+    pub fn shares_final_verification(&self) -> bool {
+        self.report_name == "drc.json"
+    }
+
+    /// Copy the checked report only when the exact saved board, its local
+    /// project inputs and the report still match what KiCad checked.
+    pub fn copy_if_current(&self, directory: &Path, board_id: &str, output: &Path) -> bool {
+        let inputs = closed_reuse_inputs(
+            directory,
+            board_id,
+            self.partial,
+            native_report::route_reuse_drc_input_key,
+        );
+        self.copy_report(directory, output, inputs)
+    }
+
+    /// Transfer the fill only while its exact routed project and the
+    /// freshly checked raw DRC artifact still match the selected rung.
+    pub fn refill_if_current(&self, directory: &Path, board_id: &str) -> Option<CheckedRefill> {
+        let snapshot = self.captured_refill.as_ref()?;
+        let board = directory.join(format!("{board_id}.kicad_pcb"));
+        if !snapshot.matches(&board) {
+            return None;
+        }
+        let inputs = closed_reuse_inputs(
+            directory,
+            board_id,
+            self.partial,
+            native_report::route_reuse_drc_input_key,
+        );
+        let bytes = self.checked_report_bytes(directory, inputs)?;
+        Some(CheckedRefill {
+            snapshot: snapshot.clone(),
+            drc: serde_json::from_slice(&bytes).ok()?,
+            report_name: self.report_name,
+            report_sha256: self.report.clone(),
+        })
+    }
+
+    fn copy_report(
+        &self,
+        directory: &Path,
+        output: &Path,
+        inputs: Option<ClosedReuseInputs>,
+    ) -> bool {
+        self.checked_report_bytes(directory, inputs)
+            .is_some_and(|report| write_atomically(output, &report).is_ok())
+    }
+
+    fn checked_report_bytes(
+        &self,
+        directory: &Path,
+        inputs: Option<ClosedReuseInputs>,
+    ) -> Option<Vec<u8>> {
+        if inputs.as_ref() != Some(&self.inputs) {
+            return None;
+        }
+        let report = fs::read(directory.join(self.report_name)).ok()?;
+        (format!("{:x}", Sha256::digest(&report)) == self.report).then_some(report)
+    }
+}
+
+/// Use one strict current-board DRC for both normal verification and reuse
+/// comparison when all routed copper is already present and the board has
+/// no copper pours. Where the strict path cannot prove equivalence, the
+/// first model-complete result can use the guarded refill-aware check.
+pub fn verify_closed_reuse_rung(
+    directory: &Path,
+    board_id: &str,
+    allow_refilled_proof: bool,
+    capture_refill: bool,
+) -> Result<(VerificationReport, Option<ClosedReuseDrc>, usize), String> {
+    verify_reuse_rung(
+        directory,
+        board_id,
+        false,
+        allow_refilled_proof,
+        capture_refill,
+    )
+}
+
+/// Check all tracks first for a model-complete incremental trial. The
+/// ordinary verification can share a report containing only optional library
+/// warnings. Otherwise the raw report is used only for the reuse comparison.
+/// The final element is the number of DRC checks to charge to the trial.
+pub fn verify_partial_reuse_rung(
+    directory: &Path,
+    board_id: &str,
+    capture_refill: bool,
+) -> Result<(VerificationReport, Option<ClosedReuseDrc>, usize), String> {
+    if env::var_os(KICAD_VERIFICATION_CACHE_ENV).is_some() {
+        return verify_materialized_rung(directory, board_id).map(|report| (report, None, 1));
+    }
+    verify_reuse_rung(directory, board_id, true, false, capture_refill)
+}
+
+fn verify_reuse_rung(
+    directory: &Path,
+    board_id: &str,
+    partial: bool,
+    allow_refilled_proof: bool,
+    capture_refill: bool,
+) -> Result<(VerificationReport, Option<ClosedReuseDrc>, usize), String> {
+    const DRC: &str = "drc.json";
+    const ALL_TRACK_DRC: &str = "reuse-all-track-drc.json";
+    let input_key = || {
+        closed_reuse_inputs(
+            directory,
+            board_id,
+            partial,
+            native_report::route_reuse_drc_input_key,
+        )
+    };
+    let Some(inputs) = input_key() else {
+        if allow_refilled_proof {
+            return verify_partial_reuse_rung(directory, board_id, capture_refill);
+        }
+        return verify_materialized_rung(directory, board_id).map(|report| (report, None, 1));
+    };
+    let mut captured_refill = None;
+    let mut extra_checks = 0;
+    let (drc, report_name, checks) = if partial {
+        let pcb = directory.join(format!("{board_id}.kicad_pcb"));
+        let raw = directory.join(ALL_TRACK_DRC);
+        let capture = if capture_refill && inputs.refill {
+            refill::capture(directory, &pcb, &raw)
+        } else {
+            Capture::Skipped
+        };
+        let report = match capture {
+            Capture::Verified(report, proof) => {
+                captured_refill = Some(proof);
+                Ok(report)
+            }
+            fallback => {
+                extra_checks = usize::from(matches!(fallback, Capture::Failed));
+                native_report::run_route_reuse_drc(&pcb, &raw, inputs.refill)
+            }
+        };
+        match report {
+            Ok(report) if input_key().as_ref() == Some(&inputs) => {
+                if can_share_partial_drc(&report) {
+                    fs::rename(directory.join(ALL_TRACK_DRC), directory.join(DRC))
+                        .map_err(|error| format!("could not publish reuse DRC: {error}"))?;
+                    (SchematicDrc::Checked(report), DRC, 1)
+                } else {
+                    // Preserve ordinary verification and keep the raw
+                    // report for the later comparison of unchanged inputs.
+                    (SchematicDrc::Ordinary, ALL_TRACK_DRC, 2)
+                }
+            }
+            _ => {
+                return verify_materialized_rung(directory, board_id)
+                    .map(|report| (report, None, 2 + extra_checks));
+            }
+        }
+    } else {
+        (SchematicDrc::AllTracks, DRC, 1)
+    };
+    let report = verification_preview::capture(directory, board_id, || {
+        verify_with_schematic(directory, board_id, inputs.refill, drc)
+    })?;
+    let inputs_unchanged = input_key().as_ref() == Some(&inputs);
+    if partial && checks == 1 && !inputs_unchanged {
+        // The strict report also served as the ordinary check. Refresh it
+        // before publishing if inputs changed while the attempt finished.
+        return verify_materialized_rung(directory, board_id)
+            .map(|report| (report, None, 2 + extra_checks));
+    }
+    let proof = if inputs_unchanged {
+        file_sha256(&directory.join(report_name))
+            .ok()
+            .map(|report| ClosedReuseDrc {
+                inputs,
+                report,
+                report_name,
+                partial,
+                captured_refill,
+            })
+    } else {
+        None
+    };
+    Ok((report, proof, checks + extra_checks))
+}
+
+fn can_share_partial_drc(report: &serde_json::Value) -> bool {
+    // Reporting every track error can only add design findings, and the
+    // ordinary panel check can only excuse entries from unconnected_items.
+    // There must be none of either to transform.
+    ["schematic_parity", "unconnected_items"]
+        .iter()
+        .all(|field| report[field].as_array().is_some_and(Vec::is_empty))
+        && report["violations"].as_array().is_some_and(|findings| {
+            findings.iter().all(is_library_metadata_warning)
+                && (findings.is_empty() || native_drc_uses_english())
+        })
+}
+
+fn native_drc_uses_english() -> bool {
+    // The all-track command confirms native parity with LC_ALL=C. Avoid
+    // substituting its warning text when the ordinary command is localized.
+    let locale = ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .iter()
+        .filter_map(env::var_os)
+        .find(|value| !value.is_empty());
+    env::var_os("LANGUAGE").is_none_or(|language| language.is_empty())
+        && locale.is_none_or(|locale| {
+            matches!(
+                locale.to_str(),
+                Some("C" | "C.UTF-8" | "POSIX" | "en_US.UTF-8")
+            )
+        })
+}
+
 fn verify_materialized_rung_with_options(
     directory: &Path,
     board_id: &str,
@@ -101,6 +475,21 @@ fn verify_materialized_rung_uncached(
     board_id: &str,
     refill_zones: bool,
 ) -> Result<VerificationReport, String> {
+    verify_with_schematic(directory, board_id, refill_zones, SchematicDrc::Ordinary)
+}
+
+enum SchematicDrc {
+    Ordinary,
+    AllTracks,
+    Checked(serde_json::Value),
+}
+
+fn verify_with_schematic(
+    directory: &Path,
+    board_id: &str,
+    refill_zones: bool,
+    check: SchematicDrc,
+) -> Result<VerificationReport, String> {
     remove_if_present(&directory.join("verification.json"))?;
     let schematic = directory.join(format!("{board_id}.kicad_sch"));
     let pcb = directory.join(format!("{board_id}.kicad_pcb"));
@@ -118,23 +507,19 @@ fn verify_materialized_rung_uncached(
         &erc_path,
         &schematic,
     )?;
-    let mut drc_arguments = vec![
-        "pcb",
-        "drc",
-        "--format",
-        "json",
-        "--severity-all",
-        "--schematic-parity",
-    ];
-    if refill_zones {
-        drc_arguments.push("--refill-zones");
-    }
-    drc_arguments.push("--output");
-    run_kicad_report(&drc_arguments, &drc_path, &pcb)?;
-
+    let drc = match check {
+        SchematicDrc::Checked(report) => report,
+        SchematicDrc::AllTracks => {
+            native_report::run_route_reuse_drc(&pcb, &drc_path, refill_zones)?
+        }
+        SchematicDrc::Ordinary => {
+            let drc_arguments = native_report::ordinary_drc_arguments(true, refill_zones, false);
+            run_kicad_report(&drc_arguments, &drc_path, &pcb)?;
+            read_json(&drc_path)?
+        }
+    };
     let erc: serde_json::Value = read_json(&erc_path)?;
-    let drc: serde_json::Value = read_json(&drc_path)?;
-    write_verification_report(directory, board_id, &erc, &drc)
+    write_verification_report(directory, board_id, &erc, &drc, true)
 }
 
 /// A project without a schematic (a bare board, as in board-only benchmark
@@ -147,11 +532,7 @@ fn verify_board_only(
     remove_if_present(&directory.join("verification.json"))?;
     let pcb = directory.join(format!("{board_id}.kicad_pcb"));
     let drc_path = directory.join("drc.json");
-    let mut drc_arguments = vec!["pcb", "drc", "--format", "json", "--severity-all"];
-    if refill_zones {
-        drc_arguments.push("--refill-zones");
-    }
-    drc_arguments.push("--output");
+    let drc_arguments = native_report::ordinary_drc_arguments(false, refill_zones, false);
     run_kicad_report(&drc_arguments, &drc_path, &pcb)?;
     let drc: serde_json::Value = read_json(&drc_path)?;
     let erc = serde_json::json!({
@@ -162,7 +543,7 @@ fn verify_board_only(
         "sheets": [],
     });
     write_typed_json(&directory.join("erc.json"), &erc)?;
-    write_verification_report(directory, board_id, &erc, &drc)
+    write_verification_report(directory, board_id, &erc, &drc, false)
 }
 
 pub(crate) fn write_verification_report(
@@ -170,9 +551,10 @@ pub(crate) fn write_verification_report(
     board_id: &str,
     erc: &serde_json::Value,
     drc: &serde_json::Value,
+    parity_requested: bool,
 ) -> Result<VerificationReport, String> {
     remove_if_present(&directory.join("verification.json"))?;
-    let report = assess_verification_reports(board_id, erc, drc)?;
+    let report = assess_verification_reports(board_id, erc, drc, parity_requested)?;
     write_typed_json(&directory.join("verification.json"), &report)?;
     Ok(report)
 }
@@ -181,6 +563,7 @@ pub(crate) fn assess_verification_reports(
     board_id: &str,
     erc: &serde_json::Value,
     drc: &serde_json::Value,
+    parity_requested: bool,
 ) -> Result<VerificationReport, String> {
     validate_report(
         erc,
@@ -233,6 +616,7 @@ pub(crate) fn assess_verification_reports(
         complete,
         erc_violations,
         drc_design_violations,
+        schematic_parity_checked: parity_requested && drc["schematic_parity"].is_array(),
         schematic_parity_issues,
         selected_net_unconnected_items,
         intentional_no_connect_groups,
@@ -330,6 +714,7 @@ fn verify_materialized_rung_cached(
             board_id,
             &read_json(&cached_erc)?,
             &read_json(&cached_drc)?,
+            true,
         )?;
         if assessed != entry.report {
             return Err(format!(
@@ -638,6 +1023,143 @@ fn is_intentional_no_connect_group(violation: &serde_json::Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn closed_reuse_accepts_only_contained_native_libraries() {
+        let library = |kind, uri| {
+            local_library_table(
+                &parse(&format!(
+                    r#"(fp_lib_table (lib (name "fixture") (type "{kind}") (uri "{uri}")))"#
+                ))
+                .unwrap(),
+            )
+        };
+        assert!(library("KiCad", "${KIPRJMOD}/parts/fixture.pretty"));
+        assert!(!library("KiCad", "${KIPRJMOD}/../fixture.pretty"));
+        assert!(!library("KiCad", "${KIPRJMOD}/parts/../../fixture.pretty"));
+        assert!(!library("KiCad", "${KIPRJMOD}/.hidden/fixture.pretty"));
+        assert!(!library("KiCad", "${KIPRJMOD}/${other}/fixture.pretty"));
+        assert!(!library("Eagle", "${KIPRJMOD}/fixture.pretty"));
+    }
+
+    #[test]
+    fn closed_reuse_report_follows_renamed_attempt_but_rejects_mutation() {
+        check_reuse_report_invalidation(false, true);
+    }
+
+    #[test]
+    fn partial_reuse_report_rejects_changed_dependencies_and_repairable_boards() {
+        check_reuse_report_invalidation(true, false);
+    }
+
+    #[test]
+    fn a_refilled_shared_report_still_rejects_mutation_and_input_repairs() {
+        check_reuse_report_invalidation(true, true);
+    }
+
+    #[test]
+    fn partial_reuse_needs_a_complete_report_without_design_findings() {
+        let mut report = serde_json::json!({
+            "schematic_parity": [],
+            "unconnected_items": [],
+            "violations": [],
+        });
+        assert!(can_share_partial_drc(&report));
+        for field in ["schematic_parity", "unconnected_items", "violations"] {
+            report[field] = serde_json::json!([{"type": "clearance", "severity": "warning"}]);
+            assert!(!can_share_partial_drc(&report), "{field}");
+            report[field] = serde_json::Value::Null;
+            assert!(!can_share_partial_drc(&report), "{field} missing");
+            report[field] = serde_json::json!([]);
+        }
+        report["violations"] = serde_json::json!([
+            {"type": "lib_footprint_mismatch", "severity": "error"}
+        ]);
+        assert!(!can_share_partial_drc(&report));
+    }
+
+    fn check_reuse_report_invalidation(partial: bool, shared: bool) {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let scratch = env::temp_dir().join(format!(
+            "pcb-maker-reuse-{}-{nonce}-{partial}-{shared}",
+            std::process::id(),
+        ));
+        let attempt = scratch.join("rung");
+        let selected = scratch.join("selected");
+        fs::create_dir_all(&attempt).unwrap();
+        let board = if partial {
+            "(kicad_pcb (zone))"
+        } else {
+            "(kicad_pcb)"
+        };
+        let report_name = if shared {
+            "drc.json"
+        } else {
+            "reuse-all-track-drc.json"
+        };
+        let files = [
+            ("case.kicad_pcb", board),
+            ("case.kicad_sch", "(kicad_sch)"),
+            ("case.kicad_pro", "{}"),
+            ("case.kicad_dru", "(version 1)"),
+            (report_name, "{\"violations\":[]}"),
+        ];
+        for (name, text) in files {
+            fs::write(attempt.join(name), text).unwrap();
+        }
+        let project_inputs = |path: &Path| {
+            closed_reuse_inputs(path, "case", partial, |_, refill| {
+                Ok(format!("native DRC with refill {refill}"))
+            })
+        };
+        let proof = ClosedReuseDrc {
+            inputs: project_inputs(&attempt).unwrap(),
+            report: file_sha256(&attempt.join(report_name)).unwrap(),
+            report_name,
+            partial,
+            captured_refill: None,
+        };
+        assert_eq!(proof.shares_final_verification(), shared);
+        if partial {
+            assert!(proof.inputs.refill);
+            assert!(closed_reuse_inputs(&attempt, "case", false, |_, _| unreachable!()).is_none());
+        }
+        fs::rename(&attempt, &selected).unwrap();
+        let copy = scratch.join("raw.json");
+        let copy_report = |path: &Path| proof.copy_report(path, &copy, project_inputs(path));
+        assert!(copy_report(&selected));
+        assert_eq!(fs::read_to_string(&copy).unwrap(), files[4].1);
+        for (name, text) in files {
+            let path = selected.join(name);
+            fs::write(&path, format!("{text}\n")).unwrap();
+            assert!(!copy_report(&selected), "{name}");
+            fs::write(&path, text).unwrap();
+        }
+        let unsupported = if partial {
+            "(kicad_pcb (zone) (gr_line (start 0 0) (end 0 0) (layer \"Edge.Cuts\")))"
+        } else {
+            "(kicad_pcb (zone))"
+        };
+        fs::write(selected.join("case.kicad_pcb"), unsupported).unwrap();
+        assert!(project_inputs(&selected).is_none());
+        fs::write(
+            selected.join("case.kicad_pcb"),
+            "(kicad_pcb (zone (keepout (footprints not_allowed))))",
+        )
+        .unwrap();
+        assert!(project_inputs(&selected).unwrap().refill);
+        assert!(!copy_report(&selected));
+        fs::write(selected.join("case.kicad_pcb"), files[0].1).unwrap();
+        let other_parent = scratch.join("other");
+        fs::create_dir(&other_parent).unwrap();
+        let moved = other_parent.join("selected");
+        fs::rename(selected, &moved).unwrap();
+        assert!(!copy_report(&moved));
+        fs::remove_dir_all(&scratch).unwrap();
+    }
 
     #[test]
     fn verification_cache_hashes_design_inputs_and_ignores_reports() {

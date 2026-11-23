@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "move_all": true,
+  "place": [
+    {
+      "part": "D6",
+      "x": 115.453284,
+      "y": 98.641087,
+      "angle": 90.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J2",
+      "x": 135.951084,
+      "y": 107.840624,
+      "angle": 0.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "J1",
+      "x": 147.990684,
+      "y": 85.966487,
+      "angle": 240.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "C3",
+      "x": 155.3644,
+      "y": 91.8464,
+      "angle": 180.0,
+      "origin": "absolute"
+    },
+    {
+      "part": "SW1",
+      "x": 117.807884,
+      "y": 98.400487,
+      "angle": 90.0,
+      "origin": "absolute"
+    }
+  ],
+  "front": [
+    "D6",
+    "J2"
+  ],
+  "back": [
+    "J1",
+    "C3",
+    "SW1"
+  ]
+}

@@ -117,6 +117,7 @@ impl Placing<'_> {
             best_level,
             best_annealed,
             walk,
+            sparse_legalization,
             overfull_sides,
             ..
         } = walk;
@@ -148,6 +149,7 @@ impl Placing<'_> {
                 finishing.elapsed().as_secs_f64()
             );
         }
+        legal::refine_pad_near(&relaxed, &mut poses, &unplaced, config.refine_pad_near);
         let exits = self.pad_exits(&relaxed, &mut poses, &unplaced);
         let problem = &relaxed;
         let wirelength_final = problem.wirelength(&poses);
@@ -178,6 +180,7 @@ impl Placing<'_> {
             constraints,
             relaxation: relaxation.expect("at least one relaxation level ran"),
             work: work() - self.work_started,
+            sparse_legalization,
             stage_poses,
             global_histories: vec![("global", global.history)],
             overfull: overfull_sides,

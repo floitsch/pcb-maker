@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "move_all": true,
+  "place": [
+    {"part": "H1", "origin": "absolute", "x": 9.0, "y": 23.75, "angle": 0.0},
+    {"part": "H2", "origin": "absolute", "x": 9.0, "y": 88.833274, "angle": 0.0},
+    {"part": "J1", "origin": "absolute", "x": 1.240471, "y": 105.975, "angle": 180.0},
+    {"part": "J10", "origin": "absolute", "x": -12.982, "y": 88.772626, "angle": 90.0},
+    {"part": "J11", "origin": "absolute", "x": -12.982, "y": 102.5612, "angle": 90.0},
+    {"part": "J2", "origin": "absolute", "x": 2.0, "y": 16.75, "angle": 180.0},
+    {"part": "J3", "origin": "absolute", "x": -1.804, "y": 53.25, "angle": -90.0},
+    {"part": "J4", "origin": "absolute", "x": -12.982, "y": 6.0412, "angle": 90.0},
+    {"part": "J5", "origin": "absolute", "x": -12.982, "y": 19.829771, "angle": 90.0},
+    {"part": "J6", "origin": "absolute", "x": -12.982, "y": 33.618342, "angle": 90.0},
+    {"part": "J7", "origin": "absolute", "x": -12.982, "y": 47.406913, "angle": 90.0},
+    {"part": "J8", "origin": "absolute", "x": -12.982, "y": 61.195484, "angle": 90.0},
+    {"part": "J9", "origin": "absolute", "x": -12.982, "y": 74.984055, "angle": 90.0}
+  ],
+  "front": ["H1", "H2", "J1", "J10", "J11", "J2", "J4", "J5", "J6", "J7", "J8", "J9"],
+  "back": ["J3"]
+}
