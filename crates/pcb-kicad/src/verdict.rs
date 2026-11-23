@@ -6100,7 +6100,6 @@ pub(crate) fn judge_at(
     // The input's own observations last, tagged, those of one kind folded
     // into one line (`fold_observations`); every one in full in
     // `input_observations`.
-    let mut actions = actions;
     actions.extend(walled_pads_actions(&walled_pads));
     let actions = with_input_observations(actions, &observations);
     KiCadVerdict {
