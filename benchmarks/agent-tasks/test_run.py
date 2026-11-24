@@ -868,6 +868,24 @@ class CommittedTaskLists(unittest.TestCase):
         self.assertEqual(named[1]["endgame"], {"task": "a", "reserve": True})
         self.assertEqual(named[1]["board_id"], "a")
 
+    def test_release_window_removes_the_copper_near_the_opens(self):
+        board = ('(kicad_pcb\n  (version 20241229)\n'
+                 '  (segment\n    (start 0 0)\n    (end 1 0)\n    (net "A")\n    (uuid "s1"))\n'
+                 '  (via\n    (at 10 10)\n    (net "B")\n    (uuid "v1"))\n'
+                 '  (segment\n    (start 0.5 -0.2)\n    (end 0.5 -3)\n    (net "C (x)")\n    (uuid "s2")))\n')
+        drc = {"unconnected_items": [{"items": [{"pos": {"x": 0, "y": -1}}, {"pos": {"x": 2, "y": -1}}]}]}
+        with tempfile.TemporaryDirectory() as directory:
+            path, report = Path(directory) / "b.kicad_pcb", Path(directory) / "drc.json"
+            path.write_text(board)
+            report.write_text(json.dumps(drc))
+            released = run.release_window(path, report, 1.5)
+            text = path.read_text()
+        self.assertEqual(released, {"segments": 2, "vias": 0, "nets": ["A", "C (x)"]})
+        self.assertIn('(uuid "v1")', text)
+        self.assertNotIn('"s1"', text)
+        # The last item held the board's closing parenthesis.
+        self.assertEqual(run.text_balance(text), 0)
+
     def test_v6_and_v7_differ_only_on_six_panels(self):
         # The quick and short tiers moved from v6 to v7 (2026-10-21): none of
         # their boards is one of the six, so their older v6 logs stay bases.

@@ -444,9 +444,13 @@ benchmarks/agent-tasks/endgame_report.py build/endgame-main.log build/endgame-xN
 ```
 
 What it cannot say: the resumed route starts from the stalled copper, so
-it measures gains in the endgame only. A change upstream of the endgame
-(the negotiation that left the copper, the placement) is not seen, and a
-change that would make the full route open more cannot show. Freeze a
+it measures the endgame only. A change upstream of the endgame (the
+negotiation that left the copper, the placement) is not seen. A resume
+rarely opens more (it can: its new copper can cut a pour, Sisu's GND on
+the 2026-11-18 designer board went from 1 to 3), so a change that makes
+the full route open more mostly does not show. Measurements, cost,
+determinism and how its verdicts predict full runs:
+[docs/experiments/endgame-tier.md](../../docs/experiments/endgame-tier.md). Freeze a
 new version (`endgame_freeze.py build/endgame-tier/vN --source
 <tag>=<log> ...`) when main's routes have moved: the boards are the stalled
 results of the binary named in each entry.

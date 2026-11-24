@@ -51,8 +51,10 @@
    "work_seconds_before": 792.1,
    "seconds_before": 249.5,
    "cpu_seconds_before": 418.2,
-   "peak_rss_mb": 439,
-   "input_like_items": 1
+   "peak_rss_mb": 447,
+   "input_like_items": 1,
+   "peak_rss_mb_before": 439,
+   "seconds": 69.6
   },
   "CDFER__Business-Cards__WLED_Matrix@sweep-1118": {
    "task": "CDFER__Business-Cards__WLED_Matrix",
@@ -76,8 +78,10 @@
    "work_seconds_before": 811.5,
    "seconds_before": 358.4,
    "cpu_seconds_before": 567.3,
-   "peak_rss_mb": 557,
-   "input_like_items": 2
+   "peak_rss_mb": 551,
+   "input_like_items": 2,
+   "peak_rss_mb_before": 557,
+   "seconds": 154.7
   },
   "CRImier__MyKiCad__protoesp@sweep-1118": {
    "task": "CRImier__MyKiCad__protoesp",
@@ -100,8 +104,10 @@
    "work_seconds_before": 1500.1,
    "seconds_before": 800.7,
    "cpu_seconds_before": 1125.4,
-   "peak_rss_mb": 594,
-   "input_like_items": 0
+   "peak_rss_mb": 658,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 594,
+   "seconds": 87.1
   },
   "CRImier__MyKiCad__vaio_re@sweep-1118": {
    "task": "CRImier__MyKiCad__vaio_re",
@@ -126,8 +132,10 @@
    "work_seconds_before": 1211.7,
    "seconds_before": 1028.5,
    "cpu_seconds_before": 1479.5,
-   "peak_rss_mb": 709,
-   "input_like_items": 0
+   "peak_rss_mb": 564,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 709,
+   "seconds": 45.6
   },
   "ISSUIUC__ISS-PCB__MIDAS-MK1.1__MIDAS-MK1.1-revA@sweep-1118": {
    "task": "ISSUIUC__ISS-PCB__MIDAS-MK1.1__MIDAS-MK1.1-revA",
@@ -150,8 +158,10 @@
    "work_seconds_before": 1440.0,
    "seconds_before": 872.4,
    "cpu_seconds_before": 1304.2,
-   "peak_rss_mb": 593,
-   "input_like_items": 0
+   "peak_rss_mb": 397,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 593,
+   "seconds": 36.1
   },
   "Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1@sweep-1118": {
    "task": "Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1",
@@ -172,8 +182,10 @@
    "work_seconds_before": 294.7,
    "seconds_before": 232.4,
    "cpu_seconds_before": 388.3,
-   "peak_rss_mb": 439,
-   "input_like_items": 4
+   "peak_rss_mb": 317,
+   "input_like_items": 4,
+   "peak_rss_mb_before": 439,
+   "seconds": 27.5
   },
   "antmicro__jetson-nano-baseboard__jetson-nano-baseboard@sweep-1118": {
    "task": "antmicro__jetson-nano-baseboard__jetson-nano-baseboard",
@@ -194,8 +206,10 @@
    "work_seconds_before": 1306.9,
    "seconds_before": 1061.3,
    "cpu_seconds_before": 1549.3,
-   "peak_rss_mb": 2149,
-   "input_like_items": 0
+   "peak_rss_mb": 1454,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 2149,
+   "seconds": 57.6
   },
   "briskspirit__Sisu_SSE-9__Sisu_SSE-9@sweep-1118": {
    "task": "briskspirit__Sisu_SSE-9__Sisu_SSE-9",
@@ -222,8 +236,10 @@
    "work_seconds_before": 1316.3,
    "seconds_before": 983.1,
    "cpu_seconds_before": 1348.0,
-   "peak_rss_mb": 1063,
-   "input_like_items": 0
+   "peak_rss_mb": 1673,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 1063,
+   "seconds": 87.6
   },
   "byrantech__laptop__keyboard@sweep-1118": {
    "task": "byrantech__laptop__keyboard",
@@ -245,8 +261,10 @@
    "work_seconds_before": 1182.5,
    "seconds_before": 914.8,
    "cpu_seconds_before": 1246.2,
-   "peak_rss_mb": 1547,
-   "input_like_items": 0
+   "peak_rss_mb": 439,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 1547,
+   "seconds": 38.1
   },
   "byrantech__laptop__motherboard@sweep-1118": {
    "task": "byrantech__laptop__motherboard",
@@ -269,8 +287,10 @@
    "work_seconds_before": 1390.1,
    "seconds_before": 1214.6,
    "cpu_seconds_before": 1806.8,
-   "peak_rss_mb": 1600,
-   "input_like_items": 0
+   "peak_rss_mb": 1162,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 1600,
+   "seconds": 63.6
   },
   "ebastler__osprey__osprey_rev_a@sweep-1118": {
    "task": "ebastler__osprey__osprey_rev_a",
@@ -294,8 +314,10 @@
    "work_seconds_before": 1417.3,
    "seconds_before": 868.5,
    "cpu_seconds_before": 1404.4,
-   "peak_rss_mb": 2483,
-   "input_like_items": 0
+   "peak_rss_mb": 1432,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 2483,
+   "seconds": 61.6
   },
   "ikajdan__katia__katia@sweep-1118": {
    "task": "ikajdan__katia__katia",
@@ -317,8 +339,10 @@
    "work_seconds_before": 1503.3,
    "seconds_before": 1216.6,
    "cpu_seconds_before": 1529.0,
-   "peak_rss_mb": 2944,
-   "input_like_items": 0
+   "peak_rss_mb": 1203,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 2944,
+   "seconds": 55.6
   },
   "obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized@sweep-1118": {
    "task": "obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized",
@@ -342,8 +366,10 @@
    "work_seconds_before": 1220.2,
    "seconds_before": 1305.6,
    "cpu_seconds_before": 1462.6,
-   "peak_rss_mb": 1756,
-   "input_like_items": 0
+   "peak_rss_mb": 756,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 1756,
+   "seconds": 97.1
   },
   "oro-os__link__link@sweep-1118": {
    "task": "oro-os__link__link",
@@ -372,8 +398,10 @@
    "work_seconds_before": 1166.0,
    "seconds_before": 1586.3,
    "cpu_seconds_before": 1768.5,
-   "peak_rss_mb": 3204,
-   "input_like_items": 0
+   "peak_rss_mb": 1765,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 3204,
+   "seconds": 95.1
   },
   "sporkus__capybully_keyboard__capybully@sweep-1118": {
    "task": "sporkus__capybully_keyboard__capybully",
@@ -394,8 +422,10 @@
    "work_seconds_before": 1183.2,
    "seconds_before": 1288.3,
    "cpu_seconds_before": 1533.8,
-   "peak_rss_mb": 1219,
-   "input_like_items": 0
+   "peak_rss_mb": 566,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 1219,
+   "seconds": 47.1
   },
   "stonedDiscord__nonSNES__SNSP-CPU-01@sweep-1118": {
    "task": "stonedDiscord__nonSNES__SNSP-CPU-01",
@@ -417,8 +447,10 @@
    "work_seconds_before": 1288.4,
    "seconds_before": 1481.0,
    "cpu_seconds_before": 1684.4,
-   "peak_rss_mb": 1175,
-   "input_like_items": 1
+   "peak_rss_mb": 1201,
+   "input_like_items": 1,
+   "peak_rss_mb_before": 1175,
+   "seconds": 69.6
   },
   "thpoll83__PolyKybd__poly_corne_split42_left@sweep-1118": {
    "task": "thpoll83__PolyKybd__poly_corne_split42_left",
@@ -441,8 +473,10 @@
    "work_seconds_before": 1327.9,
    "seconds_before": 1311.4,
    "cpu_seconds_before": 1653.3,
-   "peak_rss_mb": 959,
-   "input_like_items": 0
+   "peak_rss_mb": 554,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 959,
+   "seconds": 56.1
   },
   "thpoll83__PolyKybd__poly_corne_split42_right@sweep-1118": {
    "task": "thpoll83__PolyKybd__poly_corne_split42_right",
@@ -467,8 +501,10 @@
    "work_seconds_before": 1250.4,
    "seconds_before": 1732.9,
    "cpu_seconds_before": 1878.9,
-   "peak_rss_mb": 1413,
-   "input_like_items": 0
+   "peak_rss_mb": 1214,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 1413,
+   "seconds": 78.6
   },
   "thpoll83__PolyKybd__poly_kybd_split72_left@sweep-1118": {
    "task": "thpoll83__PolyKybd__poly_kybd_split72_left",
@@ -489,8 +525,10 @@
    "work_seconds_before": 1367.5,
    "seconds_before": 2099.0,
    "cpu_seconds_before": 2547.4,
-   "peak_rss_mb": 1652,
-   "input_like_items": 0
+   "peak_rss_mb": 1925,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 1652,
+   "seconds": 73.1
   },
   "vd-rd__sbc_allwinner_a13__module@sweep-1118": {
    "task": "vd-rd__sbc_allwinner_a13__module",
@@ -517,8 +555,10 @@
    "work_seconds_before": 1135.3,
    "seconds_before": 834.8,
    "cpu_seconds_before": 1093.9,
-   "peak_rss_mb": 518,
-   "input_like_items": 0
+   "peak_rss_mb": 550,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 518,
+   "seconds": 42.5
   },
   "CDFER__Business-Cards__Batch_1@designer-1124": {
    "task": "CDFER__Business-Cards__Batch_1",
@@ -540,8 +580,10 @@
    "work_seconds_before": 770.7,
    "seconds_before": 743.0,
    "cpu_seconds_before": 737.9,
-   "peak_rss_mb": 1136,
-   "input_like_items": 1
+   "peak_rss_mb": 1002,
+   "input_like_items": 1,
+   "peak_rss_mb_before": 1136,
+   "seconds": 33.0
   },
   "CDFER__Business-Cards__WLED_Matrix@designer-1124": {
    "task": "CDFER__Business-Cards__WLED_Matrix",
@@ -563,8 +605,10 @@
    "work_seconds_before": 246.2,
    "seconds_before": 235.6,
    "cpu_seconds_before": 240.9,
-   "peak_rss_mb": 563,
-   "input_like_items": 0
+   "peak_rss_mb": 542,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 563,
+   "seconds": 9.0
   },
   "CRImier__MyKiCad__protoesp@designer-1124": {
    "task": "CRImier__MyKiCad__protoesp",
@@ -585,8 +629,10 @@
    "work_seconds_before": 806.0,
    "seconds_before": 651.8,
    "cpu_seconds_before": 650.6,
-   "peak_rss_mb": 589,
-   "input_like_items": 0
+   "peak_rss_mb": 347,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 589,
+   "seconds": 33.5
   },
   "CRImier__MyKiCad__vaio_re@designer-1124": {
    "task": "CRImier__MyKiCad__vaio_re",
@@ -609,8 +655,10 @@
    "work_seconds_before": 822.6,
    "seconds_before": 792.5,
    "cpu_seconds_before": 802.7,
-   "peak_rss_mb": 478,
-   "input_like_items": 0
+   "peak_rss_mb": 468,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 478,
+   "seconds": 28.6
   },
   "Twisted-Fields__rp2040-motor-controller__RP2040_base@designer-1124": {
    "task": "Twisted-Fields__rp2040-motor-controller__RP2040_base",
@@ -637,8 +685,10 @@
    "work_seconds_before": 502.1,
    "seconds_before": 437.3,
    "cpu_seconds_before": 434.3,
-   "peak_rss_mb": 330,
-   "input_like_items": 0
+   "peak_rss_mb": 322,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 330,
+   "seconds": 34.5
   },
   "antmicro__jetson-nano-baseboard__jetson-nano-baseboard@designer-1124": {
    "task": "antmicro__jetson-nano-baseboard__jetson-nano-baseboard",
@@ -660,8 +710,10 @@
    "work_seconds_before": 733.5,
    "seconds_before": 660.4,
    "cpu_seconds_before": 659.7,
-   "peak_rss_mb": 1054,
-   "input_like_items": 0
+   "peak_rss_mb": 2561,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 1054,
+   "seconds": 75.1
   },
   "apfaudio__eurorack-pmod__eurorack-pmod-pcb@designer-1124": {
    "task": "apfaudio__eurorack-pmod__eurorack-pmod-pcb",
@@ -682,8 +734,10 @@
    "work_seconds_before": 917.7,
    "seconds_before": 737.5,
    "cpu_seconds_before": 734.5,
-   "peak_rss_mb": 377,
-   "input_like_items": 0
+   "peak_rss_mb": 605,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 377,
+   "seconds": 17.0
   },
   "briskspirit__Sisu_SSE-9__Sisu_SSE-9@designer-1124": {
    "task": "briskspirit__Sisu_SSE-9__Sisu_SSE-9",
@@ -709,8 +763,10 @@
    "work_seconds_before": 787.6,
    "seconds_before": 789.5,
    "cpu_seconds_before": 790.5,
-   "peak_rss_mb": 1035,
-   "input_like_items": 0
+   "peak_rss_mb": 743,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 1035,
+   "seconds": 51.1
   },
   "byrantech__laptop__keyboard@designer-1124": {
    "task": "byrantech__laptop__keyboard",
@@ -732,8 +788,10 @@
    "work_seconds_before": 760.9,
    "seconds_before": 593.4,
    "cpu_seconds_before": 586.8,
-   "peak_rss_mb": 444,
-   "input_like_items": 0
+   "peak_rss_mb": 562,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 444,
+   "seconds": 42.6
   },
   "byrantech__laptop__motherboard@designer-1124": {
    "task": "byrantech__laptop__motherboard",
@@ -755,8 +813,10 @@
    "work_seconds_before": 669.0,
    "seconds_before": 689.9,
    "cpu_seconds_before": 697.5,
-   "peak_rss_mb": 978,
-   "input_like_items": 0
+   "peak_rss_mb": 1656,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 978,
+   "seconds": 55.1
   },
   "byrantech__laptop__power@designer-1124": {
    "task": "byrantech__laptop__power",
@@ -777,8 +837,10 @@
    "work_seconds_before": 936.3,
    "seconds_before": 723.4,
    "cpu_seconds_before": 722.2,
-   "peak_rss_mb": 511,
-   "input_like_items": 0
+   "peak_rss_mb": 545,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 511,
+   "seconds": 40.6
   },
   "ebastler__osprey__osprey_rev_a@designer-1124": {
    "task": "ebastler__osprey__osprey_rev_a",
@@ -801,8 +863,10 @@
    "work_seconds_before": 827.0,
    "seconds_before": 787.5,
    "cpu_seconds_before": 780.9,
-   "peak_rss_mb": 1159,
-   "input_like_items": 0
+   "peak_rss_mb": 818,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 1159,
+   "seconds": 39.0
   },
   "obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized@designer-1124": {
    "task": "obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized",
@@ -825,8 +889,10 @@
    "work_seconds_before": 591.0,
    "seconds_before": 611.9,
    "cpu_seconds_before": 628.0,
-   "peak_rss_mb": 1056,
-   "input_like_items": 0
+   "peak_rss_mb": 728,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 1056,
+   "seconds": 38.5
   },
   "ohdsp__DSP-ADAU1452__DSP-ADAU1452@designer-1124": {
    "task": "ohdsp__DSP-ADAU1452__DSP-ADAU1452",
@@ -847,8 +913,10 @@
    "work_seconds_before": 738.0,
    "seconds_before": 698.0,
    "cpu_seconds_before": 699.2,
-   "peak_rss_mb": 447,
-   "input_like_items": 0
+   "peak_rss_mb": 458,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 447,
+   "seconds": 13.5
   },
   "oro-os__link__link@designer-1124": {
    "task": "oro-os__link__link",
@@ -871,8 +939,10 @@
    "work_seconds_before": 1062.4,
    "seconds_before": 1547.0,
    "cpu_seconds_before": 1541.1,
-   "peak_rss_mb": 2776,
-   "input_like_items": 0
+   "peak_rss_mb": 1360,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 2776,
+   "seconds": 44.6
   },
   "thpoll83__PolyKybd__poly_corne_split42_right@designer-1124": {
    "task": "thpoll83__PolyKybd__poly_corne_split42_right",
@@ -893,8 +963,10 @@
    "work_seconds_before": 1079.3,
    "seconds_before": 1325.9,
    "cpu_seconds_before": 1347.4,
-   "peak_rss_mb": 1137,
-   "input_like_items": 0
+   "peak_rss_mb": 1336,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 1137,
+   "seconds": 71.1
   },
   "thpoll83__PolyKybd__poly_kybd_split72_right@designer-1124": {
    "task": "thpoll83__PolyKybd__poly_kybd_split72_right",
@@ -915,8 +987,10 @@
    "work_seconds_before": 954.4,
    "seconds_before": 1172.3,
    "cpu_seconds_before": 1172.1,
-   "peak_rss_mb": 1276,
-   "input_like_items": 0
+   "peak_rss_mb": 1293,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 1276,
+   "seconds": 57.1
   },
   "vd-rd__sbc_allwinner_a13__module@designer-1124": {
    "task": "vd-rd__sbc_allwinner_a13__module",
@@ -943,8 +1017,10 @@
    "work_seconds_before": 778.0,
    "seconds_before": 815.1,
    "cpu_seconds_before": 861.9,
-   "peak_rss_mb": 559,
-   "input_like_items": 0
+   "peak_rss_mb": 519,
+   "input_like_items": 0,
+   "peak_rss_mb_before": 559,
+   "seconds": 40.5
   },
   "CDFER__Business-Cards__Batch_1@designer-1118": {
    "task": "CDFER__Business-Cards__Batch_1",
@@ -966,9 +1042,11 @@
    "work_seconds_before": 767.7,
    "seconds_before": 573.8,
    "cpu_seconds_before": 571.3,
-   "peak_rss_mb": 1127,
+   "peak_rss_mb": 1012,
    "input_like_items": 1,
-   "reserve": true
+   "reserve": true,
+   "peak_rss_mb_before": 1127,
+   "seconds": 44.1
   },
   "CDFER__Business-Cards__WLED_Matrix@designer-1118": {
    "task": "CDFER__Business-Cards__WLED_Matrix",
@@ -990,9 +1068,11 @@
    "work_seconds_before": 241.0,
    "seconds_before": 216.6,
    "cpu_seconds_before": 222.3,
-   "peak_rss_mb": 584,
+   "peak_rss_mb": 248,
    "input_like_items": 0,
-   "reserve": true
+   "reserve": true,
+   "peak_rss_mb_before": 584,
+   "seconds": 11.5
   },
   "CRImier__MyKiCad__protoesp@designer-1118": {
    "task": "CRImier__MyKiCad__protoesp",
@@ -1013,9 +1093,11 @@
    "work_seconds_before": 806.0,
    "seconds_before": 604.8,
    "cpu_seconds_before": 601.3,
-   "peak_rss_mb": 586,
+   "peak_rss_mb": 348,
    "input_like_items": 0,
-   "reserve": true
+   "reserve": true,
+   "peak_rss_mb_before": 586,
+   "seconds": 88.1
   },
   "CRImier__MyKiCad__vaio_re@designer-1118": {
    "task": "CRImier__MyKiCad__vaio_re",
@@ -1038,9 +1120,11 @@
    "work_seconds_before": 822.6,
    "seconds_before": 664.9,
    "cpu_seconds_before": 660.9,
-   "peak_rss_mb": 423,
+   "peak_rss_mb": 451,
    "input_like_items": 0,
-   "reserve": true
+   "reserve": true,
+   "peak_rss_mb_before": 423,
+   "seconds": 40.1
   },
   "MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub@designer-1118": {
    "task": "MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub",
@@ -1061,10 +1145,12 @@
    "work_seconds_before": 862.5,
    "seconds_before": 627.8,
    "cpu_seconds_before": 624.8,
-   "peak_rss_mb": 971,
+   "peak_rss_mb": 790,
    "input_like_items": 2,
    "reserve": true,
-   "excluded": "the designer's own board leaves the same two GND zone pieces unconnected"
+   "excluded": "the designer's own board leaves the same two GND zone pieces unconnected",
+   "peak_rss_mb_before": 971,
+   "seconds": 45.1
   },
   "Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1@designer-1118": {
    "task": "Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1",
@@ -1085,9 +1171,11 @@
    "work_seconds_before": 67.9,
    "seconds_before": 52.5,
    "cpu_seconds_before": 52.0,
-   "peak_rss_mb": 258,
+   "peak_rss_mb": 290,
    "input_like_items": 4,
-   "reserve": true
+   "reserve": true,
+   "peak_rss_mb_before": 258,
+   "seconds": 16.1
   },
   "Twisted-Fields__rp2040-motor-controller__RP2040_base@designer-1118": {
    "task": "Twisted-Fields__rp2040-motor-controller__RP2040_base",
@@ -1114,9 +1202,11 @@
    "work_seconds_before": 502.1,
    "seconds_before": 349.7,
    "cpu_seconds_before": 347.7,
-   "peak_rss_mb": 321,
+   "peak_rss_mb": 322,
    "input_like_items": 0,
-   "reserve": true
+   "reserve": true,
+   "peak_rss_mb_before": 321,
+   "seconds": 39.6
   },
   "antmicro__jetson-nano-baseboard__jetson-nano-baseboard@designer-1118": {
    "task": "antmicro__jetson-nano-baseboard__jetson-nano-baseboard",
@@ -1138,9 +1228,11 @@
    "work_seconds_before": 733.5,
    "seconds_before": 571.3,
    "cpu_seconds_before": 567.8,
-   "peak_rss_mb": 1045,
+   "peak_rss_mb": 2558,
    "input_like_items": 0,
-   "reserve": true
+   "reserve": true,
+   "peak_rss_mb_before": 1045,
+   "seconds": 69.1
   },
   "apfaudio__eurorack-pmod__eurorack-pmod-pcb@designer-1118": {
    "task": "apfaudio__eurorack-pmod__eurorack-pmod-pcb",
@@ -1161,9 +1253,11 @@
    "work_seconds_before": 917.7,
    "seconds_before": 559.2,
    "cpu_seconds_before": 556.0,
-   "peak_rss_mb": 258,
+   "peak_rss_mb": 605,
    "input_like_items": 0,
-   "reserve": true
+   "reserve": true,
+   "peak_rss_mb_before": 258,
+   "seconds": 18.5
   },
   "bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV@designer-1118": {
    "task": "bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV",
@@ -1186,10 +1280,12 @@
    "work_seconds_before": 645.4,
    "seconds_before": 931.4,
    "cpu_seconds_before": 896.6,
-   "peak_rss_mb": 826,
+   "peak_rss_mb": 1227,
    "input_like_items": 4,
    "reserve": true,
-   "excluded": "the project's own rules leave pads no track of their class can enter (handover, 'Not targets'); the designer's board leaves GND, SHLD and +12V open too"
+   "excluded": "the project's own rules leave pads no track of their class can enter (handover, 'Not targets'); the designer's board leaves GND, SHLD and +12V open too",
+   "peak_rss_mb_before": 826,
+   "seconds": 85.6
   },
   "briskspirit__Sisu_SSE-9__Sisu_SSE-9@designer-1118": {
    "task": "briskspirit__Sisu_SSE-9__Sisu_SSE-9",
@@ -1214,9 +1310,11 @@
    "work_seconds_before": 807.9,
    "seconds_before": 730.3,
    "cpu_seconds_before": 707.4,
-   "peak_rss_mb": 1044,
+   "peak_rss_mb": 1000,
    "input_like_items": 0,
-   "reserve": true
+   "reserve": true,
+   "peak_rss_mb_before": 1044,
+   "seconds": 88.1
   },
   "byrantech__laptop__keyboard@designer-1118": {
    "task": "byrantech__laptop__keyboard",
@@ -1238,9 +1336,11 @@
    "work_seconds_before": 760.9,
    "seconds_before": 498.7,
    "cpu_seconds_before": 495.8,
-   "peak_rss_mb": 454,
+   "peak_rss_mb": 806,
    "input_like_items": 0,
-   "reserve": true
+   "reserve": true,
+   "peak_rss_mb_before": 454,
+   "seconds": 69.6
   },
   "byrantech__laptop__motherboard@designer-1118": {
    "task": "byrantech__laptop__motherboard",
@@ -1262,9 +1362,11 @@
    "work_seconds_before": 669.0,
    "seconds_before": 590.3,
    "cpu_seconds_before": 586.6,
-   "peak_rss_mb": 972,
+   "peak_rss_mb": 1677,
    "input_like_items": 0,
-   "reserve": true
+   "reserve": true,
+   "peak_rss_mb_before": 972,
+   "seconds": 47.6
   },
   "ebastler__osprey__osprey_rev_a@designer-1118": {
    "task": "ebastler__osprey__osprey_rev_a",
@@ -1285,9 +1387,11 @@
    "work_seconds_before": 759.2,
    "seconds_before": 586.8,
    "cpu_seconds_before": 583.6,
-   "peak_rss_mb": 1158,
+   "peak_rss_mb": 1043,
    "input_like_items": 0,
-   "reserve": true
+   "reserve": true,
+   "peak_rss_mb_before": 1158,
+   "seconds": 23.0
   },
   "obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized@designer-1118": {
    "task": "obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized",
@@ -1310,9 +1414,11 @@
    "work_seconds_before": 591.0,
    "seconds_before": 472.2,
    "cpu_seconds_before": 469.2,
-   "peak_rss_mb": 1042,
+   "peak_rss_mb": 728,
    "input_like_items": 0,
-   "reserve": true
+   "reserve": true,
+   "peak_rss_mb_before": 1042,
+   "seconds": 46.6
   },
   "ohdsp__DSP-ADAU1452__DSP-ADAU1452@designer-1118": {
    "task": "ohdsp__DSP-ADAU1452__DSP-ADAU1452",
@@ -1333,9 +1439,11 @@
    "work_seconds_before": 738.0,
    "seconds_before": 570.8,
    "cpu_seconds_before": 567.3,
-   "peak_rss_mb": 424,
+   "peak_rss_mb": 439,
    "input_like_items": 0,
-   "reserve": true
+   "reserve": true,
+   "peak_rss_mb_before": 424,
+   "seconds": 14.0
   },
   "oro-os__link__link@designer-1118": {
    "task": "oro-os__link__link",
@@ -1358,9 +1466,11 @@
    "work_seconds_before": 1064.9,
    "seconds_before": 1181.0,
    "cpu_seconds_before": 1173.5,
-   "peak_rss_mb": 2772,
+   "peak_rss_mb": 1390,
    "input_like_items": 0,
-   "reserve": true
+   "reserve": true,
+   "peak_rss_mb_before": 2772,
+   "seconds": 103.1
   },
   "thpoll83__PolyKybd__poly_corne_split42_right@designer-1118": {
    "task": "thpoll83__PolyKybd__poly_corne_split42_right",
@@ -1382,9 +1492,11 @@
    "work_seconds_before": 990.0,
    "seconds_before": 1053.0,
    "cpu_seconds_before": 1046.8,
-   "peak_rss_mb": 1133,
+   "peak_rss_mb": 1320,
    "input_like_items": 0,
-   "reserve": true
+   "reserve": true,
+   "peak_rss_mb_before": 1133,
+   "seconds": 117.1
   },
   "thpoll83__PolyKybd__poly_kybd_split72_right@designer-1118": {
    "task": "thpoll83__PolyKybd__poly_kybd_split72_right",
@@ -1405,9 +1517,11 @@
    "work_seconds_before": 954.4,
    "seconds_before": 952.4,
    "cpu_seconds_before": 946.8,
-   "peak_rss_mb": 1257,
+   "peak_rss_mb": 1548,
    "input_like_items": 0,
-   "reserve": true
+   "reserve": true,
+   "peak_rss_mb_before": 1257,
+   "seconds": 99.1
   },
   "vd-rd__sbc_allwinner_a13__module@designer-1118": {
    "task": "vd-rd__sbc_allwinner_a13__module",
@@ -1434,9 +1548,12 @@
    "work_seconds_before": 868.5,
    "seconds_before": 700.3,
    "cpu_seconds_before": 696.4,
-   "peak_rss_mb": 407,
+   "peak_rss_mb": 533,
    "input_like_items": 0,
-   "reserve": true
+   "reserve": true,
+   "peak_rss_mb_before": 407,
+   "seconds": 52.6
   }
- }
+ },
+ "estimates": "peak_rss_mb and seconds: the endgame's own, measured on 2026-11-24 (11-24 binary, 3 x 2, 30 s): the largest peak and the shortest uncut wall of base-a, base-b, pred-new and pred-old; peak_rss_mb_before is the original run's"
 }
