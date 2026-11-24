@@ -80,6 +80,7 @@ libraries and can run from a schematic and a mechanical brief alone.
 | Schematic (`--tier schematic`) | 12 harvested boards with a usable schematic | import from the schematic (`import-kicad-netlist`), the task's constraints moved onto the new parts, layout at a third of the budget | the flow an agent takes from a KiCad project: import, libraries, constraints and layout together | by hand |
 | Layout sweep | all 109 boards of tasks v7 | layout, 1500 s of work each, `--quality` | the headline: how many boards pcb-maker places and routes to a clean KiCad verdict | the nightly only (10 x 2, `--order peak-desc`) |
 | Matched designer tier (`--tier designer`) | the same 109 boards | route on the designer's own placement, 1500 s of work scaled by the median final-ladder share of the previous night's sweep (`nightly-report.py --ladder-share`; 0.695 without one) | splits what the layout leaves open into a placement gap and a routing gap (`compare.py --gap`) | the nightly only (8 x 1, `--order peak-desc`) |
+| Endgame (`--tier endgame`) | 38 routed results a nightly left 1 to 7 KiCad-unconnected items short (the sweep of 2026-11-18 and the designer tier of 2026-11-24), frozen under `build/endgame-tier/v1` | the routed board resumed with its copper kept (`route-kicad-board`, 30 s of ladder work, the run's settings and pour mode), then `repair-kicad-opens --local` | an endgame change: does it close more of the last connections; minutes instead of layouts ([README](../benchmarks/agent-tasks/README.md#the-endgame-tier---tier-endgame)) | a router package (3 x 2) |
 | From schematic (`benchmarks/from-schematic/run.py`) | the KiCad demos whose footprints the libraries have | import, then `layout-kicad-board` with the starter `layout.json` unchanged | the whole way from a schematic with nothing but the starter files | by hand |
 | [Schematic with a mechanical brief](../benchmarks/from-schematic/README.md) | one supplied design | project libraries, explicit layer count and placement constraints, optional board outline | verifies the requested poses, KiCad connectivity, DRC and schematic parity together | by hand |
 | KiCad demo corpus (`benchmarks/corpus/run.py`) | the KiCad demo projects (`benchmarks/corpus/fetch.sh`) | route and place + route | a small, quick sanity check on boards everyone knows | by hand |
@@ -736,6 +737,7 @@ $R build/short-x15210 --tier short --jobs 3 --threads 2 --binary $B > build/shor
 $R build/expansion-x15210 --tier expansion --jobs 8 --threads 1 --binary $B > build/expansion-x15210.log
 $R build/quick-x15210 --tier quick --binary $B > build/quick-x15210.log
 $R build/sch-x15210 --tier schematic --binary $B > build/sch-x15210.log
+$R build/endgame-x15210 --tier endgame --jobs 3 --threads 2 --binary $B > build/endgame-x15210.log
 # the layout sweep and the matched designer tier, as the nightly runs them
 $R build/sweep-x15210 --tasks benchmarks/agent-tasks/tasks/v7/tasks.json --jobs 10 --threads 2 \
   --quality --order peak-desc --binary $B > build/sweep-x15210.log
