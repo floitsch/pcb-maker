@@ -222,6 +222,17 @@ elif [ -n "$PCB_NIGHTLY_TMPDIR" ]; then
   mkdir -p "$TMPDIR"
 fi
 
+# The machine stays awake while the night runs. A suspend in the middle
+# (the night of 2026-11-24 slept from 04:38 to 10:26) stretches the wall
+# time of every running board and moves the rest into the day's load. The
+# inhibitor ends with this script. PCB_NIGHTLY_NO_INHIBIT=1 skips it.
+if [ -z "$fake_binary" ] && [ -z "${PCB_NIGHTLY_NO_INHIBIT:-}" ] \
+  && command -v systemd-inhibit > /dev/null 2>&1; then
+  systemd-inhibit --what=sleep:idle --who=pcb-maker-nightly \
+    --why="nightly measurement of main" --mode=block \
+    tail --pid=$$ -f /dev/null 9>&- > /dev/null 2>&1 &
+fi
+
 # The sweep's days.
 weekday="$(date -d "${PCB_NIGHTLY_DATE:-today}" +%u 2> /dev/null || date +%u)"
 sweep_today=0
