@@ -696,6 +696,21 @@ pub struct KiCadDeadPad {
     /// at the pad's best point for the net's narrowest track, or what
     /// blocks the stubs from a legal track end to the nearest nodes.
     pub wall: String,
+    /// How open the pad is, the most open of its layers
+    /// (`pcb_router::DeadPadAccess::name`): `no_legal_access` (no point
+    /// of the pad keeps the clearances for the net's narrowest track: by
+    /// the router's rules no track ends on it), `no_lattice_node` (a track
+    /// may end on it, no node within 2 mm admits the class's track),
+    /// `stubs_blocked`, `start_blocked` (free from the pad's best point,
+    /// not from where the router's stubs start), `escape_not_kept`;
+    /// `unknown` where not measured. Only the first is a wall of the
+    /// input by the router's rules; KiCad's DRC is the judge.
+    #[serde(default = "unknown_access")]
+    pub access: String,
+}
+
+fn unknown_access() -> String {
+    "unknown".into()
 }
 
 impl KiCadDeadPad {
@@ -710,6 +725,7 @@ impl KiCadDeadPad {
             at: dead.anchor.map(|value| (value * 1000.0).round() / 1000.0),
             near: dead.near.clone(),
             wall: name_layers(&dead.wall, layer_names),
+            access: dead.access.name().into(),
         }
     }
 }

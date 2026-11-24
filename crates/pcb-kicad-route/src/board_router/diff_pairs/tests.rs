@@ -2288,6 +2288,7 @@ fn a_links_cause_not_routed_is_read_from_the_diagnostics() {
         anchor: [0.0, 0.0],
         near: Vec::new(),
         wall: String::new(),
+        access: core::DeadPadAccess::Unknown,
     });
     assert_eq!(
         not_routed_cause(&diagnostics, 7),

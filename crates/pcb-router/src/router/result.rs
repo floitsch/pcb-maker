@@ -106,6 +106,50 @@ pub struct DeadPad {
     pub near: Vec<String>,
     /// What walls the pad, in words (`Router::dead_pad_wall`).
     pub wall: String,
+    /// How open the pad is, the most open of its layers.
+    pub access: DeadPadAccess,
+}
+
+/// How a dead pad stands (`Router::dead_pad_wall`), from the most closed
+/// to the most open; a pad's is the most open of its layers. Only
+/// `NoLegalAccess` says that by the router's rules no track can end on
+/// the pad; the others have a legal track end, and the lattice or the
+/// escape's rules left the pad (KiCad, the judge, may accept a track).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DeadPadAccess {
+    /// Not measured (a pair's launch).
+    #[default]
+    Unknown,
+    /// No point of the pad keeps the clearances for the net's narrowest
+    /// track (its neck) on any of its layers.
+    NoLegalAccess,
+    /// A track may end on the pad, but no lattice node within the escape's
+    /// reach admits the class's track.
+    NoLatticeNode,
+    /// Nodes admit the class's track, and items block the stubs to the
+    /// nearest ones (or the board's edge does).
+    StubsBlocked,
+    /// A stub from the pad's best point to a node is free, but the
+    /// router's stubs start elsewhere (a plain pad's centre), where it is
+    /// not.
+    StartBlocked,
+    /// A stub from the router's own start is free too: the router did not
+    /// keep the escape.
+    EscapeNotKept,
+}
+
+impl DeadPadAccess {
+    /// The name in the reports (`dead_pads[].access`).
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::NoLegalAccess => "no_legal_access",
+            Self::NoLatticeNode => "no_lattice_node",
+            Self::StubsBlocked => "stubs_blocked",
+            Self::StartBlocked => "start_blocked",
+            Self::EscapeNotKept => "escape_not_kept",
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
