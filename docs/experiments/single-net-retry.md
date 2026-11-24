@@ -266,10 +266,35 @@ since 19081669 the repair runs on the kept input too.
   the waiting proposals' search limit, and
   `an_open_net_is_routed_alone_and_adopted_with_kicads_evidence` (route
   mode's repair with kicad-cli).
-- Queued behind the load gate when this was written (see the hand-off):
-  the fingerprints, the expansion tier
-  (6 x 1), the short tier (layouts change: the final ladder's reserve), and
-  the repair alone on the 11-24 sweep's 17 near misses.
+- **Fingerprints** (route mode from `build/github-layout-v16`, 1 x 4,
+  budget scale 0.25, against the nightly of 2026-11-24): the four routed
+  boards byte-identical (jetson 0e25e5b4af35, Sisu d8133d50b358, k30
+  37f4f5e49ac7, Castor 066bfcea49b6), unconnected 20 -> 20, strict 2 -> 2,
+  the router's phase fingerprints unchanged. On Sisu (7 open) the new repair
+  ran and refused its candidate (`new_or_incomparable_native_findings`); its
+  four local searches add 16 fingerprint lines to `route.log`, so the first
+  nightly after a merge will report Sisu's fingerprints changed by those
+  lines alone.
+- **Expansion tier** (6 x 1): 46 boards identical, unconnected 571 -> 571,
+  strict 28 -> 28, work unchanged. The tier routes without KiCad, so the
+  repair does not run there: it shows only that the routing is unchanged.
+- **Short tier** (3 x 2, layouts): 12 boards identical, unconnected 5 -> 5,
+  strict 9 -> 9, vias and length unchanged, work 2351 -> 2299 s. MIDAS
+  (3 open): the layout's repair now runs (the library cap refused it on
+  the nightly) and stops at `native_endpoints_unavailable`. WLED_Matrix
+  (2 open): still skipped for `insufficient_remaining_work`, as on the
+  nightly, because its final ladder overruns its own budget (work 360 s of
+  a 258 s budget; the nightly 414 of 332), its neck repair's 11 checks
+  counting as no work there; the overrun takes the reserve. The reserve
+  helps only where the final ladder keeps to its budget.
+- **The repair alone on the 11-24 sweep's 17 near misses** (main against
+  the branch, `repair-kicad-opens --local` on each layout's result): 58 -> 58
+  on both. The library cap no longer refuses (13 boards' notes on main),
+  and the searches find no path (31 `no_local_path`): tonight's sweep
+  residue, on its new placements, holds no single-net close this repair
+  finds. The census's 42 boards on 046e82c1: 116 -> 107, as on 99d1b02f.
+- CPU in the tiers rose (unpaired runs under loads of 20 to 60 against a
+  quiet night); not a measurement.
 
 ## Reproducing
 
