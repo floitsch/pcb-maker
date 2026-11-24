@@ -284,12 +284,16 @@ pub(super) fn propose(
     }
     let mut result = Vec::new();
     let bridge_checks = pad_bridge::checks_needed(pad_bridge::has_fills(pcb));
+    // Proposals of this call that wait for their native checks: an
+    // automatic repair searches the next net only with work left for
+    // those checks and its own.
+    let mut pending = 0;
     for target in targets.into_iter().take(MAX_TRIALS) {
         if budget.as_ref().is_some_and(|budget| {
             if search_scope == SearchScope::LargeNet {
                 budget.branch_search_limit() <= 0.0
             } else {
-                budget.search_limit() <= 0.0
+                budget.search_limit_after(pending) <= 0.0
             }
         }) {
             break;
@@ -441,7 +445,9 @@ pub(super) fn propose(
                         target.net,
                         net_form.clone(),
                         scope,
-                        budget.as_ref().map(|budget| budget.search_limit()),
+                        budget
+                            .as_ref()
+                            .map(|budget| budget.search_limit_after(pending)),
                     );
                     if target.named_single_net
                         && layers.len() == 2
@@ -552,7 +558,11 @@ pub(super) fn propose(
         let ready = !proposal.objects.is_empty();
         result.push((target.native_net.to_owned(), proposal));
         if ready && budget.is_some() {
-            break;
+            // A large net's branches are one proposal of their own.
+            if search_scope == SearchScope::LargeNet {
+                break;
+            }
+            pending += 1;
         }
     }
     Ok(result)
