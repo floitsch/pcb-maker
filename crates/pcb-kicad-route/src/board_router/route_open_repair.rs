@@ -184,3 +184,71 @@ impl KiCadRouteOpenRepair {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_open_net_is_routed_alone_and_adopted_with_kicads_evidence() {
+        if !std::process::Command::new(native_report::kicad_cli())
+            .arg("version")
+            .output()
+            .is_ok_and(|output| output.status.success())
+        {
+            return;
+        }
+        let root = temporary_next_to(&std::env::temp_dir().join("route-open-repair"));
+        let directory = root.join("route");
+        fs::create_dir_all(&directory).unwrap();
+        let pcb = r#"(kicad_pcb (version 20241229) (generator "pcbnew")
+          (general (thickness 1.6)) (paper "A4")
+          (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
+          (gr_rect (start 0 0) (end 20 10) (stroke (width 0.05) (type default)) (layer "Edge.Cuts"))
+          (footprint "test" (layer "F.Cu") (at 3 5)
+            (uuid "bf2ff1e8-13dd-462e-9898-234e65f5ff01")
+            (property "Reference" "J1" (at 0 -2) (layer "F.SilkS") (effects (font (size 1 1) (thickness 0.15))))
+            (pad "1" smd circle (at 0 0) (size 1 1) (layers "F.Cu") (net "LINK")
+              (uuid "1b0aa000-13dd-462e-9898-234e65f5ff01")))
+          (footprint "test" (layer "F.Cu") (at 16 5)
+            (uuid "bf2ff1e8-13dd-462e-9898-234e65f5ff02")
+            (property "Reference" "J2" (at 0 -2) (layer "F.SilkS") (effects (font (size 1 1) (thickness 0.15))))
+            (pad "1" smd circle (at 0 0) (size 1 1) (layers "F.Cu") (net "LINK")
+              (uuid "1b0aa000-13dd-462e-9898-234e65f5ff02"))))"#;
+        fs::write(directory.join("board.kicad_pcb"), pcb).unwrap();
+        fs::write(directory.join("board.kicad_pro"), "{}\n").unwrap();
+        let config = crate::resolve_project_rules(
+            &directory.join("board.kicad_pro"),
+            &directory.join("board.kicad_pcb"),
+        )
+        .unwrap();
+        let native = verify_materialized_rung(&directory, "board").unwrap();
+        assert_eq!(native.selected_net_unconnected_items, 1);
+        let mut result = KiCadBoardRouterResult {
+            native: Some(native),
+            ..Default::default()
+        };
+        // No work left: the floor still searches.
+        let repair = repair_route_opens(&mut result, &directory, "board", &config, 0.0)
+            .unwrap()
+            .unwrap();
+        assert_eq!(repair.status, "accepted", "{repair:?}");
+        assert_eq!((repair.opens_before, repair.opens_after), (1, 0));
+        assert_eq!(repair.nets, ["LINK"]);
+        assert!(repair.native_checks >= 2);
+        assert!(repair.search_work_seconds > 0.0);
+        assert!(result.model_precedes_additive_repair);
+        assert!(result.native.as_ref().unwrap().complete);
+        assert!(result.saved_copper.as_ref().unwrap().segments > 0);
+        assert!(directory.join("open-repair.json").is_file());
+        let disk = fs::read_to_string(directory.join("board.kicad_pcb")).unwrap();
+        assert!(disk.starts_with(pcb.strip_suffix(')').unwrap()));
+        // A board KiCad finds connected has nothing to repair.
+        assert!(
+            repair_route_opens(&mut result, &directory, "board", &config, 0.0)
+                .unwrap()
+                .is_none()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+}
