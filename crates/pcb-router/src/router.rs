@@ -66,6 +66,11 @@ mod trouble;
 mod update;
 mod vias;
 mod wall;
+mod window_census;
+pub use window_census::{
+    CensusAccess, CensusConnection, CensusElement, CensusEscape, CensusLimits, CensusModel,
+    CensusNet, CensusRequest,
+};
 
 pub use build::{
     BuildCounts, SharedBuild, StaticMapsHold, held_maps_bytes, hold_static_maps, static_maps_key,

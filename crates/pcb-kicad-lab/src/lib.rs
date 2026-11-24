@@ -20,6 +20,9 @@
 //!   strength rows (benchmarks/corpus/run.py).
 //! - `footprint_links`: `normalize-kicad-footprint-links`, a benchmark
 //!   board's schematic links rewritten (benchmarks/real/*/prepare.sh).
+//! - `window_census`: `census-kicad-window`, a routed board's window as
+//!   the router's lattice for an offline joint solve
+//!   (experiments/window-census).
 //!
 //! They lower boards with the route and place crate's lowering and
 //! geometry (the placer's `lower_placement` and `prepare_board`, the
@@ -62,6 +65,7 @@ mod lowering;
 mod placement_ablation;
 mod shrink;
 mod trouble_probe;
+mod window_census;
 
 pub use coarse_probe::{KiCadCoarseProbeConfig, KiCadCoarseProbeReport, probe_coarse_placement};
 pub use footprint_links::{
@@ -78,3 +82,4 @@ pub use trouble_probe::{
     KiCadTroubleBackground, KiCadTroubleNet, KiCadTroubleProbeConfig, KiCadTroubleProbeReport,
     KiCadTroubleSource, probe_trouble_placement,
 };
+pub use window_census::{KiCadWindowCensusConfig, KiCadWindowItem, census_kicad_window};
