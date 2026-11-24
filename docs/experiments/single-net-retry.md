@@ -118,7 +118,8 @@ The skipped ones all ran a final ladder to the end of the layout's work
   other finding still counts, and another type at its cap still caps.
   Every repair that calls `report_capped` runs on such boards now.
 - **Route mode** (`board_router/route_open_repair.rs`): after the ladder,
-  the solid thermals, the necks and the kept-copper trial, where KiCad
+  the solid thermals, the necks and the kept-copper trial (and on the input
+  that trial keeps), where KiCad
   finds connections open, `repair_layout_opens` on the board kept: each
   open net alone against all the kept copper (`lower_for_local`: pours not
   connected, BGA fan-outs and vias in pads off, foreign exclusive planes
@@ -240,8 +241,18 @@ under 1 s of search work; DSP-ADAU1452 the resumed route closes before it.
 Of its 35 other rows, 16 found no local path, and 9 were refused as capped
 by a copper-dependent type at its cap beside the library findings (protoesp
 and motherboard: `solder_mask_bridge`; split42_right: `silk_over_copper`;
-jetson-nano: `text_height`; link: `text_thickness`; the last two now pass
-as copper-independent, commit 046e82c1, not yet measured on the tier).
+jetson-nano: `text_height`; link: `text_thickness`; the last two pass as
+copper-independent since 046e82c1).
+
+Again on 046e82c1: the same totals, 99 -> 79 and 5 strict, every board at
+the same count. jetson-nano's and link's repairs now search and find no
+local path. split72_right closed in the tier's standalone repair after
+the route instead of inside it: on this run KiCad's preflight of the kept
+copper finished, the protected-plane trial kept the input, and
+`route_kicad_board` returned the input before the repair (on the first run
+the preflight ran out of wall clock and the attempt's board was kept).
+Which way it goes depends on the wall clock, as before this package;
+since 19081669 the repair runs on the kept input too.
 
 ## Guards
 
@@ -256,7 +267,7 @@ as copper-independent, commit 046e82c1, not yet measured on the tier).
   `an_open_net_is_routed_alone_and_adopted_with_kicads_evidence` (route
   mode's repair with kicad-cli).
 - Queued behind the load gate when this was written (see the hand-off):
-  the endgame tier again on 046e82c1, the fingerprints, the expansion tier
+  the fingerprints, the expansion tier
   (6 x 1), the short tier (layouts change: the final ladder's reserve), and
   the repair alone on the 11-24 sweep's 17 near misses.
 
