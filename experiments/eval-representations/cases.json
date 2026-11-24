@@ -1,30 +1,170 @@
 {
- "note": "Ground truth: the window census (docs/experiments/window-census.md on branch fund-window) and, for class A, KiCad's DRC accepting the single-net path whyopen.py --verify wrote (build/scratch/fund-eval/all/causes.json). Classes: A a legal path for the net alone exists with all other copper kept; B walled by other nets' routed copper; C walled at a pad by fixed objects of the input or by the class's width; D a piece of the net's pour; E not local.",
+ "note": "Ground truth: the window census (docs/experiments/window-census.md on branch fund-window) and, for class A, KiCad's DRC accepting the single-net path whyopen.py --verify wrote (build/scratch/fund-eval/all/causes.json). Classes: A a legal path for the net alone exists with all other copper kept; B walled by other nets' routed copper; C walled at a pad by fixed objects of the input or by the class's width; D a piece of the net's pour; E not local. Three classes were revised after round 1 by direct checks (the field revised says how); census_class keeps the first key.",
  "nightly": "/home/flo/programming/pcb-maker/build/nightly",
  "cases": [
-  {"id": "a1", "tier": "2026-11-24/designer", "name": "ohdsp__DSP-ADAU1452__DSP-ADAU1452", "item": 0, "class": "A", "fault": "tool",
-   "blockers": [], "truth": "census sat-kicad with no other net moved; KiCad accepts a 1.4 mm track with one via that necks to 0.127 mm for 0.3 mm"},
-  {"id": "a2", "tier": "2026-11-18/sweep", "name": "sporkus__capybully_keyboard__capybully", "item": 0, "class": "A", "fault": "tool",
-   "blockers": [], "truth": "census sat-kicad: the two copper sides of a hot-swap socket's GND pad, the router counted them joined by the pour; KiCad accepts one via and 0.6 mm of track"},
-  {"id": "a3", "tier": "2026-11-18/sweep", "name": "CDFER__Business-Cards__WLED_Matrix", "item": 2, "class": "A", "fault": "tool",
-   "blockers": [], "truth": "the router reports LDO1.3 as a dead pad (escape not kept) and the census counts it walled-dead, but KiCad accepts a plain 2.8 mm F.Cu track of the class's width: a single-net miss of the lattice's escape model"},
-  {"id": "b1", "tier": "2026-11-24/designer", "name": "byrantech__laptop__keyboard", "item": 0, "class": "B", "fault": "congestion",
-   "blockers": ["Net-(U2-ANT)", "Net-(U2-DEC3)", "Net-(U2-DEC5)", "VDD_NRF", "GND"], "truth": "census UNSAT with a certificate, core {U2-ANT, U2-DEC3, U2-DEC5, VDD_NRF, VSS_PA}"},
-  {"id": "b2", "tier": "2026-11-18/sweep", "name": "antmicro__jetson-nano-baseboard__jetson-nano-baseboard", "item": 0, "class": "B", "fault": "congestion",
-   "blockers": ["/Display/TMDS_D0_C_P", "/Display/TMDS_D0_C_N"], "truth": "census walled-cu: walled by copper kept as routed, the TMDS D0 differential pair"},
-  {"id": "b3", "tier": "2026-11-18/sweep", "name": "thpoll83__PolyKybd__poly_corne_split42_left", "item": 0, "class": "B", "fault": "congestion",
-   "blockers": ["/K_A/CS", "/K_F/CS", "/K_G/CS", "/K_S/CS", "GND", "RESET", "Row3", "SR_CLOCK", "SR_LATCH", "VDD"], "truth": "census UNSAT within the detour budget, a core of 11 nets"},
-  {"id": "c1", "tier": "2026-11-18/sweep", "name": "ebastler__osprey__osprey_rev_a", "item": 1, "class": "C", "fault": "input",
-   "blockers": ["AE1"], "truth": "the antenna feed AE1.1 is walled by the antenna footprint's own copper graphic; every lattice answer crosses the graphic and KiCad reports shorting_items and clearance against it"},
-  {"id": "c2", "tier": "2026-11-24/designer", "name": "bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV", "item": 4, "class": "C", "fault": "input",
-   "blockers": ["IC2", "class width"], "truth": "dead pad IC2.11: the +12V class's 2.0 mm track is wider than the pad's surroundings admit (the router's dead_pads: no node within 2 mm admits the class's track)"},
-  {"id": "c3", "tier": "2026-11-18/sweep", "name": "ikajdan__katia__katia", "item": 2, "class": "C", "fault": "input",
-   "blockers": ["J8"], "truth": "dead pads J8.A6 and J8.B6 of the USB-C connector: no lattice node admits the class's track between the neighbouring pads"},
-  {"id": "c4", "tier": "2026-11-18/sweep", "name": "CDFER__Business-Cards__USB_Keypad", "item": 1, "class": "C", "fault": "input",
-   "blockers": ["C2"], "truth": "C2.1 sits in a pocket the lattice closes even on the board stripped of every track and via"},
-  {"id": "d1", "tier": "2026-11-24/designer", "name": "MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub", "item": 0, "class": "D", "fault": "pour",
-   "blockers": [], "truth": "census zone: the item is between pieces of the GND pour"},
-  {"id": "e1", "tier": "2026-11-24/designer", "name": "byrantech__laptop__keyboard", "item": 1, "class": "E", "fault": "congestion",
-   "blockers": [], "truth": "census long: RESET, ends 149 mm apart"}
+  {
+   "id": "a1",
+   "tier": "2026-11-24/designer",
+   "name": "ohdsp__DSP-ADAU1452__DSP-ADAU1452",
+   "item": 0,
+   "class": "A",
+   "fault": "tool",
+   "blockers": [],
+   "truth": "census sat-kicad with no other net moved; KiCad accepts a 1.4 mm track with one via that necks to 0.127 mm for 0.3 mm",
+   "census_class": "A"
+  },
+  {
+   "id": "a2",
+   "tier": "2026-11-18/sweep",
+   "name": "sporkus__capybully_keyboard__capybully",
+   "item": 0,
+   "class": "A",
+   "fault": "tool",
+   "blockers": [],
+   "truth": "census sat-kicad: the two copper sides of a hot-swap socket's GND pad, the router counted them joined by the pour; KiCad accepts one via and 0.6 mm of track",
+   "census_class": "A"
+  },
+  {
+   "id": "a3",
+   "tier": "2026-11-18/sweep",
+   "name": "CDFER__Business-Cards__WLED_Matrix",
+   "item": 2,
+   "class": "A",
+   "fault": "tool",
+   "blockers": [],
+   "truth": "the router reports LDO1.3 as a dead pad (escape not kept) and the census counts it walled-dead, but KiCad accepts a plain 2.8 mm F.Cu track of the class's width: a single-net miss of the lattice's escape model",
+   "census_class": "A"
+  },
+  {
+   "id": "b1",
+   "tier": "2026-11-24/designer",
+   "name": "byrantech__laptop__keyboard",
+   "item": 0,
+   "class": "B",
+   "fault": "congestion",
+   "blockers": [
+    "Net-(U2-ANT)",
+    "Net-(U2-DEC3)",
+    "Net-(U2-DEC5)",
+    "VDD_NRF",
+    "GND"
+   ],
+   "truth": "census UNSAT with a certificate, core {U2-ANT, U2-DEC3, U2-DEC5, VDD_NRF, VSS_PA}",
+   "census_class": "B"
+  },
+  {
+   "id": "b2",
+   "tier": "2026-11-18/sweep",
+   "name": "antmicro__jetson-nano-baseboard__jetson-nano-baseboard",
+   "item": 0,
+   "class": "B",
+   "fault": "congestion",
+   "blockers": [
+    "/Display/TMDS_D0_C_P",
+    "/Display/TMDS_D0_C_N"
+   ],
+   "truth": "census walled-cu: walled by copper kept as routed, the TMDS D0 differential pair",
+   "census_class": "B"
+  },
+  {
+   "id": "b3",
+   "tier": "2026-11-18/sweep",
+   "name": "thpoll83__PolyKybd__poly_corne_split42_left",
+   "item": 0,
+   "class": "B",
+   "fault": "congestion",
+   "blockers": [
+    "/K_A/CS",
+    "/K_F/CS",
+    "/K_G/CS",
+    "/K_S/CS",
+    "GND",
+    "RESET",
+    "Row3",
+    "SR_CLOCK",
+    "SR_LATCH",
+    "VDD"
+   ],
+   "truth": "census UNSAT within the detour budget, a core of 11 nets",
+   "census_class": "B"
+  },
+  {
+   "id": "c1",
+   "tier": "2026-11-18/sweep",
+   "name": "ebastler__osprey__osprey_rev_a",
+   "item": 1,
+   "class": "C",
+   "fault": "input",
+   "blockers": [
+    "AE1"
+   ],
+   "truth": "the antenna feed AE1.1 is walled by the antenna footprint's own copper graphic; every lattice answer crosses the graphic and KiCad reports shorting_items and clearance against it",
+   "census_class": "C"
+  },
+  {
+   "id": "c2",
+   "tier": "2026-11-24/designer",
+   "name": "bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV",
+   "item": 4,
+   "class": "A",
+   "fault": "tool",
+   "blockers": [
+    "IC2",
+    "class width"
+   ],
+   "truth": "dead pad IC2.11: the +12V class's 2.0 mm track is wider than the pad's surroundings admit (the router's dead_pads: no node within 2 mm admits the class's track)",
+   "census_class": "C",
+   "revised": "KiCad accepts a 0.4 mm F.Cu track of 2.0 mm from IC2.11 to the +12V pad C15.2 beside it (unconnected 6 to 5, no new error; build/scratch/fund-eval/try/sumec-neck): a single-net miss of the router's neck rule, which wants a full-width node within 2 mm. The census class (walled-dead) and the first dossier (class_width_does_not_fit) were both wrong; two subjects found it."
+  },
+  {
+   "id": "c3",
+   "tier": "2026-11-18/sweep",
+   "name": "ikajdan__katia__katia",
+   "item": 2,
+   "class": "C",
+   "fault": "input",
+   "blockers": [
+    "J8"
+   ],
+   "truth": "dead pads J8.A6 and J8.B6 of the USB-C connector: no lattice node admits the class's track between the neighbouring pads",
+   "census_class": "C"
+  },
+  {
+   "id": "c4",
+   "tier": "2026-11-18/sweep",
+   "name": "CDFER__Business-Cards__USB_Keypad",
+   "item": 1,
+   "class": "C",
+   "fault": "input",
+   "blockers": [
+    "C2"
+   ],
+   "truth": "C2.1 sits in a pocket the lattice closes even on the board stripped of every track and via",
+   "census_class": "C"
+  },
+  {
+   "id": "d1",
+   "tier": "2026-11-24/designer",
+   "name": "MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub",
+   "item": 0,
+   "class": "C",
+   "fault": "input",
+   "blockers": [],
+   "truth": "census zone: the item is between pieces of the GND pour",
+   "census_class": "D",
+   "revised": "the board file holds three separate board outlines with a GND zone each (pcbnew: GetBoardPolygonOutlines gives 3); no copper can join them. The census class (zone) only names the item's kind; three subjects found it."
+  },
+  {
+   "id": "e1",
+   "tier": "2026-11-24/designer",
+   "name": "byrantech__laptop__keyboard",
+   "item": 1,
+   "class": "C",
+   "fault": "input",
+   "blockers": [],
+   "truth": "census long: RESET, ends 149 mm apart",
+   "census_class": "E",
+   "revised": "route.log says \"3 pads no track leaves, no via allowed (AC9, AC11, AC13 (RESET))\": U2's inner-row pads are closed in by the footprint's own pads at the class's rules. The census class (long) only names the distance; E is accepted as half right."
+  }
  ]
 }

@@ -65,12 +65,13 @@ def nm(v):
 class Window:
     """The copper of a board inside a box, as rasters per copper layer."""
 
-    def __init__(self, board, box, px, net, without=()):
+    def __init__(self, board, box, px, net, without=(), side=None):
         self.board = board
         self.box = box  # x0, y0, x1, y1 in mm
         self.px = px
         self.net = net
         self.without = set(without)
+        self.side = side or set()  # ids of the items of one island of the net
         ds = board.GetDesignSettings()
         self.layers = list(ds.GetEnabledLayers().CuStack())
         self.names = [board.GetLayerName(l) for l in self.layers]
@@ -84,6 +85,7 @@ class Window:
         self.routed_id = np.zeros(shape, np.int32)  # tracks and vias of other nets
         self.own = np.zeros(shape, bool)  # the item's net: any copper
         self.own_zone = np.zeros(shape, bool)
+        self.own_side = np.zeros(shape, bool)  # the net's copper of the island in self.side
         self.other_zone = np.zeros(shape, bool)
         self.hole = np.zeros((self.h, self.w), bool)
         self.own_smd = np.zeros((self.h, self.w), bool)  # the net's pads without a hole
@@ -159,6 +161,7 @@ class Window:
             if not self._hits(fp):
                 continue
             ref = fp.GetReference()
+            tie = fp.IsNetTie() and any(p.GetNetname() == self.net for p in fp.Pads())
             for pad in fp.Pads():
                 if not self._hits(pad):
                     continue
@@ -176,6 +179,8 @@ class Window:
                     on.append(li)
                     if own:
                         self.own[li] |= m
+                        if pad.m_Uuid.AsString() in self.side:
+                            self.own_side[li] |= m
                         if not pad.HasHole():
                             self.own_smd |= m
                     else:
@@ -193,7 +198,10 @@ class Window:
                     if g.GetLayer() != layer or not self._hits(g):
                         continue
                     m = self._mask(self._shape_polys(g, layer))
-                    if m.any():
+                    if m.any() and tie:
+                        # A net tie's copper joins its pads: the net's own copper.
+                        self.own[li] |= m
+                    elif m.any():
                         oid = self._object(f"copper graphic of {ref}", "graphic")
                         self.fixed_id[li][m & (self.fixed_id[li] == 0)] = oid
             for z in fp.Zones():
@@ -220,6 +228,8 @@ class Window:
                 m = self._mask(self._shape_polys(t, layer))
                 if own:
                     self.own[li] |= m
+                    if t.m_Uuid.AsString() in self.side:
+                        self.own_side[li] |= m
                 elif net not in self.without:
                     self.routed_id[li][m] = self._net_object(net)
             if is_via and (own or net not in self.without):
@@ -517,6 +527,19 @@ def analyse(win, rules, ends, width):
     """One search at a width: the path A to B and each end's reach."""
     search = Search(win, rules, width)
     seeds = [seeds_for(win, e, e["pos"]) for e in ends]
+    if win.own_side.any() and ends[0] is not ends[1]:
+        # One island of the net against all the rest of its copper: the item
+        # KiCad names is one pair of many that would close it.
+        mine = win.own_side.copy()
+        for l in range(mine.shape[0]):
+            lab, _ = ndimage.label(win.own[l], structure=np.ones((3, 3)))
+            ids = np.unique(lab[mine[l]])
+            mine[l] = np.isin(lab, ids[ids > 0])
+        rest = win.own & ~mine
+        if rest.any():
+            k = win.side_end
+            seeds[k] = mine
+            seeds[1 - k] = rest
     res = {"width_mm": round(width, 3)}
     if not seeds[0].any() or not seeds[1].any():
         res["status"] = "no_copper_at_end"
@@ -699,6 +722,61 @@ def walls(a):
     return out
 
 
+_OUTLINES = {}
+
+
+def board_outlines(board):
+    key = id(board)
+    if key not in _OUTLINES:
+        o = pcbnew.SHAPE_POLY_SET()
+        board.GetBoardPolygonOutlines(o, True)
+        _OUTLINES[key] = o
+    return _OUTLINES[key]
+
+
+def outline_of(board, pos):
+    """The index of the board outline a point lies on (within 0.2 mm), if several exist."""
+    o = board_outlines(board)
+    if o.OutlineCount() < 2:
+        return 0
+    for i in range(o.OutlineCount()):
+        bb = o.Outline(i).BBox()
+        if mm(bb.GetLeft()) - 0.2 <= pos[0] <= mm(bb.GetRight()) + 0.2 and mm(bb.GetTop()) - 0.2 <= pos[1] <= mm(bb.GetBottom()) + 0.2:
+            return i
+    return None
+
+
+def island_of(board, drc_ends):
+    """The smaller of the two islands KiCad's item joins: the ids of its items.
+
+    Returns (ids, which end it holds, a note), or (None, 0, None) when an end
+    is a zone or cannot be resolved."""
+    conn = board.GetConnectivity()
+    clusters = []
+    for e in drc_ends:
+        if e["description"].startswith("Zone") or "uuid" not in e:
+            return None, 0, None
+        try:
+            item = board.ResolveItem(pcbnew.KIID(e["uuid"])).Cast()
+            ids = {item.m_Uuid.AsString()}
+            kinds = {item.GetClass()}
+            for other in conn.GetConnectedItems(item, 0):
+                ids.add(other.m_Uuid.AsString())
+                kinds.add(other.GetClass())
+        except Exception:
+            return None, 0, None
+        clusters.append((ids, kinds))
+    k = 0 if len(clusters[0][0]) <= len(clusters[1][0]) else 1
+    ids, kinds = clusters[k]
+    if "ZONE" in kinds:
+        return None, 0, None
+    note = "the island of end %s (%d item(s) of the net) and all the net's other copper in the window, not only the two points KiCad names" % (
+        "AB"[k],
+        len(ids),
+    )
+    return ids, k, note
+
+
 def item_window(ends, margin):
     xs = [e["pos"][0] for e in ends]
     ys = [e["pos"][1] for e in ends]
@@ -782,6 +860,8 @@ def do_item(board, drc_item, index, args, router):
         "rules": rules,
     }
     names = [board.GetLayerName(l) for l in board.GetDesignSettings().GetEnabledLayers().CuStack()]
+    side, side_end, island_note = island_of(board, drc_item["items"][:2])
+    outlines = [outline_of(board, e["pos"]) for e in ends]
     for e in ends:
         e["layer_idx"] = layers_in(e["description"], names)
     windows = []
@@ -793,7 +873,8 @@ def do_item(board, drc_item, index, args, router):
     results = []
     for wends, box in windows:
         px = pick_px(box, len(names))
-        win = Window(board, box, px, net, without=args.without_net or ())
+        win = Window(board, box, px, net, without=args.without_net or (), side=side if dist <= LONG_MM else None)
+        win.side_end = side_end
         a_class, search, seeds, path, dists = analyse(win, rules, wends, rules["track_width"])
         a_min = None
         if 0 < rules["neck_width"] < rules["track_width"] - 1e-6 and a_class.get("status") not in (
@@ -812,6 +893,23 @@ def do_item(board, drc_item, index, args, router):
         results.append((win, a_class, a_min, search, seeds, path, path_min, wends))
     win, a_class, a_min, search, seeds, path, path_min, _ = results[0]
     cause, why = classify(item, a_class, a_min)
+    if None not in outlines and outlines[0] != outlines[1]:
+        cause = "separate_board_outlines"
+        why = "the two ends lie on different board outlines (the file holds %d): no copper can join them" % board_outlines(board).OutlineCount()
+    elif dist > LONG_MM:
+        closed = []
+        for (w_, ac, am, s_, sd, _, _, we), n in zip(results, "AB"):
+            r = ac.get("reach", {}).get("A", {}).get("other_tracks_removed")
+            if r and not r["reaches_window_edge"]:
+                closed.append((n, r))
+        if closed:
+            n, r = closed[0]
+            cause = "end_walled_by_fixed_objects"
+            why = "the ends are %.1f mm apart, but end %s cannot leave its pad even with every other net's tracks and vias removed: closed in by %s" % (
+                dist,
+                n,
+                ", ".join(b["object"] for b in r["bounded_by"][:6]),
+            )
     dossier = {
         "item": index,
         "net": net,
@@ -832,6 +930,8 @@ def do_item(board, drc_item, index, args, router):
         "cause": cause,
         "because": why,
     }
+    if island_note:
+        dossier["searched_between"] = island_note
     if args.without_net:
         dossier["tracks_removed_for_this_query"] = list(args.without_net)
     if dist > LONG_MM:
@@ -902,7 +1002,10 @@ def do_item(board, drc_item, index, args, router):
         suffix = "" if len(results) == 1 else "-end" + "AB"[wi]
         marks = [(n, e["pos"]) for n, e in zip("AB", ends)] if len(results) == 1 else [("AB"[wi], we[0]["pos"])]
         if "png" in formats:
-            render(w_, s_, sd, marks, None if args.plain else p, stem + suffix + ".png", item, args.plain, ac)
+            shown = p
+            if pm and (ac.get("status") != "path_with_all_copper_kept"):
+                shown = pm  # the neck's path is the better lead when the class's width has none or crosses copper
+            render(w_, s_, sd, marks, None if args.plain else shown, stem + suffix + ".png", item, args.plain, am if shown is pm else ac)
         if "ascii" in formats:
             with open(stem + suffix + ".txt", "w") as f:
                 f.write(ascii_map(w_, sd, marks, item))
@@ -1071,17 +1174,38 @@ PALETTE = [
     (38, 198, 218),
     (236, 64, 122),
     (156, 204, 101),
+    (121, 134, 203),
+    (0, 150, 136),
+    (240, 98, 146),
+    (141, 110, 99),
 ]
 
 
-def top_nets(win, limit=8):
-    counts = {}
+def top_nets(win, limit=8, marks=()):
+    """Other nets' ids, those nearest the item's ends first."""
+    best = {}
     for l in range(len(win.layers)):
-        ids, cnt = np.unique(win.routed_id[l], return_counts=True)
-        for i, c in zip(ids, cnt):
-            if i:
-                counts[int(i)] = counts.get(int(i), 0) + int(c)
-    order = sorted(counts, key=lambda i: -counts[i])
+        ids = win.routed_id[l]
+        ys, xs = np.nonzero(ids)
+        if not len(ys):
+            continue
+        d = np.full(len(ys), 1e9)
+        for _, pos in marks:
+            mx, my = (pos[0] - win.box[0]) / win.px, (pos[1] - win.box[1]) / win.px
+            d = np.minimum(d, np.hypot(xs - mx, ys - my))
+        if not marks:
+            d = -np.ones(len(ys))
+        v = ids[ys, xs]
+        order = np.argsort(d)
+        for i in order:
+            k = int(v[i])
+            if k not in best or d[i] < best[k]:
+                best[k] = float(d[i])
+            if len(best) > 400:
+                break
+        for k in np.unique(v):
+            best.setdefault(int(k), 1e9)
+    order = sorted(best, key=lambda i: best[i])
     return order[:limit], order[limit:]
 
 
@@ -1110,7 +1234,7 @@ def render(win, search, seeds, marks, path, out, item, plain, a_class):
     f_big = ImageFont.truetype(FONT, 18)
     f = ImageFont.truetype(FONT, 14)
     f_small = ImageFont.truetype(FONT, 12)
-    top, rest = top_nets(win)
+    top, rest = top_nets(win, 12, marks)
     colour = {i: PALETTE[k % len(PALETTE)] for k, i in enumerate(top)}
     r = item["rules"]
     d.text(
@@ -1150,6 +1274,8 @@ def render(win, search, seeds, marks, path, out, item, plain, a_class):
         rgb[(fk == 3) & hatch] = (214, 60, 214)
         rgb[win.own_zone[l]] = (150, 135, 20)
         rgb[win.own[l] & ~win.own_zone[l]] = (255, 235, 59)
+        if not plain and win.own_side.any():
+            rgb[win.own[l] & ~win.own_zone[l] & ~seeds[win.side_end][l]] = (255, 152, 0)
         rgb[win.hole] = (0, 0, 0)
         panel = Image.fromarray(rgb).resize((pw, ph), Image.NEAREST)
         img.paste(panel, (ox, oy + 22))
@@ -1226,6 +1352,8 @@ def render(win, search, seeds, marks, path, out, item, plain, a_class):
         d.text((lx + 30, ly), text[:38], font=f, fill=(230, 230, 230))
         ly += 20
     row((255, 235, 59), f"{item['net']} (the open net)")
+    if not plain and win.own_side.any():
+        row((255, 152, 0), "same net, the other island(s)")
     if win.own_zone.any():
         row((150, 135, 20), f"{item['net']} pour (filled)")
     row((176, 136, 72), "pads of other nets")
@@ -1266,7 +1394,7 @@ def ascii_map(win, seeds, marks, item, cell=0.1):
     """The window as characters, one block per copper layer."""
     step = max(1, int(round(cell / win.px)))
     cell = step * win.px
-    top, rest = top_nets(win, 20)
+    top, rest = top_nets(win, 24, marks)
     letters = {i: chr(ord("a") + k) for k, i in enumerate(top)}
     r = item["rules"]
     lines = [
