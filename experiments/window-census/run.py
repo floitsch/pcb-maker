@@ -10,14 +10,25 @@ cut board and checked with drc-kicad-board.
 
     run.py items.json outdir [--jobs 6] [--limit 600] [--half 2 4]
 """
-import argparse, concurrent.futures as cf, json, math, os, re, shutil, subprocess, sys, time, uuid
+import argparse, concurrent.futures as cf, json, math, os, re, resource, shutil, subprocess, sys, time, uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import solve as S
 
-BIN = os.environ.get("PCB_MAKER", "/home/flo/programming/pcb-maker/build/scratch/fund-window/bin/pcb-maker-fw4")
+BIN = os.environ.get("PCB_MAKER", "/home/flo/programming/pcb-maker/build/scratch/fund-window/bin/pcb-maker-fw6")
 MAX_WINDOW = 20.0  # mm across: longer items are not local
+
+
+GB = 1 << 30
+
+
+def limit_memory(gigabytes):
+    """A preexec_fn: the child's address space capped (the machine is
+    shared; a census of a big window once took 17 GB)."""
+    def apply():
+        resource.setrlimit(resource.RLIMIT_AS, (gigabytes * GB, gigabytes * GB))
+    return apply
 
 
 def env():
@@ -146,15 +157,28 @@ def census_run(board, cfg, work, tag):
     out = os.path.join(work, f"{tag}.census.json")
     t = time.time()
     r = subprocess.run([BIN, "census-kicad-window", board, cfg_path, clipped, out],
-                       capture_output=True, text=True, env=env(), timeout=3600)
+                       capture_output=True, text=True, env=env(), timeout=3600,
+                       preexec_fn=limit_memory(8))
     if r.returncode != 0 or not os.path.exists(out):
         return None, (r.stderr or r.stdout)[-600:], time.time() - t
     return json.load(open(out)), None, time.time() - t
 
 
 def run_job(job):
-    """One item at one half-size on `job['board']`."""
+    """One item at one half-size on `job['board']`; the census files go."""
+    try:
+        return run_job_inner(job)
+    finally:
+        work = job["work"]
+        if os.path.isdir(work):
+            for f in os.listdir(work):
+                if f.endswith(".census.json") or f.endswith(".cnf"):
+                    os.remove(os.path.join(work, f))
+
+
+def run_job_inner(job):
     wait_for_room()
+    resource.setrlimit(resource.RLIMIT_AS, (10 * GB, 10 * GB))
     work = job["work"]
     os.makedirs(work, exist_ok=True)
     res = {k: job[k] for k in ("tier", "name", "item", "half", "net", "length")}
@@ -169,7 +193,12 @@ def run_job(job):
         res["status"] = "long"
         return res
     text = open(board).read()
-    pairs = sorted(n for n in pair_nets(text) if n != job["net"])
+    # The pairs' copper stays as routed (the census does not model pairs),
+    # but not the target's own partner: a pair's gap is narrower than the
+    # lattice's clearance, so the partner kept would wall the target in.
+    m = PAIR.match(job["net"])
+    partner = m and m.group(1) + m.group(2) + {"+": "-", "-": "+", "P": "N", "N": "P"}[m.group(3)]
+    pairs = sorted(n for n in pair_nets(text) if n not in (job["net"], partner))
     cfg = {"window": window, "items": [{"net": job["net"], "ends": ends}],
            "pitch": job["pitch"], "pin_lines": job["pin_lines"],
            "slack_steps": job["slack"], "slack_ratio": 0.5,
@@ -181,7 +210,7 @@ def run_job(job):
         census, err, sec = census_run(board, cfg, work, "census")
         res["census_seconds"] = round(sec, 1)
         if census is None:
-            res["status"] = "census_error"
+            res["status"] = "too_big" if err and "window too big" in err else "census_error"
             res["error"] = err
             return res
         bad = [n["raw"] for n in census["nets"] if n["separated"] and not n["target"]]
@@ -201,6 +230,8 @@ def run_job(job):
         res["status"] = "no_target"
         return res
     res["target_sides"] = targets[0]["target_sides"]
+    res["target_terminals"] = [(t[1], len(t[2])) for t in targets[0]["terminals"]]
+    res["dead_terminals"] = [t[1] for t in targets[0]["terminals"] if not t[2]]
     if any(n["separated"] for n in targets):
         res["status"] = "target_walled"
         # Walled by copper at all, or by pads, graphics and rule areas?
@@ -235,7 +266,7 @@ def run_job(job):
         return best
 
     ranked = sorted(others, key=distance)
-    stages = sorted({k for k in (0, 2, 5) if k < len(ranked)})
+    stages = sorted({k for k in (0, 2, 5, 10) if k < len(ranked)})
     res["stages"] = []
     sol = None
     for k in stages:
@@ -269,7 +300,7 @@ def run_job(job):
         cfg4.update({"slack_steps": 1e6, "other_slack_steps": 1e6})
         c4, err4, _ = census_run(board, cfg4, work, "census-full")
         if c4 is not None and not any(n["separated"] for n in c4["nets"]):
-            full = S.solve(c4, work, job["limit"], job["core_limit"])
+            full = S.solve(c4, work, job["limit"], job["core_limit"], cores=False)
             res["full"] = {k: full[k] for k in ("status", "seconds", "variables", "clauses", "core",
                                                 "core_unknown", "without_targets") if k in full}
             if full["status"] == "sat":
@@ -277,6 +308,8 @@ def run_job(job):
                 res["moved"] = len(ranked)
         elif c4 is not None:
             res["full"] = {"status": "separated"}
+        else:
+            res["full"] = {"status": "too_big" if err4 and "window too big" in err4 else "census_error"}
     if sol["status"] == "sat":
         sol_dir = os.path.join(work, "solution")
         project_copy(os.path.dirname(board), sol_dir)
@@ -320,8 +353,19 @@ def main():
     p.add_argument("--slack", type=float, default=20)
     p.add_argument("--other-slack", type=float, default=10)
     p.add_argument("--only", default=None, help="regex on board names")
+    p.add_argument("--unsolved-in", default=None,
+                   help="a results.jsonl: only the items it has no SAT answer for")
     a = p.parse_args()
     boards = json.load(open(a.items))
+    solved = set()
+    if a.unsolved_in:
+        for line in open(a.unsolved_in):
+            r = json.loads(line)
+            # A bigger window does not make a long or too big item smaller,
+            # nor put an off-board pad on the lattice.
+            if r.get("status") in ("sat", "zone_item", "mixed_nets", "long", "too_big", "census_error") \
+                    or (r.get("full") or {}).get("status") == "sat":
+                solved.add((r["tier"], r["name"], r["item"]))
     jobs = []
     for b in boards:
         if a.only and not re.search(a.only, b["name"]):
@@ -333,6 +377,8 @@ def main():
             net = nets.pop() if len(nets) == 1 else None
             pts = [[e[0], e[1]] for e in ends]
             length = math.hypot(pts[0][0] - pts[-1][0], pts[0][1] - pts[-1][1])
+            if (b["tier"], b["name"], i) in solved:
+                continue
             for h in a.half:
                 tier = b["tier"].replace("/", "-")
                 jobs.append({"tier": b["tier"], "name": b["name"], "board": b["board"], "item": i,

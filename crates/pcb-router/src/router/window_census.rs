@@ -44,6 +44,9 @@ pub struct CensusLimits {
     pub slack_steps: f64,
     pub slack_ratio: f64,
     pub via_steps: f64,
+    /// A layer step is allowed when the search may take it from either end
+    /// (else only when it may from both, the default).
+    pub either_end: bool,
 }
 
 pub struct CensusEscape {
@@ -169,6 +172,7 @@ impl Router {
         &self,
         region: crate::geometry::Aabb,
         requests: &[CensusRequest],
+        max_nodes: usize,
     ) -> Result<CensusModel, String> {
         if let Some(spans) = &self.spans
             && requests
@@ -191,6 +195,24 @@ impl Router {
             .iter()
             .map(|request| self.census_net(&shape, request))
             .collect();
+        // Each node an element costs a footprint of a few hundred keys: a
+        // window past `max_nodes` (the connections' nodes, all nets) is
+        // too big for the offline solve.
+        let used: usize = nets
+            .iter()
+            .map(|census| {
+                let mut used = vec![false; census.nodes.len()];
+                for connection in &census.connections {
+                    for &node in &connection.nodes {
+                        used[node] = true;
+                    }
+                }
+                used.iter().filter(|used| **used).count()
+            })
+            .sum();
+        if used > max_nodes {
+            return Err(format!("window too big: {used} nodes in connections"));
+        }
         let keys = self.census_elements(&mut nets);
         Ok(CensusModel {
             range,
@@ -251,7 +273,8 @@ impl Router {
                     let (block, owner) = statics.edges_at(layer, cell);
                     block & (1 << way) != 0 && owner != own16
                 };
-                if blocked(index, direction) || blocked(other, direction + 4) {
+                let (from, to) = (blocked(index, direction), blocked(other, direction + 4));
+                if (from && to) || (!limits.either_end && (from || to)) {
                     continue;
                 }
                 let diagonal = dx != 0 && dy != 0;

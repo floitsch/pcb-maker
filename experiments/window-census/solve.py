@@ -12,8 +12,11 @@ import model as M
 
 def run_cadical(cnf_path, limit):
     start = time.time()
+    def cap():
+        import resource
+        resource.setrlimit(resource.RLIMIT_AS, (8 << 30, 8 << 30))
     r = subprocess.run(["cadical", "-q", "--phase=0", "-t", str(int(limit)), cnf_path],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, preexec_fn=cap)
     seconds = time.time() - start
     status = "timeout"
     values = set()
@@ -33,6 +36,14 @@ def solve(census, work, limit, core_limit, cores=True):
               "targets": [n["name"] for n in nets if n["target"]]}
     separated = [(n["name"], n["target"]) for n in nets if n["separated"]]
     result["separated"] = separated
+    # Too big for this census (the worker's memory): a few hundred bytes a
+    # clause in Python.
+    stamps = sum(len(e[2]) + len(e[3]) for n in nets for e in n["elements"])
+    nodes = sum(len(c[3]) for n in nets for c in n["connections"])
+    result["estimated_clauses"] = stamps + 25 * nodes
+    if result["estimated_clauses"] > 12_000_000:
+        result["status"] = "too_big"
+        return result
     t = time.time()
     cnf, info = M.build(census)
     result["build_seconds"] = round(time.time() - t, 1)

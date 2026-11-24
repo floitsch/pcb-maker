@@ -48,6 +48,13 @@ pub struct KiCadWindowCensusConfig {
     /// graphics and rule areas alone).
     #[serde(default)]
     pub strip_all: bool,
+    /// The most nodes the connections may span together (else the window
+    /// is too big for the offline solve).
+    #[serde(default = "default_max_nodes")]
+    pub max_nodes: usize,
+    /// A layer step allowed when either end's search may take it.
+    #[serde(default)]
+    pub either_end: bool,
     /// The lattice the routed board's attempt used (board-router.json).
     pub pitch: Option<f64>,
     pub pin_lines: Option<bool>,
@@ -64,6 +71,9 @@ fn default_ratio() -> f64 {
 }
 fn default_via_steps() -> f64 {
     3.0
+}
+fn default_max_nodes() -> usize {
+    150_000
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -451,12 +461,14 @@ pub fn census_kicad_window(
                 slack_steps: config.slack_steps,
                 slack_ratio: config.slack_ratio,
                 via_steps: config.via_steps,
+                either_end: config.either_end,
             }
         } else {
             core::router::CensusLimits {
                 slack_steps: config.other_slack_steps.unwrap_or(config.slack_steps),
                 slack_ratio: config.other_slack_ratio.unwrap_or(config.slack_ratio),
                 via_steps: config.via_steps,
+                either_end: config.either_end,
             }
         };
         requests.push(core::router::CensusRequest {
@@ -466,7 +478,7 @@ pub fn census_kicad_window(
         });
         extra.push((name.to_string(), raw.clone(), target, sides));
     }
-    let model = router.window_census(region, &requests)?;
+    let model = router.window_census(region, &requests, config.max_nodes)?;
     let layers = board_router::LayerTable::from_pcb(&pcb)?.names;
     // The cut copper snapped to the lattice: each net's nodes and vias
     // under it (phases for the solver; not a constraint).
