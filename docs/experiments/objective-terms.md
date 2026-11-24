@@ -9,8 +9,8 @@ says the opposite ("The objective is not what is wrong", from 2026-11-04).
 This note reconciles the two, splits the objective by term, looks for a
 routing quantity the objective lacks, and proposes changes.
 
-Stage 0 (rescoring stored placements) plus 30 pinned first routes of the
-placements it scores. Scripts in `experiments/objective-terms/`:
+Stage 0 (rescoring stored placements) plus 36 pinned first routes: the
+placements it scores, and the designer's active parts with our passives. Scripts in `experiments/objective-terms/`:
 `terms.py` (the trace's objective by term), `measures.py` (routing proxies
 from the pads of a placed board), `labelled.py` (place checks and pinned
 first routes), `report.py` (these tables). Data under
@@ -56,28 +56,30 @@ with its first route's open terminals), as the cut census extracted them.
   the active parts.** Pairs of pads of different parts and nets closer
   than one track's quantum (`w + 2 s`) with at least one active part:
   the designer 32, 1 and 14 on Glasgow, the 4in1 and the 4in1-mini; our
-  seeds 134 to 180, 212 to 275 and 141 to 183, every seed. Between two
+  seeds 134 to 180, 186 to 247 and 141 to 183, every seed. Between two
   passives the designer packs as tight as we do (the 4in1: 160 against
-  95 to 123). On the boards without a placement gap the designer has as
+  119 to 152). On the boards without a placement gap the designer has as
   many such pairs as ours or more (protoesp 52 against 1, the 0xCB panel
   24 against 16), or both have almost none (MegaDrive, SNSP-CPU-01);
   DSP-ADAU1452 and the split72 keyboard are exceptions (the designer far
   fewer, yet no or a small gap). The objective has no term for it, and
   our stages close it: the designer's arrangement seated and refined by
-  our pipeline has as many as ours (152, 204, 146).
-- **The routes do not show that lost pin room is the cause.** Pinned first
+  our pipeline has as many as ours (152, 183, 146).
+- **Lost pin room is not the cause of most of the gap.** Pinned first
   routes (open terminals): the designer's own placement 19, 33 and 105 on
   Glasgow, the 4in1 and the 4in1-mini; our seeds 88 to 137, 93 to 187,
-  126 to 166. The designer's arrangement seated and refined by today's
-  pipeline routes like ours or worse (114, 175, 117), with the pin room
-  closed (152, 204, 146 pairs). The plain pipeline keeps half the 4in1's
-  room (107) and most of its advantage (56), closes Glasgow's (140) and
-  loses most of it (93). That is consistent with the room mattering, but
-  in every placement that lost the room the active parts also moved (a
-  mean 3.4 to 5.4 mm on Glasgow, 3.6 on the 4in1 through the skeleton,
-  0.5 through the plain pipeline): room and arrangement fall together,
-  and these routes cannot tell them apart. Within our seeds the pin room
-  does not rank the first route (Spearman -0.14, +0.43, +0.17).
+  126 to 166. Seated and refined by today's pipeline the designer's
+  arrangement routes like ours or worse (114, 175, 117) with the pin room
+  closed (152, 183, 146 pairs), but its active parts move too (a mean 1.4
+  to 5.4 mm). The direct test pins the designer's active parts exactly
+  and lets our passives fill in: our passives close the room (Glasgow 145
+  and 107 pairs, at our seeds' level) and the route still keeps 0.54 and
+  0.65 of the designer's advantage there (57 and 48 open); over the three
+  boards the median kept is 0.49 (2026-11-04: 0.92 with an older binary).
+  The active arrangement carries about half the advantage by itself; the
+  room may carry part of the rest (on each board the seed with less room
+  closed routed better, 3 of 3). Within our seeds the room does not rank
+  the route (Spearman -0.14, +0.43, +0.17).
 - **Candidates** (stage 0): (1) a pin-room term, about 5 to 15 mm of wire
   per pair of foreign pads within one track quantum of an active part's
   pad, in the legaliser, the refinement and the skeleton's legalisation;
@@ -88,21 +90,24 @@ with its first route's open terminals), as the cut census extracted them.
   Glasgow. Neither survives the second stage-0 test: added to the
   objective, the pin-room term ranks our October seeds by their first route
   worse than the objective alone (mean Spearman +0.28 to +0.25 at 3 mm,
-  +0.18 at 5 mm; the 4in1-mini turns from +0.72 to -0.25).
-- **Recommendation: build neither yet; no stage 1 for C2.** C2 alone fails
-  stage 0 (it moves no gap board's designer above our seeds; on the plain
+  +0.20 at 5 mm; the 4in1-mini turns from +0.72 to -0.25).
+- **Recommendation: drop C1, no stage 1 for C2.** C2 alone fails stage
+  0 (it moves no gap board's designer above our seeds; on the plain
   pipeline the 4in1's designer carries more relations than ours, 7544
   against 6582), and its only role here was to let C1 work on Glasgow. C1
-  waits for one direct test, queued: the designer's active parts pinned,
-  our passives placed around them (partialcopy.py's `nonpassive`, which
-  recovered 0.92 of the designer's first-route advantage on 2026-11-04).
-  If our passives close the pin room there (pairs at our seeds' level)
-  and the route still recovers most of the advantage, the room is not the
-  cause and C1 is dropped: the gap is the active parts' arrangement, as
-  placer.md says, and our objective does not prefer it. If the route
-  recovers the advantage only where the room stays open, build C1 behind
-  a switch (without C2) and take it to stage 1. Either way correct
-  placer.md (wording below).
+  fails the seed test and, by the direct test, would aim at the smaller
+  part of the gap. Next, at stage 0, the arrangement: with our passives
+  around the designer's active parts, the pad proxies give fewer crossings
+  than every seed on Glasgow and the 4in1 at wire inside our range, so the
+  placer's own objective may prefer the designer's active arrangement once
+  the passives are ours. Three place checks with the trace and the
+  designer's active parts pinned (the `nonpassive` constraints of
+  `recon/firstroute/units/`) would say so with the real objective; if it
+  does, the 2026-11-04 line "accepts, the search does not reach it" holds
+  for the active arrangement, and the work is in the search and in what
+  our legalisation and refinement do to an arrangement (they cost the
+  designer's 19 to 93 and 114 on Glasgow), not in a new term. Correct
+  placer.md either way (wording below).
 
 ## 1. Reconciliation
 
@@ -261,9 +266,9 @@ Today's placements:
 | Glasgow | ours | 198 [183, 221] | 147 [134, 180] | 321 [291, 334] | 452 [413, 561] | 727 [638, 853] | 1752 / 1300 / 658 |
 | Glasgow | designer, own poses | 79 (0/6) | 32 (0/6) | 175 (0/6) | 288 (0/6) | 814 (5/6) | 1935 / 1063 / 643 |
 | Glasgow | designer, legalised and refined | 239 (6/6) | 152 (5/6) | 322 (3/6) | 388 (0/6) | 725 (3/6) | 1896 / 1124 / 656 |
-| 4in1 | ours | 336 [312, 398] | 235 [212, 275] | 356 [328, 406] | 31 [26, 48] | 136 [84, 273] | 446 / 216 / 546 |
+| 4in1 | ours | 338 [314, 399] | 210 [186, 247] | 328 [299, 381] | 31 [26, 48] | 136 [84, 273] | 446 / 216 / 546 |
 | 4in1 | designer, own poses | 161 (0/6) | 1 (0/6) | 134 (0/6) | 22 (0/6) | 242 (5/6) | 410 / 231 / 547 |
-| 4in1 | designer, legalised and refined | 312 (0/6) | 204 (0/6) | 313 (0/6) | 35 (5/6) | 192 (4/6) | 527 / 247 / 550 |
+| 4in1 | designer, legalised and refined | 315 (1/6) | 183 (0/6) | 290 (0/6) | 35 (5/6) | 192 (4/6) | 527 / 247 / 550 |
 | 4in1-mini | ours | 268 [235, 285] | 152 [141, 183] | 272 [248, 307] | 58 [45, 66] | 114 [79, 138] | 284 / 211 / 394 |
 | 4in1-mini | designer, own poses | 24 (0/6) | 14 (0/6) | 98 (0/6) | 36 (0/6) | 266 (6/6) | 465 / 151 / 396 |
 | 4in1-mini | designer, legalised and refined | 254 (1/6) | 146 (2/6) | 279 (4/6) | 51 (2/6) | 114 (3/6) | 379 / 178 / 367 |
@@ -271,33 +276,31 @@ Today's placements:
 | video | designer, own poses | 1 (0/8) | 1 (0/8) | 17 (0/8) | 1705 (3/8) | 8763 (0/8) | 6531 / 14688 / 9693 |
 | video | designer, legalised and refined | 2 (0/8) | 2 (0/8) | 31 (0/8) | 1795 (3/8) | 8219 (0/8) | 6638 / 14527 / 9881 |
 
-By the class of the two parts (Glasgow / the 4in1 / the 4in1-mini; A an
-active part of fewer than ten pads, M one of ten or more, P a free
-passive; the designer's own poses, the designer legalised and refined, our
-seeds' range):
+By the class of the two parts (A a part that is not a free passive, P a
+free passive; the designer's own poses / the designer legalised and
+refined / our seeds' range):
 
 | pair | Glasgow | 4in1 | 4in1-mini |
 | --- | --- | --- | --- |
-| active with passive (AP + MP) | 12 / 84 / 95 to 123 | 1 / 125 / 147 to 221 | 14 / 94 / 88 to 122 |
-| active with active (AA + AM + MM) | 20 / 99 / 17 to 57 | 0 / 70 / 45 to 65 | 0 / 27 / 47 to 62 |
-| passive with passive (PP) | 47 / 47 / 40 to 68 | 160 / 160 / 95 to 123 | 10 / 10 / 92 to 130 |
+| active with passive (AP) | 12 / 107 / 95 to 123 | 1 / 179 / 168 to 238 | 14 / 93 / 88 to 122 |
+| active with active (AA) | 20 / 45 / 17 to 57 | 0 / 4 / 8 to 18 | 0 / 53 / 47 to 62 |
+| passive with passive (PP) | 47 / 87 / 40 to 68 | 160 / 132 / 119 to 152 | 10 / 108 / 92 to 130 |
 
 - The designer keeps passives a track away from the pads of its active
-  parts (1 to 14 such pairs against our 88 to 221), keeps its active
-  parts apart on the OpenESC boards (none against 45 to 65; on Glasgow 20,
-  inside our 17 to 57), and packs passives against passives as we do or
-  tighter. That is a rule about
-  escapes, not about density: the designer's pad density, spread and
-  RUDY at the nominal capacity are not consistently lower.
+  parts (1 to 14 such pairs against our 88 to 238), keeps its active
+  parts apart on the OpenESC boards (none against 8 to 18 and 47 to 62;
+  on Glasgow 20, inside our 17 to 57), and packs passives against
+  passives as we do or tighter (except on the 4in1-mini). That is a rule
+  about escapes, not about density: the designer's pad density, spread
+  and RUDY at the nominal capacity are not consistently lower.
 - RUDY overflow at half capacity also ranks the designer first on all
   three gap boards (0 of 6 seeds below), but not at the nominal capacity
   (the 4in1-mini 1.45 of ours) or a quarter (video): the result depends
   on a capacity we cannot calibrate.
 - **Our pipeline closes the room.** The designer's arrangement seated and
   refined by our stages has as many closed pairs at active parts as our
-  seeds; the passive pairs keep the designer's count exactly (47, 160,
-  10): what moves is the active parts (the skeleton's legalisation against
-  grown bodies) and the passives next to them. Per stage of the
+  seeds: the active parts move (the skeleton's legalisation against grown
+  bodies) and the passives with them. Per stage of the
   designer's start (Glasgow, the 4in1, the 4in1-mini): the passives'
   legaliser 182, 281, 176 closed pairs, the refinement 239, 312, 254,
   while the refinement takes the crossings from 1013 to 725, 643 to 192,
@@ -312,14 +315,14 @@ seeds' range):
   DSP-ADAU1452 (6 against 44 to 82), which our layouts route as well as
   the designer's placement. The October seeds show the gap boards'
   separation as today's do (Glasgow 32 against 194 to 259, the 4in1 1
-  against 200 to 271, the 4in1-mini 14 against 152 to 188; SmartSpin2k 162
-  against 600 to 1115).
+  against 178 to 232, the 4in1-mini 14 against 152 to 188; SmartSpin2k 45
+  against 351 to 819).
 
 **As a seed ranker** (Spearman with the first route's open terminals over
 the nine October seeds of each board, mean over the boards where it
 varies): the objective +0.28, crossings +0.27, wire +0.21, RUDY overflow
--0.03 to +0.13, crossings weighted by demand +0.13, `closed` +0.13,
-`narrow` +0.13, two-pin wire +0.19. Nothing pad-based ranks our seeds
+-0.03 to +0.13, crossings weighted by demand +0.13, `closed` +0.08,
+`closed_active` +0.01, `narrow` +0.09, two-pin wire +0.19. Nothing pad-based ranks our seeds
 better than the objective; the pin room, which separates the designer
 from every seed by a factor of 4 to over 200, does not order our seeds
 (their counts lie within a third of each other).
@@ -334,16 +337,16 @@ a fifth, or none):
 | board | relations x 1 | x 0.2 | x 0 |
 | --- | --- | --- | --- |
 | Glasgow, `closed_active` | 39.1 | 14.9 | 9.6 |
-| 4in1, `closed_active` | 11.0 | 3.9 | 2.1 |
+| 4in1, `closed_active` | 12.2 | 4.3 | 2.4 |
 | 4in1-mini, `closed_active` | 5.8 | 5.8 | 5.8 |
 | video, `closed_active` | 2459 | 102 | 0 |
 | Glasgow, `narrow_active` | 30.1 | 11.2 | 7.2 |
 
 Added to the October seeds' objective, the mean Spearman with their first
 route at `w` = 0, 2, 3, 5, 10, 20 mm: `closed_active` +0.28, +0.25, +0.25,
-+0.18, +0.15, +0.15; `narrow_active` +0.28, +0.22, +0.18, +0.18, +0.17,
++0.20, +0.17, +0.17; `narrow_active` +0.28, +0.22, +0.18, +0.17, +0.17,
 +0.19; the loss is the 4in1-mini (+0.72 to -0.25 at 5 mm) and the 4in1
-(+0.45 to +0.12 at 10 mm).
+(+0.45 to +0.27 at 10 mm).
 
 **Candidate 1: a pin-room term.** For every pair of pads of two parts, on
 a shared outer layer, of different nets, at least one of the parts not a
@@ -400,10 +403,10 @@ seed of the two place checks.
 | Glasgow | ours, plain | 103 | 210 | 548 | 2693 | |
 | Glasgow | ours, six seeds | 88, 90, 100, 103, 127, 137 | 134 to 180 | 638 to 853 | 2778 to 2933 | |
 | 4in1 | designer, own poses | 33 | 1 | 242 | 742 | 0 |
-| 4in1 | designer, plain pipeline | 56 | 107 | 64 | 630 | 0.5 |
-| 4in1 | designer, today's pipeline | 175 | 204 | 192 | 873 | 3.6 |
-| 4in1 | ours, plain | 116 | 165 | 121 | 728 | |
-| 4in1 | ours, six seeds | 93, 105, 122, 164, 172, 187 | 212 to 275 | 84 to 273 | 638 to 961 | |
+| 4in1 | designer, plain pipeline | 56 | 86 | 64 | 630 | 0.5 |
+| 4in1 | designer, today's pipeline | 175 | 183 | 192 | 873 | 3.6 |
+| 4in1 | ours, plain | 116 | 142 | 121 | 728 | |
+| 4in1 | ours, six seeds | 93, 105, 122, 164, 172, 187 | 186 to 247 | 84 to 273 | 638 to 961 | |
 | 4in1-mini | designer, own poses | 105 | 14 | 266 | 718 | 0 |
 | 4in1-mini | designer, today's pipeline | 117 | 146 | 114 | 645 | 1.4 |
 | 4in1-mini | designer, plain pipeline | 147 | 182 | 148 | 648 | 2.2 |
@@ -429,8 +432,8 @@ What the routes say:
   the 2026-11-04 study's. Our legality and refinement, not the search,
   are what the designer's arrangement does not survive.
 - **The pin room goes with it**, to our seeds' level in every legalised
-  variant but the 4in1's plain one, which keeps half the room (107
-  against our 212 to 275) and most of the advantage. Across all ten
+  variant but the 4in1's plain one, which keeps more than half the room (86
+  against our 186 to 247) and most of the advantage. Across all ten
   placements the room ranks the route at +0.32 to +0.61; the objective's
   wire and crossings at -0.12 to +0.68, because they rank the designer's
   own placement among the worst.
@@ -448,28 +451,72 @@ What the routes say:
 So: lost pin room is consistent with the open connections, not shown to
 cause them.
 
-### Queued: the direct test
+### The direct test: the designer's active parts pinned, our passives
 
-`build/scratch/fund-objective/recon/nonpassive.sh` (PID 1895169, started
-2026-11-24 20:43; status `recon/nonpassive.status`, log
-`recon/nonpassive.log`; gated on load at most 20 and 16 GB free, never
-02:00 to 07:00, three two-thread jobs): six first routes, the designer's
-active parts pinned (partialcopy.py's `nonpassive` rule) and the passives
-placed by our layout, on Glasgow, the 4in1 and the 4in1-mini at layout
-seeds 1 and 101 (`labelled.py route ... BOARD:nonpassive@1`). The active
-parts do not move, so the arrangement is the designer's; whether the room
-stays open is up to our passives. Read with `labelled.py results` (units
-`<board>-nonpassive-s1`, `-s101`), and measure the pin room of each
-layout's placed board
-(`recon/firstroute/runs/<unit>/<board>/layout/placed/*.kicad_pcb`) with
-`measures.py`'s `measure`.
+Six first routes (`nonpassive.sh`, finished 2026-11-24 21:11): every part
+partialcopy.py's `nonpassive` rule counts as active pinned at the
+designer's pose (checked: they did not move), the passives placed by our
+layout at layout seeds 1 and 101, `stop_after_first_route`. The
+arrangement of the active parts is the designer's; whether the room at
+their pins stays open is up to our passives. Pin room and pad proxies
+measured on each layout's placed board (`measures.py`; the parts the
+rule leaves free, such as resistor arrays and some connectors, count as
+active in `closed_active` as everywhere in this note). Recovery: the
+share of the designer's first-route advantage over our seeds' median
+that the placement keeps, (median - open) / (median - designer).
 
-- Room closed (pairs near our seeds' 134 to 275) and the route near the
-  designer's (2026-11-04: 0.92 of the advantage recovered with these
-  parts pinned): the room is not the cause; drop C1.
-- Room open and the route near the designer's, or room closed and the
-  route near ours: the room is implicated; build C1 behind a switch and
-  take it to stage 1.
+| board | layout seed | first-route open | recovery | closed_active | crossings | wire |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Glasgow | 1 | 57 | 0.54 | 145 | 589 | 2843 |
+| Glasgow | 101 | 48 | 0.65 | 107 | 621 | 2866 |
+| 4in1 | 1 | 98 | 0.41 | 107 | 75 | 708 |
+| 4in1 | 101 | 66 | 0.70 | 97 | 83 | 711 |
+| 4in1-mini | 1 | 137 | 0.27 | 112 | 130 | 670 |
+| 4in1-mini | 101 | 130 | 0.43 | 98 | 121 | 665 |
+
+For comparison: the designer's own placement 19 / 33 / 105 open with 32 /
+1 / 14 pairs; our seeds 88 to 137 / 93 to 187 / 126 to 166 open with 134
+to 180 / 186 to 247 / 141 to 183 pairs, crossings 638 to 853 / 84 to 273 /
+79 to 138, wire 2778 to 2933 / 638 to 961 / 534 to 646.
+
+Applying the rule of the previous version of this note:
+
+- **Glasgow, the clean case: room closed, route nearer the designer's.**
+  Our passives close the room around the designer's exact active parts to
+  our seeds' level (145 and 107 against 134 to 180; the designer 32), and
+  the route keeps 0.54 and 0.65 of the advantage (57 and 48 open, against
+  19 and our median 101.5). By the rule: the room is not the cause; drop
+  C1.
+- **The 4in1: room half closed, route in between** (97 and 107 pairs
+  against 186 to 247 and the designer's 1; recovery 0.41 and 0.70). Not
+  decisive either way.
+- **The 4in1-mini: room mostly closed, route near ours** (98 and 112
+  against 141 to 183; recovery 0.27 and 0.43), but its first-route gap is
+  44 terminals, too small to carry a verdict.
+- The median recovery is 0.49, against 0.92 measured on 2026-11-04 with
+  x1904 (whose seeds left 174 and 149 open on the 4in1 and Glasgow; ours
+  today median 143 and 101.5). With our passives the designer's active
+  arrangement keeps about half its advantage, not nearly all.
+- Of each board's two seeds, the one with less room closed routed better
+  (3 of 3 boards; by chance one time in eight). The room may account for
+  part of the half that is lost, besides the passives' own arrangement;
+  three pairs cannot separate the two.
+- With our passives around them the designer's active parts give fewer
+  pad crossings than every one of our seeds on Glasgow (589 and 621
+  against 638 to 853) and the 4in1 (75 and 83 against 84 to 273), at wire
+  inside our range; on the 4in1-mini more wire and crossings than ours.
+  The objective's dislike of the designer's own placement on Glasgow and
+  the 4in1 is then largely about the designer's passives (and relations),
+  not its active arrangement. These are pad proxies, not the placer's
+  objective.
+
+**Verdict on C1: drop it as the next bet.** Lost pin room is not the
+cause of most of the gap: the designer's active arrangement with the room
+closed by our passives still routes far better than our seeds on Glasgow
+and keeps about half the advantage on the three boards. The other half
+may owe something to the room, but that is a weak signal (three pairs)
+for a term that already fails the seed test and belongs to a family of
+levers that failed.
 
 ## Proposed wording for docs/placer.md
 
@@ -487,8 +534,10 @@ not what is wrong.** ..." with:
 >   our 134 to 275). Seated and refined by today's pipeline the
 >   designer's arrangement loses that room and its advantage (first
 >   route: Glasgow 19 to 114, the 4in1 33 to 175 open terminals, our
->   seeds 88 to 187); whether the room or the moved active parts cost
->   the routes is not yet separated. Among our own seeds the objective's
+>   seeds 88 to 187). With the designer's active parts pinned and our
+>   passives around them the room closes and the route keeps about half
+>   the advantage (Glasgow 57 and 48 open): the active arrangement
+>   carries most of it, the room at most part of the rest. Among our own seeds the objective's
 >   crossings rank the first route well (Spearman +0.57 to +1.00). (On
 >   2026-11-04 the designer scored 0.59 to 1.02 of one seed's whole
 >   objective on the plain pipeline; our plain placements have since

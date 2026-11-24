@@ -80,10 +80,16 @@ def net_weight(pins):
 
 
 def pads_of(board):
-    """[(x, y, net, layers, box, hole)] of the copper pads: centre of the
-    first layer's polygons' box, the layers it is on, its box."""
+    """[(x, y, net, layers, box, hole, part)] of the copper pads: centre of
+    the first layer's polygons' box, the layers it is on, its box, and the
+    footprint as `REF#n` (the n-th of its reference: copies share
+    references)."""
     result = []
+    seen = {}
     for footprint in board["footprints"]:
+        n = seen.get(footprint["reference"], 0)
+        seen[footprint["reference"]] = n + 1
+        part = f"{footprint['reference']}#{n}"
         for pad in footprint["pads"]:
             if pad["npth"] or not pad["layers"]:
                 continue
@@ -94,7 +100,7 @@ def pads_of(board):
             ys = [p[1] for p in points]
             box = (min(xs), min(ys), max(xs), max(ys))
             result.append(((box[0] + box[2]) / 2, (box[1] + box[3]) / 2, pad["net"], set(pad["layers"]), box,
-                           "hole" in pad, footprint["reference"]))
+                           "hole" in pad, part))
     return result
 
 
@@ -239,8 +245,8 @@ PASSIVE = re.compile(r"(R|C|L|FB|F|FL|FER)\d")
 
 
 def passives(pads):
-    """The references of the free passives: at most two pads and a
-    passive's reference prefix."""
+    """The free passives (`REF#n`): at most two pads and a passive's
+    reference prefix."""
     count = {}
     for pad in pads:
         count[pad[6]] = count.get(pad[6], 0) + 1
