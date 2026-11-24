@@ -28,7 +28,8 @@ pub(super) fn recover(
     routed: &mut KiCadBoardRouterResult,
     fill: &mut Option<crate::FillPublication>,
 ) -> Result<Option<LayoutGeneratedPadViaRecovery>, String> {
-    if ctx.config.stop_after_first_route
+    if !ctx.router_config.post_route_repairs_on()
+        || ctx.config.stop_after_first_route
         || !ctx.config.save_zone_fills
         || routed.route_reuse.is_some()
     {

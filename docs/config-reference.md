@@ -29,7 +29,7 @@ The environment variables are indexed in the hand-over
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
 | [Router settings](#router-settings) | 82 | 53 | 29 | 82 | 46 |
-| [Router settings: tuning](#router-settings-tuning) | 43 | 43 | 0 | 43 | 32 |
+| [Router settings: tuning](#router-settings-tuning) | 45 | 45 | 0 | 45 | 34 |
 | [Router settings: tuning.topological](#router-settings-tuningtopological) | 8 | 8 | 0 | 8 | 1 |
 | [Router settings: tuning.pin_swap](#router-settings-tuningpin_swap) | 5 | 5 | 0 | 5 | 1 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 7 | 7 | 0 | 7 | 6 |
@@ -41,7 +41,7 @@ The environment variables are indexed in the hand-over
 | [Router core](#router-core) | 75 | - | 0 | 75 | - |
 | [Placer settings](#placer-settings) | 37 | 29 | 8 | 37 | 23 |
 | [Placer settings: tuning](#placer-settings-tuning) | 24 | 24 | 0 | 24 | 22 |
-| [Layout settings](#layout-settings) | 17 | 13 | 4 | 17 | 7 |
+| [Layout settings](#layout-settings) | 17 | 13 | 4 | 17 | 8 |
 | [Layout settings: tuning](#layout-settings-tuning) | 9 | 9 | 0 | 9 | 5 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 1 |
 | [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 3 |
@@ -189,6 +189,8 @@ The `tuning` object of the router settings: the machinery's settings, not for an
 | `tuning.topological` | `KiCadTopologicalConfig` | its own table | router.md | Weights of the topological engine (defaults in `pcb_topo::Config`). |
 | `tuning.tighten` | `bool` | `false` | router.md | Pull the lattice router's tracks tight afterwards (any-angle tracks with arcs, as the topological engine draws them), wherever the result stays legal. |
 | `tuning.pin_swap` | `KiCadPinSwapConfig` | its own table | - | The pin-swap estimate's settings, for `pin_swaps`. |
+| `tuning.post_route_repairs` | `Option<bool>` | unset | router.md | The repairs after routing that start from KiCad's report on the routed board (docs/router.md, "Repairs from KiCad's report"; default on): a layout's local open repair, via detour, generated pad-via move and same-hatch width repair, and the neck repair's round pad-to-via bridge in both commands. False skips them and their KiCad checks; diagnostics that change no copper still run. Not given, `PCB_KICAD_NO_POST_ROUTE_REPAIRS` set (any value) turns them off. |
+| `tuning.save_zone_fills` | `Option<bool>` | unset | router.md | route-kicad-board: save and verify KiCad's zone fill on the returned PCB when the route is complete (default on). False skips that hand-off and its KiCad checks; the routed board's check still refills. A layout's is the layout setting `save_zone_fills`. |
 
 ## Router settings: tuning.topological
 
@@ -484,7 +486,7 @@ The layout config file of `layout-kicad-board`: the settings an agent sets. Unkn
 | `swappable` | `Vec<KiCadSwappable>` | `[]` | - | Interchangeable pins, the short way: per part, the pins (pad functions such as `GPIO*` or pad numbers, globs) whose nets may be permuted. Used when `pin_swaps` is not given. |
 | `free_dimension` | `Option<crate::free_dimension::KiCadFreeDimension>` | unset | placer.md | One edge of a rectangular outline the layout may move, to find the smallest board that comes out clean (docs/constraints.md, "A free dimension"): `layout-kicad-board` then lays the board out at several sizes, `total_seconds` being the whole search's budget. |
 | `silkscreen` | `KiCadSilkscreenConfig` | its own table | - | The footprints' Reference and Value fields on the silkscreen, placed after routing where KiCad's silkscreen checks find nothing. |
-| `save_zone_fills` | `bool` | `true` | - | Save and verify KiCad's zone copper on the returned PCB when time remains. False skips only the stored-fill handoff for fast iterations. Native routing verification still uses a refill. |
+| `save_zone_fills` | `bool` | `true` | router.md | Save and verify KiCad's zone copper on the returned PCB when time remains. False skips only the stored-fill handoff for fast iterations. Native routing verification still uses a refill. |
 | `stop_after_first_route` | `bool` | `false` | placer.md | A measurement mode (off by default; docs/benchmarks.md, "The ladder of placer measurements"): the layout ends after its first route. Sizing, placement, the race and the first route run as without it (the same work, the same budget), then the move trials, the resume, the polish, the final ladder and the neck repair are skipped and the layout finishes with the first route's board: its labels, KiCad's check and the report, whose `first_unconnected_terminals` is the full layout's at the same `total_seconds`. The report says so (`stopped_after_first_route`). |
 | `tuning` | `KiCadLayoutTuning` | its own table | router.md, placer.md | The tuning of the layout's machinery: not for an agent's everyday use (docs/architecture.md, "Settings"). |
 

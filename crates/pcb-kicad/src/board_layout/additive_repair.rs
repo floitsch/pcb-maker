@@ -39,6 +39,9 @@ pub(super) fn recover(
     ledger: &mut WorkLedger,
     routed: &mut KiCadBoardRouterResult,
 ) -> Result<Option<LayoutOpenRepair>, String> {
+    if !ctx.router_config.post_route_repairs_on() {
+        return Ok(None);
+    }
     let Some(before) = routed
         .native
         .as_ref()
@@ -328,7 +331,7 @@ mod tests {
             &source.join("board.kicad_pcb"),
         )
         .unwrap();
-        let (ctx, mut work) =
+        let (mut ctx, mut work) =
             super::super::setup::prepare(&source, "board", &output, &config, &router).unwrap();
         copy_directory_tree(&source, &result).unwrap();
         let verified = verification::verify_materialized_rung(&result, "board").unwrap();
@@ -350,6 +353,34 @@ mod tests {
             pcb
         );
         work.work = 0.0;
+        // With `tuning.post_route_repairs` false no repair from KiCad's
+        // report runs: no record, no check, no work, the board untouched.
+        ctx.router_config.tuning.post_route_repairs = Some(false);
+        let mut fill = None;
+        assert!(recover(&ctx, &mut work, &mut routed).unwrap().is_none());
+        assert!(
+            super::super::via_detour::recover(&ctx, &mut work, &mut routed)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            super::super::generated_pad_via::recover(&ctx, &mut work, &mut routed, &mut fill)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            super::super::unchanged_hatch::recover(&ctx, &mut work, &mut routed, &mut fill)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!((work.work, work.checks.checks), (0.0, 0));
+        assert_eq!(
+            fs::read_to_string(result.join("board.kicad_pcb")).unwrap(),
+            pcb
+        );
+        assert!(!output.join("local-open-repair").exists());
+        // The default: the repair runs as before.
+        ctx.router_config.tuning.post_route_repairs = None;
         let accepted = recover(&ctx, &mut work, &mut routed).unwrap().unwrap();
         assert_eq!(accepted.status, "accepted", "{accepted:?}");
         assert_eq!((accepted.opens_before, accepted.opens_after), (1, 0));

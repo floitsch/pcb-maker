@@ -96,6 +96,8 @@ pub(super) fn finish_report(
     let config = ctx.config;
     let work_before_finish = ledger.work;
     let plane_escape = recover_plane_escape(ctx, ledger, &mut routed)?;
+    // The repairs from KiCad's report (`tuning.post_route_repairs`): each
+    // stage returns None at once with them off.
     let mut local_open_repair = if prepublished_fill.is_none() {
         super::additive_repair::recover(ctx, ledger, &mut routed)?
     } else {

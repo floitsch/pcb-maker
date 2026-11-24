@@ -542,6 +542,62 @@ mod tests {
         }
     }
 
+    /// The route's neck repair (`repair_necks`, as route-kicad-board and a
+    /// layout's ladder call it) on a board whose report holds one round
+    /// pad-to-via warning: by default the bridge is tried (here it stops at
+    /// the check budget before any KiCad check); with
+    /// `tuning.post_route_repairs` false it is not, no check is spent and
+    /// the board is untouched.
+    #[test]
+    fn the_round_contact_bridge_is_skipped_without_post_route_repairs() {
+        let directory = pcb_kicad_file::fs_util::temporary_next_to(
+            &std::env::temp_dir().join("round-contact-gate"),
+        );
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join("b.kicad_pcb"), BOARD).unwrap();
+        fs::write(
+            directory.join("b.kicad_pro"),
+            r#"{"board": {"design_settings": {"rules": {"min_connection": 0.1}}}}"#,
+        )
+        .unwrap();
+        fs::write(directory.join("b.kicad_sch"), "(kicad_sch)\n").unwrap();
+        let report = json!({
+            "violations": [warning("pad")],
+            "coordinate_units": "mm",
+            "unconnected_items": [],
+            "schematic_parity": [],
+        });
+        fs::write(directory.join("drc.json"), report.to_string()).unwrap();
+        let run = |config: &KiCadBoardRouterConfig| {
+            let mut result = crate::board_router::KiCadBoardRouterResult::default();
+            let checks =
+                crate::board_router::repair_necks(&mut result, &directory, "b", config, Some(0))
+                    .unwrap();
+            (result.neck_repair, checks)
+        };
+
+        let default = KiCadBoardRouterConfig::default();
+        assert!(default.post_route_repairs_on());
+        let (repair, checks) = run(&default);
+        let repair = repair.expect("the round contact repair runs by default");
+        assert!(repair.round_contact.is_some());
+        assert!(!repair.kept);
+        assert_eq!(checks, 0);
+
+        let mut off = KiCadBoardRouterConfig::default();
+        off.tuning.post_route_repairs = Some(false);
+        assert!(!off.post_route_repairs_on());
+        let (repair, checks) = run(&off);
+        assert!(repair.is_none());
+        assert_eq!(checks, 0);
+        assert_eq!(
+            fs::read_to_string(directory.join("b.kicad_pcb")).unwrap(),
+            BOARD
+        );
+        assert!(!directory.join("necks.json").exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
     #[test]
     fn only_removes_the_exact_warning_and_preserves_electrical_partitions() {
         let bridge = measure(BOARD, "launch").unwrap();

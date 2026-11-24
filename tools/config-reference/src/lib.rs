@@ -168,6 +168,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "`1`: the command's requests of at most 2 GB of its own beside one KiCad check are short: they go once the capacity has their room and the memory available less the reservations' growth covers them, never behind the ledger's order or a drain; `0`: none are (default: every command that reserves but a route and a layout; docs/benchmarks.md, \"Memory ledger\").",
     ),
     (
+        "PCB_KICAD_NO_POST_ROUTE_REPAIRS",
+        Kind::Switch,
+        "set (any value): the router settings' `tuning.post_route_repairs` is false where they do not give it (docs/router.md, \"Repairs from KiCad's report\"): the repairs after routing that start from KiCad's report, and their KiCad checks, are skipped. For the benchmark harness, which passes no router settings of its own.",
+    ),
+    (
         "PCB_ROUTER_CORRIDOR_ESCAPES",
         Kind::Switch,
         "overrides the router's `corridor_escapes` (`0` off, anything else on; on by default since 2026-11-05): a pad without a legal node of its own whose escape nodes lie in a pocket the lattice closes leaves by a corridor stub off the lattice, a path through the region its track keeps its clearances in to a legal node beyond the pocket (OpenFC's U10.5; docs/router.md, \"Corridors of pocketed pads\").",

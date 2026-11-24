@@ -1195,6 +1195,10 @@ pub(crate) fn repair_connection_width(
     };
     let before = findings(&report);
     if before.is_empty() {
+        // The round pad-to-via bridge starts from KiCad's warning alone.
+        if !config.post_route_repairs_on() {
+            return Ok(None);
+        }
         let Some(repair) =
             round_contact::repair(directory, board_id, &report, max_checks, config.deadline)?
         else {

@@ -35,7 +35,8 @@ pub(super) fn recover(
         repair_unchanged_hatch_widths,
     };
 
-    if ctx.config.stop_after_first_route
+    if !ctx.router_config.post_route_repairs_on()
+        || ctx.config.stop_after_first_route
         || ctx.router_config.skip_native_verification
         || !routed.native.as_ref().is_some_and(|native| {
             native.schematic_parity_checked

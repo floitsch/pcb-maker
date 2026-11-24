@@ -623,6 +623,21 @@ measured width and track. The repair needs complete native reports.
 Use `PCB_MAKER_KICAD_USER_LIBS=1` when the project's installed footprint
 libraries are needed for complete checks.
 
+### Repairs from KiCad's report
+
+Some repairs after routing start from KiCad's report on the routed board
+rather than from the router's own model: in a layout the local open
+repair (`board_layout/additive_repair.rs`, from KiCad's open
+connections), the via detour (`via_detour.rs`, from a via/track short),
+the generated pad-via move (`generated_pad_via.rs`, from an open next to
+a generated via) and the same-hatch width repair (`unchanged_hatch.rs`,
+from width errors), and in both commands the neck repair's round
+pad-to-via bridge above. They are on by default; the router setting
+`tuning.post_route_repairs: false` (or `PCB_KICAD_NO_POST_ROUTE_REPAIRS`
+set, where the settings do not give it) skips them and their KiCad
+checks. The neck repair proper, the solid step, the fill hand-off
+(`save_zone_fills`) and the verdict's retry suggestions still run.
+
 ### Plane skeleton
 
 `plane_skeleton` routes each pour net first as a fixed tree on its main
