@@ -1,0 +1,1394 @@
+{
+ "description": "Endgame tier: routed boards a nightly left with 1 to 7 KiCad-unconnected items, frozen under build/endgame-tier/v1 (endgame_freeze.py), resumed with their copper kept: route-kicad-board on the routed project (existing_tracks keep, the run's own router settings and pour mode, endgame_budget_seconds of ladder work), then repair-kicad-opens --local where KiCad still reports opens. It answers one question in minutes: does the endgame close more of the last connections on these boards (README.md, 'The endgame tier'). Entries are <task>@<source>; reserve entries run only when named with --only.",
+ "kind": "endgame",
+ "tasks": "benchmarks/agent-tasks/tasks/v7/tasks.json",
+ "inputs": "build/endgame-tier/v1",
+ "endgame_budget_seconds": 30.0,
+ "max_open": 7,
+ "sources": {
+  "sweep-1118": {
+   "log": "build/nightly/2026-11-18/sweep.log",
+   "reserve": false,
+   "entries": 20
+  },
+  "designer-1124": {
+   "log": "build/nightly/2026-11-24/designer.log",
+   "reserve": false,
+   "entries": 18
+  },
+  "designer-1118": {
+   "log": "build/nightly/2026-11-18/designer.log",
+   "reserve": true,
+   "entries": 18
+  }
+ },
+ "excluded": {
+  "MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub@sweep-1118": "the designer's own board leaves the same two GND zone pieces unconnected",
+  "bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV@sweep-1118": "the project's own rules leave pads no track of their class can enter (handover, 'Not targets'); the designer's board leaves GND, SHLD and +12V open too",
+  "MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub@designer-1124": "the designer's own board leaves the same two GND zone pieces unconnected",
+  "bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV@designer-1124": "the project's own rules leave pads no track of their class can enter (handover, 'Not targets'); the designer's board leaves GND, SHLD and +12V open too",
+  "MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub@designer-1118": "the designer's own board leaves the same two GND zone pieces unconnected",
+  "bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV@designer-1118": "the project's own rules leave pads no track of their class can enter (handover, 'Not targets'); the designer's board leaves GND, SHLD and +12V open too"
+ },
+ "boards": {
+  "CDFER__Business-Cards__USB_Keypad@sweep-1118": {
+   "task": "CDFER__Business-Cards__USB_Keypad",
+   "source": "build/nightly/2026-11-18/sweep/CDFER__Business-Cards__USB_Keypad/layout/result",
+   "project": "build/endgame-tier/v1/CDFER__Business-Cards__USB_Keypad@sweep-1118/project",
+   "board_id": "USB Keypad",
+   "board_sha256": "16c0ff7881c03caeb5bbd7d98de6a7ec07f2bd6cb154dad045ca2725b1612283",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "layout",
+   "placement": "ours",
+   "pour_mode": "connect",
+   "unconnected_before": 2,
+   "open_nets_before": [
+    "+3.3V",
+    "GND"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {
+    "connection_width": 2
+   },
+   "work_seconds_before": 792.1,
+   "seconds_before": 249.5,
+   "cpu_seconds_before": 418.2,
+   "peak_rss_mb": 439,
+   "input_like_items": 1
+  },
+  "CDFER__Business-Cards__WLED_Matrix@sweep-1118": {
+   "task": "CDFER__Business-Cards__WLED_Matrix",
+   "source": "build/nightly/2026-11-18/sweep/CDFER__Business-Cards__WLED_Matrix/layout/result",
+   "project": "build/endgame-tier/v1/CDFER__Business-Cards__WLED_Matrix@sweep-1118/project",
+   "board_id": "WLED Matrix",
+   "board_sha256": "0d3543ad4ceffcfd2954823a6249d205eb3b96f619c49ba0ad8c4104806fd905",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "layout",
+   "placement": "ours",
+   "pour_mode": "tracks",
+   "unconnected_before": 5,
+   "open_nets_before": [
+    "+3.3V",
+    "GND",
+    "Net-(AE1-A)",
+    "Net-(LDO1-Vin)"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 811.5,
+   "seconds_before": 358.4,
+   "cpu_seconds_before": 567.3,
+   "peak_rss_mb": 557,
+   "input_like_items": 2
+  },
+  "CRImier__MyKiCad__protoesp@sweep-1118": {
+   "task": "CRImier__MyKiCad__protoesp",
+   "source": "build/nightly/2026-11-18/sweep/CRImier__MyKiCad__protoesp/layout/result",
+   "project": "build/endgame-tier/v1/CRImier__MyKiCad__protoesp@sweep-1118/project",
+   "board_id": "protoesp",
+   "board_sha256": "05135c89171513598a96fc76164cc7670f704ee731dbe7541745d424e9629650",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "layout",
+   "placement": "ours",
+   "pour_mode": "connect",
+   "unconnected_before": 3,
+   "open_nets_before": [
+    "/5D3",
+    "/5D5",
+    "CH_SDA"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 1500.1,
+   "seconds_before": 800.7,
+   "cpu_seconds_before": 1125.4,
+   "peak_rss_mb": 594,
+   "input_like_items": 0
+  },
+  "CRImier__MyKiCad__vaio_re@sweep-1118": {
+   "task": "CRImier__MyKiCad__vaio_re",
+   "source": "build/nightly/2026-11-18/sweep/CRImier__MyKiCad__vaio_re/layout/result",
+   "project": "build/endgame-tier/v1/CRImier__MyKiCad__vaio_re@sweep-1118/project",
+   "board_id": "vaio_re",
+   "board_sha256": "16cf3b223c61b272d9b83faff84afd94f2c355c73a5eddb5bb3cfc3774a727aa",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "layout",
+   "placement": "ours",
+   "pour_mode": "tracks",
+   "unconnected_before": 1,
+   "open_nets_before": [
+    "XOUT_E"
+   ],
+   "errors_before": {
+    "solder_mask_bridge": 2
+   },
+   "new_findings_strict_before": {
+    "solder_mask_bridge": 2
+   },
+   "work_seconds_before": 1211.7,
+   "seconds_before": 1028.5,
+   "cpu_seconds_before": 1479.5,
+   "peak_rss_mb": 709,
+   "input_like_items": 0
+  },
+  "ISSUIUC__ISS-PCB__MIDAS-MK1.1__MIDAS-MK1.1-revA@sweep-1118": {
+   "task": "ISSUIUC__ISS-PCB__MIDAS-MK1.1__MIDAS-MK1.1-revA",
+   "source": "build/nightly/2026-11-18/sweep/ISSUIUC__ISS-PCB__MIDAS-MK1.1__MIDAS-MK1.1-revA/layout/result",
+   "project": "build/endgame-tier/v1/ISSUIUC__ISS-PCB__MIDAS-MK1.1__MIDAS-MK1.1-revA@sweep-1118/project",
+   "board_id": "MIDAS-MK1.1",
+   "board_sha256": "f5d5d8154797cd4fe7b872ac1feb074d429316fc52733ea23eed792f4d58a097",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "layout",
+   "placement": "ours",
+   "pour_mode": "tracks",
+   "unconnected_before": 3,
+   "open_nets_before": [
+    "/LIS3MDL_INT",
+    "/MEM_RST_N",
+    "Net-(U106-DS)"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 1440.0,
+   "seconds_before": 872.4,
+   "cpu_seconds_before": 1304.2,
+   "peak_rss_mb": 593,
+   "input_like_items": 0
+  },
+  "Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1@sweep-1118": {
+   "task": "Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1",
+   "source": "build/nightly/2026-11-18/sweep/Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1/layout/result",
+   "project": "build/endgame-tier/v1/Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1@sweep-1118/project",
+   "board_id": "reCamera S101 v1.1",
+   "board_sha256": "14ec49a844b6a74e558cf5080fff33a61afca5f13cefd0fe2aaa3044e3559ef1",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "layout",
+   "placement": "ours",
+   "pour_mode": "tracks",
+   "unconnected_before": 4,
+   "open_nets_before": [
+    "GND"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 294.7,
+   "seconds_before": 232.4,
+   "cpu_seconds_before": 388.3,
+   "peak_rss_mb": 439,
+   "input_like_items": 4
+  },
+  "antmicro__jetson-nano-baseboard__jetson-nano-baseboard@sweep-1118": {
+   "task": "antmicro__jetson-nano-baseboard__jetson-nano-baseboard",
+   "source": "build/nightly/2026-11-18/sweep/antmicro__jetson-nano-baseboard__jetson-nano-baseboard/layout/result",
+   "project": "build/endgame-tier/v1/antmicro__jetson-nano-baseboard__jetson-nano-baseboard@sweep-1118/project",
+   "board_id": "jetson-nano-baseboard",
+   "board_sha256": "49752760daa2c60060f2cb6a95a582fea810f41e3a621e487a8fa448b744a10a",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "layout",
+   "placement": "ours",
+   "pour_mode": "tracks",
+   "unconnected_before": 1,
+   "open_nets_before": [
+    "HDMI_SHIELD"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 1306.9,
+   "seconds_before": 1061.3,
+   "cpu_seconds_before": 1549.3,
+   "peak_rss_mb": 2149,
+   "input_like_items": 0
+  },
+  "briskspirit__Sisu_SSE-9__Sisu_SSE-9@sweep-1118": {
+   "task": "briskspirit__Sisu_SSE-9__Sisu_SSE-9",
+   "source": "build/nightly/2026-11-18/sweep/briskspirit__Sisu_SSE-9__Sisu_SSE-9/layout/result",
+   "project": "build/endgame-tier/v1/briskspirit__Sisu_SSE-9__Sisu_SSE-9@sweep-1118/project",
+   "board_id": "Sisu_SSE-9",
+   "board_sha256": "974942939012201acde4072c5c02a54561849c12ad27a437b5b9a912d0972c4c",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "layout",
+   "placement": "ours",
+   "pour_mode": "connect",
+   "unconnected_before": 4,
+   "open_nets_before": [
+    "+3.3V",
+    "GND",
+    "PMIC_38_EN"
+   ],
+   "errors_before": {
+    "diff_pair_uncoupled_length_too_long": 2
+   },
+   "new_findings_strict_before": {
+    "diff_pair_uncoupled_length_too_long": 2
+   },
+   "work_seconds_before": 1316.3,
+   "seconds_before": 983.1,
+   "cpu_seconds_before": 1348.0,
+   "peak_rss_mb": 1063,
+   "input_like_items": 0
+  },
+  "byrantech__laptop__keyboard@sweep-1118": {
+   "task": "byrantech__laptop__keyboard",
+   "source": "build/nightly/2026-11-18/sweep/byrantech__laptop__keyboard/layout/result",
+   "project": "build/endgame-tier/v1/byrantech__laptop__keyboard@sweep-1118/project",
+   "board_id": "keyboard",
+   "board_sha256": "0de33592404e408fc4f158adf067b81bc37806cc10462050e3cac1fe43f5e3fe",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "layout",
+   "placement": "ours",
+   "pour_mode": "tracks",
+   "unconnected_before": 2,
+   "open_nets_before": [
+    "RESET",
+    "VSS_PA"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 1182.5,
+   "seconds_before": 914.8,
+   "cpu_seconds_before": 1246.2,
+   "peak_rss_mb": 1547,
+   "input_like_items": 0
+  },
+  "byrantech__laptop__motherboard@sweep-1118": {
+   "task": "byrantech__laptop__motherboard",
+   "source": "build/nightly/2026-11-18/sweep/byrantech__laptop__motherboard/layout/result",
+   "project": "build/endgame-tier/v1/byrantech__laptop__motherboard@sweep-1118/project",
+   "board_id": "motherboard",
+   "board_sha256": "291e9d826d85707c4bd1327b41145dcf3a9523e3040436545f4284e7bd1d7124",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "layout",
+   "placement": "ours",
+   "pour_mode": "connect",
+   "unconnected_before": 3,
+   "open_nets_before": [
+    "/GPIO0_D3/CC_INT_L",
+    "/GPIO0_D5",
+    "GND"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 1390.1,
+   "seconds_before": 1214.6,
+   "cpu_seconds_before": 1806.8,
+   "peak_rss_mb": 1600,
+   "input_like_items": 0
+  },
+  "ebastler__osprey__osprey_rev_a@sweep-1118": {
+   "task": "ebastler__osprey__osprey_rev_a",
+   "source": "build/nightly/2026-11-18/sweep/ebastler__osprey__osprey_rev_a/layout/result",
+   "project": "build/endgame-tier/v1/ebastler__osprey__osprey_rev_a@sweep-1118/project",
+   "board_id": "osprey_rev_a",
+   "board_sha256": "2cd62bd12e66cc38bdb5a7b205f4748ce3b7d935023bbb4891ecef9c8a3da23d",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "layout",
+   "placement": "ours",
+   "pour_mode": "connect",
+   "unconnected_before": 2,
+   "open_nets_before": [
+    "Net-(AE1-Pad1)",
+    "USB-Di-"
+   ],
+   "errors_before": {
+    "clearance": 1
+   },
+   "new_findings_strict_before": {},
+   "work_seconds_before": 1417.3,
+   "seconds_before": 868.5,
+   "cpu_seconds_before": 1404.4,
+   "peak_rss_mb": 2483,
+   "input_like_items": 0
+  },
+  "ikajdan__katia__katia@sweep-1118": {
+   "task": "ikajdan__katia__katia",
+   "source": "build/nightly/2026-11-18/sweep/ikajdan__katia__katia/layout/result",
+   "project": "build/endgame-tier/v1/ikajdan__katia__katia@sweep-1118/project",
+   "board_id": "katia",
+   "board_sha256": "5d83d8d83863a2d61e7d78365fd6cc41996679f37efadc4279faf599385359c8",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "layout",
+   "placement": "ours",
+   "pour_mode": "tracks",
+   "unconnected_before": 3,
+   "open_nets_before": [
+    "+1V1",
+    "/Right Board/USB/DATA+"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 1503.3,
+   "seconds_before": 1216.6,
+   "cpu_seconds_before": 1529.0,
+   "peak_rss_mb": 2944,
+   "input_like_items": 0
+  },
+  "obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized@sweep-1118": {
+   "task": "obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized",
+   "source": "build/nightly/2026-11-18/sweep/obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized/layout/result",
+   "project": "build/endgame-tier/v1/obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized@sweep-1118/project",
+   "board_id": "Quanta75_BareRP2040_JLCPCBAoptimized",
+   "board_sha256": "e5886521e7148fff1344bec2e725fd9370e67ddb6cd8621e8110d68b0bf8f750",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "layout",
+   "placement": "ours",
+   "pour_mode": "connect",
+   "unconnected_before": 6,
+   "open_nets_before": [
+    "+3V3",
+    "Column10",
+    "Column5",
+    "Row4"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 1220.2,
+   "seconds_before": 1305.6,
+   "cpu_seconds_before": 1462.6,
+   "peak_rss_mb": 1756,
+   "input_like_items": 0
+  },
+  "oro-os__link__link@sweep-1118": {
+   "task": "oro-os__link__link",
+   "source": "build/nightly/2026-11-18/sweep/oro-os__link__link/layout/result",
+   "project": "build/endgame-tier/v1/oro-os__link__link@sweep-1118/project",
+   "board_id": "link",
+   "board_sha256": "ed8d945f1ac3dc822208e72ba13a23e7249ce6d3e94ff5ec7da74711492c82bf",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "layout",
+   "placement": "ours",
+   "pour_mode": "connect",
+   "unconnected_before": 5,
+   "open_nets_before": [
+    "/ULPI_CK",
+    "/ULPI_D1",
+    "/ULPI_D2",
+    "/USB/HS_D+",
+    "GND"
+   ],
+   "errors_before": {
+    "length_out_of_range": 6
+   },
+   "new_findings_strict_before": {
+    "length_out_of_range": 6
+   },
+   "work_seconds_before": 1166.0,
+   "seconds_before": 1586.3,
+   "cpu_seconds_before": 1768.5,
+   "peak_rss_mb": 3204,
+   "input_like_items": 0
+  },
+  "sporkus__capybully_keyboard__capybully@sweep-1118": {
+   "task": "sporkus__capybully_keyboard__capybully",
+   "source": "build/nightly/2026-11-18/sweep/sporkus__capybully_keyboard__capybully/layout/result",
+   "project": "build/endgame-tier/v1/sporkus__capybully_keyboard__capybully@sweep-1118/project",
+   "board_id": "capybully",
+   "board_sha256": "ed1a3911459d5fb406d4c4d529bff3d14fdb3463bc42687ed78e64c7d1cdbf7d",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "layout",
+   "placement": "ours",
+   "pour_mode": "connect",
+   "unconnected_before": 3,
+   "open_nets_before": [
+    "GND"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 1183.2,
+   "seconds_before": 1288.3,
+   "cpu_seconds_before": 1533.8,
+   "peak_rss_mb": 1219,
+   "input_like_items": 0
+  },
+  "stonedDiscord__nonSNES__SNSP-CPU-01@sweep-1118": {
+   "task": "stonedDiscord__nonSNES__SNSP-CPU-01",
+   "source": "build/nightly/2026-11-18/sweep/stonedDiscord__nonSNES__SNSP-CPU-01/layout/result",
+   "project": "build/endgame-tier/v1/stonedDiscord__nonSNES__SNSP-CPU-01@sweep-1118/project",
+   "board_id": "SNSP-CPU-01",
+   "board_sha256": "0f50fa882fa5726ea6e77313cf9b932f28126972ed08baddec4b4a7086556197",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "layout",
+   "placement": "ours",
+   "pour_mode": "connect",
+   "unconnected_before": 2,
+   "open_nets_before": [
+    "GND",
+    "Net-(P2-JPIO6)"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 1288.4,
+   "seconds_before": 1481.0,
+   "cpu_seconds_before": 1684.4,
+   "peak_rss_mb": 1175,
+   "input_like_items": 1
+  },
+  "thpoll83__PolyKybd__poly_corne_split42_left@sweep-1118": {
+   "task": "thpoll83__PolyKybd__poly_corne_split42_left",
+   "source": "build/nightly/2026-11-18/sweep/thpoll83__PolyKybd__poly_corne_split42_left/layout/result",
+   "project": "build/endgame-tier/v1/thpoll83__PolyKybd__poly_corne_split42_left@sweep-1118/project",
+   "board_id": "poly_corne_split42_left",
+   "board_sha256": "95d71453a558fc84c7c6a431cc769a19239e3f1ca9df8846a463efcf23a09e2f",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "layout",
+   "placement": "ours",
+   "pour_mode": "connect",
+   "unconnected_before": 3,
+   "open_nets_before": [
+    "/K_B/CS",
+    "/K_D/CS",
+    "/RpPico/QSPI_SCLK"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 1327.9,
+   "seconds_before": 1311.4,
+   "cpu_seconds_before": 1653.3,
+   "peak_rss_mb": 959,
+   "input_like_items": 0
+  },
+  "thpoll83__PolyKybd__poly_corne_split42_right@sweep-1118": {
+   "task": "thpoll83__PolyKybd__poly_corne_split42_right",
+   "source": "build/nightly/2026-11-18/sweep/thpoll83__PolyKybd__poly_corne_split42_right/layout/result",
+   "project": "build/endgame-tier/v1/thpoll83__PolyKybd__poly_corne_split42_right@sweep-1118/project",
+   "board_id": "poly_corne_split42_right",
+   "board_sha256": "e5412a88b31073466664532b27f566e9b5c05e1504f0246f0ef4f59d038150d4",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "layout",
+   "placement": "ours",
+   "pour_mode": "connect",
+   "unconnected_before": 5,
+   "open_nets_before": [
+    "/K_R/CS",
+    "/K_T/CS",
+    "/ShiftRegisters/Carry1",
+    "GND",
+    "RESET"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 1250.4,
+   "seconds_before": 1732.9,
+   "cpu_seconds_before": 1878.9,
+   "peak_rss_mb": 1413,
+   "input_like_items": 0
+  },
+  "thpoll83__PolyKybd__poly_kybd_split72_left@sweep-1118": {
+   "task": "thpoll83__PolyKybd__poly_kybd_split72_left",
+   "source": "build/nightly/2026-11-18/sweep/thpoll83__PolyKybd__poly_kybd_split72_left/layout/result",
+   "project": "build/endgame-tier/v1/thpoll83__PolyKybd__poly_kybd_split72_left@sweep-1118/project",
+   "board_id": "poly_kybd_split72_left",
+   "board_sha256": "5c61a03acec6ae9de73cbae9169e902f444b07a14fbdc266bf256e301b319920",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "layout",
+   "placement": "ours",
+   "pour_mode": "connect",
+   "unconnected_before": 1,
+   "open_nets_before": [
+    "GND"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 1367.5,
+   "seconds_before": 2099.0,
+   "cpu_seconds_before": 2547.4,
+   "peak_rss_mb": 1652,
+   "input_like_items": 0
+  },
+  "vd-rd__sbc_allwinner_a13__module@sweep-1118": {
+   "task": "vd-rd__sbc_allwinner_a13__module",
+   "source": "build/nightly/2026-11-18/sweep/vd-rd__sbc_allwinner_a13__module/layout/result",
+   "project": "build/endgame-tier/v1/vd-rd__sbc_allwinner_a13__module@sweep-1118/project",
+   "board_id": "module",
+   "board_sha256": "2623ad3ef41e23e709920f1e928c0206b36cc27ac1e97ca33dad6f86b13c593e",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "layout",
+   "placement": "ours",
+   "pour_mode": "tracks",
+   "unconnected_before": 5,
+   "open_nets_before": [
+    "+1V5",
+    "/DDR3 Memory/a14",
+    "/DDR3 Memory/ddr-a11"
+   ],
+   "errors_before": {
+    "items_not_allowed": 1
+   },
+   "new_findings_strict_before": {
+    "items_not_allowed": 1
+   },
+   "work_seconds_before": 1135.3,
+   "seconds_before": 834.8,
+   "cpu_seconds_before": 1093.9,
+   "peak_rss_mb": 518,
+   "input_like_items": 0
+  },
+  "CDFER__Business-Cards__Batch_1@designer-1124": {
+   "task": "CDFER__Business-Cards__Batch_1",
+   "source": "build/nightly/2026-11-24/designer/CDFER__Business-Cards__Batch_1/route",
+   "project": "build/endgame-tier/v1/CDFER__Business-Cards__Batch_1@designer-1124/project",
+   "board_id": "Batch 1",
+   "board_sha256": "dbc4bc1689f93045f0ce65a9c50e5ea6a7378502978c935d799baf0efe8c18b6",
+   "binary": "pcb-maker-nightly-2026-11-24-96e891b27162",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 2,
+   "open_nets_before": [
+    "GND",
+    "Net-(R28-Pad2)"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 770.7,
+   "seconds_before": 743.0,
+   "cpu_seconds_before": 737.9,
+   "peak_rss_mb": 1136,
+   "input_like_items": 1
+  },
+  "CDFER__Business-Cards__WLED_Matrix@designer-1124": {
+   "task": "CDFER__Business-Cards__WLED_Matrix",
+   "source": "build/nightly/2026-11-24/designer/CDFER__Business-Cards__WLED_Matrix/route",
+   "project": "build/endgame-tier/v1/CDFER__Business-Cards__WLED_Matrix@designer-1124/project",
+   "board_id": "WLED Matrix",
+   "board_sha256": "46014ac902b5ef6a8f5cc928b1f9c431690c8f6b85872664f38ca3d588d9e9d7",
+   "binary": "pcb-maker-nightly-2026-11-24-96e891b27162",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 2,
+   "open_nets_before": [
+    "+3.3V",
+    "Net-(LDO1-Vin)"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 246.2,
+   "seconds_before": 235.6,
+   "cpu_seconds_before": 240.9,
+   "peak_rss_mb": 563,
+   "input_like_items": 0
+  },
+  "CRImier__MyKiCad__protoesp@designer-1124": {
+   "task": "CRImier__MyKiCad__protoesp",
+   "source": "build/nightly/2026-11-24/designer/CRImier__MyKiCad__protoesp/route",
+   "project": "build/endgame-tier/v1/CRImier__MyKiCad__protoesp@designer-1124/project",
+   "board_id": "protoesp",
+   "board_sha256": "b5a6c03a72d926febdd41f8de8af5e8251930bad9c5e0698c2de644561d50c8a",
+   "binary": "pcb-maker-nightly-2026-11-24-96e891b27162",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "connect",
+   "unconnected_before": 1,
+   "open_nets_before": [
+    "RXD"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 806.0,
+   "seconds_before": 651.8,
+   "cpu_seconds_before": 650.6,
+   "peak_rss_mb": 589,
+   "input_like_items": 0
+  },
+  "CRImier__MyKiCad__vaio_re@designer-1124": {
+   "task": "CRImier__MyKiCad__vaio_re",
+   "source": "build/nightly/2026-11-24/designer/CRImier__MyKiCad__vaio_re/route",
+   "project": "build/endgame-tier/v1/CRImier__MyKiCad__vaio_re@designer-1124/project",
+   "board_id": "vaio_re",
+   "board_sha256": "2b9ba953a763c2c98188c9d222a3ba9a4fa788921f48495a89a4430cab43ff36",
+   "binary": "pcb-maker-nightly-2026-11-24-96e891b27162",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 3,
+   "open_nets_before": [
+    "GPE_P3",
+    "LED_PWM",
+    "Net-(U6-USB_DM)"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 822.6,
+   "seconds_before": 792.5,
+   "cpu_seconds_before": 802.7,
+   "peak_rss_mb": 478,
+   "input_like_items": 0
+  },
+  "Twisted-Fields__rp2040-motor-controller__RP2040_base@designer-1124": {
+   "task": "Twisted-Fields__rp2040-motor-controller__RP2040_base",
+   "source": "build/nightly/2026-11-24/designer/Twisted-Fields__rp2040-motor-controller__RP2040_base/route",
+   "project": "build/endgame-tier/v1/Twisted-Fields__rp2040-motor-controller__RP2040_base@designer-1124/project",
+   "board_id": "RP2040_base",
+   "board_sha256": "6424ab9a3a1d4c33d8a9f8106634ca34fd478e03b7b1ad4ffe5691757b25859c",
+   "binary": "pcb-maker-nightly-2026-11-24-96e891b27162",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 7,
+   "open_nets_before": [
+    "+3.3VA",
+    "/AUX3_CSn",
+    "/QSPI_SCLK",
+    "/QSPI_SS_2",
+    "/SWCLK_2",
+    "M1A_PWM_L\\",
+    "Net-(U19-XIN)"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 502.1,
+   "seconds_before": 437.3,
+   "cpu_seconds_before": 434.3,
+   "peak_rss_mb": 330,
+   "input_like_items": 0
+  },
+  "antmicro__jetson-nano-baseboard__jetson-nano-baseboard@designer-1124": {
+   "task": "antmicro__jetson-nano-baseboard__jetson-nano-baseboard",
+   "source": "build/nightly/2026-11-24/designer/antmicro__jetson-nano-baseboard__jetson-nano-baseboard/route",
+   "project": "build/endgame-tier/v1/antmicro__jetson-nano-baseboard__jetson-nano-baseboard@designer-1124/project",
+   "board_id": "jetson-nano-baseboard",
+   "board_sha256": "a492f35415077e4cf90f470b090a98475a176296e1cd23538220f0f28c17fa18",
+   "binary": "pcb-maker-nightly-2026-11-24-96e891b27162",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 2,
+   "open_nets_before": [
+    "/Supply/5V_EN",
+    "Net-(IC7-CURRENT_MODE)"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 733.5,
+   "seconds_before": 660.4,
+   "cpu_seconds_before": 659.7,
+   "peak_rss_mb": 1054,
+   "input_like_items": 0
+  },
+  "apfaudio__eurorack-pmod__eurorack-pmod-pcb@designer-1124": {
+   "task": "apfaudio__eurorack-pmod__eurorack-pmod-pcb",
+   "source": "build/nightly/2026-11-24/designer/apfaudio__eurorack-pmod__eurorack-pmod-pcb/route",
+   "project": "build/endgame-tier/v1/apfaudio__eurorack-pmod__eurorack-pmod-pcb@designer-1124/project",
+   "board_id": "eurorack-pmod-pcb",
+   "board_sha256": "ef17b4a2ce907bd984e75b13ad78028bb487a88529e3625e07b3727a2dd334bd",
+   "binary": "pcb-maker-nightly-2026-11-24-96e891b27162",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 1,
+   "open_nets_before": [
+    "Net-(D18-A)"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 917.7,
+   "seconds_before": 737.5,
+   "cpu_seconds_before": 734.5,
+   "peak_rss_mb": 377,
+   "input_like_items": 0
+  },
+  "briskspirit__Sisu_SSE-9__Sisu_SSE-9@designer-1124": {
+   "task": "briskspirit__Sisu_SSE-9__Sisu_SSE-9",
+   "source": "build/nightly/2026-11-24/designer/briskspirit__Sisu_SSE-9__Sisu_SSE-9/route",
+   "project": "build/endgame-tier/v1/briskspirit__Sisu_SSE-9__Sisu_SSE-9@designer-1124/project",
+   "board_id": "Sisu_SSE-9",
+   "board_sha256": "4b53579cc1af25f7dfff02c07c8a809e8f10a837c083f602a5339f4c638dac95",
+   "binary": "pcb-maker-nightly-2026-11-24-96e891b27162",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 2,
+   "open_nets_before": [
+    "/4G LTE/RESET",
+    "/AUDIO/I_MIC_P"
+   ],
+   "errors_before": {
+    "skew_out_of_range": 3
+   },
+   "new_findings_strict_before": {
+    "skew_out_of_range": 3
+   },
+   "work_seconds_before": 787.6,
+   "seconds_before": 789.5,
+   "cpu_seconds_before": 790.5,
+   "peak_rss_mb": 1035,
+   "input_like_items": 0
+  },
+  "byrantech__laptop__keyboard@designer-1124": {
+   "task": "byrantech__laptop__keyboard",
+   "source": "build/nightly/2026-11-24/designer/byrantech__laptop__keyboard/route",
+   "project": "build/endgame-tier/v1/byrantech__laptop__keyboard@designer-1124/project",
+   "board_id": "keyboard",
+   "board_sha256": "7af8c69c2b8cc2f7df4dd96aa55cb0a5fddbeca90dc2ed352a60ed71d0415e8a",
+   "binary": "pcb-maker-nightly-2026-11-24-96e891b27162",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "connect",
+   "unconnected_before": 2,
+   "open_nets_before": [
+    "RESET",
+    "VSS_PA"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 760.9,
+   "seconds_before": 593.4,
+   "cpu_seconds_before": 586.8,
+   "peak_rss_mb": 444,
+   "input_like_items": 0
+  },
+  "byrantech__laptop__motherboard@designer-1124": {
+   "task": "byrantech__laptop__motherboard",
+   "source": "build/nightly/2026-11-24/designer/byrantech__laptop__motherboard/route",
+   "project": "build/endgame-tier/v1/byrantech__laptop__motherboard@designer-1124/project",
+   "board_id": "motherboard",
+   "board_sha256": "a765484659e44dd45ece7d7181123630d12102cb8fa176efbc577b304f4a1460",
+   "binary": "pcb-maker-nightly-2026-11-24-96e891b27162",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 2,
+   "open_nets_before": [
+    "/GPIO0_D3/CC_INT_L",
+    "/GPIO0_D5"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 669.0,
+   "seconds_before": 689.9,
+   "cpu_seconds_before": 697.5,
+   "peak_rss_mb": 978,
+   "input_like_items": 0
+  },
+  "byrantech__laptop__power@designer-1124": {
+   "task": "byrantech__laptop__power",
+   "source": "build/nightly/2026-11-24/designer/byrantech__laptop__power/route",
+   "project": "build/endgame-tier/v1/byrantech__laptop__power@designer-1124/project",
+   "board_id": "power",
+   "board_sha256": "1b5bfbf7663189c4fdde364030c3d114dfd30fff429a166455fd8153ef50d767",
+   "binary": "pcb-maker-nightly-2026-11-24-96e891b27162",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 1,
+   "open_nets_before": [
+    "/HIDRV1"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 936.3,
+   "seconds_before": 723.4,
+   "cpu_seconds_before": 722.2,
+   "peak_rss_mb": 511,
+   "input_like_items": 0
+  },
+  "ebastler__osprey__osprey_rev_a@designer-1124": {
+   "task": "ebastler__osprey__osprey_rev_a",
+   "source": "build/nightly/2026-11-24/designer/ebastler__osprey__osprey_rev_a/route",
+   "project": "build/endgame-tier/v1/ebastler__osprey__osprey_rev_a@designer-1124/project",
+   "board_id": "osprey_rev_a",
+   "board_sha256": "3356f6976a24c9a74edd9ee98256af40a8f1ad1378492b25d29dd42a968cc338",
+   "binary": "pcb-maker-nightly-2026-11-24-96e891b27162",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 1,
+   "open_nets_before": [
+    "c2"
+   ],
+   "errors_before": {
+    "clearance": 1
+   },
+   "new_findings_strict_before": {},
+   "work_seconds_before": 827.0,
+   "seconds_before": 787.5,
+   "cpu_seconds_before": 780.9,
+   "peak_rss_mb": 1159,
+   "input_like_items": 0
+  },
+  "obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized@designer-1124": {
+   "task": "obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized",
+   "source": "build/nightly/2026-11-24/designer/obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized/route",
+   "project": "build/endgame-tier/v1/obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized@designer-1124/project",
+   "board_id": "Quanta75_BareRP2040_JLCPCBAoptimized",
+   "board_sha256": "15d6d33e00a8086be1d5db36533631784ba643a098f9662f64849969e848c06b",
+   "binary": "pcb-maker-nightly-2026-11-24-96e891b27162",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 3,
+   "open_nets_before": [
+    "+1V1",
+    "/~{RESET}",
+    "Row1"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 591.0,
+   "seconds_before": 611.9,
+   "cpu_seconds_before": 628.0,
+   "peak_rss_mb": 1056,
+   "input_like_items": 0
+  },
+  "ohdsp__DSP-ADAU1452__DSP-ADAU1452@designer-1124": {
+   "task": "ohdsp__DSP-ADAU1452__DSP-ADAU1452",
+   "source": "build/nightly/2026-11-24/designer/ohdsp__DSP-ADAU1452__DSP-ADAU1452/route",
+   "project": "build/endgame-tier/v1/ohdsp__DSP-ADAU1452__DSP-ADAU1452@designer-1124/project",
+   "board_id": "DSP-ADAU1452",
+   "board_sha256": "dce1ab0ea7a41bfdc7111208bcd491b30bffb5d5fcabfb46ed34fc8d9db367fb",
+   "binary": "pcb-maker-nightly-2026-11-24-96e891b27162",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 1,
+   "open_nets_before": [
+    "/ADAU1452/DVDD"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 738.0,
+   "seconds_before": 698.0,
+   "cpu_seconds_before": 699.2,
+   "peak_rss_mb": 447,
+   "input_like_items": 0
+  },
+  "oro-os__link__link@designer-1124": {
+   "task": "oro-os__link__link",
+   "source": "build/nightly/2026-11-24/designer/oro-os__link__link/route",
+   "project": "build/endgame-tier/v1/oro-os__link__link@designer-1124/project",
+   "board_id": "link",
+   "board_sha256": "cb7feb7894e59bd522d4a04a5d1541596f5441749b78ea0a4b88e4b90ebc7840",
+   "binary": "pcb-maker-nightly-2026-11-24-96e891b27162",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 1,
+   "open_nets_before": [
+    "GND"
+   ],
+   "errors_before": {
+    "length_out_of_range": 1
+   },
+   "new_findings_strict_before": {},
+   "work_seconds_before": 1062.4,
+   "seconds_before": 1547.0,
+   "cpu_seconds_before": 1541.1,
+   "peak_rss_mb": 2776,
+   "input_like_items": 0
+  },
+  "thpoll83__PolyKybd__poly_corne_split42_right@designer-1124": {
+   "task": "thpoll83__PolyKybd__poly_corne_split42_right",
+   "source": "build/nightly/2026-11-24/designer/thpoll83__PolyKybd__poly_corne_split42_right/route",
+   "project": "build/endgame-tier/v1/thpoll83__PolyKybd__poly_corne_split42_right@designer-1124/project",
+   "board_id": "poly_corne_split42_right",
+   "board_sha256": "4b2546b8fbfed1bc577458632d42b17af4cae7c6933799469b83323dfa43cea5",
+   "binary": "pcb-maker-nightly-2026-11-24-96e891b27162",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "connect",
+   "unconnected_before": 1,
+   "open_nets_before": [
+    "D-C"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 1079.3,
+   "seconds_before": 1325.9,
+   "cpu_seconds_before": 1347.4,
+   "peak_rss_mb": 1137,
+   "input_like_items": 0
+  },
+  "thpoll83__PolyKybd__poly_kybd_split72_right@designer-1124": {
+   "task": "thpoll83__PolyKybd__poly_kybd_split72_right",
+   "source": "build/nightly/2026-11-24/designer/thpoll83__PolyKybd__poly_kybd_split72_right/route",
+   "project": "build/endgame-tier/v1/thpoll83__PolyKybd__poly_kybd_split72_right@designer-1124/project",
+   "board_id": "poly_kybd_split72_right",
+   "board_sha256": "973869864073db3559190633d551f486dc3b5362766cc6cee76dd3e66cc83c52",
+   "binary": "pcb-maker-nightly-2026-11-24-96e891b27162",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "connect",
+   "unconnected_before": 1,
+   "open_nets_before": [
+    "VDD"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 954.4,
+   "seconds_before": 1172.3,
+   "cpu_seconds_before": 1172.1,
+   "peak_rss_mb": 1276,
+   "input_like_items": 0
+  },
+  "vd-rd__sbc_allwinner_a13__module@designer-1124": {
+   "task": "vd-rd__sbc_allwinner_a13__module",
+   "source": "build/nightly/2026-11-24/designer/vd-rd__sbc_allwinner_a13__module/route",
+   "project": "build/endgame-tier/v1/vd-rd__sbc_allwinner_a13__module@designer-1124/project",
+   "board_id": "module",
+   "board_sha256": "ff1792e30f99d239a4a1057a10de763578af8b6fbcee3cb1e711ed7643a6a3bc",
+   "binary": "pcb-maker-nightly-2026-11-24-96e891b27162",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 3,
+   "open_nets_before": [
+    "/DDR3 Memory/ddr-a0",
+    "/DDR3 Memory/ddr-dqs0-",
+    "/DDR3 Memory/ddr-we"
+   ],
+   "errors_before": {
+    "items_not_allowed": 2
+   },
+   "new_findings_strict_before": {
+    "items_not_allowed": 2
+   },
+   "work_seconds_before": 778.0,
+   "seconds_before": 815.1,
+   "cpu_seconds_before": 861.9,
+   "peak_rss_mb": 559,
+   "input_like_items": 0
+  },
+  "CDFER__Business-Cards__Batch_1@designer-1118": {
+   "task": "CDFER__Business-Cards__Batch_1",
+   "source": "build/nightly/2026-11-18/designer/CDFER__Business-Cards__Batch_1/route",
+   "project": "build/endgame-tier/v1/CDFER__Business-Cards__Batch_1@designer-1118/project",
+   "board_id": "Batch 1",
+   "board_sha256": "9723a6eca8cdac94fed291a95cbdcf56e3fa67f750419fa875a520c6e1007923",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 2,
+   "open_nets_before": [
+    "GND",
+    "Net-(R28-Pad2)"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 767.7,
+   "seconds_before": 573.8,
+   "cpu_seconds_before": 571.3,
+   "peak_rss_mb": 1127,
+   "input_like_items": 1,
+   "reserve": true
+  },
+  "CDFER__Business-Cards__WLED_Matrix@designer-1118": {
+   "task": "CDFER__Business-Cards__WLED_Matrix",
+   "source": "build/nightly/2026-11-18/designer/CDFER__Business-Cards__WLED_Matrix/route",
+   "project": "build/endgame-tier/v1/CDFER__Business-Cards__WLED_Matrix@designer-1118/project",
+   "board_id": "WLED Matrix",
+   "board_sha256": "46014ac902b5ef6a8f5cc928b1f9c431690c8f6b85872664f38ca3d588d9e9d7",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 2,
+   "open_nets_before": [
+    "+3.3V",
+    "Net-(LDO1-Vin)"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 241.0,
+   "seconds_before": 216.6,
+   "cpu_seconds_before": 222.3,
+   "peak_rss_mb": 584,
+   "input_like_items": 0,
+   "reserve": true
+  },
+  "CRImier__MyKiCad__protoesp@designer-1118": {
+   "task": "CRImier__MyKiCad__protoesp",
+   "source": "build/nightly/2026-11-18/designer/CRImier__MyKiCad__protoesp/route",
+   "project": "build/endgame-tier/v1/CRImier__MyKiCad__protoesp@designer-1118/project",
+   "board_id": "protoesp",
+   "board_sha256": "db0856e7547017b5d6038935ad8fc179b8b03703cf938dbf2063b30cb7624e92",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "connect",
+   "unconnected_before": 1,
+   "open_nets_before": [
+    "RXD"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 806.0,
+   "seconds_before": 604.8,
+   "cpu_seconds_before": 601.3,
+   "peak_rss_mb": 586,
+   "input_like_items": 0,
+   "reserve": true
+  },
+  "CRImier__MyKiCad__vaio_re@designer-1118": {
+   "task": "CRImier__MyKiCad__vaio_re",
+   "source": "build/nightly/2026-11-18/designer/CRImier__MyKiCad__vaio_re/route",
+   "project": "build/endgame-tier/v1/CRImier__MyKiCad__vaio_re@designer-1118/project",
+   "board_id": "vaio_re",
+   "board_sha256": "de2ee8e00feb621cd2474dc908397f03c2588bbce1f4adc13321895f0ac4dbc8",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 3,
+   "open_nets_before": [
+    "GPE_P3",
+    "LED_PWM",
+    "Net-(U6-USB_DM)"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 822.6,
+   "seconds_before": 664.9,
+   "cpu_seconds_before": 660.9,
+   "peak_rss_mb": 423,
+   "input_like_items": 0,
+   "reserve": true
+  },
+  "Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1@designer-1118": {
+   "task": "Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1",
+   "source": "build/nightly/2026-11-18/designer/Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1/route",
+   "project": "build/endgame-tier/v1/Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1@designer-1118/project",
+   "board_id": "reCamera S101 v1.1",
+   "board_sha256": "644d2ca375bd13b887deabea83b8ae4af08d1c170011b767799c4fe618615245",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 4,
+   "open_nets_before": [
+    "GND"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 67.9,
+   "seconds_before": 52.5,
+   "cpu_seconds_before": 52.0,
+   "peak_rss_mb": 258,
+   "input_like_items": 4,
+   "reserve": true
+  },
+  "Twisted-Fields__rp2040-motor-controller__RP2040_base@designer-1118": {
+   "task": "Twisted-Fields__rp2040-motor-controller__RP2040_base",
+   "source": "build/nightly/2026-11-18/designer/Twisted-Fields__rp2040-motor-controller__RP2040_base/route",
+   "project": "build/endgame-tier/v1/Twisted-Fields__rp2040-motor-controller__RP2040_base@designer-1118/project",
+   "board_id": "RP2040_base",
+   "board_sha256": "b51141f67eb9fd709b3f25f6d638c96104fc49f5f51e7da57bc7acc0ff31d3f1",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 7,
+   "open_nets_before": [
+    "+3.3VA",
+    "/AUX3_CSn",
+    "/QSPI_SCLK",
+    "/QSPI_SS_2",
+    "/SWCLK_2",
+    "M1A_PWM_L\\",
+    "Net-(U19-XIN)"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 502.1,
+   "seconds_before": 349.7,
+   "cpu_seconds_before": 347.7,
+   "peak_rss_mb": 321,
+   "input_like_items": 0,
+   "reserve": true
+  },
+  "antmicro__jetson-nano-baseboard__jetson-nano-baseboard@designer-1118": {
+   "task": "antmicro__jetson-nano-baseboard__jetson-nano-baseboard",
+   "source": "build/nightly/2026-11-18/designer/antmicro__jetson-nano-baseboard__jetson-nano-baseboard/route",
+   "project": "build/endgame-tier/v1/antmicro__jetson-nano-baseboard__jetson-nano-baseboard@designer-1118/project",
+   "board_id": "jetson-nano-baseboard",
+   "board_sha256": "461c23cff89669d45bba04fb1a726bedee93990219127b0b43cb73f1c03bd5bb",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 2,
+   "open_nets_before": [
+    "/Supply/5V_EN",
+    "Net-(IC7-CURRENT_MODE)"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 733.5,
+   "seconds_before": 571.3,
+   "cpu_seconds_before": 567.8,
+   "peak_rss_mb": 1045,
+   "input_like_items": 0,
+   "reserve": true
+  },
+  "apfaudio__eurorack-pmod__eurorack-pmod-pcb@designer-1118": {
+   "task": "apfaudio__eurorack-pmod__eurorack-pmod-pcb",
+   "source": "build/nightly/2026-11-18/designer/apfaudio__eurorack-pmod__eurorack-pmod-pcb/route",
+   "project": "build/endgame-tier/v1/apfaudio__eurorack-pmod__eurorack-pmod-pcb@designer-1118/project",
+   "board_id": "eurorack-pmod-pcb",
+   "board_sha256": "0911805205287b44a719c1a1187a81eab8fa0df499ea3376ffe57cd23c133074",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 1,
+   "open_nets_before": [
+    "Net-(D18-A)"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 917.7,
+   "seconds_before": 559.2,
+   "cpu_seconds_before": 556.0,
+   "peak_rss_mb": 258,
+   "input_like_items": 0,
+   "reserve": true
+  },
+  "briskspirit__Sisu_SSE-9__Sisu_SSE-9@designer-1118": {
+   "task": "briskspirit__Sisu_SSE-9__Sisu_SSE-9",
+   "source": "build/nightly/2026-11-18/designer/briskspirit__Sisu_SSE-9__Sisu_SSE-9/route",
+   "project": "build/endgame-tier/v1/briskspirit__Sisu_SSE-9__Sisu_SSE-9@designer-1118/project",
+   "board_id": "Sisu_SSE-9",
+   "board_sha256": "3cf256b524a7cd1c3ed1b86b98a9cf011fc43679df874eff60b34f078e557ae8",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "connect",
+   "unconnected_before": 1,
+   "open_nets_before": [
+    "/4G LTE/RESET"
+   ],
+   "errors_before": {
+    "skew_out_of_range": 5
+   },
+   "new_findings_strict_before": {
+    "skew_out_of_range": 5
+   },
+   "work_seconds_before": 807.9,
+   "seconds_before": 730.3,
+   "cpu_seconds_before": 707.4,
+   "peak_rss_mb": 1044,
+   "input_like_items": 0,
+   "reserve": true
+  },
+  "byrantech__laptop__keyboard@designer-1118": {
+   "task": "byrantech__laptop__keyboard",
+   "source": "build/nightly/2026-11-18/designer/byrantech__laptop__keyboard/route",
+   "project": "build/endgame-tier/v1/byrantech__laptop__keyboard@designer-1118/project",
+   "board_id": "keyboard",
+   "board_sha256": "81b82b13a0a43e03162dfcc7d12ec41ea76d6d3ba92eab1eae6708ac54f5123d",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "connect",
+   "unconnected_before": 2,
+   "open_nets_before": [
+    "RESET",
+    "VSS_PA"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 760.9,
+   "seconds_before": 498.7,
+   "cpu_seconds_before": 495.8,
+   "peak_rss_mb": 454,
+   "input_like_items": 0,
+   "reserve": true
+  },
+  "byrantech__laptop__motherboard@designer-1118": {
+   "task": "byrantech__laptop__motherboard",
+   "source": "build/nightly/2026-11-18/designer/byrantech__laptop__motherboard/route",
+   "project": "build/endgame-tier/v1/byrantech__laptop__motherboard@designer-1118/project",
+   "board_id": "motherboard",
+   "board_sha256": "7833cd726d7fc657418a4622f27971125e2d68fe9fd0e5eb3612c0f81b029b50",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 2,
+   "open_nets_before": [
+    "/GPIO0_D3/CC_INT_L",
+    "/GPIO0_D5"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 669.0,
+   "seconds_before": 590.3,
+   "cpu_seconds_before": 586.6,
+   "peak_rss_mb": 972,
+   "input_like_items": 0,
+   "reserve": true
+  },
+  "ebastler__osprey__osprey_rev_a@designer-1118": {
+   "task": "ebastler__osprey__osprey_rev_a",
+   "source": "build/nightly/2026-11-18/designer/ebastler__osprey__osprey_rev_a/route",
+   "project": "build/endgame-tier/v1/ebastler__osprey__osprey_rev_a@designer-1118/project",
+   "board_id": "osprey_rev_a",
+   "board_sha256": "9b1c65526f31af3ce47915f22887c5078497c802975af3b47f6707ed311f79c7",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 1,
+   "open_nets_before": [
+    "Net-(AE1-Pad1)"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 759.2,
+   "seconds_before": 586.8,
+   "cpu_seconds_before": 583.6,
+   "peak_rss_mb": 1158,
+   "input_like_items": 0,
+   "reserve": true
+  },
+  "obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized@designer-1118": {
+   "task": "obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized",
+   "source": "build/nightly/2026-11-18/designer/obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized/route",
+   "project": "build/endgame-tier/v1/obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized@designer-1118/project",
+   "board_id": "Quanta75_BareRP2040_JLCPCBAoptimized",
+   "board_sha256": "15d6d33e00a8086be1d5db36533631784ba643a098f9662f64849969e848c06b",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 3,
+   "open_nets_before": [
+    "+1V1",
+    "/~{RESET}",
+    "Row1"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 591.0,
+   "seconds_before": 472.2,
+   "cpu_seconds_before": 469.2,
+   "peak_rss_mb": 1042,
+   "input_like_items": 0,
+   "reserve": true
+  },
+  "ohdsp__DSP-ADAU1452__DSP-ADAU1452@designer-1118": {
+   "task": "ohdsp__DSP-ADAU1452__DSP-ADAU1452",
+   "source": "build/nightly/2026-11-18/designer/ohdsp__DSP-ADAU1452__DSP-ADAU1452/route",
+   "project": "build/endgame-tier/v1/ohdsp__DSP-ADAU1452__DSP-ADAU1452@designer-1118/project",
+   "board_id": "DSP-ADAU1452",
+   "board_sha256": "986c6c5dede3230de7b3e3b65fce1015a47bdd3db012330849cf355d0613bea9",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 1,
+   "open_nets_before": [
+    "/ADAU1452/DVDD"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 738.0,
+   "seconds_before": 570.8,
+   "cpu_seconds_before": 567.3,
+   "peak_rss_mb": 424,
+   "input_like_items": 0,
+   "reserve": true
+  },
+  "oro-os__link__link@designer-1118": {
+   "task": "oro-os__link__link",
+   "source": "build/nightly/2026-11-18/designer/oro-os__link__link/route",
+   "project": "build/endgame-tier/v1/oro-os__link__link@designer-1118/project",
+   "board_id": "link",
+   "board_sha256": "1b5a8612f50afd78efe843a4b65abdafe8d93d14b48656050c126d36cbf549f5",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 1,
+   "open_nets_before": [
+    "GND"
+   ],
+   "errors_before": {
+    "length_out_of_range": 1
+   },
+   "new_findings_strict_before": {},
+   "work_seconds_before": 1064.9,
+   "seconds_before": 1181.0,
+   "cpu_seconds_before": 1173.5,
+   "peak_rss_mb": 2772,
+   "input_like_items": 0,
+   "reserve": true
+  },
+  "thpoll83__PolyKybd__poly_corne_split42_right@designer-1118": {
+   "task": "thpoll83__PolyKybd__poly_corne_split42_right",
+   "source": "build/nightly/2026-11-18/designer/thpoll83__PolyKybd__poly_corne_split42_right/route",
+   "project": "build/endgame-tier/v1/thpoll83__PolyKybd__poly_corne_split42_right@designer-1118/project",
+   "board_id": "poly_corne_split42_right",
+   "board_sha256": "090bab89d9ecae8f18d1855317825f0b0071190a04409fe0f17abc5be7077eba",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "connect",
+   "unconnected_before": 2,
+   "open_nets_before": [
+    "/RpPico/GPIO24",
+    "/SCLK1"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 990.0,
+   "seconds_before": 1053.0,
+   "cpu_seconds_before": 1046.8,
+   "peak_rss_mb": 1133,
+   "input_like_items": 0,
+   "reserve": true
+  },
+  "thpoll83__PolyKybd__poly_kybd_split72_right@designer-1118": {
+   "task": "thpoll83__PolyKybd__poly_kybd_split72_right",
+   "source": "build/nightly/2026-11-18/designer/thpoll83__PolyKybd__poly_kybd_split72_right/route",
+   "project": "build/endgame-tier/v1/thpoll83__PolyKybd__poly_kybd_split72_right@designer-1118/project",
+   "board_id": "poly_kybd_split72_right",
+   "board_sha256": "0dec9a911e422faa1e9624b876a78717b9d45549ae7285b08f0c5edcf5880444",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "connect",
+   "unconnected_before": 1,
+   "open_nets_before": [
+    "VDD"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 954.4,
+   "seconds_before": 952.4,
+   "cpu_seconds_before": 946.8,
+   "peak_rss_mb": 1257,
+   "input_like_items": 0,
+   "reserve": true
+  },
+  "vd-rd__sbc_allwinner_a13__module@designer-1118": {
+   "task": "vd-rd__sbc_allwinner_a13__module",
+   "source": "build/nightly/2026-11-18/designer/vd-rd__sbc_allwinner_a13__module/route",
+   "project": "build/endgame-tier/v1/vd-rd__sbc_allwinner_a13__module@designer-1118/project",
+   "board_id": "module",
+   "board_sha256": "c1c7f74acf7f0f479f71dd2e447ae7f997d52a20e290bf759e9933ee210a3388",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 3,
+   "open_nets_before": [
+    "/DDR3 Memory/ddr-a0",
+    "/DDR3 Memory/ddr-dqs0-",
+    "/DDR3 Memory/ddr-we"
+   ],
+   "errors_before": {
+    "items_not_allowed": 2
+   },
+   "new_findings_strict_before": {
+    "items_not_allowed": 2
+   },
+   "work_seconds_before": 868.5,
+   "seconds_before": 700.3,
+   "cpu_seconds_before": 696.4,
+   "peak_rss_mb": 407,
+   "input_like_items": 0,
+   "reserve": true
+  }
+ }
+}

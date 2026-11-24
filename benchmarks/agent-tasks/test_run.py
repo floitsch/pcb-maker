@@ -848,6 +848,26 @@ class CommittedTaskLists(unittest.TestCase):
             _, tasks = self.load("v7")
             self.assertLessEqual(set(entry["boards"]), set(tasks), tier)
 
+    def test_the_endgame_tier_names_tasks_of_the_committed_list(self):
+        entry = json.loads(run.TIERS["endgame"].read_text())
+        self.assertEqual(entry["kind"], "endgame")
+        self.assertEqual(entry["tasks"], "benchmarks/agent-tasks/tasks/v7/tasks.json")
+        _, tasks = self.load("v7")
+        for key, board in entry["boards"].items():
+            self.assertEqual(key.split("@")[0], board["task"], key)
+            self.assertIn(board["task"], tasks, key)
+            self.assertGreater(board["unconnected_before"], 0, key)
+            self.assertFalse(board["project"].startswith("build/nightly"), key)
+
+    def test_endgame_tasks_rename_and_leave_reserve_out(self):
+        tier = {"boards": {"a@x": {"task": "a"}, "a@y": {"task": "a", "reserve": True}, "b@x": {"task": "gone"}}}
+        tasks = [{"name": "a", "board_id": "a"}]
+        self.assertEqual([task["name"] for task in run.endgame_tasks(tier, tasks)], ["a@x"])
+        named = run.endgame_tasks(tier, tasks, only=["a@y"])
+        self.assertEqual([task["name"] for task in named], ["a@x", "a@y"])
+        self.assertEqual(named[1]["endgame"], {"task": "a", "reserve": True})
+        self.assertEqual(named[1]["board_id"], "a")
+
     def test_v6_and_v7_differ_only_on_six_panels(self):
         # The quick and short tiers moved from v6 to v7 (2026-10-21): none of
         # their boards is one of the six, so their older v6 logs stay bases.

@@ -41,7 +41,8 @@ the nightly are in [docs/benchmarks.md](../../docs/benchmarks.md).
 | `ablation.py`, `legality_census.py` | Placement ablation and the legality census (docs/placer.md). |
 | `tasks.json` | The three hand-written tasks below (the default list). |
 | `tasks/v7` | The harvested corpus as 109 tasks: every tier's default list (`tasks/v6` differs only in six panels). |
-| `quick.json`, `short.json`, `schematic.json`, `expansion.json`, `designer.json` | The tiers: boards, task list, budget scale, and per board its reasons and estimates. |
+| `quick.json`, `short.json`, `schematic.json`, `expansion.json`, `designer.json`, `endgame.json` | The tiers: boards, task list, budget scale, and per board its reasons and estimates. |
+| `endgame_freeze.py`, `endgame_report.py` | Freeze the endgame tier's inputs out of a nightly; its per-board table and totals. |
 | `estimates.json`, `designer-numbers.json`, `dense-noise.json` | Per-board estimates; the designer's vias, length, pour cut and aesthetics; the seed noise of the eleven dense boards. |
 | `connectivity-tasks.json`, `rules-tasks.json` | Route-mode task lists of two experiments (experiments/kicad-connectivity, experiments/project-rules). |
 
@@ -395,6 +396,60 @@ benchmarks/agent-tasks/compare.py --gap build/github-layout-vNN.log build/design
 The layout's router also had the first route, and splitting by subtraction
 assumes the causes add up: the split is an accounting of where the open
 connections are, not a measured cause.
+
+## The endgame tier (`--tier endgame`)
+
+**Does the endgame close more of the last connections?** The strict
+passes are decided by boards a layout leaves 1 to 7 connections short.
+The endgame tier asks only that question, in minutes instead of full
+layouts: it starts from routed boards a nightly left a few
+KiCad-unconnected items short, frozen with the router settings their run
+used, and runs only the endgame on them.
+
+- **The inputs** (`endgame.json`, written by `endgame_freeze.py`): every
+  row of a nightly's sweep or designer tier that fails the strict rule
+  with 1 to 7 unconnected items, copied out of `build/nightly` (which the
+  nightly rotates) to `build/endgame-tier/<version>/<task>@<source>/`
+  (`project/`: the routed project with its `drc.json`; `router.json`: the
+  run's router settings; `row.json`: the run's row). The tier file names
+  each entry's board SHA-256, the open nets, the counts before, the run's
+  work and the pour mode. Boards whose opens are the input's own
+  (`excluded`: SUMEC's rules, Hub's GND zone pieces, which the designer's
+  board leaves open too) are left out; `input_like_items` counts the open
+  items on a net the designer's own board also leaves open. Reserve
+  entries (`"reserve": true`) are frozen but run only when named with
+  `--only`.
+- **The endgame** (`endgame_admitted`): `route-kicad-board` on the frozen
+  project with its copper kept (`existing_tracks: keep`: the board's
+  tracks and vias stay, their connections count as made, the router
+  routes only what is open around them and never rips one up), the run's
+  router settings and pour mode, and `endgame_budget_seconds` of ladder
+  work; then, where KiCad still reports opens, `repair-kicad-opens
+  --local` on the result (the layout's additive repair as a command; a
+  repaired board becomes the row's result). `--endgame-release MM`
+  removes the tracks and vias within MM of each open item (the segment
+  between its two ends) first, so that the router renegotiates that
+  window with the opens: its pieces of kept copper on no pad become
+  terminals of their net.
+- **The row** is a route row of the final stage (KiCad's findings less
+  the designer's, the strict rule) with `unconnected_before` and
+  `endgame`: each stage's unconnected count, seconds, CPU and work, the
+  local repair's status, and what the window released.
+
+```sh
+benchmarks/agent-tasks/run.py build/endgame-xNNNN --tier endgame --jobs 3 --threads 2 \
+  --binary build/bin/pcb-maker-xNNNN > build/endgame-xNNNN.log
+benchmarks/agent-tasks/endgame_report.py build/endgame-xNNNN.log              # the table and totals
+benchmarks/agent-tasks/endgame_report.py build/endgame-main.log build/endgame-xNNNN.log
+```
+
+What it cannot say: the resumed route starts from the stalled copper, so
+it measures gains in the endgame only. A change upstream of the endgame
+(the negotiation that left the copper, the placement) is not seen, and a
+change that would make the full route open more cannot show. Freeze a
+new version (`endgame_freeze.py build/endgame-tier/vN --source
+<tag>=<log> ...`) when main's routes have moved: the boards are the stalled
+results of the binary named in each entry.
 
 ## Route mode (`--route-from`)
 
