@@ -2733,6 +2733,27 @@ def segment_distance(a, b, c, d):
     return min(point(a, c, d), point(b, c, d), point(c, a, b), point(d, a, b))
 
 
+def text_balance(text):
+    """Opening less closing parentheses of S-expression text, outside its
+    quoted strings."""
+    balance, quoted, escaped = 0, False, False
+    for character in text:
+        if quoted:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                quoted = False
+        elif character == '"':
+            quoted = True
+        elif character == "(":
+            balance += 1
+        elif character == ")":
+            balance -= 1
+    return balance
+
+
 def release_window(board, drc, radius):
     """Removes from `board` (a .kicad_pcb with one top-level item a block
     of lines at two spaces) the track segments, arcs and vias within
@@ -2775,6 +2796,12 @@ def release_window(board, drc, radius):
                     nets.add(net.group(1))
         if not drop:
             kept.extend(block)
+        else:
+            # The board's own closing parenthesis can end the last item's
+            # line: what the item does not open stays.
+            balance = text_balance(text)
+            if balance < 0:
+                kept.append(")" * -balance + "\n")
         block.clear()
 
     for line in lines:
