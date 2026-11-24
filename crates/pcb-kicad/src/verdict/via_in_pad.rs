@@ -215,6 +215,7 @@ mod tests {
                 footprint: "lib:Switch".into(),
                 pads: vec!["1 (COL)".into()],
                 nets: vec!["COL".into()],
+                ..Default::default()
             })
             .collect();
         let planned = crate::KiCadViaInPadReport {

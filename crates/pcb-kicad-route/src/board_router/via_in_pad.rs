@@ -229,7 +229,17 @@ pub struct KiCadClosedPads {
     pub pads: Vec<String>,
     /// The pads' nets (as the router names them).
     pub nets: Vec<String>,
+    /// Why the pads are closed, in a sentence (`CLOSED_PADS_WHY`): the
+    /// route.log line `pads no track leaves, no via allowed`.
+    #[serde(default)]
+    pub why: String,
 }
+
+/// What a footprint's closed pads (`KiCadClosedPads`) are: no track of the
+/// nets' class passes between the footprint's own pads to them (a flood at
+/// the narrowest track and clearance from outside the pad field), and the
+/// via-in-pad rule does not admit the footprint.
+pub const CLOSED_PADS_WHY: &str = "no track leaves, no via allowed: no track of the pads' class passes between the footprint's own pads to them (at the narrowest track and clearance of their nets), and no via may go into its pads (via_in_pad does not admit the footprint); KiCad reports these pads open unless the class, the footprint or the via-in-pad rule changes";
 
 /// A via the rule puts in a pad.
 #[derive(Clone, Debug, PartialEq)]
@@ -704,6 +714,7 @@ fn plan_of(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Result<ViaInPadPlan, 
                     nets.dedup();
                     nets
                 },
+                why: CLOSED_PADS_WHY.into(),
             });
             continue;
         };

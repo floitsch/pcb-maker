@@ -38,6 +38,7 @@ mod held_geometry;
 pub use held_geometry::{KiCadHeldPad, KiCadHeldPadShort};
 mod invalid_padstack;
 mod mask_opening;
+mod outlines;
 mod parity;
 mod retry;
 mod via_cost;
@@ -1782,6 +1783,9 @@ pub struct KiCadRunFacts {
     /// What `solid_starved_thermals` did on the board written, when it ran
     /// on it.
     pub solid_starved: Option<crate::board_router::KiCadSolidStarved>,
+    /// The board's separate outlines, when it has two or more
+    /// (`outlines::KiCadBoardOutlines`).
+    pub board_outlines: Option<outlines::KiCadBoardOutlines>,
 }
 
 /// A part near a hot spot: its reference, its side (`front`, `back`) and
@@ -1949,17 +1953,19 @@ fn blocked_open_pads(report: &Value, blocked: &[crate::board_router::KiCadDeadPa
         .iter()
         .filter(|pad| pads.contains(&(pad.pad.clone(), pad.net.clone())))
         .take(3)
-        .map(|pad| format!("{} [{}]: {}", pad.pad, pad.net, pad.wall))
+        .map(|pad| format!("{} [{}] ({}): {}", pad.pad, pad.net, pad.access, pad.wall))
         .collect()
 }
 
 /// The first of KiCad's unconnected items (`report`, its drc.json) between
 /// two parts' pads on one of `nets` (taken in their order), with the pad
-/// counts of its parts on `board`.
+/// counts of its parts on `board`; with `near` (the hot spot's point),
+/// the one of those nets' items with an end nearest it.
 pub fn open_link_of(
     report: &Value,
     nets: &[String],
     board: Option<&crate::Expr>,
+    near: Option<[f64; 2]>,
 ) -> Option<KiCadOpenLink> {
     let footprints = footprints_by_reference(board);
     let links: Vec<KiCadOpenLink> = report["unconnected_items"]
@@ -2000,6 +2006,19 @@ pub fn open_link_of(
             })
         })
         .collect();
+    if let Some(at) = near {
+        let wanted: BTreeSet<&str> = nets.iter().map(|net| bare_net(net)).collect();
+        return links
+            .iter()
+            .filter(|link| wanted.contains(link.net.as_str()))
+            .min_by(|a, b| {
+                let reach = |link: &KiCadOpenLink| link_end_nearest(link, at).1;
+                (a.ends[0].0 == a.ends[1].0)
+                    .cmp(&(b.ends[0].0 == b.ends[1].0))
+                    .then(reach(a).total_cmp(&reach(b)))
+            })
+            .cloned();
+    }
     nets.iter().find_map(|net| {
         links
             .iter()
@@ -2038,7 +2057,7 @@ fn open_link_text(link: &KiCadOpenLink, command: &str, fixed: &BTreeSet<String>)
         );
     }
     let head = format!(
-        "its open link on {} runs from {} to {}, {:.1} mm apart (KiCad's unconnected item)",
+        "KiCad's open link on {} runs from {} to {}, {:.1} mm apart (its unconnected item)",
         link.net,
         pin(0),
         pin(1),
@@ -2221,17 +2240,11 @@ pub fn hot_spot_note(
     })
 }
 
-/// The next actions for open connections at pads no track leaves (a
-/// fine-pitch BGA's inner balls, `KiCadViaInPadReport`): where the rule
-/// does not admit the footprint, the opt-in; where no via size fits, why.
-/// A footprint counts when one of its enclosed pads' nets is open, by
-/// KiCad's unconnected items or else by the router.
-fn via_in_pad_actions(facts: &KiCadRunFacts) -> Vec<String> {
-    let Some(report) = &facts.vias_in_pads else {
-        return Vec::new();
-    };
+/// The nets open on the board, as bare names: KiCad's unconnected items',
+/// else the router's.
+fn open_net_names(facts: &KiCadRunFacts) -> BTreeSet<String> {
     let bare = |net: &str| net.trim_start_matches('/').to_string();
-    let open: BTreeSet<String> = match facts
+    match facts
         .native
         .as_ref()
         .filter(|native| !native.unconnected_nets.is_empty())
@@ -2242,17 +2255,80 @@ fn via_in_pad_actions(facts: &KiCadRunFacts) -> Vec<String> {
             .map(|net| bare(net))
             .collect(),
         None => facts.open_nets.iter().map(|net| bare(net)).collect(),
+    }
+}
+
+/// A footprint's pads no track leaves and no via may enter, as the
+/// verdict says them (`closed_pads`): board-router.json's
+/// `vias_in_pads.closed` (route.log's `pads no track leaves, no via
+/// allowed`) with the nets among them that are open.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct KiCadClosedPadsNote {
+    pub part: String,
+    pub footprint: String,
+    /// `AC9 (RESET)`.
+    pub pads: Vec<String>,
+    pub nets: Vec<String>,
+    /// The nets of `nets` KiCad reports unconnected (else the router).
+    pub open_nets: Vec<String>,
+    pub why: String,
+}
+
+fn closed_pads(facts: &KiCadRunFacts) -> Vec<KiCadClosedPadsNote> {
+    let Some(report) = &facts.vias_in_pads else {
+        return Vec::new();
     };
+    let open = open_net_names(facts);
+    report
+        .closed
+        .iter()
+        .map(|closed| KiCadClosedPadsNote {
+            part: closed.part.clone(),
+            footprint: closed.footprint.clone(),
+            pads: closed.pads.clone(),
+            nets: closed.nets.clone(),
+            open_nets: closed
+                .nets
+                .iter()
+                .filter(|net| open.contains(net.trim_start_matches('/')))
+                .cloned()
+                .collect(),
+            why: crate::board_router::CLOSED_PADS_WHY.into(),
+        })
+        .collect()
+}
+
+/// The next actions for open connections at pads no track leaves (a
+/// fine-pitch BGA's inner balls, `KiCadViaInPadReport`): where the rule
+/// does not admit the footprint, the opt-in; where no via size fits, why.
+/// A footprint counts when one of its enclosed pads' nets is open, by
+/// KiCad's unconnected items or else by the router.
+fn via_in_pad_actions(facts: &KiCadRunFacts) -> Vec<String> {
+    let Some(report) = &facts.vias_in_pads else {
+        return Vec::new();
+    };
+    let bare = |net: &str| net.trim_start_matches('/').to_string();
+    let open = open_net_names(facts);
     let mut actions: Vec<_> = facts
         .via_in_pad_retries
         .iter()
         .flatten()
         .map(KiCadViaInPadRetry::action)
         .collect();
+    // A footprint a retry names has its action there; the others keep
+    // theirs (the laptop keyboard's U2: KiCad names one of its three
+    // closed RESET pads, so no retry groups them, and the closed pads
+    // went unsaid).
+    let retried: BTreeSet<&str> = facts
+        .via_in_pad_retries
+        .iter()
+        .flatten()
+        .flat_map(|retry| retry.references.iter().map(String::as_str))
+        .collect();
     for closed in report
         .closed
         .iter()
-        .filter(|_| facts.via_in_pad_retries.is_none())
+        .filter(|closed| !retried.contains(closed.part.as_str()))
     {
         let nets: Vec<&String> = closed
             .nets
@@ -2722,6 +2798,7 @@ impl KiCadRunFacts {
             via_in_pad_retries: None,
             open_nets: Vec::new(),
             hot_spot: None,
+            board_outlines: None,
             fixed_parts: BTreeSet::new(),
             authored_layout_constraints: None,
             starved_pads: Vec::new(),
@@ -2943,6 +3020,18 @@ pub struct KiCadVerdict {
     /// Geometry-equivalent enclosed pads with exact native open witnesses.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub via_in_pad_retries: Option<Vec<KiCadViaInPadRetry>>,
+    /// The board file's separate outlines (Edge.Cuts loops that do not
+    /// touch: several boards in one file), when it has two or more, and
+    /// KiCad's unconnected items between two of them, which no copper can
+    /// join (`outlines::KiCadBoardOutlines`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub board_outlines: Option<outlines::KiCadBoardOutlines>,
+    /// Pads no track leaves and no via may enter, per footprint
+    /// (`KiCadClosedPadsNote`: board-router.json's `vias_in_pads.closed`,
+    /// route.log's `pads no track leaves, no via allowed`), with the nets
+    /// among them that are open.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub closed_pads: Vec<KiCadClosedPadsNote>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fixed_route_comparison: Option<crate::KiCadFixedRouteComparison>,
     /// The input's own observations (fixed parts on the board's texts,
@@ -3623,6 +3712,14 @@ fn next_actions(
             rear.allow_back_additions.len(), rear.front_body_area_mm2, rear.rear_headroom_mm2,
         ));
     }
+    if facts.routes && open > 0 {
+        actions.extend(
+            facts
+                .board_outlines
+                .as_ref()
+                .and_then(outlines::KiCadBoardOutlines::across_action),
+        );
+    }
     if facts.routes
         && open > 0
         && let Some(recovery) = &facts.zone_island_recovery
@@ -3649,8 +3746,18 @@ fn next_actions(
         }
         if facts.dead_pads > 0 {
             where_.push(format!(
-                "diagnostics.dead_pads ({}) lists pads no track of their class can enter",
+                "diagnostics.dead_pads ({}) lists pads the router's lattice found no way out of, each with its access: only no_legal_access says that no point of the pad keeps the clearances for the net's narrowest track; the others have a legal track end, and the lattice or the router's stub rules left the pad (KiCad may accept a track there)",
                 facts.dead_pads
+            ));
+        }
+        let closed = facts
+            .vias_in_pads
+            .as_ref()
+            .map_or(0, |report| report.closed.len());
+        if closed > 0 {
+            where_.push(format!(
+                "closed_pads ({closed} footprint{}; vias_in_pads.closed in board-router.json) lists pads no track leaves and no via may enter",
+                if closed == 1 { "" } else { "s" }
             ));
         }
         if let Some(native) = facts
@@ -3679,7 +3786,7 @@ fn next_actions(
         ));
         if !facts.native_blocked_pads.is_empty() {
             actions.push(format!(
-                "KiCad reports an open at each of these pads, and the router found no legal track entry. Inspect the obstacles at these pads before retrying the route. {}",
+                "KiCad reports an open at each of these pads, and the router found no way out of them (its access in parentheses: no_legal_access is a wall by the router's rules, where no point of the pad keeps the clearances for the net's narrowest track; no_lattice_node, stubs_blocked, start_blocked and escape_not_kept have a legal track end, which the router's lattice or stub rules did not use, so KiCad may accept a track there). Inspect the obstacles at these pads before changing the design. {}",
                 facts.native_blocked_pads.join(" | ")
             ));
         }
@@ -3970,7 +4077,11 @@ fn next_actions(
         ));
     }
     for pour in facts.pours.iter().filter(|pour| pour.in_many_pieces()) {
-        actions.push(pour_action(pour));
+        let note = facts
+            .board_outlines
+            .as_ref()
+            .map_or(String::new(), outlines::KiCadBoardOutlines::pour_note);
+        actions.push(format!("{note}{}", pour_action(pour)));
     }
     actions.extend(
         facts
@@ -4267,17 +4378,58 @@ fn open_evidence(facts: &KiCadRunFacts) -> String {
 /// The next action naming the hot spot of the open connections and the
 /// parts nearest it (`hot_spot_note`), with what moves them: a layout's
 /// constraints, or in route mode (which keeps every part) the input.
+/// Where KiCad names an open link on one of its nets, the link leads,
+/// and the hot spot follows with its distance to the link's nearer end;
+/// beyond `HOT_SPOT_REACH_MM` the hot spot is not where the connection is
+/// missing and its parts are not offered as levers (the eval study of
+/// 2026-11-24: USB_Keypad's hot spots lay 16 mm from its open item, and
+/// subjects read them as its cause).
 fn hot_spot_action(note: &KiCadHotSpotNote, command: &str, fixed: &BTreeSet<String>) -> String {
-    let action = hot_spot_parts_action(note, command);
-    match &note.open_link {
-        Some(link) => format!("{action}; {}", open_link_text(link, command, fixed)),
-        None => action,
+    let Some(link) = &note.open_link else {
+        return hot_spot_parts_action(note, command);
+    };
+    let (end, distance) = link_end_nearest(link, note.at);
+    let link_text = open_link_text(link, command, fixed);
+    let link_text = link_text.trim_end_matches('.');
+    if distance <= HOT_SPOT_REACH_MM {
+        return format!(
+            "{link_text}; {} lies {distance:.1} mm from {end}: {}",
+            hot_spot_label(note),
+            hot_spot_parts_tail(note, command)
+        );
     }
+    format!(
+        "{link_text}; the router's worst hot spot on {} (diagnostics.hot_spots[{}]: {} at {:.2}, {:.2}) lies {distance:.1} mm from its nearer end {end}: it is where nets fought, not where this connection is missing, so its parts are no lever for it (inspect-routing-run's nets[].hot_spots_near lists the hot spots by their distance to the open item)",
+        link.net, note.index, note.layer, note.at[0], note.at[1]
+    )
+}
+
+/// The end of `link` nearest `at` (`REF:PAD`) and its distance.
+fn link_end_nearest(link: &KiCadOpenLink, at: [f64; 2]) -> (String, f64) {
+    (0..2)
+        .map(|index| {
+            (
+                format!("{}:{}", link.ends[index].0, link.ends[index].1),
+                distance(link.occurrences[index].at, at),
+            )
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .expect("two ends")
 }
 
 /// The hot spot and the parts nearest it (`hot_spot_action` less its open
 /// link).
 fn hot_spot_parts_action(note: &KiCadHotSpotNote, command: &str) -> String {
+    format!(
+        "{}: {}",
+        hot_spot_label(note),
+        hot_spot_parts_tail(note, command)
+    )
+}
+
+/// `hot spot 1 (diagnostics.hot_spots[1]: B.Cu at x, y, on the open nets
+/// ...; their pads in its tile ...; in conflict there with ...)`.
+fn hot_spot_label(note: &KiCadHotSpotNote) -> String {
     let mut nets = if !note.open_nets.is_empty() {
         format!(", on the open nets {}", note.open_nets.join(", "))
     } else if !note.conflicted_nets.is_empty() {
@@ -4313,6 +4465,15 @@ fn hot_spot_parts_action(note: &KiCadHotSpotNote, command: &str) -> String {
             nets += &format!("; in conflict there with {}", others.join(", "));
         }
     }
+    format!(
+        "hot spot {} (diagnostics.hot_spots[{}]: {} at {:.2}, {:.2}{nets})",
+        note.index, note.index, note.layer, note.at[0], note.at[1]
+    )
+}
+
+/// What the hot spot's parts are and what moves them
+/// (`hot_spot_parts_action` less its label).
+fn hot_spot_parts_tail(note: &KiCadHotSpotNote, command: &str) -> String {
     let parts: Vec<String> = note
         .parts
         .iter()
@@ -4333,12 +4494,8 @@ fn hot_spot_parts_action(note: &KiCadHotSpotNote, command: &str) -> String {
             }
         })
         .collect();
-    let spot = format!(
-        "hot spot {} (diagnostics.hot_spots[{}]: {} at {:.2}, {:.2}{nets})",
-        note.index, note.index, note.layer, note.at[0], note.at[1]
-    );
     if parts.is_empty() {
-        return format!("{spot}: no part's body or pad lies on its layer");
+        return "no part's body or pad lies on its layer".to_string();
     }
     let lever = if note.parts.iter().any(|part| part.occurrence.is_some()) {
         "identify any repeated part by its position and footprint UUID before making an edit. To constrain a specific occurrence's pose in a layout run, put its reference and UUID in the place entry"
@@ -4350,13 +4507,13 @@ fn hot_spot_parts_action(note: &KiCadHotSpotNote, command: &str) -> String {
     // Farther than a few millimetres the parts are no neighbours to move.
     if note.parts[0].distance_mm > HOT_SPOT_REACH_MM {
         return format!(
-            "{spot}: no part's body or pad on {} lies within {HOT_SPOT_REACH_MM:.0} mm of it (the nearest: {}): what crowds it is copper, not parts",
+            "no part's body or pad on {} lies within {HOT_SPOT_REACH_MM:.0} mm of it (the nearest: {}): what crowds it is copper, not parts",
             note.layer,
             parts.join(", ")
         );
     }
     format!(
-        "{spot}: the parts nearest it on {} are {} (side, distance from the point to the body or a pad on that layer); {lever}",
+        "the parts nearest it on {} are {} (side, distance from the point to the body or a pad on that layer); {lever}",
         note.layer,
         parts.join(", ")
     )
@@ -4497,6 +4654,11 @@ fn thermal_action_text(facts: &KiCadRunFacts) -> String {
 /// region would cut another net's pads off (the trial's board A,
 /// 2026-10-26: keep_whole under its ICs on F.Cu opened 22 connections).
 fn pour_action(pour: &crate::board_router::KiCadPourQuality) -> String {
+    // A part without a reference names nothing to paste (Hub's F.Cu:
+    // "U10, U5, , ").
+    let mut named = pour.clone();
+    named.keep_whole_parts.retain(|part| !part.is_empty());
+    let pour = &named;
     if pour.bounded_regions.is_some() {
         let advice = if pour.keep_whole_parts.is_empty() {
             "Review the requested rectangles and the tracks inside them in `pours[].bounded_regions`.".to_owned()
@@ -6133,6 +6295,8 @@ pub(crate) fn judge_at(
             .as_ref()
             .filter(|groups| !groups.is_empty())
             .cloned(),
+        closed_pads: closed_pads(facts),
+        board_outlines: facts.board_outlines.clone(),
         fixed_route_comparison: None,
         input_observations: observations,
         footprint_findings,
@@ -6405,6 +6569,7 @@ pub fn route_facts(
                 result.vias_in_pads.as_ref(),
             ));
         }
+        facts.board_outlines = outlines::of_board(&board, report.as_ref());
         let project_exists = project.is_file();
         let has_native_opens = facts
             .native
@@ -6508,7 +6673,7 @@ pub fn route_facts(
         if let Some(note) = facts.hot_spot.as_mut()
             && let Some(report) = &report
         {
-            note.open_link = open_link_of(report, &note.open_nets, board.as_ref());
+            note.open_link = open_link_of(report, &note.open_nets, board.as_ref(), Some(note.at));
         }
     }
     facts.starved_pads = result
@@ -6567,6 +6732,7 @@ mod tests {
             at: [128.905, 99.54],
             near: Vec::new(),
             wall: "F.Cu: rule area at the best entry point".into(),
+            access: "stubs_blocked".into(),
         };
         let matches = blocked_open_pads(
             &report,
@@ -6578,7 +6744,7 @@ mod tests {
         );
         assert_eq!(
             matches,
-            ["C90.1 [GND]: F.Cu: rule area at the best entry point"]
+            ["C90.1 [GND] (stubs_blocked): F.Cu: rule area at the best entry point"]
         );
     }
 
@@ -8444,6 +8610,7 @@ mod tests {
                 footprint: "Package_TFBGA:TFBGA-153_11.5x13mm".into(),
                 pads: vec!["B2 (MEM_DAT3)".into(), "M5 (MEM_CMD)".into()],
                 nets: vec!["MEM_CMD".into(), "MEM_DAT3".into()],
+                ..Default::default()
             }],
             ..Default::default()
         };
@@ -8463,6 +8630,25 @@ mod tests {
             .expect("the via-in-pad action");
         assert!(action.contains("open there: MEM_DAT3"), "{action}");
         assert!(action.contains("\"via_in_pad\": [\"U106\"]"), "{action}");
+        // In verdict.json too, with the open net, and named where the
+        // open connections' action says where to look.
+        assert_eq!(verdict.closed_pads.len(), 1);
+        assert_eq!(verdict.closed_pads[0].open_nets, ["MEM_DAT3"]);
+        assert!(
+            verdict.closed_pads[0]
+                .why
+                .starts_with("no track leaves, no via allowed")
+        );
+        // A retry that groups no footprint (KiCad named only some of the
+        // closed pads: the laptop keyboard's U2) leaves the action said.
+        facts.via_in_pad_retries = Some(Vec::new());
+        assert!(
+            judge(&facts)
+                .next_actions
+                .iter()
+                .any(|action| action.starts_with("U106 ("))
+        );
+        facts.via_in_pad_retries = None;
         // Open elsewhere: no such action.
         let mut elsewhere = BTreeMap::new();
         elsewhere.insert("/SDA".to_string(), 1);
@@ -10625,7 +10811,7 @@ mod tests {
             {"description": "Pad 7 [DATA] of J1 on F.Cu", "uuid": "pad-1", "pos": {"x":10,"y":20}},
             {"description": "Pad 7 [DATA] of J1 on F.Cu", "uuid": "pad-2", "pos": {"x":15,"y":20}}
         ]}]});
-        let link = open_link_of(&report, &["DATA".into()], Some(&board)).unwrap();
+        let link = open_link_of(&report, &["DATA".into()], Some(&board), None).unwrap();
         assert_eq!(
             link.occurrences[0].footprint_uuid.as_deref(),
             Some("copy-1")
@@ -10665,8 +10851,13 @@ mod tests {
             pad(2)
         ))
         .unwrap();
-        let link =
-            open_link_of(&report, &["Display/TMDS_D0_C_N".to_string()], Some(&board)).unwrap();
+        let link = open_link_of(
+            &report,
+            &["Display/TMDS_D0_C_N".to_string()],
+            Some(&board),
+            None,
+        )
+        .unwrap();
         assert_eq!(link.net, "Display/TMDS_D0_C_N");
         assert_eq!(
             link.ends,
@@ -10679,7 +10870,7 @@ mod tests {
         assert!((link.distance_mm - 10.554).abs() < 0.01, "{link:?}");
         // An open net without an unconnected item: no link.
         assert_eq!(
-            open_link_of(&report, &["+5V".to_string()], Some(&board)),
+            open_link_of(&report, &["+5V".to_string()], Some(&board), None),
             None
         );
         let mut facts = open_layout();
@@ -10702,15 +10893,20 @@ mod tests {
             judge(facts)
                 .next_actions
                 .into_iter()
-                .find(|action| action.starts_with("hot spot 0 "))
+                .find(|action| action.starts_with("KiCad's open link on "))
                 .unwrap()
         };
-        // R8, the smaller part, comes to J1's pin.
+        // R8, the smaller part, comes to J1's pin. The open link leads, the
+        // hot spot follows with its distance to the link's nearer end.
         let text = action(&facts);
         assert!(
-            text.contains(
-                "its open link on Display/TMDS_D0_C_N runs from J1:11 to R8:2, 10.6 mm apart"
+            text.starts_with(
+                "KiCad's open link on Display/TMDS_D0_C_N runs from J1:11 to R8:2, 10.6 mm apart"
             ),
+            "{text}"
+        );
+        assert!(
+            text.contains("; hot spot 0 (diagnostics.hot_spots[0]: F.Cu at 108.45, 122.58, on the open nets Display/TMDS_D0_C_N) lies 0.4 mm from J1:11: the parts nearest it on F.Cu are J1 (front, over it)"),
             "{text}"
         );
         let entry = text
@@ -10733,8 +10929,8 @@ mod tests {
         );
         facts.fixed_parts = ["R8".to_string(), "J1".to_string()].into();
         assert!(
-            action(&facts).ends_with(
-                "both J1 and R8 are fixed, so only freeing one of them brings it nearer"
+            action(&facts).contains(
+                "both J1 and R8 are fixed, so only freeing one of them brings it nearer; hot spot 0 "
             ),
             "{}",
             action(&facts)
@@ -10748,6 +10944,32 @@ mod tests {
             "{}",
             action(&facts)
         );
+        // A hot spot far from the open link (USB_Keypad's, 16 mm away):
+        // the link leads and the hot spot's parts are no lever.
+        if let Some(note) = &mut facts.hot_spot {
+            note.at = [124.0, 122.6];
+        }
+        let far = action(&facts);
+        assert!(
+            far.contains("the router's worst hot spot on Display/TMDS_D0_C_N (diagnostics.hot_spots[0]: F.Cu at 124.00, 122.60) lies 16.0 mm from its nearer end J1:11: it is where nets fought, not where this connection is missing"),
+            "{far}"
+        );
+        assert!(!far.contains("the parts nearest it"), "{far}");
+    }
+
+    #[test]
+    fn the_open_link_named_is_the_one_nearest_the_hot_spot() {
+        let report = json!({"unconnected_items": [
+            {"items": [{"description": "Pad 1 [+3V3] of C1 on F.Cu", "pos": {"x": 0.0, "y": 0.0}},
+                       {"description": "Pad 2 [+3V3] of U1 on F.Cu", "pos": {"x": 2.0, "y": 0.0}}]},
+            {"items": [{"description": "Pad 1 [+3V3] of C2 on F.Cu", "pos": {"x": 40.0, "y": 0.0}},
+                       {"description": "Pad 3 [+3V3] of U1 on F.Cu", "pos": {"x": 42.0, "y": 0.0}}]}
+        ]});
+        let nets = ["+3V3".to_string()];
+        let first = open_link_of(&report, &nets, None, None).unwrap();
+        assert_eq!(first.ends[0].0, "C1");
+        let near = open_link_of(&report, &nets, None, Some([41.0, 1.0])).unwrap();
+        assert_eq!(near.ends[0].0, "C2");
     }
 
     #[test]
