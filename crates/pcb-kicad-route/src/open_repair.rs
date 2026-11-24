@@ -467,27 +467,32 @@ pub(crate) fn finding_counts(report: &Value, key: &str) -> Result<Findings, Stri
     Ok(counts)
 }
 
-/// KiCad's findings that compare a footprint with its library. Added copper
-/// and a part's pose leave them as they are, and KiCad caps each finding
-/// type on its own (DRC_ENGINE's per-type limits), so their cap hides no
-/// finding a repair could cause. The checks run without the user's library
-/// tables (`kicad_config.rs`), which makes every board of 199 library
-/// footprints or more reach that cap: on the night of 2026-11-24 it refused
-/// the layout's open repair on 17 sweep boards and the single-net closes of
-/// DSP-ADAU1452 and poly_kybd_split72_right, whose trials KiCad found closed
-/// and otherwise unchanged.
-pub(crate) const LIBRARY_FINDING_TYPES: [&str; 2] =
-    ["lib_footprint_issues", "lib_footprint_mismatch"];
+/// KiCad's findings that neither added copper nor a part's pose can change:
+/// a footprint compared with its library, and a text's height and stroke.
+/// KiCad caps each finding type on its own (DRC_ENGINE's per-type limits),
+/// so their cap hides no finding a repair could cause. The checks run
+/// without the user's library tables (`kicad_config.rs`), which makes every
+/// board of 199 library footprints or more reach the library findings' cap:
+/// on the night of 2026-11-24 it refused the layout's open repair on 17
+/// sweep boards and the single-net closes of DSP-ADAU1452 and
+/// poly_kybd_split72_right, whose trials KiCad found closed and otherwise
+/// unchanged. The text findings reach theirs on jetson-nano and link.
+pub(crate) const COPPER_INDEPENDENT_TYPES: [&str; 4] = [
+    "lib_footprint_issues",
+    "lib_footprint_mismatch",
+    "text_height",
+    "text_thickness",
+];
 
-fn library_finding(finding: &Value) -> bool {
+fn copper_independent(finding: &Value) -> bool {
     finding["type"]
         .as_str()
-        .is_some_and(|kind| LIBRARY_FINDING_TYPES.contains(&kind))
+        .is_some_and(|kind| COPPER_INDEPENDENT_TYPES.contains(&kind))
 }
 
 /// Whether KiCad's report may hide a finding a repair could change: a
 /// report KiCad marked capped, the unconnected items at their limit, or a
-/// violation type other than the library findings at its cap.
+/// violation type at its cap that copper can change.
 pub fn report_capped(report: &Value) -> bool {
     report[CAPPED_KEY] == true
         || report["unconnected_items"]
@@ -496,11 +501,11 @@ pub fn report_capped(report: &Value) -> bool {
         || !copper_finding_types_at_cap(report).is_empty()
 }
 
-/// The violation types at KiCad's cap less the library findings.
+/// The violation types at KiCad's cap less the copper-independent ones.
 pub fn copper_finding_types_at_cap(report: &Value) -> Vec<&str> {
     finding_types_at_cap(report, "violations")
         .into_iter()
-        .filter(|kind| !LIBRARY_FINDING_TYPES.contains(kind))
+        .filter(|kind| !COPPER_INDEPENDENT_TYPES.contains(kind))
         .collect()
 }
 
@@ -533,20 +538,20 @@ pub fn finding_types_at_cap<'a>(report: &'a Value, key: &str) -> Vec<&'a str> {
 }
 
 /// Whether the candidate has a finding more often than the baseline. The
-/// library findings do not count: copper does not change them, and where
-/// KiCad caps them two checks may list different ones.
+/// copper-independent findings do not count: copper does not change them,
+/// and where KiCad caps them two checks may list different ones.
 fn adds_findings(baseline: &Value, candidate: &Value, key: &str) -> Result<bool, String> {
     let counts = |report: &Value| -> Result<Findings, String> {
         if key != "violations"
             || !report[key]
                 .as_array()
-                .is_some_and(|all| all.iter().any(library_finding))
+                .is_some_and(|all| all.iter().any(copper_independent))
         {
             return finding_counts(report, key);
         }
         let mut copper = report.clone();
         if let Some(findings) = copper[key].as_array_mut() {
-            findings.retain(|finding| !library_finding(finding));
+            findings.retain(|finding| !copper_independent(finding));
         }
         finding_counts(&copper, key)
     };
@@ -1002,7 +1007,7 @@ fn repair_in_copy(
         report.note =
             Some("KiCad capped its baseline report; compare a complete report before repairing");
         // The library findings at their cap do not cap the report
-        // (`LIBRARY_FINDING_TYPES`): another type does, and restoring the
+        // (`COPPER_INDEPENDENT_TYPES`): another type does, and restoring the
         // libraries would not lift it. Their counts are reported still.
         if report
             .capped_native_violation_types
@@ -1803,6 +1808,13 @@ mod tests {
             .extend(vec![json!({"type": "silk_overlap"}); 199]);
         assert!(report_capped(&silk));
         assert_eq!(copper_finding_types_at_cap(&silk), ["silk_overlap"]);
+        // A text's height at its cap is copper-independent too.
+        let mut text = baseline.clone();
+        text["violations"]
+            .as_array_mut()
+            .unwrap()
+            .extend(vec![json!({"type": "text_height"}); 199]);
+        assert!(!report_capped(&text));
     }
 
     #[test]
