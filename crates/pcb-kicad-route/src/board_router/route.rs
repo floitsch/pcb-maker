@@ -512,44 +512,37 @@ pub fn route_kicad_board(
                     input.publish_original(final_directory, &mut original, Some(output_directory));
                 let _ = fs::remove_dir_all(output_directory);
                 published?;
+                // The input kept is repaired as an attempt's board would be
+                // (split72_right on the endgame tier: kept by the trial on
+                // one run, by a wall-guarded preflight's absence on another).
+                if super::route_open_repair::after_ladder(
+                    &mut original,
+                    final_directory,
+                    board_id,
+                    config,
+                    &mut ladder,
+                )? {
+                    original.work_seconds = ladder.work;
+                    original.kicad_checks_charged = ladder.checks_charged.checks;
+                    write_atomically(
+                        &final_directory.join("board-router.json"),
+                        &serde_json::to_vec_pretty(&original).map_err(|error| error.to_string())?,
+                    )?;
+                }
                 return Ok(original);
             }
         }
         ladder.charge_checks(input_checks - before);
     }
     // The nets KiCad still finds open, each routed alone against all the
-    // copper kept and kept where KiCad finds the board better. A layout's
-    // own ladders (`kicad_kept`) leave it to the layout, which repairs the
-    // board it keeps (`board_layout/additive_repair.rs`).
-    if config.kicad_kept.is_none()
-        && config.provisional_native_check_limit.is_none()
-        && !config.skip_native_verification
-    {
-        let past = ladder.past_deadline();
-        let left = (ladder.ladder_budget - ladder.work).max(0.0);
-        let repair = if past {
-            result
-                .native
-                .as_ref()
-                .filter(|native| native.selected_net_unconnected_items > 0)
-                .map(|native| KiCadRouteOpenRepair::skipped(native, "wall_guard_expired"))
-        } else {
-            super::route_open_repair::repair_route_opens(
-                &mut result,
-                output_directory,
-                board_id,
-                config,
-                left,
-            )?
-        };
-        if let Some(repair) = &repair {
-            ladder.work += repair.search_work_seconds;
-            ladder.charged.search_seconds += repair.search_work_seconds;
-            ladder.charge_checks(repair.native_checks);
-            eprintln!("{}", repair.line());
-        }
-        result.open_repair = repair;
-    }
+    // copper kept (`route_open_repair.rs`).
+    super::route_open_repair::after_ladder(
+        &mut result,
+        output_directory,
+        board_id,
+        config,
+        &mut ladder,
+    )?;
     result.cut = core::router::wall_cuts();
     result.work_seconds = ladder.work;
     result.work_bound_seconds = ladder.work_bound;

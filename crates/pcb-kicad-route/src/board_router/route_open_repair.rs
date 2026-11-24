@@ -33,6 +33,46 @@ pub struct KiCadRouteOpenRepair {
     pub search_work_seconds: f64,
 }
 
+/// Route mode's repair after its ladder, on the board kept in `directory`:
+/// not in a layout's own ladders (`kicad_kept`: the layout repairs the
+/// board it keeps, `board_layout/additive_repair.rs`), a provisional
+/// reroute or a run without KiCad; skipped past the wall guard. Charges its
+/// work to the ladder and notes it in `result.open_repair`. Returns whether
+/// it ran.
+pub(super) fn after_ladder(
+    result: &mut KiCadBoardRouterResult,
+    directory: &Path,
+    board_id: &str,
+    config: &KiCadBoardRouterConfig,
+    ladder: &mut Ladder<'_>,
+) -> Result<bool, String> {
+    if config.kicad_kept.is_some()
+        || config.provisional_native_check_limit.is_some()
+        || config.skip_native_verification
+    {
+        return Ok(false);
+    }
+    let repair = if ladder.past_deadline() {
+        result
+            .native
+            .as_ref()
+            .filter(|native| native.selected_net_unconnected_items > 0)
+            .map(|native| KiCadRouteOpenRepair::skipped(native, "wall_guard_expired"))
+    } else {
+        let left = (ladder.ladder_budget - ladder.work).max(0.0);
+        repair_route_opens(result, directory, board_id, config, left)?
+    };
+    let Some(repair) = repair else {
+        return Ok(false);
+    };
+    ladder.work += repair.search_work_seconds;
+    ladder.charged.search_seconds += repair.search_work_seconds;
+    ladder.charge_checks(repair.native_checks);
+    eprintln!("{}", repair.line());
+    result.open_repair = Some(repair);
+    Ok(true)
+}
+
 /// Runs the repair on the board kept in `directory` (the run's staging
 /// directory) when KiCad finds connections open there, and adopts the
 /// repaired project in its place. Returns the search work charged.
