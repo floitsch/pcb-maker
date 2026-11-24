@@ -1544,7 +1544,7 @@ impl KiCadRouteReuseOutcome {
 /// Environment variables that change what a run does or reports (the
 /// router's seed and switches, KiCad's check and its repairs, the budgets'
 /// guards), echoed into the verdict when set.
-pub const RESULT_ENVIRONMENT: [&str; 17] = [
+pub const RESULT_ENVIRONMENT: [&str; 18] = [
     "PCB_ROUTER_SEED",
     "PCB_ROUTER_DIFF_PAIRS",
     "PCB_ROUTER_LENGTH_MATCHING",
@@ -1553,6 +1553,7 @@ pub const RESULT_ENVIRONMENT: [&str; 17] = [
     "PCB_SKIP_NATIVE",
     "PCB_MIN_CONNECTION_FLOOR",
     "PCB_KICAD_NO_NECK_REPAIR",
+    "PCB_KICAD_NO_POST_ROUTE_REPAIRS",
     "PCB_KICAD_TIMEOUT",
     "PCB_MAKER_KICAD_USER_LIBS",
     "PCB_PLACER_WORK_SECONDS",

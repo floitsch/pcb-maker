@@ -728,6 +728,23 @@ crate::tuning_group! {
         /// The pin-swap estimate's settings, for `pin_swaps`.
         #[serde(default)]
         pub pin_swap: KiCadPinSwapConfig,
+        /// The repairs after routing that start from KiCad's report on the
+        /// routed board (docs/router.md, "Repairs from KiCad's report";
+        /// default on): a layout's local open repair, via detour, generated
+        /// pad-via move and same-hatch width repair, and the neck repair's
+        /// round pad-to-via bridge in both commands. False skips them and
+        /// their KiCad checks; diagnostics that change no copper still run.
+        /// Not given, `PCB_KICAD_NO_POST_ROUTE_REPAIRS` set (any value)
+        /// turns them off.
+        #[serde(default)]
+        pub post_route_repairs: Option<bool>,
+        /// route-kicad-board: save and verify KiCad's zone fill on the
+        /// returned PCB when the route is complete (default on). False
+        /// skips that hand-off and its KiCad checks; the routed board's
+        /// check still refills. A layout's is the layout setting
+        /// `save_zone_fills`.
+        #[serde(default)]
+        pub save_zone_fills: Option<bool>,
     }
 }
 
@@ -1023,6 +1040,15 @@ impl KiCadBoardRouterConfig {
     /// (`length_reroute`): the settings' value, else off.
     pub fn length_reroute_on(&self) -> bool {
         self.length_reroute.unwrap_or(false)
+    }
+
+    /// Whether the repairs after routing that start from KiCad's report run
+    /// (`tuning.post_route_repairs`): the settings' value, else off where
+    /// `PCB_KICAD_NO_POST_ROUTE_REPAIRS` is set, else on.
+    pub fn post_route_repairs_on(&self) -> bool {
+        self.tuning
+            .post_route_repairs
+            .unwrap_or_else(|| std::env::var_os("PCB_KICAD_NO_POST_ROUTE_REPAIRS").is_none())
     }
 
     /// Whether differential pairs route coupled (`diff_pairs_choice`).

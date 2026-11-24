@@ -13,7 +13,8 @@ pub(super) fn recover(
     ledger: &mut WorkLedger,
     routed: &mut KiCadBoardRouterResult,
 ) -> Result<Option<ViaDetourRepair>, String> {
-    if ctx.config.stop_after_first_route
+    if !ctx.router_config.post_route_repairs_on()
+        || ctx.config.stop_after_first_route
         || ctx.wall_passed()
         || routed.route_reuse.is_some()
         || routed.native.as_ref().is_none_or(|native| {
