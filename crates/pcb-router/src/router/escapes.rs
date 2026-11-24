@@ -672,10 +672,10 @@ impl Router {
                 .inflated(REACH),
             ) else {
                 walls.push(format!(
-                    "layer {layer}: a {width:.3} mm track may end at ({:.3}, {:.3}), but the lattice has no node within {REACH} mm (the pad lies off the routed area)",
+                    "layer {layer}: a {width:.3} mm track may end at ({:.3}, {:.3}), but the lattice has no node within {REACH} mm: the pad lies off the routed area (beside the board outline)",
                     point[0], point[1]
                 ));
-                access = access.max(DeadPadAccess::NoLatticeNode);
+                access = access.max(DeadPadAccess::OffLattice);
                 continue;
             };
             let mut candidates: Vec<(f64, usize)> = Vec::new();

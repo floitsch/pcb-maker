@@ -266,12 +266,13 @@ points of its contact (`contact_starts`; Hub 12 to 4 open).
 best point, or what blocks stubs from there; it changes no route and is
 written as `diagnostics.dead_pads[].wall`, with `access`, the most open of
 the pad's layers (`DeadPadAccess`): `no_legal_access` (no point of the pad
-keeps the clearances for the net's narrowest track), `no_lattice_node` (a
+keeps the clearances for the net's narrowest track), `off_lattice` (no
+node within 2 mm: the pad lies off the routed area), `no_lattice_node` (a
 track end fits, no node within the escape's 2 mm admits the class's
 width), `stubs_blocked`, `start_blocked` (a stub from the best point is
 free, not from where the router starts: a plain pad's centre,
-`escape_starts`) and `escape_not_kept`. Only the first is a wall by the
-router's rules.
+`escape_starts`) and `escape_not_kept`. Only the first two are walls by
+the router's rules.
 
 **A pad walled by its own footprint's copper.** To KiCad 10.0.7 a copper
 graphic of a footprint that is not a net tie is copper of no net, also

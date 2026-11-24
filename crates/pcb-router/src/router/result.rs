@@ -112,9 +112,10 @@ pub struct DeadPad {
 
 /// How a dead pad stands (`Router::dead_pad_wall`), from the most closed
 /// to the most open; a pad's is the most open of its layers. Only
-/// `NoLegalAccess` says that by the router's rules no track can end on
-/// the pad; the others have a legal track end, and the lattice or the
-/// escape's rules left the pad (KiCad, the judge, may accept a track).
+/// `NoLegalAccess` and `OffLattice` say that by the router's rules no
+/// track can reach the pad; the others have a legal track end, and the
+/// lattice or the escape's rules left the pad (KiCad, the judge, may
+/// accept a track).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DeadPadAccess {
     /// Not measured (a pair's launch).
@@ -123,6 +124,9 @@ pub enum DeadPadAccess {
     /// No point of the pad keeps the clearances for the net's narrowest
     /// track (its neck) on any of its layers.
     NoLegalAccess,
+    /// The lattice has no node within the escape's reach of the pad: the
+    /// pad lies off the routed area (a part beside the board outline).
+    OffLattice,
     /// A track may end on the pad, but no lattice node within the escape's
     /// reach admits the class's track.
     NoLatticeNode,
@@ -144,6 +148,7 @@ impl DeadPadAccess {
         match self {
             Self::Unknown => "unknown",
             Self::NoLegalAccess => "no_legal_access",
+            Self::OffLattice => "off_lattice",
             Self::NoLatticeNode => "no_lattice_node",
             Self::StubsBlocked => "stubs_blocked",
             Self::StartBlocked => "start_blocked",

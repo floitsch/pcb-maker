@@ -1829,6 +1829,10 @@ pub struct KiCadHotSpotNote {
     /// An open connection of one of `open_nets` as KiCad names it
     /// (`open_link_of`), whose far end may lie elsewhere.
     pub open_link: Option<KiCadOpenLink>,
+    /// The nearest end (a pad, a track or a via; KiCad places a zone's
+    /// item at the zone's first corner) of KiCad's unconnected items to
+    /// the hot spot's point: its distance and net (`nearest_open_item`).
+    pub nearest_open: Option<(f64, String)>,
 }
 
 /// An open connection KiCad names (an unconnected item): its net, its two
@@ -2237,7 +2241,36 @@ pub fn hot_spot_note(
         pads,
         parts,
         open_link: None,
+        nearest_open: None,
     })
+}
+
+/// The end of KiCad's retained unconnected items (`report`, its drc.json)
+/// nearest `at`, with its net: pads, tracks and vias only (a zone's item
+/// stands at the zone's first outline corner, which says nothing of where
+/// the connection is missing).
+pub fn nearest_open_item(report: &Value, at: [f64; 2]) -> Option<(f64, String)> {
+    report["unconnected_items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|item| {
+            matches!(item["severity"].as_str(), Some("error" | "warning") | None)
+                && item["excluded"] != true
+        })
+        .flat_map(|item| item["items"].as_array().into_iter().flatten())
+        .filter_map(|end| {
+            let description = end["description"].as_str()?;
+            if description.starts_with("Zone ") {
+                return None;
+            }
+            let point = [end["pos"]["x"].as_f64()?, end["pos"]["y"].as_f64()?];
+            Some((
+                distance(point, at),
+                bare_net(&item_net(description)?).to_string(),
+            ))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
 }
 
 /// The nets open on the board, as bare names: KiCad's unconnected items',
@@ -3746,7 +3779,7 @@ fn next_actions(
         }
         if facts.dead_pads > 0 {
             where_.push(format!(
-                "diagnostics.dead_pads ({}) lists pads the router's lattice found no way out of, each with its access: only no_legal_access says that no point of the pad keeps the clearances for the net's narrowest track; the others have a legal track end, and the lattice or the router's stub rules left the pad (KiCad may accept a track there)",
+                "diagnostics.dead_pads ({}) lists pads the router's lattice found no way out of, each with its access: only no_legal_access (no point of the pad keeps the clearances for the net's narrowest track) and off_lattice (the pad lies off the routed area) are walls by the router's rules; the others have a legal track end, and the lattice or the router's stub rules left the pad (KiCad may accept a track there)",
                 facts.dead_pads
             ));
         }
@@ -3786,7 +3819,7 @@ fn next_actions(
         ));
         if !facts.native_blocked_pads.is_empty() {
             actions.push(format!(
-                "KiCad reports an open at each of these pads, and the router found no way out of them (its access in parentheses: no_legal_access is a wall by the router's rules, where no point of the pad keeps the clearances for the net's narrowest track; no_lattice_node, stubs_blocked, start_blocked and escape_not_kept have a legal track end, which the router's lattice or stub rules did not use, so KiCad may accept a track there). Inspect the obstacles at these pads before changing the design. {}",
+                "KiCad reports an open at each of these pads, and the router found no way out of them (its access in parentheses: no_legal_access and off_lattice are walls by the router's rules, where no point of the pad keeps the clearances for the net's narrowest track or the pad lies off the routed area; no_lattice_node, stubs_blocked, start_blocked and escape_not_kept have a legal track end, which the router's lattice or stub rules did not use, so KiCad may accept a track there). Inspect the obstacles at these pads before changing the design. {}",
                 facts.native_blocked_pads.join(" | ")
             ));
         }
@@ -4386,7 +4419,23 @@ fn open_evidence(facts: &KiCadRunFacts) -> String {
 /// subjects read them as its cause).
 fn hot_spot_action(note: &KiCadHotSpotNote, command: &str, fixed: &BTreeSet<String>) -> String {
     let Some(link) = &note.open_link else {
-        return hot_spot_parts_action(note, command);
+        // No open link on the hot spot's nets (none of them open, or
+        // KiCad names no pad pair): its distance to the nearest of
+        // KiCad's open items says whether it is near one (SUMEC_MK_IV on
+        // the designer tier: the worst hot spot, at U2, 20 mm from the
+        // nearest open item, led the open connections).
+        return match &note.nearest_open {
+            Some((distance, net)) if *distance > HOT_SPOT_REACH_MM => format!(
+                "the router's worst hot spot (diagnostics.hot_spots[{}]: {} at {:.2}, {:.2}) lies {distance:.1} mm from the nearest of KiCad's unconnected items (on {net}): it is where nets fought, not where a connection is missing, so its parts are no lever for the open connections",
+                note.index, note.layer, note.at[0], note.at[1]
+            ),
+            Some((distance, net)) => format!(
+                "{} lies {distance:.1} mm from KiCad's unconnected item on {net}: {}",
+                hot_spot_label(note),
+                hot_spot_parts_tail(note, command)
+            ),
+            None => hot_spot_parts_action(note, command),
+        };
     };
     let (end, distance) = link_end_nearest(link, note.at);
     let link_text = open_link_text(link, command, fixed);
@@ -6674,6 +6723,7 @@ pub fn route_facts(
             && let Some(report) = &report
         {
             note.open_link = open_link_of(report, &note.open_nets, board.as_ref(), Some(note.at));
+            note.nearest_open = nearest_open_item(report, note.at);
         }
     }
     facts.starved_pads = result
@@ -10888,6 +10938,7 @@ mod tests {
                 occurrence: None,
             }],
             open_link: Some(link),
+            nearest_open: None,
         });
         let action = |facts: &KiCadRunFacts| {
             judge(facts)
@@ -10955,6 +11006,50 @@ mod tests {
             "{far}"
         );
         assert!(!far.contains("the parts nearest it"), "{far}");
+    }
+
+    #[test]
+    fn a_hot_spot_far_from_every_open_item_is_no_lever() {
+        // SUMEC_MK_IV on the designer tier: no hot spot holds an open net,
+        // and the worst, at U2, lay 20 mm from the nearest of KiCad's
+        // unconnected items; its parts led the open connections.
+        let report = json!({"unconnected_items": [
+            {"items": [{"description": "Zone [GND] on F.Cu", "pos": {"x": 122.0, "y": 108.0}},
+                       {"description": "Pad 11 [+12V] of IC2 on F.Cu", "pos": {"x": 159.688, "y": 87.525}}]},
+            {"items": [{"description": "Pad 1 [GND] of C1 on F.Cu", "pos": {"x": 0.0, "y": 0.0}},
+                       {"description": "Pad 2 [GND] of C2 on F.Cu", "pos": {"x": 1.0, "y": 0.0}}],
+             "excluded": true}
+        ]});
+        let at = [122.62, 108.01];
+        let (distance, net) = nearest_open_item(&report, at).unwrap();
+        assert_eq!(net, "+12V");
+        assert!((distance - 42.35).abs() < 0.01, "{distance}");
+        let mut note = KiCadHotSpotNote {
+            index: 0,
+            layer: "F.Cu".into(),
+            at,
+            parts: vec![KiCadNearPart {
+                reference: "U2".into(),
+                side: "front".into(),
+                distance_mm: 0.0,
+                occurrence: None,
+            }],
+            nearest_open: Some((distance, net)),
+            ..Default::default()
+        };
+        let text = hot_spot_action(&note, "route-kicad-board", &BTreeSet::new());
+        assert!(
+            text.starts_with("the router's worst hot spot (diagnostics.hot_spots[0]: F.Cu at 122.62, 108.01) lies 42.4 mm from the nearest of KiCad's unconnected items (on +12V): it is where nets fought"),
+            "{text}"
+        );
+        assert!(!text.contains("U2"), "{text}");
+        // Near one: the parts, with the distance.
+        note.nearest_open = Some((1.2, "+12V".into()));
+        let text = hot_spot_action(&note, "route-kicad-board", &BTreeSet::new());
+        assert!(
+            text.starts_with("hot spot 0 (diagnostics.hot_spots[0]: F.Cu at 122.62, 108.01) lies 1.2 mm from KiCad's unconnected item on +12V: the parts nearest it on F.Cu are U2 (front, over it)"),
+            "{text}"
+        );
     }
 
     #[test]

@@ -569,6 +569,24 @@ fn a_dead_pad_names_what_walls_it() {
 }
 
 #[test]
+fn a_dead_pad_off_the_board_says_it_lies_off_the_routed_area() {
+    // SUMEC_MK_IV's C19 and R12 lie beside the board outline: no node
+    // lies within the escape's reach, and the wall said nothing.
+    let config = Config {
+        pitches: vec![0.1],
+        ..Config::default()
+    };
+    let board = overlapped_pad(0.23, [20.0, 20.0]);
+    let result = crate::route(&board, &config);
+    let dead = &result.diagnostics.dead_pads;
+    assert!(!dead.is_empty());
+    for pad in dead {
+        assert_eq!(pad.access, DeadPadAccess::OffLattice, "{}", pad.wall);
+        assert!(pad.wall.contains("off the routed area"), "{}", pad.wall);
+    }
+}
+
+#[test]
 fn a_dead_pad_whose_free_part_the_router_does_not_start_from_says_so() {
     // WLED_Matrix's LDO1.3: the no-net pad covers the pad's centre and
     // leaves a strip along its top edge. A track may end in the strip and

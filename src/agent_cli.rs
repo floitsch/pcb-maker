@@ -3634,7 +3634,7 @@ native_pairs (each pair's items and the groups they lie in: a pad by its uuid, a
 the copper it lies on), rules (track width and clearance with their sources: class, board minimum,
 custom rule; the class's own value below the minimum; the run's overrides; the widths emitted),
 reference (connected: true, false, or null where a zone of the net may join its groups),
-dead_pads (each with its access: only no_legal_access is a wall by the router's rules),
+dead_pads (each with its access: only no_legal_access and off_lattice are walls by the router's rules),
 hot_spots_near (indices into hot_spots; with KiCad's report those within 3 mm of the open item,
 nearest first, with to_open_item_mm), and access and cause: unknown (not measured).
 Top level: checks (router, native: not_run|passed|failed, components), attempts (the ladder's
