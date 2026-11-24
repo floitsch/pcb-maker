@@ -19,16 +19,14 @@
   "designer-1118": {
    "log": "build/nightly/2026-11-18/designer.log",
    "reserve": true,
-   "entries": 18
+   "entries": 20
   }
  },
  "excluded": {
   "MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub@sweep-1118": "the designer's own board leaves the same two GND zone pieces unconnected",
   "bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV@sweep-1118": "the project's own rules leave pads no track of their class can enter (handover, 'Not targets'); the designer's board leaves GND, SHLD and +12V open too",
   "MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub@designer-1124": "the designer's own board leaves the same two GND zone pieces unconnected",
-  "bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV@designer-1124": "the project's own rules leave pads no track of their class can enter (handover, 'Not targets'); the designer's board leaves GND, SHLD and +12V open too",
-  "MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub@designer-1118": "the designer's own board leaves the same two GND zone pieces unconnected",
-  "bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV@designer-1118": "the project's own rules leave pads no track of their class can enter (handover, 'Not targets'); the designer's board leaves GND, SHLD and +12V open too"
+  "bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV@designer-1124": "the project's own rules leave pads no track of their class can enter (handover, 'Not targets'); the designer's board leaves GND, SHLD and +12V open too"
  },
  "boards": {
   "CDFER__Business-Cards__USB_Keypad@sweep-1118": {
@@ -1044,6 +1042,30 @@
    "input_like_items": 0,
    "reserve": true
   },
+  "MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub@designer-1118": {
+   "task": "MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub",
+   "source": "build/nightly/2026-11-18/designer/MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub/route",
+   "project": "build/endgame-tier/v1/MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub@designer-1118/project",
+   "board_id": "Hub",
+   "board_sha256": "9b584980a7ba502abed0413d172a24d6b75863723394ee88bac34d4f14b0f098",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "tracks",
+   "unconnected_before": 2,
+   "open_nets_before": [
+    "GND"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 862.5,
+   "seconds_before": 627.8,
+   "cpu_seconds_before": 624.8,
+   "peak_rss_mb": 971,
+   "input_like_items": 2,
+   "reserve": true,
+   "excluded": "the designer's own board leaves the same two GND zone pieces unconnected"
+  },
   "Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1@designer-1118": {
    "task": "Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1",
    "source": "build/nightly/2026-11-18/designer/Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1/route",
@@ -1142,6 +1164,32 @@
    "peak_rss_mb": 258,
    "input_like_items": 0,
    "reserve": true
+  },
+  "bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV@designer-1118": {
+   "task": "bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV",
+   "source": "build/nightly/2026-11-18/designer/bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV/route",
+   "project": "build/endgame-tier/v1/bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV@designer-1118/project",
+   "board_id": "SUMEC_MK_IV",
+   "board_sha256": "8d9fd8680403f2eae7ac0141bae0b4378f4735ba9186e481887cb2b2b3a2dae6",
+   "binary": "pcb-maker-nightly-2026-11-18-3b27f2d0eb93",
+   "mode": "route",
+   "placement": "designer",
+   "pour_mode": "connect",
+   "unconnected_before": 6,
+   "open_nets_before": [
+    "+12V",
+    "/MCU/SHLD",
+    "GND"
+   ],
+   "errors_before": {},
+   "new_findings_strict_before": {},
+   "work_seconds_before": 645.4,
+   "seconds_before": 931.4,
+   "cpu_seconds_before": 896.6,
+   "peak_rss_mb": 826,
+   "input_like_items": 4,
+   "reserve": true,
+   "excluded": "the project's own rules leave pads no track of their class can enter (handover, 'Not targets'); the designer's board leaves GND, SHLD and +12V open too"
   },
   "briskspirit__Sisu_SSE-9__Sisu_SSE-9@designer-1118": {
    "task": "briskspirit__Sisu_SSE-9__Sisu_SSE-9",

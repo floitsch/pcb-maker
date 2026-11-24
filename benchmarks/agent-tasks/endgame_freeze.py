@@ -96,7 +96,7 @@ def board_id_of(project):
     return boards[0].stem if len(boards) == 1 else None
 
 
-def freeze(destination, tag, log, max_open, designer_drc, reserve):
+def freeze(destination, tag, log, max_open, designer_drc, reserve, keep_excluded=False):
     """The entries of one source, their projects copied under
     `destination`."""
     output = log.with_suffix("")
@@ -106,7 +106,7 @@ def freeze(destination, tag, log, max_open, designer_drc, reserve):
         if row.get("pass_strict") or not unconnected or unconnected > max_open:
             continue
         key = f"{name}@{tag}"
-        if name in EXCLUDED:
+        if name in EXCLUDED and not (reserve and keep_excluded):
             excluded[key] = EXCLUDED[name]
             continue
         project = result_project(output, row)
@@ -151,6 +151,8 @@ def freeze(destination, tag, log, max_open, designer_drc, reserve):
                 entry["input_like_items"] = sum(1 for item in items if item_nets(item) & nets)
         if reserve:
             entry["reserve"] = True
+        if name in EXCLUDED:
+            entry["excluded"] = EXCLUDED[name]
         entries[key] = entry
     return entries, excluded
 
@@ -163,6 +165,9 @@ def main():
     parser.add_argument("--reserve", action="append", default=[], metavar="TAG=LOG",
                         help="a run.py log whose near misses are frozen as reserve entries (run with --only)")
     parser.add_argument("--max-open", type=int, default=7)
+    parser.add_argument("--keep-excluded-in-reserve", action="store_true",
+                        help="freeze the excluded rows of --reserve sources too, marked with their reason "
+                             "(a prediction check that needs them)")
     parser.add_argument("--designer-drc", type=Path, default=None)
     parser.add_argument("--budget", type=float, default=30.0,
                         help="the endgame's ladder budget in work seconds (the tier's endgame_budget_seconds)")
@@ -178,7 +183,7 @@ def main():
             tag, _, log = spec.partition("=")
             log = absolute(Path(log))
             entries, left = freeze(arguments.destination, tag, log, arguments.max_open, arguments.designer_drc,
-                                   reserve)
+                                   reserve, arguments.keep_excluded_in_reserve)
             boards.update(entries)
             excluded.update(left)
             sources[tag] = {"log": relative(log), "reserve": reserve, "entries": len(entries)}
