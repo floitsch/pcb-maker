@@ -80,65 +80,8 @@ impl Router {
                     })
                 })
                 .collect();
-            // A pad straddling the board edge (connector shell, card-edge
-            // finger) cannot host copper at its centre: the stub then starts
-            // at the nearest point along the pad's long axis that keeps the
-            // edge clearance.
             let narrowest = *widths.last().unwrap();
-            let mut starts = vec![terminal.anchor];
-            if !self.stub_keeps_edge(terminal.anchor, terminal.anchor, narrowest) {
-                let shape = &self.board.obstacles[terminal.pad].shape;
-                let mut interior: Vec<crate::geometry::Point> = Vec::new();
-                for step in 1.. {
-                    let d = step as f64 * 0.1;
-                    if d > half_length {
-                        break;
-                    }
-                    for sign in [1.0, -1.0] {
-                        let point = [
-                            terminal.anchor[0] + sign * axis[0] * d,
-                            terminal.anchor[1] + sign * axis[1] * d,
-                        ];
-                        if well_inside(shape, point)
-                            && self.stub_keeps_edge(point, point, narrowest)
-                        {
-                            interior.push(point);
-                        }
-                    }
-                }
-                starts = interior;
-                if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
-                    eprintln!(
-                        "edge escape for {} at {:?}: {} interior starts",
-                        terminal.label,
-                        terminal.anchor,
-                        starts.len()
-                    );
-                }
-            } else if let Some(contact) = &terminal.contact
-                && !self.stub_is_clear(net, layer, terminal.anchor, terminal.anchor, narrowest)
-            {
-                // A custom pad joins only through its contact (its anchor
-                // shape), and the anchor's centre may lie within another
-                // net's clearance (Hub's X2SON-4 corner pads: a 0.148 mm
-                // anchor 0.24 mm from the centre pad's edge, under the
-                // class's 0.2 mm plus half a track; the designer's tracks
-                // end on the anchor's far side). The stub starts at the
-                // contact's points that keep every clearance, the farthest
-                // from the other copper first. (A plain pad whose centre
-                // lies in another item's clearance does the same with its
-                // copper on branch pad-access-starts, measured and not
-                // taken: docs/router.md, "What walls a pad".)
-                starts = self.contact_starts(net, layer, contact, narrowest);
-                if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
-                    eprintln!(
-                        "contact escape for {} at {:?}: {} starts in its contact",
-                        terminal.label,
-                        terminal.anchor,
-                        starts.len()
-                    );
-                }
-            }
+            let starts = self.escape_starts(net, terminal, layer, narrowest);
             let candidate_count = candidates.len();
             if std::env::var_os("PCB_ROUTER_DEBUG").is_some() && !candidates.is_empty() {
                 // What blocks the narrowest stub to the nearest candidates.
@@ -275,6 +218,88 @@ impl Router {
                 );
             }
         }
+    }
+
+    /// Where a pad's escape stubs start on `layer` for a track of `narrowest`
+    /// (`escape_nodes`): the pad's centre; for a pad straddling the board
+    /// edge, the points along its long axis that keep the edge clearance;
+    /// for a custom pad whose centre is not clear, up to four clear points
+    /// of its contact. A plain pad starts at its centre only.
+    pub(super) fn escape_starts(
+        &self,
+        net: NetId,
+        terminal: &crate::board::Terminal,
+        layer: usize,
+        narrowest: f64,
+    ) -> Vec<crate::geometry::Point> {
+        let pad = self.board.obstacles[terminal.pad].shape.aabb();
+        let extent = [
+            pad.maximum[0] - pad.minimum[0],
+            pad.maximum[1] - pad.minimum[1],
+        ];
+        let axis = if extent[0] >= extent[1] {
+            [1.0, 0.0]
+        } else {
+            [0.0, 1.0]
+        };
+        let half_length = extent[0].max(extent[1]) / 2.0;
+        // A pad straddling the board edge (connector shell, card-edge
+        // finger) cannot host copper at its centre: the stub then starts
+        // at the nearest point along the pad's long axis that keeps the
+        // edge clearance.
+        let mut starts = vec![terminal.anchor];
+        if !self.stub_keeps_edge(terminal.anchor, terminal.anchor, narrowest) {
+            let shape = &self.board.obstacles[terminal.pad].shape;
+            let mut interior: Vec<crate::geometry::Point> = Vec::new();
+            for step in 1.. {
+                let d = step as f64 * 0.1;
+                if d > half_length {
+                    break;
+                }
+                for sign in [1.0, -1.0] {
+                    let point = [
+                        terminal.anchor[0] + sign * axis[0] * d,
+                        terminal.anchor[1] + sign * axis[1] * d,
+                    ];
+                    if well_inside(shape, point) && self.stub_keeps_edge(point, point, narrowest) {
+                        interior.push(point);
+                    }
+                }
+            }
+            starts = interior;
+            if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
+                eprintln!(
+                    "edge escape for {} at {:?}: {} interior starts",
+                    terminal.label,
+                    terminal.anchor,
+                    starts.len()
+                );
+            }
+        } else if let Some(contact) = &terminal.contact
+            && !self.stub_is_clear(net, layer, terminal.anchor, terminal.anchor, narrowest)
+        {
+            // A custom pad joins only through its contact (its anchor
+            // shape), and the anchor's centre may lie within another
+            // net's clearance (Hub's X2SON-4 corner pads: a 0.148 mm
+            // anchor 0.24 mm from the centre pad's edge, under the
+            // class's 0.2 mm plus half a track; the designer's tracks
+            // end on the anchor's far side). The stub starts at the
+            // contact's points that keep every clearance, the farthest
+            // from the other copper first. (A plain pad whose centre
+            // lies in another item's clearance does the same with its
+            // copper on branch pad-access-starts, measured and not
+            // taken: docs/router.md, "What walls a pad".)
+            starts = self.contact_starts(net, layer, contact, narrowest);
+            if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
+                eprintln!(
+                    "contact escape for {} at {:?}: {} starts in its contact",
+                    terminal.label,
+                    terminal.anchor,
+                    starts.len()
+                );
+            }
+        }
+        starts
     }
 
     /// Whether the stub behind escape node `node` is free of other nets.
@@ -503,8 +528,15 @@ impl Router {
     /// stubs from there to the nearest nodes the class may use, or that no
     /// such node lies within the escape's reach. Items are named with their
     /// net and place (two footprints may share a reference: WLED_Matrix's
-    /// LDO1, a second SOT-23 without nets over the first).
-    pub(super) fn dead_pad_wall(&self, net: NetId, terminal: &crate::board::Terminal) -> String {
+    /// LDO1, a second SOT-23 without nets over the first). With it, how
+    /// open the pad is (`DeadPadAccess`, the most open of its layers): a
+    /// pad with a legal track end is walled by the lattice or the escape's
+    /// rules, not shown to be walled by the input.
+    pub(super) fn dead_pad_wall(
+        &self,
+        net: NetId,
+        terminal: &crate::board::Terminal,
+    ) -> (String, DeadPadAccess) {
         const REACH: f64 = 2.0;
         const DEPTH: f64 = 0.01;
         let class_index = self.board.nets[net as usize].class;
@@ -528,6 +560,7 @@ impl Router {
             )
         };
         let mut walls: Vec<String> = Vec::new();
+        let mut access = DeadPadAccess::Unknown;
         for layer in 0..self.board.layer_count {
             if terminal.layers & (1 << layer) == 0 {
                 continue;
@@ -609,6 +642,7 @@ impl Router {
             }
             let Some((slack, point, by)) = best else {
                 walls.push(format!("layer {layer}: the contact holds no track end"));
+                access = access.max(DeadPadAccess::NoLegalAccess);
                 continue;
             };
             if slack + STUB_FIT < 0.0 {
@@ -625,6 +659,7 @@ impl Router {
                     "layer {layer}: no point of the pad keeps the clearances for a {width:.3} mm track: the best, ({:.3}, {:.3}), has {by}",
                     point[0], point[1]
                 ));
+                access = access.max(DeadPadAccess::NoLegalAccess);
                 continue;
             }
             // A track end fits: the nearest nodes the class may use, and
@@ -636,6 +671,11 @@ impl Router {
                 }
                 .inflated(REACH),
             ) else {
+                walls.push(format!(
+                    "layer {layer}: a {width:.3} mm track may end at ({:.3}, {:.3}), but the lattice has no node within {REACH} mm: the pad lies off the routed area (beside the board outline)",
+                    point[0], point[1]
+                ));
+                access = access.max(DeadPadAccess::OffLattice);
                 continue;
             };
             let mut candidates: Vec<(f64, usize)> = Vec::new();
@@ -651,13 +691,19 @@ impl Router {
             candidates.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
             if candidates.is_empty() {
                 walls.push(format!(
-                    "layer {layer}: a {width:.3} mm track may end at ({:.3}, {:.3}), but no node within {REACH} mm admits the class's {:.3} mm track",
+                    "layer {layer}: a {width:.3} mm track may end at ({:.3}, {:.3}), but no node within {REACH} mm admits the class's {:.3} mm track (the lattice's and the neck rule's limit, not shown to be the input's: a narrower track, or the net's own copper nearby, may still join it)",
                     point[0],
                     point[1],
                     self.width_on(class_index, layer)
                 ));
+                access = access.max(DeadPadAccess::NoLatticeNode);
                 continue;
             }
+            // Where the router's own stubs start (`escape_starts`): a plain
+            // pad's centre, which may lie in a clearance the best point
+            // keeps (WLED_Matrix's LDO1.3 under the second SOT-23's pad).
+            let starts = self.escape_starts(net, terminal, layer, width);
+            let mut layer_access = DeadPadAccess::StubsBlocked;
             let mut blocked: Vec<String> = Vec::new();
             for (distance, cell) in candidates.iter().take(3) {
                 let center = self.grid.center_of(*cell);
@@ -691,12 +737,57 @@ impl Router {
                         "to ({:.3}, {:.3}) ({distance:.3} mm) by the board's edge",
                         center[0], center[1]
                     )),
-                    _ => blocked.push(format!(
-                        "to ({:.3}, {:.3}) ({distance:.3} mm) free (the escape was not kept: its node another pad's of the net, or its pocket closed)",
-                        center[0], center[1]
-                    )),
+                    _ if starts.iter().any(|start| {
+                        self.stub_is_clear(net, layer, *start, center, width)
+                            && self.stub_keeps_edge(*start, center, width)
+                    }) =>
+                    {
+                        layer_access = layer_access.max(DeadPadAccess::EscapeNotKept);
+                        blocked.push(format!(
+                            "to ({:.3}, {:.3}) ({distance:.3} mm) free, from the router's stub start too: the router did not keep this escape (its node another pad's of the net, or a pocket the lattice closes beyond it)",
+                            center[0], center[1]
+                        ))
+                    }
+                    _ => {
+                        layer_access = layer_access.max(DeadPadAccess::StartBlocked);
+                        let from = starts
+                            .iter()
+                            .map(|start| format!("({:.3}, {:.3})", start[0], start[1]))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        let why = starts
+                            .first()
+                            .and_then(|start| {
+                                near.iter()
+                                    .map(|(obstacle, required)| {
+                                        (
+                                            obstacle.shape.distance_to_segment(*start, center)
+                                                - required,
+                                            obstacle,
+                                            required,
+                                        )
+                                    })
+                                    .min_by(|a, b| a.0.total_cmp(&b.0))
+                            })
+                            .filter(|(short, ..)| short + STUB_FIT < 0.0)
+                            .map_or(String::new(), |(short, obstacle, required)| {
+                                format!(
+                                    ": blocked there by {} {:.3} mm from the stub where it asks {:.3}",
+                                    name(obstacle),
+                                    (short + required).max(0.0),
+                                    required
+                                )
+                            });
+                        blocked.push(format!(
+                            "to ({:.3}, {:.3}) ({distance:.3} mm) free from this point, but the router's stubs start at {}{why} (a plain pad's stubs start at its centre only: the router's limit, not the input's)",
+                            center[0],
+                            center[1],
+                            if from.is_empty() { "no point of the pad".to_string() } else { from }
+                        ))
+                    }
                 }
             }
+            access = access.max(layer_access);
             walls.push(format!(
                 "layer {layer}: a {width:.3} mm track may end at ({:.3}, {:.3}); its stubs to the nearest nodes the class's {:.3} mm track may use: {}",
                 point[0],
@@ -705,7 +796,7 @@ impl Router {
                 blocked.join("; ")
             ));
         }
-        walls.join(" | ")
+        (walls.join(" | "), access)
     }
 
     /// A pad-centre stub is cosmetic (the track already ends inside the pad),

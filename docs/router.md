@@ -264,7 +264,15 @@ points of its contact (`contact_starts`; Hub 12 to 4 open).
 **What walls a pad.** A pad no path reaches is a *dead pad*.
 `Router::dead_pad_wall` names, per layer, the nearest item at the contact's
 best point, or what blocks stubs from there; it changes no route and is
-written as `diagnostics.dead_pads[].wall`.
+written as `diagnostics.dead_pads[].wall`, with `access`, the most open of
+the pad's layers (`DeadPadAccess`): `no_legal_access` (no point of the pad
+keeps the clearances for the net's narrowest track), `off_lattice` (no
+node within 2 mm: the pad lies off the routed area), `no_lattice_node` (a
+track end fits, no node within the escape's 2 mm admits the class's
+width), `stubs_blocked`, `start_blocked` (a stub from the best point is
+free, not from where the router starts: a plain pad's centre,
+`escape_starts`) and `escape_not_kept`. Only the first two are walls by
+the router's rules.
 
 **A pad walled by its own footprint's copper.** To KiCad 10.0.7 a copper
 graphic of a footprint that is not a net tie is copper of no net, also
@@ -1274,8 +1282,22 @@ fail on:
   plane stubs ranked first by 85 to 86 and it ended 0 to 7 open). Boards
   without probes get pin lines only after the leader's run. Handover open
   problem 3.
-- **Odd pads.** Pads under a second footprint of the same reference (WLED);
-  pads walled by a warning-rated clearance.
+- **Odd pads.** Pads under a second footprint of the same reference
+  (WLED_Matrix's LDO1, on the designer tier of 2026-11-24 too: the second
+  SOT-23 without nets covers LDO1.3's and LDO1.2's centres; `access`
+  `start_blocked`, not an escape found and dropped: a plain pad's stubs
+  start at its centre, and starting them from the pad's free part was
+  measured on 2026-11-07, branch pad-access-starts, WLED 2 to 0 open with a
+  pour neck, the designer tier 75 to 75 strict, and not taken); pads
+  walled by a warning-rated clearance.
+- **The neck reaches 2 mm and needs a full-width node.** A pad whose
+  surroundings admit no node for the class's width within 2 mm is dead
+  (`no_lattice_node`) even where the net's own copper lies beside it:
+  SUMEC_MK_IV's IC2.11 and IC3.11 (+12V, a 2.0 mm class), where KiCad
+  accepts a 0.4 mm track of 2 mm to the +12V pad C15.2 (the eval study of
+  2026-11-24, docs/experiments/evaluation-representations.md on branch
+  fund-eval-representations). A neck stub to another pad of the net,
+  merged before routing as kept copper is, would take it; not built.
 - **Two-layer pours** are cut up whatever the price: crossings need the
   back layer, and neither `plane_cut_cost` nor `pour_integrity` shortens
   what crosses it; `keep_whole` regions are the tool.

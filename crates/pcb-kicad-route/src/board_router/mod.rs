@@ -58,7 +58,7 @@ pub use self::route_reuse::{
     read_route_reuse, route_kicad_board_reusing, route_reuse_trial_budget,
 };
 pub use self::row_escapes::emit_layout_row_escapes;
-pub use self::via_in_pad::far_side_vias;
+pub use self::via_in_pad::{CLOSED_PADS_WHY, far_side_vias};
 pub(crate) use self::via_in_pad::{PlannedVia, designer_entries, pad_vias_of};
 pub use self::via_in_pad::{admits_any as admits_vias_in_pads, plan as plan_vias_in_pads};
 pub(crate) use self::via_spans::{allowed_spans, designer_spans, project_spans};

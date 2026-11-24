@@ -3626,19 +3626,23 @@ usage: pcb-maker inspect-routing-run <run-dir> [--net <net>] [--terminal <REF:PA
                        copper-free placed project. A suggested move stays on its current face.
   --output <file>      write the JSON there; default: stdout.
 
-Per net: components (groups of pads the result board's copper joins, pours not counted: ref,
+Per net: open_at (where KiCad finds it open: each unconnected item's two ends), components
+(groups of pads the result board's copper joins, pours not counted: ref,
 number, uuid, at in mm, copper layers; the largest marked), counts (the router's terminals and
 unconnected terminals, the groups and links missing, KiCad's unconnected pairs, explained apart),
 native_pairs (each pair's items and the groups they lie in: a pad by its uuid, a track or via by
 the copper it lies on), rules (track width and clearance with their sources: class, board minimum,
 custom rule; the class's own value below the minimum; the run's overrides; the widths emitted),
 reference (connected: true, false, or null where a zone of the net may join its groups),
-dead_pads, hot_spots_near (indices into hot_spots), and access and cause: unknown (not measured).
+dead_pads (each with its access: only no_legal_access and off_lattice are walls by the router's rules),
+hot_spots_near (indices into hot_spots; with KiCad's report those within 3 mm of the open item,
+nearest first, with to_open_item_mm), and access and cause: unknown (not measured).
 Top level: checks (router, native: not_run|passed|failed, components), attempts (the ladder's
 ledger: each attempt's pitch, pours, open, work, negotiation_stop, the selected one;
 strategy_history: earlier recorded work and a separate one-rung trial where supported) and hot_spots
 (each tile's box, pads with ref, number and net, the nets whose copper crosses it, those still in
-conflict; links_from says where they were read). Any outline the router reads is read. Exits 0 when the report was written, 2 on
+conflict; links_from says where they were read; with KiCad's report nearest_open_item_mm and
+nearest_open_item_net). Any outline the router reads is read. Exits 0 when the report was written, 2 on
 usage or input errors (no board-router.json, an unknown net or pad), 4 on internal errors.";
 
 const LAYOUT_HELP: &str = "\

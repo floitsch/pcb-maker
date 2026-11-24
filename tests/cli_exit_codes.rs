@@ -242,6 +242,110 @@ fn a_layout_placement_seed_override_matches_the_same_seed_in_config() {
     fs::remove_dir_all(root).unwrap();
 }
 
+/// Each footprint's reference and `(at x y angle)` as a board file holds
+/// them (the first `at` of the footprint is its own).
+fn footprint_poses(board: &str) -> Vec<(String, [f64; 3])> {
+    let starts: Vec<usize> = board
+        .match_indices("(footprint \"")
+        .map(|(at, _)| at)
+        .collect();
+    starts
+        .iter()
+        .enumerate()
+        .filter_map(|(index, &start)| {
+            let end = starts.get(index + 1).copied().unwrap_or(board.len());
+            let text = &board[start..end];
+            let at = &text[text.find("(at ")? + 4..];
+            let numbers: Vec<f64> = at[..at.find(')')?]
+                .split_whitespace()
+                .filter_map(|value| value.parse().ok())
+                .collect();
+            let reference = &text[text.find("(property \"Reference\" \"")? + 23..];
+            let reference = &reference[..reference.find('"')?];
+            Some((
+                reference.to_string(),
+                [
+                    numbers[0],
+                    numbers[1],
+                    numbers.get(2).copied().unwrap_or(0.0),
+                ],
+            ))
+        })
+        .collect()
+}
+
+#[test]
+fn a_layouts_placement_report_describes_the_board_it_wrote() {
+    // The eval study of 2026-11-24: on the sweep of 2026-11-18,
+    // USB_Keypad's result/board-placer.json described the placer's kept
+    // seed while the board held the placement the race kept (69 of 98
+    // parts elsewhere; 57 of 106 sweep boards differed). Since 84c4c3eb
+    // (2026-11-20) the selected placement's report is written beside it
+    // (`selected_placement`). At seed 7 with four placements F1's race
+    // keeps another placement than the placer's (pool_index 7 on
+    // e38be883): every part the report names must stand where the board
+    // has it, in placed/ and in result/.
+    let root = scratch("placer-report-matches");
+    let project = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/f1");
+    let config = root.join("layout.json");
+    fs::write(
+        &config,
+        r#"{"total_seconds": 20, "moves": 0, "polish_seconds": 0,
+            "placer": {"fixed": ["J1", "H1"], "tuning": {"seed": 7, "placement_seeds": 4}}}"#,
+    )
+    .unwrap();
+    let destination = root.join("layout");
+    let output = binary()
+        .env("PCB_SKIP_NATIVE", "1")
+        .env("PCB_WORK_RATE", "3.15e6,150e6")
+        .env("PCB_ROUTER_NO_WALL_GUARD", "1")
+        .arg("layout-kicad-board")
+        .arg(&project)
+        .arg("f1")
+        .arg(&destination)
+        .arg("auto")
+        .arg(&config)
+        .output()
+        .unwrap();
+    assert!(matches!(code(&output), 0 | 1), "{}", stderr(&output));
+    for directory in ["placed", "result"] {
+        let report: serde_json::Value = serde_json::from_slice(
+            &fs::read(destination.join(directory).join("board-placer.json")).unwrap(),
+        )
+        .unwrap();
+        let board = fs::read_to_string(destination.join(directory).join("f1.kicad_pcb")).unwrap();
+        let poses = footprint_poses(&board);
+        let rows = report["footprints"].as_array().unwrap();
+        assert!(!rows.is_empty());
+        for row in rows {
+            let reference = row["reference"].as_str().unwrap();
+            let at: Vec<f64> = row["at"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|value| value.as_f64().unwrap())
+                .collect();
+            let same = |pose: &[f64; 3]| {
+                (pose[0] - at[0]).abs() < 1.0e-6
+                    && (pose[1] - at[1]).abs() < 1.0e-6
+                    && ((pose[2] - at[2]).rem_euclid(360.0) < 1.0e-6
+                        || (pose[2] - at[2]).rem_euclid(360.0) > 360.0 - 1.0e-6)
+            };
+            assert!(
+                poses
+                    .iter()
+                    .any(|(name, pose)| name == reference && same(pose)),
+                "{directory}: {reference} at {at:?} in board-placer.json, on the board {:?}",
+                poses
+                    .iter()
+                    .filter(|(name, _)| name == reference)
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn a_layout_stopped_by_placement_reports_reuse_as_skipped() {
     let root = scratch("reuse-placement-blocked");

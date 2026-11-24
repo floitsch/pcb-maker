@@ -477,12 +477,14 @@ impl Router {
                 near.sort();
                 near.dedup();
                 near.truncate(8);
+                let (wall, access) = self.dead_pad_wall(net as NetId, terminal);
                 dead_pads.push(DeadPad {
                     net: net as NetId,
                     label: terminal.label.clone(),
                     anchor: terminal.anchor,
                     near,
-                    wall: self.dead_pad_wall(net as NetId, terminal),
+                    wall,
+                    access,
                 });
             }
         }

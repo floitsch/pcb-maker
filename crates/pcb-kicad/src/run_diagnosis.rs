@@ -259,6 +259,11 @@ pub struct KiCadNetDiagnosis {
     /// `partial`, `unreachable`, ...
     pub status: String,
     pub counts: KiCadNetCounts,
+    /// Where KiCad finds the net open: each retained unconnected item's two
+    /// ends (`[[x, y], [x, y]]`, KiCad's places; a zone's is its outline's
+    /// first corner), in `native_pairs`' order. Empty without a DRC report.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub open_at: Vec<[[f64; 2]; 2]>,
     pub components: Vec<KiCadInspectedComponent>,
     /// What the groups were measured on: the result board's copper
     /// without its pours.
@@ -298,10 +303,16 @@ pub struct KiCadNetDiagnosis {
     /// The router's dead pads of this net (board-router.json).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub dead_pads: Vec<serde_json::Value>,
-    /// The router's hot spots within 3 mm of a pad of this net, at most
-    /// five, the most contested first: where nets fought longest near it
-    /// (an observation, not a cause); `hot_spot` indexes the report's
-    /// `hot_spots`, which list the tile's pads and nets.
+    /// The router's hot spots near this net's open items, at most five:
+    /// with KiCad's pairs, those within 3 mm of an end of one (a pad, a
+    /// track or a via; a zone's item is left out, KiCad places it at the
+    /// zone's first corner), the nearest first, each with
+    /// `to_open_item_mm`; without them, those within 3 mm of a pad of the
+    /// net, the most contested first (`to_open_item_mm` null). Where nets
+    /// fought longest near it: an observation, not a cause; `hot_spot`
+    /// indexes the report's `hot_spots`, which list the tile's pads and
+    /// nets. Empty where no hot spot lies near the open items: the open
+    /// item's own place (`open_at`) comes first.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hot_spots_near: Vec<serde_json::Value>,
     /// The pad `--terminal` named: its group.
@@ -448,7 +459,12 @@ pub struct KiCadRunDiagnosis {
     /// The router's hot spots (board-router.json), each with its tile's
     /// objects: pads, nets, nets still in conflict (`links_from` says
     /// whether the router recorded them or this command read them off the
-    /// result board).
+    /// result board). With a DRC report, each has `nearest_open_item_mm`
+    /// and `nearest_open_item_net`: the distance to the nearest end (a
+    /// pad, a track or a via) of KiCad's retained unconnected items, and
+    /// its net (`null` where KiCad finds nothing open): a hot spot far
+    /// from every open item is where nets fought, not where a connection
+    /// is missing.
     pub hot_spots: Vec<serde_json::Value>,
     /// With `--reference`: whose placement its routes are on, and a
     /// layout's own evidence for this placement (`KiCadReferencePlacement`).
@@ -1472,16 +1488,41 @@ fn reference_route(
     }
 }
 
-/// The router's hot spots within reach of a pad of the net, at most five.
+/// The ends of KiCad's retained unconnected items that mark where the
+/// connection is missing: pads, tracks and vias (KiCad places a zone's
+/// item at the zone's first outline corner, which says nothing of where).
+fn open_ends(pairs: &[KiCadNativePair]) -> Vec<[f64; 2]> {
+    pairs
+        .iter()
+        .filter(|pair| pair.retained)
+        .flat_map(|pair| &pair.items)
+        .filter(|item| !item.description.starts_with("Zone "))
+        .map(|item| item.at)
+        .collect()
+}
+
+/// The distance from `at` to the nearest of `ends`.
+fn nearest_end(ends: &[[f64; 2]], at: [f64; 2]) -> f64 {
+    ends.iter()
+        .map(|end| distance_squared(*end, at).sqrt())
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// The router's hot spots near the net's open items, at most five: within
+/// reach of an end of one, the nearest first, where KiCad's pairs say
+/// where (`ends`); else within reach of a pad of the net, the most
+/// contested first.
 fn hot_spots_near(
     hot_spots: &[serde_json::Value],
     components: &[KiCadInspectedComponent],
+    ends: Option<&[[f64; 2]]>,
 ) -> Vec<serde_json::Value> {
     let pads: Vec<&KiCadInspectedPad> = components
         .iter()
         .flat_map(|component| &component.pads)
         .collect();
-    hot_spots
+    let ends = ends.filter(|ends| !ends.is_empty());
+    let mut near: Vec<(f64, serde_json::Value)> = hot_spots
         .iter()
         .enumerate()
         .filter_map(|(index, spot)| {
@@ -1490,19 +1531,27 @@ fn hot_spots_near(
                 .iter()
                 .map(|pad| distance_squared(pad.at, at).sqrt())
                 .fold(f64::INFINITY, f64::min);
-            (nearest <= HOT_SPOT_REACH_MM).then(|| {
-                serde_json::json!({
-                    "hot_spot": index,
-                    "at": spot["at"],
-                    "layer": spot["layer"],
-                    "history": spot["history"],
-                    "nearest_pad_mm": round(nearest),
-                    "conflicted_nets": spot["conflicted_nets"],
-                })
+            let to_open = ends.map(|ends| nearest_end(ends, at));
+            let reach = to_open.unwrap_or(nearest);
+            (reach <= HOT_SPOT_REACH_MM).then(|| {
+                (
+                    to_open.unwrap_or(0.0),
+                    serde_json::json!({
+                        "hot_spot": index,
+                        "at": spot["at"],
+                        "layer": spot["layer"],
+                        "history": spot["history"],
+                        "to_open_item_mm": to_open.map(round),
+                        "nearest_pad_mm": round(nearest),
+                        "conflicted_nets": spot["conflicted_nets"],
+                    }),
+                )
             })
         })
-        .take(5)
-        .collect()
+        .collect();
+    // The nearest first (stable: among equals, the most contested).
+    near.sort_by(|a, b| a.0.total_cmp(&b.0));
+    near.into_iter().map(|(_, spot)| spot).take(5).collect()
 }
 
 /// A net with a zone: keeps only the groups KiCad's pairs name and the
@@ -1615,7 +1664,17 @@ fn diagnose_net(
         .reference
         .as_ref()
         .map(|reference| reference_route(name, reference, run.reference_placement.as_ref()));
-    let hot_spots_near = hot_spots_near(inputs.hot_spots, &components);
+    let ends = native_pairs.as_deref().map(open_ends);
+    let hot_spots_near = hot_spots_near(inputs.hot_spots, &components, ends.as_deref());
+    let open_at: Vec<[[f64; 2]; 2]> = native_pairs
+        .iter()
+        .flatten()
+        .filter(|pair| pair.retained)
+        .filter_map(|pair| match &pair.items[..] {
+            [a, b] => Some([a.at, b.at]),
+            _ => None,
+        })
+        .collect();
     let dead_pads: Vec<serde_json::Value> = run.report["diagnostics"]["dead_pads"]
         .as_array()
         .into_iter()
@@ -1635,6 +1694,7 @@ fn diagnose_net(
         net: name.to_string(),
         status,
         counts,
+        open_at,
         components,
         components_basis: "the result board's pads, tracks, arcs, vias and stored teardrops joined where their copper overlaps on a shared layer (without ordinary zone fill)".into(),
         pour_layers,
@@ -1902,7 +1962,31 @@ pub fn inspect_routing_run(inspection: &KiCadRunInspection) -> Result<KiCadRunDi
         .as_array()
         .cloned()
         .unwrap_or_default();
-    let hot_spots = linked_hot_spots(&run.report, &result);
+    let mut hot_spots = linked_hot_spots(&run.report, &result);
+    // Each hot spot's distance to the nearest place KiCad finds a net
+    // open (the eval study of 2026-11-24: hot spots 16 mm from the open
+    // item read as its cause).
+    if run.drc.is_some() {
+        let ends: Vec<(&str, [f64; 2])> = native_by_net
+            .iter()
+            .flat_map(|(net, pairs)| {
+                open_ends(pairs)
+                    .into_iter()
+                    .map(move |at| (net.as_str(), at))
+            })
+            .collect();
+        for spot in &mut hot_spots {
+            let (Some(x), Some(y)) = (spot["at"][0].as_f64(), spot["at"][1].as_f64()) else {
+                continue;
+            };
+            let nearest = ends
+                .iter()
+                .map(|(net, end)| (distance_squared(*end, [x, y]).sqrt(), *net))
+                .min_by(|a, b| a.0.total_cmp(&b.0));
+            spot["nearest_open_item_mm"] = nearest.map(|(d, _)| round(d)).into();
+            spot["nearest_open_item_net"] = nearest.map(|(_, net)| net.to_string()).into();
+        }
+    }
     let nets: Vec<KiCadNetDiagnosis> = {
         let inputs = NetInputs {
             run: &run,
@@ -2044,6 +2128,57 @@ pub fn inspect_routing_run(inspection: &KiCadRunInspection) -> Result<KiCadRunDi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hot_spots_near_an_open_net_are_those_near_its_open_item() {
+        // USB_Keypad's +3V3 (the eval study of 2026-11-24): every hot spot
+        // listed lay near some pad of the net, 16 mm from the open item.
+        let pad = |reference: &str, at: [f64; 2]| KiCadInspectedPad {
+            reference: reference.into(),
+            number: "1".into(),
+            uuid: None,
+            at,
+            layers: vec!["F.Cu".into()],
+        };
+        let components = vec![KiCadInspectedComponent {
+            pads: vec![pad("C11", [-1.395, 12.7]), pad("C17", [15.0, 17.0])],
+            other: Vec::new(),
+            largest: true,
+        }];
+        let spot = |at: [f64; 2], history: f64| serde_json::json!({"at": at, "layer": "F.Cu", "history": history});
+        let spots = [spot([15.0, 15.965], 6.3), spot([0.0, 13.9], 1.0)];
+        // Without KiCad's report: near a pad of the net, the most
+        // contested first.
+        let by_pad = hot_spots_near(&spots, &components, None);
+        assert_eq!(by_pad.len(), 2);
+        assert_eq!(by_pad[0]["hot_spot"], 0);
+        assert!(by_pad[0]["to_open_item_mm"].is_null());
+        // With it: only the one near the open item's ends, with its
+        // distance.
+        let ends = [[-1.395, 12.7], [1.125, 13.215]];
+        let near = hot_spots_near(&spots, &components, Some(&ends));
+        assert_eq!(near.len(), 1, "{near:?}");
+        assert_eq!(near[0]["hot_spot"], 1);
+        assert_eq!(near[0]["to_open_item_mm"], 1.3171);
+        // A zone's item says nothing of where the net is open.
+        let pairs = vec![KiCadNativePair {
+            items: vec![
+                KiCadNativeItem {
+                    description: "Zone [GND] on F.Cu".into(),
+                    at: [0.0, 0.0],
+                    uuid: None,
+                },
+                KiCadNativeItem {
+                    description: "Pad 1 [GND] of C1 on F.Cu".into(),
+                    at: [3.0, 4.0],
+                    uuid: None,
+                },
+            ],
+            components: vec![None, None],
+            retained: true,
+        }];
+        assert_eq!(open_ends(&pairs), [[3.0, 4.0]]);
+    }
 
     const BOARD: &str = r#"(kicad_pcb (version 20241229) (generator "pcbnew")
   (general (thickness 1.6)) (paper "A4")
