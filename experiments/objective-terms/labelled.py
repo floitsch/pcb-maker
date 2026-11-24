@@ -26,6 +26,9 @@ experiments/placement-gap/partialcopy.py's machinery: every movable part
 pinned with `place` entries) of:
 
 - `designer`: the designer's own placement;
+- `nonpassive@<seed>`: the designer's active parts pinned (partialcopy.py's
+  `nonpassive` rule), the passives placed by the layout at layout seed
+  `<seed>`;
 - `<variant>@<seed>`: traced seed `<seed>`'s final poses of the place
   check `<variant>` (any seed of the run, kept or not; `kept`: the
   seed the placer kept).
@@ -100,8 +103,19 @@ def route_unit(out, binary, board, unit):
     fixed = (json.loads((partialcopy.TASKS.parent / task["constraints"]).read_text()) if task.get("constraints")
              else {}).get("fixed", [])
     movable = {partialcopy.key(f) for f in partialcopy.movable(partialcopy.numbered(designer["footprints"]), fixed)}
+    layout_seed = 1
     if unit == "designer":
         source, rule = designer, "designer"
+    elif unit.startswith("nonpassive@"):
+        layout_seed = int(unit.partition("@")[2])
+        footprints = [f for f in partialcopy.numbered(designer["footprints"])
+                      if partialcopy.key(f) in movable and not partialcopy.is_passive(f)]
+        partialcopy.write_unit(first, task, "nonpassive", footprints, designer)
+        command = partialcopy.unit_command(first, board, f"nonpassive-s{layout_seed}", binary)
+        label = Path(command[command.index("--tasks") - 1]).name
+        runs = first / "runs"
+        return (runs / f"{label}.done", command, {}, lambda: runs.mkdir(parents=True, exist_ok=True),
+                runs / f"{label}.out")
     else:
         variant, _, seed = unit.partition("@")
         run = out / "runs" / board / variant
@@ -113,7 +127,7 @@ def route_unit(out, binary, board, unit):
     if len(footprints) != len(movable):
         raise SystemExit(f"{board}:{unit}: {len(footprints)} of {len(movable)} movable parts found")
     partialcopy.write_unit(first, task, rule, footprints, source)
-    command = partialcopy.unit_command(first, board, f"{rule}-s1", binary)
+    command = partialcopy.unit_command(first, board, f"{rule}-s{layout_seed}", binary)
     label = Path(command[command.index("--tasks") - 1]).name
     runs = first / "runs"
     return runs / f"{label}.done", command, {}, lambda: runs.mkdir(parents=True, exist_ok=True), runs / f"{label}.out"

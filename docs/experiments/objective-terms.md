@@ -9,32 +9,37 @@ says the opposite ("The objective is not what is wrong", from 2026-11-04).
 This note reconciles the two, splits the objective by term, looks for a
 routing quantity the objective lacks, and proposes changes.
 
-Stage 0 only: stored traces and placements, no new routing for the
-verdicts below. Scripts in `experiments/objective-terms/`: `terms.py` (the
-trace's objective by term), `measures.py` (routing proxies from the pads
-of a placed board), `labelled.py` (place checks and pinned first routes),
-`report.py` (these tables). Data under
+Stage 0 (rescoring stored placements) plus 30 pinned first routes of the
+placements it scores. Scripts in `experiments/objective-terms/`:
+`terms.py` (the trace's objective by term), `measures.py` (routing proxies
+from the pads of a placed board), `labelled.py` (place checks and pinned
+first routes), `report.py` (these tables). Data under
 `build/scratch/fund-objective/` (not in git): `recon/runs/` (place checks
 with the trace: the census's runs of Glasgow, the 4in1 and the 4in1-mini,
-and video re-run here; binary `pcb-maker-fobj0`, main 96e891b2 plus the
-census's trace hook, whose code equals main 262adf59), `traces.json` and
-`measures.json` (the pad measures). The October seeds are the 99
-placements of `dense-noise.json` (nine per dense board, binaries x1828 and
-x1851, each with its first route's open terminals), as the cut census
-extracted them.
+and video, SNSP-CPU-01 and the plain-pipeline runs made here; binary
+`pcb-maker-fobj0`, main 96e891b2 plus the census's trace hook, whose code
+equals main 262adf59), `recon/firstroute/` (the first routes),
+`traces.json` and `measures.json` (the pad measures), `report.md`
+(`report.py`'s output). The October seeds are the 99 placements of
+`dense-noise.json` (nine per dense board, binaries x1828 and x1851, each
+with its first route's open terminals), as the cut census extracted them.
 
 ## Verdict
 
 - **The 2026-11-04 claim does not hold today, and was weaker than its
   summary then.** It scored the *whole* objective (all parts, relations,
   overlap), one seed against one seed, on the plain pipeline, with the
-  designer's poses seated by the plain legaliser (a fixed point). Today the
-  same framing gives the designer 1.20 to 1.40 of ours on Glasgow and the
-  4in1 (then 1.02 and 0.72), and the whole objective ranks the designer's
-  legalised placement worse than five of six seeds on both. The 2026-11-04
-  study itself had found, two pages further, that on the 4in1 and Glasgow
-  the anneal lowers our objective while routing gets worse ("our objective
-  is wrong after all"); the summary line dropped that.
+  designer's poses seated by the plain legaliser. Re-run on today's code
+  in that framing, the designer's legalised placement scores exactly what
+  it scored then (the 4in1: relations 7544, 51 crossings; first route 56
+  open terminals, as then), but our own plain placements improved on the
+  objective (the 4in1's relations 10 317 to 6582, crossings 190 to 92;
+  first route 174 to 116): the ratio is now 1.10 on the 4in1 and 1.09 on
+  Glasgow (then 0.72 and 1.02). With today's skeleton pipeline the
+  designer is 1.17 to 1.22 of our median, worse than five of six seeds on
+  both. The 2026-11-04 study itself had found that on the 4in1 and
+  Glasgow the anneal lowers our objective while routing gets worse ("our
+  objective is wrong after all"); the summary line dropped that.
 - **Wire and crossings are not where the designer is better.** At the
   designer's own poses the wire and crossing terms are inside or above our
   seeds' range on every gap board (the 4in1-mini: 465 against 284 mm of
@@ -42,7 +47,11 @@ extracted them.
   decoupling distances at `constraint_weight` 50 mm per mm) cost the
   designer most on Glasgow (3268 against 119 to 932) and video. The old
   "large nets 1.22 times longer in ours" is gone on today's seeds
-  (Glasgow 1.02, the two OpenESC boards 1.00).
+  (Glasgow 1.02, the two OpenESC boards 1.00). **Among our own seeds the
+  objective's terms rank the first route well**: crossings at Spearman
+  +0.94, +1.00 and +0.57 (Glasgow, the 4in1, the 4in1-mini; six seeds
+  each), wire +0.77, +0.83, +0.49. The objective orders our arrangements
+  right and misjudges the designer's.
 - **What the designer has that our placements lack is room at the pins of
   the active parts.** Pairs of pads of different parts and nets closer
   than one track's quantum (`w + 2 s`) with at least one active part:
@@ -53,12 +62,22 @@ extracted them.
   many such pairs as ours or more (protoesp 52 against 1, the 0xCB panel
   24 against 16), or both have almost none (MegaDrive, SNSP-CPU-01);
   DSP-ADAU1452 and the split72 keyboard are exceptions (the designer far
-  fewer, yet no or a small gap). The
-  objective has no term for it, and our stages close it: the designer's
-  arrangement seated and refined by our pipeline has as many as ours
-  (152, 204, 146), mostly in the skeleton's legalisation against grown
-  bodies (the active parts move 1.4 to 5.2 mm on the mean) and in the
-  refinement, which trades it for wire and crossings.
+  fewer, yet no or a small gap). The objective has no term for it, and
+  our stages close it: the designer's arrangement seated and refined by
+  our pipeline has as many as ours (152, 204, 146).
+- **The routes do not show that lost pin room is the cause.** Pinned first
+  routes (open terminals): the designer's own placement 19, 33 and 105 on
+  Glasgow, the 4in1 and the 4in1-mini; our seeds 88 to 137, 93 to 187,
+  126 to 166. The designer's arrangement seated and refined by today's
+  pipeline routes like ours or worse (114, 175, 117), with the pin room
+  closed (152, 204, 146 pairs). The plain pipeline keeps half the 4in1's
+  room (107) and most of its advantage (56), closes Glasgow's (140) and
+  loses most of it (93). That is consistent with the room mattering, but
+  in every placement that lost the room the active parts also moved (a
+  mean 3.4 to 5.4 mm on Glasgow, 3.6 on the 4in1 through the skeleton,
+  0.5 through the plain pipeline): room and arrangement fall together,
+  and these routes cannot tell them apart. Within our seeds the pin room
+  does not rank the first route (Spearman -0.14, +0.43, +0.17).
 - **Candidates** (stage 0): (1) a pin-room term, about 5 to 15 mm of wire
   per pair of foreign pads within one track quantum of an active part's
   pad, in the legaliser, the refinement and the skeleton's legalisation;
@@ -69,18 +88,21 @@ extracted them.
   Glasgow. Neither survives the second stage-0 test: added to the
   objective, the pin-room term ranks our October seeds by their first route
   worse than the objective alone (mean Spearman +0.28 to +0.25 at 3 mm,
-  +0.18 at 5 mm; the 4in1-mini turns from +0.72 to -0.25). Among our
-  seeds, which are all crowded, the count does not say which routes
-  better. So no stage 1 was run.
-- **Recommendation**: correct placer.md (wording below). Before any
-  placer work on the term, the labelled first routes queued with this note
-  (the designer's placement, the designer's arrangement through our
-  skeleton pipeline and through the plain one, and every one of our seeds,
-  pinned) say whether losing the pin room is what costs the designer's
-  arrangement its advantage. If they do, build the pin-room term behind a
-  switch and take it with `constraint_weight` 10 to stage 1; if the
-  legalised designer still routes far better than our seeds with the room
-  closed, the room is a symptom and the arrangement remains the gap.
+  +0.18 at 5 mm; the 4in1-mini turns from +0.72 to -0.25).
+- **Recommendation: build neither yet; no stage 1 for C2.** C2 alone fails
+  stage 0 (it moves no gap board's designer above our seeds; on the plain
+  pipeline the 4in1's designer carries more relations than ours, 7544
+  against 6582), and its only role here was to let C1 work on Glasgow. C1
+  waits for one direct test, queued: the designer's active parts pinned,
+  our passives placed around them (partialcopy.py's `nonpassive`, which
+  recovered 0.92 of the designer's first-route advantage on 2026-11-04).
+  If our passives close the pin room there (pairs at our seeds' level)
+  and the route still recovers most of the advantage, the room is not the
+  cause and C1 is dropped: the gap is the active parts' arrangement, as
+  placer.md says, and our objective does not prefer it. If the route
+  recovers the advantage only where the room stays open, build C1 behind
+  a switch (without C2) and take it to stage 1. Either way correct
+  placer.md (wording below).
 
 ## 1. Reconciliation
 
@@ -114,16 +136,19 @@ bodies first.
 included, as on 2026-11-04; skeleton: the census's; "below" counts our
 seeds that score lower than the designer):
 
-| board | 2026-11-04: designer / ours (seeds 1, 101) | today, same: designer / ours (kept seeds 1, 101) | today, whole: designer / our median (seeds below it) | today, skeleton: designer / our median (seeds below) |
-| --- | --- | --- | --- | --- |
-| Glasgow revC3 | 1.02, 1.05 | 1.20, 1.26 | 1.22 (5/6) | 1.20 (6/6) |
-| OpenESC 4in1 | 0.72, 0.74 | 1.40, 1.27 | 1.17 (5/6) | 1.10 (4/6) |
-| OpenESC 4in1-mini | - | 0.57, 0.57 | 0.78 (1/6) | 1.09 (5/5) |
-| video | 0.59, 0.55 | 0.94, 0.92 | 0.79 (0/8) | 0.87 (0/6) |
-| SNSP-CPU-01 | 0.99, 1.04 | queued | queued | queued |
+| board | 2026-11-04: designer / ours (seeds 1, 101) | today, same: designer / ours (kept seeds 1, 101) | today, whole: designer / our median (seeds below it) | today, skeleton: designer / our median (seeds below) | today, plain pipeline: designer / ours (kept seed 1; without overlap) |
+| --- | --- | --- | --- | --- | --- |
+| Glasgow revC3 | 1.02, 1.05 | 1.20, 1.26 | 1.22 (5/6) | 1.20 (6/6) | 1.09 (1.09) |
+| OpenESC 4in1 | 0.72, 0.74 | 1.40, 1.27 | 1.17 (5/6) | 1.10 (4/6) | 1.11 (1.10) |
+| OpenESC 4in1-mini | - | 0.57, 0.57 | 0.78 (1/6) | 1.09 (5/5) | 7.11 (1.31) |
+| video | 0.59, 0.55 | 0.94, 0.92 | 0.79 (0/8) | 0.87 (0/6) | 0.62 (0.61) |
+| SNSP-CPU-01 | 0.99, 1.04 | 1.01, 1.16 | 1.03 (16/20) | 1.04 (15/20) | 0.92 (0.94) |
 
 (The 4in1-mini's kept seeds carry an overlap of 5 to 13 mm² priced at 400
-a mm²; without it the designer is 1.08 of our median, worse than all six.)
+a mm²; without it the designer is 1.08 of our median, worse than all six.
+Its plain-pipeline designer keeps 14 mm² of overlap, hence 7.11. SNSP-CPU-01
+has no placement gap today: our layouts leave 31 fewer open connections
+than the designer's placement routed.)
 
 Why they differ:
 
@@ -142,9 +167,16 @@ Why they differ:
    legaliser on 2026-11-04: a fixed point). On the 4in1 the designer's
    legalised objective went from 8525 (relations 7544, 51 crossings) to
    16 152 (relations 14 777, 163 crossings) while our seeds' stayed in
-   11 500 to 16 700. The plain-pipeline re-run (queued, `designer-plain`
-   and `ours-plain-s1`) separates this from the code's other changes.
-4. **The designer's own poses** (no legalisation) on the whole objective
+   11 500 to 16 700.
+4. **Our own placements improved; the designer's legalised one did not
+   change.** The plain pipeline re-run today seats the 4in1's designer
+   exactly as on 2026-11-04 (relations 7544, 51 crossings, 56 open
+   terminals at the first route, all three as then), but our plain seed
+   now carries relations 6582 and 92 crossings (then 10 317 and 190) and
+   routes 116 (then 174). The ratio rose from 0.72 to 1.10 because ours got
+   better on the objective and on the route, while the designer still
+   routes better (56 against 116).
+5. **The designer's own poses** (no legalisation) on the whole objective
    without overlap: worse than every seed on Glasgow (8765 against 4590
    to 5960) and the 4in1-mini (1480 against 690 to 895), in the middle on
    the 4in1 (14 040 against 11 484 to 16 660); on video better than three
@@ -349,33 +381,95 @@ Neither survives stage 0 as the ladder asks (the designer above our seeds
 *and* the boards that pass not broken, whose only offline proxy is the
 seeds' ranking), so no stage 1 was run.
 
-## 4. Queued: labelled first routes
+## 4. Labelled first routes: is lost pin room the cause?
 
-`build/scratch/fund-objective/recon/` (launched 2026-11-24 15:08, gated
-on load at most 20 and 16 GB free, never 02:00 to 07:00, at most three
-two-thread jobs):
+Thirty first routes (layout seed 1, `stop_after_first_route`, every
+movable part pinned at the placement named; `labelled.py route`, finished
+2026-11-24 20:38), each beside the placement's pin room (`closed_active`),
+its pad crossings and its weighted wire. `designer@1`: the designer's
+poses seated and refined by today's pipeline (the skeleton's grown bodies
+first); `designer-plain@1`: the same with `"skeleton_race": null`;
+`ours-plain-s1`: our plain placement, kept seed; `ours-s*@n`: every traced
+seed of the two place checks.
 
-- `run.sh` (status in `status`, log `run.log`): video and SNSP-CPU-01
-  place checks with the trace (`ours-s1`, `ours-s101`, `designer`); video
-  done, SNSP waiting.
-- `chain.sh` (status in `chain.status`, logs `place.log`, `route.log`):
-  then `designer-plain` and `ours-plain-s1` place checks on Glasgow, the
-  4in1, the 4in1-mini, video and SNSP-CPU-01 (the 2026-11-04 framing on
-  today's code); then first routes (layout seed 1,
-  `stop_after_first_route`, every movable part pinned) on Glasgow, the 4in1
-  and the 4in1-mini of the designer's placement, the designer's
-  arrangement through today's pipeline (`designer@kept`) and through the
-  plain one (`designer-plain@kept`), `ours-plain-s1@kept`, and every traced
-  seed of `ours-s1` and `ours-s101` (30 routes).
+| board | placement | first-route open | closed_active | crossings | wire | active parts moved, mean mm |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Glasgow | designer, own poses | 19 | 32 | 814 | 2916 | 0 |
+| Glasgow | designer, plain pipeline | 93 | 140 | 640 | 2795 | 3.4 |
+| Glasgow | designer, today's pipeline | 114 | 152 | 725 | 2940 | 5.4 |
+| Glasgow | ours, plain | 103 | 210 | 548 | 2693 | |
+| Glasgow | ours, six seeds | 88, 90, 100, 103, 127, 137 | 134 to 180 | 638 to 853 | 2778 to 2933 | |
+| 4in1 | designer, own poses | 33 | 1 | 242 | 742 | 0 |
+| 4in1 | designer, plain pipeline | 56 | 107 | 64 | 630 | 0.5 |
+| 4in1 | designer, today's pipeline | 175 | 204 | 192 | 873 | 3.6 |
+| 4in1 | ours, plain | 116 | 165 | 121 | 728 | |
+| 4in1 | ours, six seeds | 93, 105, 122, 164, 172, 187 | 212 to 275 | 84 to 273 | 638 to 961 | |
+| 4in1-mini | designer, own poses | 105 | 14 | 266 | 718 | 0 |
+| 4in1-mini | designer, today's pipeline | 117 | 146 | 114 | 645 | 1.4 |
+| 4in1-mini | designer, plain pipeline | 147 | 182 | 148 | 648 | 2.2 |
+| 4in1-mini | ours, plain | 143 | 152 | 103 | 555 | |
+| 4in1-mini | ours, six seeds | 126, 127, 139, 159, 166, 166 | 141 to 183 | 79 to 138 | 534 to 646 | |
 
-Read with `labelled.py results --out build/scratch/fund-objective/recon`,
-then `measures.py traces` and `report.py` (section "First routes": each
-placement's first-route open terminals beside its `closed_active`). The
-question they answer: does the designer's arrangement with its pin room
-closed by our pipeline (`designer@kept`, `closed_active` at our seeds'
-level) route like our seeds, or still like the designer's (19 and 33 open
-terminals on Glasgow and the 4in1 on 2026-11-04, 53 and 61 legalised by
-the plain legaliser)? And does `designer-plain@kept` keep the room?
+Spearman with the first route, over the ten placements of each board (and
+over our six seeds alone):
+
+| measure | Glasgow | 4in1 | 4in1-mini |
+| --- | --- | --- | --- |
+| closed_active | +0.32 (-0.14) | +0.61 (+0.43) | +0.52 (+0.17) |
+| RUDY overflow at half capacity | +0.56 (+0.60) | +0.70 (+0.31) | +0.23 (+0.23) |
+| crossings | +0.36 (+0.94) | +0.54 (+1.00) | +0.03 (+0.57) |
+| wire | +0.33 (+0.77) | +0.68 (+0.83) | -0.12 (+0.49) |
+
+What the routes say:
+
+- **The designer's arrangement through our pipeline loses its advantage.**
+  Today's pipeline: Glasgow 19 to 114, the 4in1 33 to 175 (worse than our
+  median), the 4in1-mini 105 to 117. The plain pipeline keeps the 4in1's
+  (56) but not Glasgow's (93, inside our seeds); these two numbers equal
+  the 2026-11-04 study's. Our legality and refinement, not the search,
+  are what the designer's arrangement does not survive.
+- **The pin room goes with it**, to our seeds' level in every legalised
+  variant but the 4in1's plain one, which keeps half the room (107
+  against our 212 to 275) and most of the advantage. Across all ten
+  placements the room ranks the route at +0.32 to +0.61; the objective's
+  wire and crossings at -0.12 to +0.68, because they rank the designer's
+  own placement among the worst.
+- **But the room is not separated from the arrangement.** Every
+  placement that lost the room also moved the active parts (Glasgow 3.4
+  and 5.4 mm on the mean; the 4in1 3.6 mm through the skeleton against
+  0.5 mm through the plain pipeline). The 4in1's two legalisations differ
+  in both at once. Within our seeds, all crowded, the room does not rank
+  the route; the crossings do (+0.57 to +1.00).
+- **The 4in1-mini's first-route gap is small**: the designer's own
+  placement leaves 105 open, our seeds 126 to 166 (its 54-connection gap
+  in the nightly is in the full layout, 37 against 91). It cannot carry a
+  verdict.
+
+So: lost pin room is consistent with the open connections, not shown to
+cause them.
+
+### Queued: the direct test
+
+`build/scratch/fund-objective/recon/nonpassive.sh` (PID 1895169, started
+2026-11-24 20:43; status `recon/nonpassive.status`, log
+`recon/nonpassive.log`; gated on load at most 20 and 16 GB free, never
+02:00 to 07:00, three two-thread jobs): six first routes, the designer's
+active parts pinned (partialcopy.py's `nonpassive` rule) and the passives
+placed by our layout, on Glasgow, the 4in1 and the 4in1-mini at layout
+seeds 1 and 101 (`labelled.py route ... BOARD:nonpassive@1`). The active
+parts do not move, so the arrangement is the designer's; whether the room
+stays open is up to our passives. Read with `labelled.py results` (units
+`<board>-nonpassive-s1`, `-s101`), and measure the pin room of each
+layout's placed board
+(`recon/firstroute/runs/<unit>/<board>/layout/placed/*.kicad_pcb`) with
+`measures.py`'s `measure`.
+
+- Room closed (pairs near our seeds' 134 to 275) and the route near the
+  designer's (2026-11-04: 0.92 of the advantage recovered with these
+  parts pinned): the room is not the cause; drop C1.
+- Room open and the route near the designer's, or room closed and the
+  route near ours: the room is implicated; build C1 behind a switch and
+  take it to stage 1.
 
 ## Proposed wording for docs/placer.md
 
@@ -390,10 +484,16 @@ not what is wrong.** ..." with:
 >   longer in two-pin wire, more crossed and misses the decoupling
 >   relations, and keeps foreign copper a track away from its active
 >   parts' pads, which no term prices (1 to 32 such closed pairs against
->   our 134 to 275). Our skeleton's legalisation and the refinement close
->   that room in the designer's arrangement too. (On 2026-11-04 the
->   designer scored 0.59 to 1.02 of one seed's whole objective on the
->   plain pipeline; the same study found the anneal lowering the objective
+>   our 134 to 275). Seated and refined by today's pipeline the
+>   designer's arrangement loses that room and its advantage (first
+>   route: Glasgow 19 to 114, the 4in1 33 to 175 open terminals, our
+>   seeds 88 to 187); whether the room or the moved active parts cost
+>   the routes is not yet separated. Among our own seeds the objective's
+>   crossings rank the first route well (Spearman +0.57 to +1.00). (On
+>   2026-11-04 the designer scored 0.59 to 1.02 of one seed's whole
+>   objective on the plain pipeline; our plain placements have since
+>   improved on the objective, the designer's legalised one has not
+>   changed, and the same study found the anneal lowering the objective
 >   while the 4in1's and Glasgow's routes got worse.)
 
 and in "Which placement decisions matter" end the paragraph with "So the
