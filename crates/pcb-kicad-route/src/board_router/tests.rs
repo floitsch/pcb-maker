@@ -4878,7 +4878,7 @@ mod tuning_group_tests {
             check_tuning_group::<KiCadBoardRouterConfig>("router", top, tuning, ROUTER_RENAMED)
                 .unwrap();
         assert_eq!(checked.len(), tuning.len());
-        assert_eq!(tuning.len(), 43);
+        assert_eq!(tuning.len(), 45);
         // The core section: the core's own fields, set where given.
         let mut config = KiCadBoardRouterConfig::default();
         config.tuning.via_cost = Some(3.0);
