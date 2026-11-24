@@ -832,11 +832,21 @@ fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     let compare_reserve = comparison
         .as_ref()
         .map_or(0.0, |incumbent| incumbent.required_verification_work());
-    if verdict.status == KiCadRunStatus::Complete
+    let fill_wanted = verdict.status == KiCadRunStatus::Complete
         && !result
             .input_connectivity
             .as_ref()
-            .is_some_and(|input| input.status == "unchanged")
+            .is_some_and(|input| input.status == "unchanged");
+    if fill_wanted
+        && config.tuning.save_zone_fills == Some(false)
+        && pcb_kicad::project_has_fillable_zones(output, board_id).unwrap_or(false)
+    {
+        facts.fill_publication = Some(pcb_kicad::FillPublication {
+            status: "skipped",
+            reason: Some("save_zone_fills is false in the router's tuning".into()),
+            ..Default::default()
+        });
+    } else if fill_wanted
         && let Some((fill, work)) = pcb_kicad::publish_routed_fill(
             output,
             board_id,
