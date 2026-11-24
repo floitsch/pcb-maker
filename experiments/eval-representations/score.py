@@ -31,7 +31,10 @@ def main():
         rs = [r for r in rows if r["rep"] == rep]
         ok = [r for r in rs if r["ok"]]
         bad = [r for r in rs if not r["ok"]]
-        mean = lambda xs: sum(xs) / len(xs) if xs else float("nan")
+        def mean(xs):
+            xs = [x for x in xs if x is not None]
+            return sum(xs) / len(xs) if xs else float("nan")
+
         print(
             f"| {rep} | {len(rs)} | {len(ok)} | {sum(r['ok_census'] for r in rs)} | {mean([r['answer']['confidence'] for r in ok]):.0f} / {mean([r['answer']['confidence'] for r in bad]):.0f} "
             f"| {mean([r['tokens'] for r in rs]) / 1000:.0f}k | {mean([r['tool_uses'] for r in rs]):.1f} | {mean([r['seconds'] for r in rs]):.0f} |"
