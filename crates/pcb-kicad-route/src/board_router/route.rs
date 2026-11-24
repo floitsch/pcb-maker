@@ -517,6 +517,39 @@ pub fn route_kicad_board(
         }
         ladder.charge_checks(input_checks - before);
     }
+    // The nets KiCad still finds open, each routed alone against all the
+    // copper kept and kept where KiCad finds the board better. A layout's
+    // own ladders (`kicad_kept`) leave it to the layout, which repairs the
+    // board it keeps (`board_layout/additive_repair.rs`).
+    if config.kicad_kept.is_none()
+        && config.provisional_native_check_limit.is_none()
+        && !config.skip_native_verification
+    {
+        let past = ladder.past_deadline();
+        let left = (ladder.ladder_budget - ladder.work).max(0.0);
+        let repair = if past {
+            result
+                .native
+                .as_ref()
+                .filter(|native| native.selected_net_unconnected_items > 0)
+                .map(|native| KiCadRouteOpenRepair::skipped(native, "wall_guard_expired"))
+        } else {
+            super::route_open_repair::repair_route_opens(
+                &mut result,
+                output_directory,
+                board_id,
+                config,
+                left,
+            )?
+        };
+        if let Some(repair) = &repair {
+            ladder.work += repair.search_work_seconds;
+            ladder.charged.search_seconds += repair.search_work_seconds;
+            ladder.charge_checks(repair.native_checks);
+            eprintln!("{}", repair.line());
+        }
+        result.open_repair = repair;
+    }
     result.cut = core::router::wall_cuts();
     result.work_seconds = ladder.work;
     result.work_bound_seconds = ladder.work_bound;
@@ -1259,6 +1292,7 @@ pub fn finish_routed_board(
         native,
         native_candidate_errors: None,
         model_precedes_additive_repair: false,
+        open_repair: None,
         model_precedes_generated_pad_via_repair: false,
         model_precedes_body_near_grid_retry: false,
         pours: String::new(),

@@ -26,6 +26,7 @@ mod pour_plan;
 mod pour_quality;
 mod result;
 mod route;
+mod route_open_repair;
 mod route_reuse;
 mod row_escapes;
 #[cfg(test)]
@@ -51,6 +52,7 @@ pub(crate) use self::layer_preference::core_layer_preferences;
 pub use self::lengths::{finish_lengths, match_lengths, with_lengths, write_length_patterns};
 pub use self::meander::copper_heights;
 pub use self::native_kept::KiCadInputConnectivity;
+pub use self::route_open_repair::KiCadRouteOpenRepair;
 pub use self::route_reuse::{
     KiCadRouteReuse, KiCadRouteReuseFinding, KiCadRouteReuseFindingItem, KiCadRouteReusePartialNet,
     KiCadRouteReuseSource, RouteReuseIdentities, check_reused_copper, check_route_reuse,
