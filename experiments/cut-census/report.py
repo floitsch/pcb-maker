@@ -101,7 +101,7 @@ def census(arguments):
     boards = sorted({board for board, _ in main})
     result = {}
     gap_lines = ["| board | rules w / s | cuts D / O | moved-part cuts D / O | wasted 0.1 mm D / O (base) | "
-                 "top quarter D / O | bottom quarter D / O | mean phase D / O |", "| --- " * 8 + "|"]
+                 "top quarter D / O | bottom quarter D / O | mean phase D / O | no track (gap < Q_1) D / O |", "| --- " * 9 + "|"]
     flow_lines = ["| board | pins | " + " | ".join(f"planar r{r:g} D / O | vias r{r:g} D / O" for r in rings)
                   + " | parts short (r2.5 planar) D / O |", "| --- " * (3 + 2 * len(rings)) + "|"]
     histograms = {}
@@ -120,7 +120,8 @@ def census(arguments):
             f"{pct(d_moved and d_moved['wasted_01'])} / {pct(o_moved and o_moved['wasted_01'])} ({pct(base)}) | "
             f"{pct(d_moved and d_moved['wasted_q'])} / {pct(o_moved and o_moved['wasted_q'])} | "
             f"{pct(d_moved and d_moved['tight_q'])} / {pct(o_moved and o_moved['tight_q'])} | "
-            f"{(d_moved or {}).get('phase_mean', 0):.2f} / {(o_moved or {}).get('phase_mean', 0):.2f} |")
+            f"{(d_moved or {}).get('phase_mean', 0):.2f} / {(o_moved or {}).get('phase_mean', 0):.2f} | "
+            f"{pct(d_all['by_tracks'][0] / max(1, d_all['usable']))} / {pct(o_all['by_tracks'][0] / max(1, o_all['usable']))} |")
         histograms[board] = {"designer": d_moved and d_moved["phase_histogram"],
                              "ours": o_moved and o_moved["phase_histogram"]}
         cells = []
@@ -172,6 +173,7 @@ def seeds(arguments):
             "deficit_planar": lambda r: r["deficit_planar"],
             "deficit_vias": lambda r: r["deficit_vias"],
             "parts_short_planar": lambda r: r["parts_short_planar"],
+            "closed": lambda r: r["gaps"]["by_tracks"][0] / max(1, r["gaps"]["usable"]),
             "wasted_q": lambda r: r["gaps"]["wasted_q"],
             "wasted_01": lambda r: r["gaps"]["wasted_01"],
             "phase_mean": lambda r: r["gaps"]["phase_mean"],

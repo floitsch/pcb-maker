@@ -152,7 +152,8 @@ def table(arguments):
     out = Path(arguments.out)
     result = {}
     lines = ["| board | our seeds | ours best / median / worst | spread | designer legalised | raw designer | "
-             "designer - best, in spreads | verdict |", "| --- " * 8 + "|"]
+             "designer - best, in spreads | verdict | whole placement: ours best / worst, designer legalised |",
+             "| --- " * 9 + "|"]
     for board_dir in sorted((out / "runs").iterdir()):
         rows = read_board(board_dir)
         ours = [s for name, seeds in rows.items() if name.startswith("ours") for s in seeds
@@ -183,12 +184,17 @@ def table(arguments):
             else:
                 d, margin, verdict = None, None, "no designer skeleton"
             entry["raw_designer"] = statistics.median(raw) if raw else None
+            whole = sorted(s["whole_final"]["total"] for s in ours if "whole_final" in s)
+            whole_designer = [s["whole_final"]["total"] for s in designer if "whole_final" in s]
+            entry["whole"] = {"ours": whole, "designer": min(whole_designer) if whole_designer else None}
+            whole_cell = (f"{whole[0]:.0f} / {whole[-1]:.0f}, "
+                          f"{min(whole_designer):.0f}" if whole and whole_designer else "")
             lines.append(f"| {board_dir.name} | {len(values)} | {best:.0f} / {statistics.median(values):.0f} / "
                          f"{worst:.0f} | {spread:.0f} | {d if d is None else round(d)} | "
                          f"{entry['raw_designer'] if entry['raw_designer'] is None else round(entry['raw_designer'])} | "
-                         f"{'' if margin is None else f'{(d - best) / spread if spread > 0 else 0:+.2f}'} | {verdict} |")
+                         f"{'' if margin is None else f'{(d - best) / spread if spread > 0 else 0:+.2f}'} | {verdict} | {whole_cell} |")
         else:
-            lines.append(f"| {board_dir.name} | 0 | | | | | | no skeleton seeds |")
+            lines.append(f"| {board_dir.name} | 0 | | | | | | no skeleton seeds | |")
         result[board_dir.name] = entry
     (out / "skeleton-gap.json").write_text(json.dumps(result, indent=1))
     (out / "skeleton-gap.md").write_text("\n".join(lines) + "\n")
