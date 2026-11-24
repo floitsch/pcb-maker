@@ -37,6 +37,10 @@ designer's placement and ours of the night of 2026-11-18
 - `closed`, `narrow`: pairs of pads of different footprints and nets on a
   shared outer layer whose copper boxes lie closer than one track's
   quantum (`w + 2 s`: no track passes) or two tracks' (`2 w + 3 s`);
+  `closed_active`, `narrow_active`: the same pairs where at least one of
+  the two parts is not a free passive (a part of at most two pads whose
+  reference starts R, C, L, FB, F, FL or FER, the skeleton's rule
+  without its footprint names);
 - `foreign_1_5`: per pad the pads of other footprints within 1.5 mm
   (centre to centre, same outer layer), summed;
 - `spread`: the root mean square distance of the footprints' centres from
@@ -57,6 +61,7 @@ first route's open terminals across the seeds of each board.
 import argparse
 import json
 import math
+import re
 import statistics
 import sys
 from pathlib import Path
@@ -66,7 +71,8 @@ import numpy as np
 SCRATCH = Path("/home/flo/programming/pcb-maker/build/scratch/fund-cuts")
 BIN = 0.5
 MEASURES = ["wire", "hp2", "hp3_8", "hp9", "crossings", "rudy_over", "rudy_over_half", "rudy_over_quarter",
-            "rudy_p95", "crossings_hot", "pin_density_p95", "spread", "closed", "narrow", "foreign_1_5"]
+            "rudy_p95", "crossings_hot", "pin_density_p95", "spread", "closed", "closed_active", "narrow", "narrow_active",
+            "foreign_1_5"]
 
 
 def net_weight(pins):
@@ -229,12 +235,25 @@ def measure(board):
     return result
 
 
+PASSIVE = re.compile(r"(R|C|L|FB|F|FL|FER)\d")
+
+
+def passives(pads):
+    """The references of the free passives: at most two pads and a
+    passive's reference prefix."""
+    count = {}
+    for pad in pads:
+        count[pad[6]] = count.get(pad[6], 0) + 1
+    return {reference for reference, n in count.items() if n <= 2 and PASSIVE.match(reference or "")}
+
+
 def crowding(pads, rules):
     from scipy.spatial import cKDTree  # noqa: PLC0415
 
     w, s = rules["track"], rules["clearance"]
     q1, q2 = w + 2 * s, 2 * w + 3 * s
-    result = {"closed": 0, "narrow": 0, "foreign_1_5": 0}
+    result = {"closed": 0, "closed_active": 0, "narrow": 0, "narrow_active": 0, "foreign_1_5": 0}
+    passive = passives(pads)
     for layer in ("F.Cu", "B.Cu"):
         on = [p for p in pads if layer in p[3]]
         if len(on) < 2:
@@ -250,8 +269,11 @@ def crowding(pads, rules):
             dx = max(0.0, max(a[4][0], b[4][0]) - min(a[4][2], b[4][2]))
             dy = max(0.0, max(a[4][1], b[4][1]) - min(a[4][3], b[4][3]))
             gap = math.hypot(dx, dy)
+            active = not (a[6] in passive and b[6] in passive)
             result["closed"] += gap < q1
             result["narrow"] += gap < q2
+            result["closed_active"] += active and gap < q1
+            result["narrow_active"] += active and gap < q2
         for i, j in tree.query_pairs(1.5):
             if on[i][6] != on[j][6]:
                 result["foreign_1_5"] += 2
