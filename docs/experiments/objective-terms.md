@@ -9,8 +9,9 @@ says the opposite ("The objective is not what is wrong", from 2026-11-04).
 This note reconciles the two, splits the objective by term, looks for a
 routing quantity the objective lacks, and proposes changes.
 
-Stage 0 (rescoring stored placements) plus 36 pinned first routes: the
-placements it scores, and the designer's active parts with our passives. Scripts in `experiments/objective-terms/`:
+Stage 0 (rescoring stored placements) plus 36 pinned first routes (the
+placements it scores, and the designer's active parts with our passives)
+and three place checks with the designer's active parts pinned. Scripts in `experiments/objective-terms/`:
 `terms.py` (the trace's objective by term), `measures.py` (routing proxies
 from the pads of a placed board), `labelled.py` (place checks and pinned
 first routes), `report.py` (these tables). Data under
@@ -91,23 +92,32 @@ with its first route's open terminals), as the cut census extracted them.
   objective, the pin-room term ranks our October seeds by their first route
   worse than the objective alone (mean Spearman +0.28 to +0.25 at 3 mm,
   +0.20 at 5 mm; the 4in1-mini turns from +0.72 to -0.25).
+- **The objective accepts the designer's active arrangement on Glasgow
+  and the 4in1, and the search does not reach it.** With the designer's
+  active parts pinned and our passives placed around them, the whole
+  objective scores below every one of our seeds (Glasgow 4420 to 5237,
+  median 4540, against 4590 to 5960; the 4in1 9224 to 10 430 against
+  11 484 to 16 660), by crossings and relations, and those placements
+  route better than our seeds. What the objective rejects in the
+  designer's own placement is its passives and their relations. On the
+  4in1-mini it does not hold (971 to 1022 against 690 to 895), nor does the
+  route improve there.
+- **Where the arrangement is lost: the refinement.** On Glasgow's plain
+  pipeline it costs 40 of the 74 lost terminals (19, 53 after the
+  legaliser, 93 after the refinement), moves the active parts from 1.1 to
+  3.4 mm off the designer's poses and closes the pin room (74 to 140);
+  87 % of its objective gain is the decoupling relations. On today's
+  pipeline the skeleton's legaliser and refinement against grown bodies
+  move the active parts 5 mm before any passive is placed (the
+  refinement the larger move); its 114 cannot be split from stored
+  traces.
 - **Recommendation: drop C1, no stage 1 for C2.** C2 alone fails stage
-  0 (it moves no gap board's designer above our seeds; on the plain
-  pipeline the 4in1's designer carries more relations than ours, 7544
-  against 6582), and its only role here was to let C1 work on Glasgow. C1
-  fails the seed test and, by the direct test, would aim at the smaller
-  part of the gap. Next, at stage 0, the arrangement: with our passives
-  around the designer's active parts, the pad proxies give fewer crossings
-  than every seed on Glasgow and the 4in1 at wire inside our range, so the
-  placer's own objective may prefer the designer's active arrangement once
-  the passives are ours. Three place checks with the trace and the
-  designer's active parts pinned (the `nonpassive` constraints of
-  `recon/firstroute/units/`) would say so with the real objective; if it
-  does, the 2026-11-04 line "accepts, the search does not reach it" holds
-  for the active arrangement, and the work is in the search and in what
-  our legalisation and refinement do to an arrangement (they cost the
-  designer's 19 to 93 and 114 on Glasgow), not in a new term. Correct
-  placer.md either way (wording below).
+  0, C1 fails the seed test and, by the direct test, would aim at the
+  smaller part of the gap. The work is in the search and in the
+  refinement's moves on an arrangement it is given: the objective prefers
+  the designer's active arrangement where the gap is largest, and our
+  refinement walks away from it while lowering the objective by the
+  relations. Correct placer.md (wording below).
 
 ## 1. Reconciliation
 
@@ -518,35 +528,122 @@ may owe something to the room, but that is a weak signal (three pairs)
 for a term that already fails the seed test and belongs to a family of
 levers that failed.
 
+### The objective at the designer's active arrangement with our passives
+
+Three place checks with the trace (`labelled.py place BOARD:pinned-s1`,
+2026-11-24 21:18 to 21:23): the sweep's constraints plus the designer's
+active parts pinned at their poses (the `nonpassive` place entries), the
+passives placed by our placer, every kept seed. The whole objective
+(`objective_bare` at `final`), against our place checks' seeds:
+
+| board | term | ours: median [min, max] (six seeds) | active parts pinned (kept seeds) | our seeds below the pinned median |
+| --- | --- | --- | --- | --- |
+| Glasgow | total | 4813 [4590, 5960] | 4420, 4540, 5237 | 0 of 6 |
+| Glasgow | wire | 2865 [2790, 2944] | 2837, 2852, 2872 | 1 of 6 |
+| Glasgow | wire 2 pins / 3-8 / 9+ | 1752 / 1015 / 82 | 1844 / 926 / 83 | 4 / 0 / 3 of 6 |
+| Glasgow | crossings | 578 [509, 695] | 474, 483, 535 | 0 of 6 |
+| Glasgow | relations | 275 [119, 932] | 99, 99, 963 | 0 of 6 |
+| 4in1 | total | 13721 [11484, 16660] | 9224, 9733, 10430 | 0 of 6 |
+| 4in1 | wire | 774 [652, 976] | 716, 721, 730 | 2 of 6 |
+| 4in1 | crossings | 102 [62, 215] | 54, 60, 61 | 0 of 6 |
+| 4in1 | relations | 12715 [10646, 15045] | 8311, 8838, 9547 | 0 of 6 |
+| 4in1-mini | total | 868 [690, 895] | 971, 972, 990, 993, 1022 | 6 of 6 |
+| 4in1-mini | wire 2 pins | 284 [260, 333] | 369 to 396 | 6 of 6 |
+| 4in1-mini | crossings | 82 [50, 94] | 94 to 115 | 6 of 6 |
+
+No pinned placement left a part without a place or illegal, and none
+carries overlap.
+
+- **On Glasgow and the 4in1 the objective accepts the designer's active
+  arrangement, and the search does not reach it.** With our passives
+  around it, it scores below every one of our seeds (Glasgow 4540 at the
+  median against 4590 to 5960; the 4in1 9733 against 11 484 to 16 660),
+  by fewer crossings (Glasgow 483 against 509 to 695, the 4in1 60 against
+  62 to 215), shorter three-to-eight-pin wire (on the 4in1 also
+  nine-pin-plus) and fewer missed relations; only the two-pin wire is longer on Glasgow. Our
+  seeds, free to take that arrangement, end higher. These are also the
+  two boards where the designer's active parts with our passives route
+  better than our seeds (Glasgow 57 and 48 open against 88 to 137, the
+  4in1 98 and 66 against 93 to 187): there the objective and the route
+  agree.
+- **On the 4in1-mini it does not**: the designer's active arrangement
+  with our passives scores above every seed (971 to 1022 against 690 to
+  895), by two-pin wire and crossings, and routes no better than our
+  seeds (137 and 130 against 126 to 166). The mini's first-route gap is
+  small; its 54-connection gap in the nightly is in the full layout.
+- What the objective rejects in the designer's own placement on Glasgow
+  and the 4in1 is therefore its passives and their relations, not its
+  active arrangement.
+
+### Where the designer's Glasgow arrangement is lost (stored traces)
+
+The designer's poses on Glasgow route with 19 open terminals, after our
+plain pipeline with 93, after today's with 114. From the stored traces
+of `designer-plain` and `designer` (displacement of the active parts
+from the designer's poses, pin room, the whole objective) and the routes
+the 2026-11-04 study stored for the same stages of the plain pipeline
+(its final stage, 93, is reproduced exactly today, as are the 4in1's
+numbers):
+
+| pipeline | stage | active parts moved, mean mm (> 0.5 mm, > 2 mm) | passives moved, mean mm | pin room | objective (relations) | first-route open |
+| --- | --- | --- | --- | ---: | --- | ---: |
+| both | the designer's poses | 0 | 0 | 32 | 8765 (3268) | 19 |
+| plain | legaliser | 1.11 (33, 11) | 0.45 | 74 | 9347 (4293) | 53 (2026-11-04) |
+| plain | refinement and relation repair | 3.40 (64, 39) | 4.75 | 140 | 4547 (99) | 93 |
+| today | skeleton legaliser (grown bodies) | +2.62 between the stages (43, 29) | absent | | | |
+| today | skeleton refinement | +3.09 (34, 31) | absent | | | |
+| today | after the skeleton, passives at the designer's poses | 5.00 (61, 53) | 0 | 183 | 10 395 (4510) | |
+| today | passives' legaliser | 5.27 (68, 58) | 0.55 | 97 | 11 500 (5652) | |
+| today | passives' refinement and relation repair | 5.40 (71, 61) | 6.15 | 152 | 5655 (973) | 114 |
+
+(The skeleton's own stages place grown bodies, whose poses differ from
+the footprints' for some parts; their moves are given between stages.)
+
+- **On the plain pipeline the refinement does the most damage**: 40 of
+  the 74 terminals lost (53 to 93), against the legaliser's 34. It moves
+  the active parts from 1.1 to 3.4 mm off the designer's poses (39 of 87
+  more than 2 mm) and the passives 4.75 mm, closes the pin room from 74
+  to 140, and of its objective gain (9347 to 4547) 87 % is the relations
+  (4293 to 99): the refinement and its relation repair pull the
+  decoupling capacitors to the pins our automatic relations ask for, at
+  50 mm of wire per mm missed.
+- **On today's pipeline the skeleton's phase does it before any passive
+  is placed**: its legaliser against the grown bodies and its refinement
+  move the active parts 2.6 and 3.1 mm on the mean (to 5.0 mm off the
+  designer's poses, 53 of 87 more than 2 mm), the larger move of the two
+  being the refinement's; the passives' phase adds 0.4 mm to the active
+  parts and again trades the relations (5652 to 973) for pin room (97
+  to 152). No route of the intermediate stages is stored for today's
+  pipeline, so its 114 cannot be split between the two phases.
+- So the step that does the most damage is **the refinement**: on the
+  plain pipeline by the stored routes, on today's by the displacement of
+  the active parts (the skeleton's refinement) and the pin room (the
+  passives' refinement). It lowers the objective at each move; it is
+  also where the relations at 50 mm per mm decide where passives go.
+
 ## Proposed wording for docs/placer.md
 
 In "Where the arrangement is lost", replace the bullet "**The objective is
 not what is wrong.** ..." with:
 
-> - **The objective does not prefer the designer's arrangement.** On the
->   boards with a placement gap (Glasgow, the two OpenESC boards) the
->   whole objective and the skeleton's rank the designer's placement,
->   legalised and refined by our stages or at its own poses, below most
->   or all of our seeds (docs/experiments/objective-terms.md): it is
->   longer in two-pin wire, more crossed and misses the decoupling
->   relations, and keeps foreign copper a track away from its active
->   parts' pads, which no term prices (1 to 32 such closed pairs against
->   our 134 to 275). Seated and refined by today's pipeline the
->   designer's arrangement loses that room and its advantage (first
->   route: Glasgow 19 to 114, the 4in1 33 to 175 open terminals, our
->   seeds 88 to 187). With the designer's active parts pinned and our
->   passives around them the room closes and the route keeps about half
->   the advantage (Glasgow 57 and 48 open): the active arrangement
->   carries most of it, the room at most part of the rest. Among our own seeds the objective's
->   crossings rank the first route well (Spearman +0.57 to +1.00). (On
->   2026-11-04 the designer scored 0.59 to 1.02 of one seed's whole
->   objective on the plain pipeline; our plain placements have since
->   improved on the objective, the designer's legalised one has not
->   changed, and the same study found the anneal lowering the objective
->   while the 4in1's and Glasgow's routes got worse.)
+> - **The objective accepts the designer's active arrangement, not its
+>   passives.** With the designer's active parts pinned and our passives
+>   placed around them, the whole objective scores below every one of our
+>   seeds on Glasgow and the 4in1 (by crossings and relations), and those
+>   placements route better than ours; on the 4in1-mini it scores above
+>   them (docs/experiments/objective-terms.md). The designer's own
+>   placement scores worse than our seeds: longer two-pin wire, more
+>   crossings, missed decoupling relations. Our search does not reach the
+>   active arrangement, and our refinement walks away from it when given
+>   it: on Glasgow's plain pipeline the legaliser costs 34 open terminals
+>   (19 to 53) and the refinement 40 more (to 93), most of its objective
+>   gain being the decoupling relations; today's pipeline moves the
+>   active parts 5 mm in the skeleton's legaliser and refinement (114).
+>   (On 2026-11-04 the designer's legalised placement scored 0.59 to 1.02
+>   of one seed's whole objective; our plain placements have since
+>   improved, the designer's has not changed.)
 
-and in "Which placement decisions matter" end the paragraph with "So the
-gap is the active parts' arrangement as a whole (banks of repeated parts
-its sharpest case), which our search does not reach and our objective does
-not prefer; ..." in place of "which our objective accepts and our search
-does not reach".
+In "Which placement decisions matter" keep "which our objective accepts
+and our search does not reach" but qualify it: "which our objective
+accepts on Glasgow and the 4in1 (with our passives around it; not on the
+4in1-mini) and our search does not reach".

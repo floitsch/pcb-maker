@@ -19,7 +19,11 @@ experiments/cut-census/skeleton_gap.py does, into
 - `designer`: every level's legaliser seats the designer's poses and the
   refinement follows (`PCB_PLACER_START_STAGE=legalize`), through the
   skeleton's phase and the passives';
-- `designer-plain`: the same without the race over skeletons.
+- `designer-plain`: the same without the race over skeletons;
+- `pinned-s<base>`: the placer as it is with the designer's active parts
+  pinned (the sweep's constraints plus the `place` entries of
+  `<out>/firstroute/units/<board>/nonpassive.constraints.json`, which
+  `route BOARD:nonpassive@<seed>` writes), the passives placed around them.
 
 `route` lays out first routes (layout seed 1, `stop_after_first_route`,
 experiments/placement-gap/partialcopy.py's machinery: every movable part
@@ -73,11 +77,16 @@ def place_unit(out, binary, board, variant):
     layout = json.loads((sweep / "layout.json").read_text())
     router = sweep / "router.json"
     plain = "plain" in variant
-    base = int(variant.rsplit("-s", 1)[1]) if variant.startswith("ours") else 1
+    base = int(variant.rsplit("-s", 1)[1]) if variant.startswith(("ours", "pinned")) else 1
     placer = dict(layout.get("placer", {}))
     placer["tuning"] = {**placer.get("tuning", {}), "seed": base}
     if plain:
         placer["skeleton_race"] = None
+    if variant.startswith("pinned"):
+        constraints = json.loads((source / "constraints.json").read_text())
+        unit = Path(out) / "firstroute" / "units" / board.split("__")[-1] / "nonpassive.constraints.json"
+        constraints["place"] = constraints.get("place", []) + json.loads(unit.read_text())["place"]
+        placer["constraints"] = constraints
     work = (Path(out) / "runs" / board / variant).resolve()
     command = [str(Path(binary).resolve()), "place-kicad-board", str(source), board_id, str(work / "placed"),
                str(work / "layout.json"), "--router", str(router) if router.exists() else "auto"]
