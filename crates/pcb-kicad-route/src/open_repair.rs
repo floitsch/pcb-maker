@@ -1001,17 +1001,15 @@ fn repair_in_copy(
     if capped {
         report.note =
             Some("KiCad capped its baseline report; compare a complete report before repairing");
+        // The library findings at their cap do not cap the report
+        // (`LIBRARY_FINDING_TYPES`): another type does, and restoring the
+        // libraries would not lift it. Their counts are reported still.
         if report
             .capped_native_violation_types
             .iter()
             .any(|kind| kind == "lib_footprint_issues")
         {
             report.reported_missing_footprint_libraries = reported_missing_libraries(&native);
-            if !report.reported_missing_footprint_libraries.is_empty() {
-                report.note = Some(
-                    "KiCad reached its footprint-library finding limit. Restore the project's fp-lib-table and the libraries it references, enable installed user libraries with PCB_MAKER_KICAD_USER_LIBS=1, and retry in a fresh output directory. The reported library counts cover the visible warnings.",
-                );
-            }
         }
     } else if report.opens_before == 0 {
         report.note = Some("the native baseline has no unconnected items");
