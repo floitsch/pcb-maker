@@ -10,6 +10,7 @@
     benchmarks/agent-tasks/run.py <output> --tier schematic --binary PATH
     benchmarks/agent-tasks/run.py <output> --tier expansion --jobs 8 --threads 1 --binary PATH
     benchmarks/agent-tasks/run.py <output> --tier designer --binary PATH
+    benchmarks/agent-tasks/run.py <output> --tier endgame --jobs 3 --threads 2 --binary PATH
 
 Each task copies a real board, strips its tracks, optionally stacks every
 movable footprint at one point and removes the outline (a fresh netlist
@@ -53,7 +54,10 @@ without a licence), strips the tracks as the intake did and routes with
 `route-kicad-board` and the task's `budget_seconds` of work (README.md,
 "The expansion tier"). `--tier designer` routes every board on the
 designer's own placement (designer_admitted; compare.py --gap joins it
-with a layout run: README.md, "The designer tier"). Every run
+with a layout run: README.md, "The designer tier"). `--tier endgame`
+resumes frozen routed boards that a nightly left a few connections short
+with their copper kept, then runs the local open repair (endgame_admitted;
+README.md, "The endgame tier"). Every run
 admits each board against the machine's memory ledger (harness_common.admit;
 README.md, "How to measure"); `--lock` takes build/quick-tier.lock first and
 waits for it (one tier at a time on the machine, the default until
@@ -92,7 +96,8 @@ import tier_estimates  # noqa: E402
 ROOT = HERE.parents[1]
 # Benchmark tiers: subsets of a task list with their reasons (README.md).
 TIERS = {"quick": HERE / "quick.json", "short": HERE / "short.json", "schematic": HERE / "schematic.json",
-         "expansion": HERE / "expansion.json", "designer": HERE / "designer.json"}
+         "expansion": HERE / "expansion.json", "designer": HERE / "designer.json",
+         "endgame": HERE / "endgame.json"}
 # A tier's default parallelism (no --jobs and --threads given): this many
 # search threads a board and the physical cores / this many boards at once.
 # A layout is the same at any thread count, so this only sets the wall: the
@@ -2144,6 +2149,8 @@ def run_admitted(task, arguments, token):
         return schematic_admitted(task, arguments, token)
     if arguments.designer:
         return designer_admitted(task, arguments, token)
+    if arguments.endgame:
+        return endgame_admitted(task, arguments, token)
     if arguments.route_from:
         return route_admitted(task, arguments, token)
     if task.get("mode") == "route":
@@ -2704,6 +2711,218 @@ def designer_admitted(task, arguments, token):
     return row
 
 
+# The endgame tier's ladder budget in work seconds when its file names none
+# (endgame.json's endgame_budget_seconds).
+ENDGAME_BUDGET = 30.0
+# The local open repair's timeout beyond the route (its native checks).
+ENDGAME_LOCAL_TIMEOUT = 900
+
+
+def segment_distance(a, b, c, d):
+    """The distance between the segments a-b and c-d (points as (x, y))."""
+    def point(p, q, r):
+        dx, dy = r[0] - q[0], r[1] - q[1]
+        length = dx * dx + dy * dy
+        t = 0.0 if length == 0 else max(0.0, min(1.0, ((p[0] - q[0]) * dx + (p[1] - q[1]) * dy) / length))
+        return math.hypot(p[0] - q[0] - t * dx, p[1] - q[1] - t * dy)
+
+    def side(p, q, r):
+        return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+    if side(a, b, c) * side(a, b, d) < 0 and side(c, d, a) * side(c, d, b) < 0:
+        return 0.0
+    return min(point(a, c, d), point(b, c, d), point(c, a, b), point(d, a, b))
+
+
+def release_window(board, drc, radius):
+    """Removes from `board` (a .kicad_pcb with one top-level item a block
+    of lines at two spaces) the track segments, arcs and vias within
+    `radius` mm of any KiCad-unconnected item of `drc` (the segment between
+    the item's two ends): the window the endgame renegotiates. The pieces
+    of kept copper this leaves on no pad become terminals of their net
+    (route mode's kept copper), so the router joins them again. Returns
+    {segments, vias, nets} removed."""
+    report = json.loads(Path(drc).read_text())
+    axes = []
+    for item in report.get("unconnected_items", []):
+        ends = [(part["pos"]["x"], part["pos"]["y"]) for part in item.get("items", []) if part.get("pos")]
+        if ends:
+            axes.append((ends[0], ends[-1]))
+    lines = Path(board).read_text().splitlines(keepends=True)
+    kept, block, removed, nets = [], [], {"segment": 0, "arc": 0, "via": 0}, set()
+
+    def coordinates(text, key):
+        match = re.search(r"\(" + key + r" ([-\d.]+) ([-\d.]+)\)", text)
+        return (float(match.group(1)), float(match.group(2))) if match else None
+
+    def flush():
+        if not block:
+            return
+        text = "".join(block)
+        head = text.lstrip()[1:].split(None, 1)[0].rstrip(")")
+        drop = False
+        if head in removed and axes:
+            if head == "via":
+                at = coordinates(text, "at")
+                ends = (at, at) if at else None
+            else:
+                start, end = coordinates(text, "start"), coordinates(text, "end")
+                ends = (start, end) if start and end else None
+            if ends and any(segment_distance(ends[0], ends[1], a, b) <= radius for a, b in axes):
+                drop = True
+                removed[head] += 1
+                net = re.search(r'\(net "((?:[^"\\]|\\.)*)"\)', text) or re.search(r"\(net (\d+)\)", text)
+                if net:
+                    nets.add(net.group(1))
+        if not drop:
+            kept.extend(block)
+        block.clear()
+
+    for line in lines:
+        if line.startswith("  (") or not line.startswith("   "):
+            flush()
+        if line.startswith("  ("):
+            block.append(line)
+        elif block:
+            block.append(line)
+        else:
+            kept.append(line)
+    flush()
+    Path(board).write_text("".join(kept))
+    return {"segments": removed["segment"] + removed["arc"], "vias": removed["via"], "nets": sorted(nets)}
+
+
+def endgame_tasks(tier, tasks, only=None):
+    """The endgame tier's tasks: one per entry of its `boards`
+    (`<task>@<source>`), the task list's entry of its `task` renamed to the
+    entry's key and carrying the entry (`endgame`). Reserve entries only
+    when `only` names them."""
+    by_task = {task["name"]: task for task in tasks}
+    expanded = []
+    for key, entry in tier["boards"].items():
+        if entry.get("reserve") and not (only and key in only):
+            continue
+        base = by_task.get(entry["task"])
+        if base is None:
+            continue
+        expanded.append(dict(base, name=key, endgame=entry))
+    return expanded
+
+
+def endgame_admitted(task, arguments, token):
+    """The endgame tier (`--tier endgame`): a routed board a nightly left
+    a few connections short (frozen by endgame_freeze.py: the entry's
+    `project`) resumed with its copper kept: `route-kicad-board` with the
+    run's own router settings, its pour mode and the tier's ladder budget
+    (existing_tracks keep: the board's tracks and vias stay, their
+    connections count as made, the router routes only what is open around
+    them and never rips one up), then, where KiCad still reports opens,
+    `repair-kicad-opens --local` on the result (the layout's additive
+    repair as a command). The row is a route row of the final stage (KiCad's
+    findings less the designer's, the strict rule) with `endgame`: the
+    entry's counts before, each stage's counts, seconds, CPU and work."""
+    entry = task["endgame"]
+    name = task["name"]
+    directory = task_directory(task)
+    board_id = entry.get("board_id") or task["board_id"]
+    work = arguments.output / name
+    if work.exists():
+        shutil.rmtree(work)
+    work.mkdir(parents=True)
+    row = {"name": name, "mode": "route", "task": entry["task"],
+           "placement": entry.get("placement"),
+           "unconnected_before": entry.get("unconnected_before")}
+    project = ROOT / entry["project"]
+    board = project / f"{board_id}.kicad_pcb"
+    if not board.exists():
+        row.update(error=f"no frozen board at {board}", **{"pass": False})
+        return row
+    if entry.get("board_sha256") and file_sha256(board) != entry["board_sha256"]:
+        row.update(error=f"the frozen board {board} differs from the tier's SHA-256", **{"pass": False})
+        return row
+    shutil.copytree(project, work / "placed")
+    released = None
+    if arguments.endgame_release:
+        # The window: the copper near the opens goes, the router
+        # renegotiates it with the opens (release_window).
+        released = release_window(work / "placed" / f"{board_id}.kicad_pcb", project / "drc.json",
+                                  arguments.endgame_release)
+        released["radius_mm"] = arguments.endgame_release
+    designer_started = time.monotonic()
+    allowed = designer_findings(directory, task["board_id"], work, arguments.binary) if task.get("designer_budget") else {}
+    designer_seconds = round(time.monotonic() - designer_started, 1)
+    baseline = StrictBaseline(directory, task["board_id"], work, arguments.binary, bool(task.get("designer_budget")))
+    settings = project.parent / "router.json"
+    router = json.loads(settings.read_text()) if settings.exists() else dict(task.get("router") or {})
+    key, _ = ROUTE_BUDGET
+    router[key] = round(arguments.endgame_budget * arguments.budget_scale, 3)
+    router["existing_tracks"] = "keep"
+    if entry.get("pour_mode"):
+        router["pours"] = entry["pour_mode"]
+    (work / "router.json").write_text(json.dumps(router))
+    row["budget_seconds"] = router[key]
+    env = dict(os.environ, RAYON_NUM_THREADS=str(arguments.threads)) if arguments.threads else dict(os.environ)
+    command = [str(arguments.binary), "route-kicad-board", str(work / "placed"), board_id, str(work / "route"),
+               str(work / "router.json"), "--reference", "none"]
+    started = time.monotonic()
+    load_before = os.getloadavg()[0]
+    timeout = scaled_timeout(arguments, router[key])
+    code, output, peak_mb, own_mb, cpu_seconds = run_measured(command, timeout, env,
+                                                              lambda pid: arguments.gate.started(token, pid))
+    (work / "route.log").write_text(output)
+    route_seconds = round(time.monotonic() - started, 1)
+    row.update(seconds=route_seconds, cpu_seconds=cpu_seconds,
+               load=[round(load_before, 1), round(os.getloadavg()[0], 1)], peak_rss_mb=peak_mb,
+               layout_rss_mb=own_mb)
+    if arguments.budget_scale != 1:
+        row["budget_scale"] = arguments.budget_scale
+    if code == "timeout":
+        row.update(error=f"timed out after {timeout} s", cut=["timeout"], **{"pass": False})
+        return row
+    if killed(code):
+        return killed_row(row, code, output)
+    result = router_report(work)
+    route_result(row, task, work, code, output, allowed, designer_seconds, baseline, result)
+    stages = {"route": {"unconnected": (row.get("native") or {}).get("unconnected"),
+                        "pass_strict": row.get("pass_strict"), "seconds": route_seconds,
+                        "cpu_seconds": cpu_seconds, "work_seconds": row.get("work_seconds"),
+                        "kept_copper": ((result or {}).get("kept_copper") or {}).get("connections_made")}}
+    if released is not None:
+        stages["released"] = released
+    row["endgame"] = stages
+    if not (row.get("native") or {}).get("unconnected"):
+        return row
+    # The local open repair on the resumed board: added copper only, the
+    # placement and every existing track kept (docs/agents.md, "Verify an
+    # additive repair for open connections").
+    local = work / "local"
+    command = [str(arguments.binary), "repair-kicad-opens", str(work / "route"), board_id, "--local", str(local)]
+    started = time.monotonic()
+    env = dict(env, **harness_common.board_ledger_environment())
+    code, output, local_peak, _, local_cpu = run_measured(command, ENDGAME_LOCAL_TIMEOUT, env)
+    (work / "local.log").write_text(output)
+    local_seconds = round(time.monotonic() - started, 1)
+    stage = {"exit": code, "seconds": local_seconds, "cpu_seconds": local_cpu}
+    try:
+        report = json.loads(output[output.index("{"):output.rindex("}") + 1])
+    except ValueError:
+        report = {}
+    stage.update({field: report.get(field) for field in ("status", "opens_before", "opens_after", "added_copper")})
+    stage["search_work_seconds"] = round(sum(((trial.get("local_search") or {}).get("work_seconds") or 0)
+                                             for trial in report.get("trials") or []), 1)
+    stages["local"] = stage
+    row.update(seconds=round(route_seconds + local_seconds, 1),
+               cpu_seconds=round((cpu_seconds or 0) + (local_cpu or 0), 1),
+               peak_rss_mb=max(peak_mb or 0, local_peak or 0))
+    if code == 0 and (report.get("added_copper") or 0) > 0 and (local / "drc.json").exists():
+        # The repaired board is the result: KiCad's findings and the strict
+        # rule on it.
+        row["native"] = native(local, allowed)
+        row["pass"] = compare.passes(row)
+        strict_row(row, strict_native(local, baseline))
+        row["endgame_result"] = "local"
+    return row
+
+
 # Route-mode tasks (`"mode": "route"`, the expansion tier): the designer's
 # placement, fetched at a pinned commit, stripped and routed as the
 # 2026-10-18 intake did (benchmarks/expansion/triage.py and run.py).
@@ -3122,6 +3341,10 @@ def main():
     parser.add_argument("--route-from", type=Path, default=None,
                         help="route mode: route each board's placement from this earlier output directory "
                              "(<dir>/<task>/layout/placed) with route-kicad-board instead of laying it out")
+    parser.add_argument("--endgame-release", type=float, default=0.0, metavar="MM",
+                        help="endgame tier: before the resumed route, remove the tracks and vias within this many "
+                             "mm of each KiCad-unconnected item (the segment between its ends), so that the router "
+                             "renegotiates that window with the opens (default 0: every track kept)")
     parser.add_argument("--splice-from", type=Path, default=None,
                         help="an earlier log (or output directory): the rows of the boards not run "
                              "(outside --only) are copied from it, marked spliced, into this run's log "
@@ -3172,6 +3395,10 @@ def main():
         parser.error("--route-from does not go with --tier schematic (it lays out from the schematic)")
     arguments.designer = arguments.tier == "designer"
     arguments.designer_budget = (tier or {}).get("route_budget_seconds", DESIGNER_ROUTE_BUDGET)
+    arguments.endgame = (tier or {}).get("kind") == "endgame"
+    arguments.endgame_budget = (tier or {}).get("endgame_budget_seconds", ENDGAME_BUDGET)
+    if arguments.endgame and arguments.route_from is not None:
+        parser.error("--route-from does not go with --tier endgame (it resumes the tier's frozen boards)")
     if arguments.designer and arguments.route_from is not None:
         parser.error("--route-from does not go with --tier designer (it routes the designer's placement)")
     if arguments.route_from is not None and not arguments.route_from.is_dir():
@@ -3242,7 +3469,10 @@ def main():
     # The boards of the tier (or task list) that --only leaves out: with
     # --splice-from their rows come from the earlier log.
     left_out = {}
-    for task in json.loads(arguments.tasks.read_text())["tasks"]:
+    task_list = json.loads(arguments.tasks.read_text())["tasks"]
+    if arguments.endgame:
+        task_list = endgame_tasks(tier, task_list, arguments.only)
+    for task in task_list:
         if tier is not None and task["name"] not in tier["boards"]:
             continue
         if arguments.only and task["name"] not in arguments.only:
@@ -3262,7 +3492,8 @@ def main():
             continue
         tasks.append(task)
     if tier is not None:
-        missing = sorted(set(tier["boards"]) - {task["name"] for task in tasks})
+        missing = sorted({name for name, entry in tier["boards"].items() if not entry.get("reserve")}
+                         - {task["name"] for task in tasks})
         if missing and not arguments.only:
             print(f"tier {arguments.tier}: {len(missing)} boards not in {arguments.tasks}: {missing}", file=sys.stderr)
     tasks = order_tasks(tasks, arguments.order, tier is not None, arguments.expected_mb)
@@ -3316,6 +3547,10 @@ def main():
               + (f", {', '.join(f'{b * arguments.budget_scale:g}' for b in budgets)} s of work" if budgets else "")
               + (f", timeout {scaled_timeout(arguments)} s" if arguments.timeout_given
                  else ", the intake's timeouts"), file=sys.stderr)
+    elif arguments.endgame:
+        print(f"mode endgame (frozen routed boards resumed with their copper kept), "
+              f"{arguments.endgame_budget * arguments.budget_scale:g} s of ladder work, then the local open repair",
+              file=sys.stderr)
     elif arguments.designer:
         print(f"mode route on the designer's placement, {arguments.designer_budget * arguments.budget_scale:g} s "
               f"of work, timeout {scaled_timeout(arguments, arguments.designer_budget * arguments.budget_scale)} s",
@@ -3335,7 +3570,7 @@ def main():
             except Exception as error:
                 row = {"name": task["name"], "pass": False, "error": f"runner: {type(error).__name__}: {error}",
                        "mode": "schematic" if arguments.schematic else "route" if arguments.route_from
-                       or arguments.designer else task.get("mode", "layout")}
+                       or arguments.designer or arguments.endgame else task.get("mode", "layout")}
             if arguments.schematic and "pass_schematic" not in row:
                 record_schematic_acceptance(row, arguments.output / task["name"], task["board_id"])
             return row
@@ -3375,8 +3610,8 @@ def main():
     summary = objectives(ordered)
     summary.update(wall_seconds=round(wall), budget_scale=arguments.budget_scale,
                    strict_rule=next(iter(rules)) if len(rules) == 1 else STRICT_RULE,
-                   mode="schematic" if arguments.schematic else "route" if arguments.route_from
-                   or arguments.designer else run_mode(tasks),
+                   mode="schematic" if arguments.schematic else "endgame" if arguments.endgame
+                   else "route" if arguments.route_from or arguments.designer else run_mode(tasks),
                    spliced=spliced_count,
                    tasks=arguments.tasks_label, tasks_sha256=arguments.tasks_sha256,
                    # Search threads per board (None: all CPUs, one job) and
