@@ -277,8 +277,8 @@ def run_job_inner(job):
             res["stages"].append({"free": k, "status": "separated" if ck else "census_error"})
             continue
         sk = S.solve(ck, work, job["stage_limit"], 0, cores=False)
-        res["stages"].append({"free": k, "status": sk["status"], "seconds": sk["seconds"],
-                              "variables": sk["variables"], "nets": [n["raw"] for n in ranked[:k]]})
+        res["stages"].append({"free": k, "status": sk["status"], "seconds": sk.get("seconds"),
+                              "variables": sk.get("variables"), "nets": [n["raw"] for n in ranked[:k]]})
         if sk["status"] == "sat":
             sol, census = sk, ck
             res["status"] = "sat"

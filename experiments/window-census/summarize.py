@@ -9,6 +9,8 @@ Per item, the classification over both half-sizes:
   sat-lattice  a solution on the lattice that KiCad does not accept
   unsat        no solution in the window (the full region without a detour
                budget, or the budget's UNSAT when the full run timed out)
+  walled-dead  a side of the item is a pad with no lattice node at all (a
+               dead pad: the class's track admitted by no node near it)
   walled-pads  a side of the item no lattice path reaches inside the window
                even without any copper: pads, graphics, rule areas
   walled-cu    walled by copper kept as it is (differential pairs, nets the
@@ -16,6 +18,8 @@ Per item, the classification over both half-sizes:
   timeout      no answer in the time limit
   zone         an item between pieces of a pour (fill connectivity, not the
                lattice's)
+  too-big      the window's connections span more than 150,000 nodes or
+               the CNF would pass 12 million clauses
   long         the item's window would be wider than 20 mm
   error        the census failed (pads off the board, ...)
 """
@@ -26,7 +30,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import run as R
 
-ORDER = ["sat-kicad", "sat-lattice", "unsat", "walled-pads", "walled-cu", "timeout", "zone", "long", "error"]
+ORDER = ["sat-kicad", "sat-lattice", "unsat", "walled-dead", "walled-pads", "walled-cu", "timeout", "too-big",
+         "zone", "long", "error"]
 
 
 def load(path):
@@ -51,7 +56,11 @@ def classify(r, base):
     if s == "unsat":
         return "unsat" if full in ("unsat", "timeout", None, "separated") else "unsat"
     if s == "target_walled":
+        if r.get("dead_terminals"):
+            return "walled-dead"
         return "walled-pads" if r.get("walled_without_copper") else "walled-cu"
+    if s == "too_big":
+        return "too-big"
     if s == "timeout":
         return "timeout"
     if s == "zone_item":
@@ -72,6 +81,7 @@ def main():
     p.add_argument("h4", nargs="?")
     p.add_argument("--apply", default=None)
     p.add_argument("--json", default=None)
+    p.add_argument("--markdown", default=None, help="write the per-item table here")
     a = p.parse_args()
     boards = json.load(open(a.items))
     r2 = load(os.path.join(a.h2, "results.jsonl"))
@@ -100,9 +110,33 @@ def main():
                          "descriptions": x.get("descriptions"), "other_new_findings": b["other_new_findings"],
                          "binary": b["binary"], "attempt": x.get("attempt"),
                          "seconds2": x.get("seconds"), "vars2": x.get("variables"),
-                         "seconds4": y.get("seconds"), "vars4": y.get("variables")})
+                         "seconds4": y.get("seconds"), "vars4": y.get("variables"),
+                         "stages2": x.get("stages"), "stages4": y.get("stages"),
+                         "dead2": x.get("dead_terminals")})
     if a.json:
         json.dump(rows, open(a.json, "w"), indent=1)
+    if a.markdown:
+        with open(a.markdown, "w") as f:
+            f.write("| tier | board | net | ends mm | h = 2 | h = 4 | note |\n| --- | --- | --- | ---: | --- | --- | --- |\n")
+            for r in rows:
+                note = []
+                for h in ("2", "4"):
+                    if r["moved" + h] is not None:
+                        note.append(f"h{h}: {r['moved' + h]} other nets free")
+                    if r["core" + h]:
+                        note.append(f"h{h} core ({len(r['core' + h])}): " + ", ".join(r["core" + h]))
+                    if r["full" + h]:
+                        note.append(f"h{h} without budget: {r['full' + h]}")
+                    stages = r["stages" + h] or []
+                    if r["h" + h] in ("timeout", "unsat") and stages:
+                        shown = ", ".join(f"{st['free']}: {st['status']}" for st in stages)
+                        note.append(f"h{h} stages (nets free: answer) {shown}")
+                if r["dead2"]:
+                    note.append("dead pad " + ", ".join(r["dead2"]))
+                board = r["name"].split("__")[-1]
+                tier = "sweep" if "sweep" in r["tier"] else "designer"
+                net = (r["net"] or "").replace("|", "/")
+                f.write(f"| {tier} | {board} | {net} | {r['length']} | {r['h2']} | {r['h4'] or ''} | {'; '.join(note)} |\n")
     by_tier = defaultdict(Counter)
     for r in rows:
         by_tier[r["tier"]][r["class"]] += 1
