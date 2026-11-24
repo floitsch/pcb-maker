@@ -158,11 +158,16 @@ impl Router {
     /// pad: they are one item with it to KiCad's connectivity, and the fill
     /// that touches any of them joins them all (capybully's SW39.3, two
     /// overlapping 12.5 mm strips on B.Cu set to solid: the fill touches
-    /// only the second, 2.4 mm beyond the first's end). A merged pad is
-    /// solid where the net's pour on the layer is, or, in the measurement,
-    /// by its own setting (`merged_pad_thermal`); the routing model keeps
-    /// its thermal relief (`thermal_ring_pads`). Returns the pieces joined,
-    /// once per merged pad.
+    /// only the second, 2.4 mm beyond the first's end). Only in the
+    /// measurement, for a merged pad solid by its own setting
+    /// (`merged_pad_thermal`); the routing model keeps its thermal relief
+    /// (`thermal_ring_pads`). In a solid pour (`connect_pads yes`) the
+    /// routing model leaves merged pads out as before: joining their
+    /// thermal vias there is KiCad's truth, but it steered the route to
+    /// worse boards and lost two passes (MIDAS-MK1.1's U104.41 on the
+    /// short tier, byrantech's laptop power on the designer tier; the
+    /// finished boards agree with KiCad either way). Returns the pieces
+    /// joined, once per merged pad.
     fn join_solid_merged_pads(
         &self,
         pads: &PourPads,
@@ -192,9 +197,7 @@ impl Router {
             let own_solid = self.config.measured_thermals && !self.merged_pad_thermal(merged);
             let shape = &self.board.obstacles[merged.pad].shape;
             for layer in (0..self.board.layer_count).filter(|layer| {
-                merged.layers & (1 << layer) != 0
-                    && !pours.label[*layer].is_empty()
-                    && (pads.solid[*layer] || own_solid)
+                merged.layers & (1 << layer) != 0 && !pours.label[*layer].is_empty() && own_solid
             }) {
                 let reach = probe.brush_half(layer) + 2.0 * self.grid.pitch;
                 let Some((x0, y0, x1, y1)) = self.grid.node_range(shape.aabb().inflated(reach))

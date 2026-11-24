@@ -553,10 +553,12 @@ Three rules of KiCad's fill that decide whether a pad joins at all:
   item's thermal ring overlaps keeps every corridor: KiCad adds the rings
   after the reliefs, and the lattice holds no rings (le_chiffre's vias
   beside their capacitors' pads).
-- A pad merged into its terminal that connects solidly (in a solid pour,
-  or in the measurement by its own setting) joins the pieces its own copper
-  touches, an item of each (`join_solid_merged_pads`; capybully's SW39.3,
-  two overlapping strips of which the fill touches only the second).
+- In the measurement, a pad merged into its terminal that is solid by its
+  own setting joins the pieces its own copper touches, an item of each
+  (`join_solid_merged_pads`; capybully's SW39.3, two overlapping strips of
+  which the fill touches only the second). Not in a solid pour's routing
+  model: there it lost two passes (MIDAS-MK1.1, laptop power) though the
+  finished boards agree with KiCad either way.
 
 `experiments/pour-fidelity/agreement.py` compares the model's connected
 pads (`dump-pour-map`'s `<net>.terminals`) with KiCad's connectivity after
