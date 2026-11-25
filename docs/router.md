@@ -181,7 +181,9 @@ locally for the pad being stamped.
 On a panel, same-named nets of different boards share no copper.
 `outline_pieces.rs` (`Pieces`; `sub_boards.rs` holds the placer's half)
 finds the outline's pieces (necks under 2 mm,
-mouse-bite rows and V-cuts cut it), and `split_router_nets` gives each piece
+mouse-bite rows and V-cuts cut it; a neck under 2 mm both ways, such as
+RS485M's between its LEGO holes, is a waist of one board and cuts
+nothing), and `split_router_nets` gives each piece
 its own net unless a terminal or pour joins two pieces; `excuse_across`
 moves KiCad's cross-piece items to `unconnected_across_sub_boards`. A
 panel's cells the placement found on one outline (repeated references)
