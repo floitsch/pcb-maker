@@ -4,10 +4,14 @@
 //! open is routed alone against all the copper kept, pours lowered as
 //! the local repair lowers them (`open_repair::lower_for_local`), and
 //! kept only where KiCad finds the board better (`repair_layout_opens`, the
-//! layout's additive repair).
+//! layout's additive repair). The result then describes the board written
+//! (`account`): the nets KiCad no longer finds open are routed, the
+//! repair's copper is in their totals, and what the router had left is in
+//! `nets[].open_repair`.
 
 use super::*;
 use crate::open_repair::{LayoutRepairBudget, repair_layout_opens};
+use serde_json::Value;
 
 /// The search work the repair may take when the ladder left less: route
 /// mode's other repairs after the ladder (solid thermals, necks) count
@@ -31,6 +35,163 @@ pub struct KiCadRouteOpenRepair {
     pub added_copper: usize,
     pub native_checks: usize,
     pub search_work_seconds: f64,
+}
+
+/// What route mode's open repair did to a net whose copper KiCad accepted
+/// (`board-router.json`'s `nets[].open_repair`). The net's `status`,
+/// `unconnected_terminals`, `open`, `vias` and `length_mm` describe the
+/// board written; this is what the router had left.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct KiCadNetOpenRepair {
+    /// `closed`: KiCad finds no unconnected item on the net after the
+    /// repair (the net is `routed`, without `open`); `improved`: it still
+    /// finds some (`kicad_unconnected_items`), and the net's own count and
+    /// `open` are the router's from before the repair, which names no pad.
+    pub status: &'static str,
+    /// KiCad's unconnected items on the net after the repair.
+    pub kicad_unconnected_items: usize,
+    /// The router's own count and reasons before the repair (`open`'s
+    /// form): what the repair closed, where `closed`.
+    pub unconnected_terminals_before: usize,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub open_before: Vec<KiCadOpenTerminals>,
+    /// The repair's copper on the net, counted in the net's `vias` and
+    /// `length_mm` and in the result's.
+    pub added_vias: usize,
+    pub added_length_mm: f64,
+}
+
+/// A net whose copper KiCad accepted, as `account` takes it: its
+/// connection name, KiCad's unconnected items on it after the repair, and
+/// the vias and track length the repair added.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct RepairedNet {
+    pub name: String,
+    pub still_open: usize,
+    pub vias: usize,
+    pub length_mm: f64,
+}
+
+/// The repaired nets `names` of the board `after` against `before` (the
+/// board the ladder kept), with KiCad's report on `after`
+/// (`after_report`): per net its tracks and vias on both boards and
+/// KiCad's unconnected items left on it. An error where KiCad's items name
+/// no single net (the counts stay the router's then).
+pub(super) fn repaired_nets(
+    before: &Expr,
+    after: &Expr,
+    after_report: &Value,
+    names: &[String],
+) -> Result<Vec<RepairedNet>, String> {
+    let open = native_kept::open_nets(after, after_report)
+        .ok_or("KiCad's unconnected items after the open repair name no single net each")?;
+    let copper = |pcb: &Expr, name: &str| -> Result<(usize, f64), String> {
+        let codes = kicad_nets::net_codes(pcb);
+        let net_names = NetNames::of(pcb);
+        let (mut vias, mut length) = (0, 0.0);
+        for item in pcb.children() {
+            let head = item.head();
+            if !matches!(head, Some("segment" | "arc" | "via")) {
+                continue;
+            }
+            let on_net = kicad_nets::item_net(item, &codes)
+                .is_some_and(|net| net == name || net_names.normalize(net) == name);
+            if !on_net {
+                continue;
+            }
+            match head {
+                Some("segment") => {
+                    let [x, y] = form_xy(item, "start")?;
+                    let [to_x, to_y] = form_xy(item, "end")?;
+                    length += (to_x - x).hypot(to_y - y);
+                }
+                Some("arc") => length += board_stats::track_arc_length(item)?,
+                _ => vias += 1,
+            }
+        }
+        Ok((vias, length))
+    };
+    let net_names = NetNames::of(after);
+    names
+        .iter()
+        .map(|raw| {
+            let name = net_names.normalize(raw);
+            let (vias_before, length_before) = copper(before, name)?;
+            let (vias_after, length_after) = copper(after, name)?;
+            Ok(RepairedNet {
+                name: name.to_string(),
+                still_open: open.get(name).copied().unwrap_or(0),
+                vias: vias_after.saturating_sub(vias_before),
+                length_mm: (length_after - length_before).max(0.0),
+            })
+        })
+        .collect()
+}
+
+/// Makes `result` describe the board the accepted repair wrote: each of
+/// `repaired` gets its copper added to its net's `vias` and `length_mm`
+/// (the first entry of the name the router left open, else the first) and
+/// a `KiCadNetOpenRepair`; where KiCad finds no unconnected item left on
+/// the net, every entry of the name the router left open is `routed` with
+/// no open terminal. The result's counts and totals follow its nets, as
+/// the router summed them.
+pub(super) fn account(result: &mut KiCadBoardRouterResult, repaired: &[RepairedNet]) {
+    for net in repaired {
+        let named: Vec<usize> = (0..result.nets.len())
+            .filter(|index| result.nets[*index].connection == net.name)
+            .collect();
+        let Some(&carrier) = named
+            .iter()
+            .find(|index| result.nets[**index].unconnected_terminals > 0)
+            .or(named.first())
+        else {
+            continue;
+        };
+        for &index in &named {
+            let entry = &mut result.nets[index];
+            let was_open = entry.unconnected_terminals > 0 || entry.status != "routed";
+            if index != carrier && !(was_open && net.still_open == 0) {
+                continue;
+            }
+            let (vias, length_mm) = if index == carrier {
+                (net.vias, net.length_mm)
+            } else {
+                (0, 0.0)
+            };
+            let note = KiCadNetOpenRepair {
+                status: if net.still_open == 0 {
+                    "closed"
+                } else {
+                    "improved"
+                },
+                kicad_unconnected_items: net.still_open,
+                unconnected_terminals_before: entry.unconnected_terminals,
+                open_before: if net.still_open == 0 {
+                    std::mem::take(&mut entry.open)
+                } else {
+                    entry.open.clone()
+                },
+                added_vias: vias,
+                added_length_mm: length_mm,
+            };
+            entry.vias += vias;
+            entry.length_mm += length_mm;
+            if net.still_open == 0 && entry.terminals >= 2 {
+                entry.status = "routed".into();
+                entry.unconnected_terminals = 0;
+            }
+            entry.open_repair = Some(note);
+        }
+    }
+    let routable = result.nets.iter().filter(|net| net.terminals >= 2);
+    result.routed_connections = routable.filter(|net| net.status == "routed").count();
+    result.unconnected_terminals = result
+        .nets
+        .iter()
+        .map(|net| net.unconnected_terminals)
+        .sum();
+    result.vias = result.nets.iter().map(|net| net.vias).sum();
+    result.length_mm = result.nets.iter().map(|net| net.length_mm).sum();
 }
 
 /// Route mode's repair after its ladder, on the board kept in `directory`:
@@ -167,6 +328,26 @@ pub(super) fn repair_route_opens(
     };
     let copper =
         board_stats::inspect_kicad_saved_copper(&trial.join(format!("{board_id}.kicad_pcb")))?;
+    let accepted: Vec<String> = candidate
+        .trials
+        .iter()
+        .filter(|trial| trial.status == "accepted")
+        .map(|trial| trial.net.clone())
+        .collect();
+    // What the repair did per net, read before the directories change.
+    let repaired = (|| -> Result<Vec<RepairedNet>, String> {
+        let read = |directory: &Path| -> Result<Expr, String> {
+            let path = directory.join(format!("{board_id}.kicad_pcb"));
+            let source = fs::read_to_string(&path)
+                .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+            parse(&source).map_err(|error| format!("failed to parse {}: {error}", path.display()))
+        };
+        let report: Value = serde_json::from_str(
+            &fs::read_to_string(trial.join("drc.json")).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        repaired_nets(&read(directory)?, &read(&trial)?, &report, &accepted)
+    })();
     let previous = temporary_next_to(directory);
     fs::rename(directory, &previous)
         .map_err(|error| format!("stage the routed board for the open repair: {error}"))?;
@@ -183,12 +364,12 @@ pub(super) fn repair_route_opens(
     repair.status = "accepted";
     repair.opens_after = native.selected_net_unconnected_items;
     repair.added_copper = candidate.added_copper;
-    repair.nets = candidate
-        .trials
-        .iter()
-        .filter(|trial| trial.status == "accepted")
-        .map(|trial| trial.net.clone())
-        .collect();
+    repair.nets = accepted;
+    match repaired {
+        Ok(repaired) => account(result, &repaired),
+        // The nets' counts stay the router's from before the repair.
+        Err(error) => repair.reason = Some(format!("nets not accounted: {error}")),
+    }
     result.native = Some(native);
     result.model_precedes_additive_repair = true;
     result.closed_reuse_drc = None;
@@ -239,6 +420,142 @@ impl KiCadRouteOpenRepair {
 mod tests {
     use super::*;
 
+    fn net(
+        name: &str,
+        terminals: usize,
+        open: usize,
+        vias: usize,
+        length: f64,
+    ) -> KiCadBoardRouterNet {
+        KiCadBoardRouterNet {
+            connection: name.into(),
+            terminals,
+            status: if open > 0 { "partial" } else { "routed" }.into(),
+            unconnected_terminals: open,
+            vias,
+            length_mm: length,
+            open: if open > 0 {
+                vec![KiCadOpenTerminals {
+                    reason: "no_path_hard:board".into(),
+                    terminals: open,
+                    pads: vec!["U10.10".into()],
+                    walled: Vec::new(),
+                    wall: None,
+                    blocked_by: Vec::new(),
+                }]
+            } else {
+                Vec::new()
+            },
+            repair: None,
+            open_repair: None,
+            copy: None,
+            pads: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn the_result_describes_the_board_the_repair_wrote() {
+        // split72_right: 420 connections, VDD open at U10.10; the repair
+        // adds a via and 2.2 mm and KiCad finds no item open.
+        let mut result = KiCadBoardRouterResult {
+            routable_connections: 3,
+            routed_connections: 1,
+            unconnected_terminals: 3,
+            vias: 41,
+            length_mm: 1766.0,
+            nets: vec![
+                net("VDD", 165, 1, 38, 1736.0),
+                net("GND", 40, 2, 3, 20.0),
+                net("SDA", 2, 0, 0, 10.0),
+            ],
+            ..Default::default()
+        };
+        let repaired = |name: &str, still_open, vias, length_mm| RepairedNet {
+            name: name.into(),
+            still_open,
+            vias,
+            length_mm,
+        };
+        account(
+            &mut result,
+            &[repaired("VDD", 0, 1, 2.2), repaired("GND", 1, 0, 1.5)],
+        );
+        // VDD: closed by KiCad's count.
+        let vdd = &result.nets[0];
+        assert_eq!(
+            (vdd.status.as_str(), vdd.unconnected_terminals),
+            ("routed", 0)
+        );
+        assert!(vdd.open.is_empty());
+        assert_eq!((vdd.vias, vdd.length_mm), (39, 1738.2));
+        let note = vdd.open_repair.as_ref().unwrap();
+        assert_eq!((note.status, note.kicad_unconnected_items), ("closed", 0));
+        assert_eq!(note.unconnected_terminals_before, 1);
+        assert_eq!(note.open_before[0].pads, ["U10.10"]);
+        assert_eq!((note.added_vias, note.added_length_mm), (1, 2.2));
+        // GND: copper kept, KiCad still finds an item: the router's count
+        // and reasons stay, the copper is counted.
+        let gnd = &result.nets[1];
+        assert_eq!(
+            (gnd.status.as_str(), gnd.unconnected_terminals),
+            ("partial", 2)
+        );
+        assert_eq!(gnd.open.len(), 1);
+        assert_eq!(gnd.length_mm, 21.5);
+        let note = gnd.open_repair.as_ref().unwrap();
+        assert_eq!((note.status, note.kicad_unconnected_items), ("improved", 1));
+        assert!(result.nets[2].open_repair.is_none());
+        // The totals follow the nets.
+        assert_eq!(
+            (result.routable_connections, result.routed_connections),
+            (3, 2)
+        );
+        assert_eq!(result.unconnected_terminals, 2);
+        assert_eq!(result.vias, 42);
+        assert!((result.length_mm - 1769.7).abs() < 1.0e-9);
+        let json = serde_json::to_value(&result.nets[0]).unwrap();
+        assert!(json.get("open").is_none());
+        assert_eq!(json["open_repair"]["status"], "closed");
+    }
+
+    #[test]
+    fn a_repaired_net_is_measured_on_the_two_boards_and_in_kicads_report() {
+        let pcb = |extra: &str| {
+            parse(&format!(
+                r#"(kicad_pcb (version 20241229)
+                  (footprint "t" (layer "F.Cu") (at 3 5) (uuid "f1")
+                    (pad "1" smd circle (at 0 0) (size 1 1) (layers "F.Cu") (net "/LINK") (uuid "p1")))
+                  (footprint "t" (layer "F.Cu") (at 16 5) (uuid "f2")
+                    (pad "1" smd circle (at 0 0) (size 1 1) (layers "F.Cu") (net "/LINK") (uuid "p2")))
+                  (segment (start 3 5) (end 5 5) (width 0.2) (layer "F.Cu") (net "/LINK") (uuid "s1"))
+                  (segment (start 0 0) (end 9 0) (width 0.2) (layer "F.Cu") (net "OTHER") (uuid "s2"))
+                  {extra})"#
+            ))
+            .unwrap()
+        };
+        let before = pcb("");
+        let after = pcb(
+            r#"(segment (start 5 5) (end 16 5) (width 0.2) (layer "F.Cu") (net "/LINK") (uuid "s3"))
+               (via (at 5 5) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net "/LINK") (uuid "v1"))"#,
+        );
+        let report = serde_json::json!({"kicad_version": "10.0.7", "unconnected_items": []});
+        let repaired = repaired_nets(&before, &after, &report, &["/LINK".to_string()]).unwrap();
+        assert_eq!(
+            repaired,
+            [RepairedNet {
+                name: "LINK".into(),
+                still_open: 0,
+                vias: 1,
+                length_mm: 11.0,
+            }]
+        );
+        // KiCad still finds the pads apart: the net is not closed.
+        let report = serde_json::json!({"kicad_version": "10.0.7", "unconnected_items": [
+            {"items": [{"uuid": "p1"}, {"uuid": "p2"}]}]});
+        let repaired = repaired_nets(&before, &after, &report, &["/LINK".to_string()]).unwrap();
+        assert_eq!(repaired[0].still_open, 1);
+    }
+
     #[test]
     fn an_open_net_is_routed_alone_and_adopted_with_kicads_evidence() {
         if !std::process::Command::new(native_report::kicad_cli())
@@ -276,6 +593,9 @@ mod tests {
         assert_eq!(native.selected_net_unconnected_items, 1);
         let mut result = KiCadBoardRouterResult {
             native: Some(native),
+            routable_connections: 1,
+            unconnected_terminals: 1,
+            nets: vec![net("LINK", 2, 1, 0, 0.0)],
             ..Default::default()
         };
         // With `tuning.post_route_repairs` false the repair is skipped with
@@ -312,6 +632,16 @@ mod tests {
         assert!(result.native.as_ref().unwrap().complete);
         assert!(result.saved_copper.as_ref().unwrap().segments > 0);
         assert!(directory.join("open-repair.json").is_file());
+        // The router's own counts describe the board written.
+        assert_eq!(
+            (result.routed_connections, result.unconnected_terminals),
+            (1, 0)
+        );
+        let link = &result.nets[0];
+        assert_eq!(link.status, "routed");
+        assert!(link.open.is_empty() && link.length_mm > 12.0, "{link:?}");
+        assert_eq!(link.open_repair.as_ref().unwrap().status, "closed");
+        assert_eq!(result.length_mm, link.length_mm);
         let disk = fs::read_to_string(directory.join("board.kicad_pcb")).unwrap();
         assert!(disk.starts_with(pcb.strip_suffix(')').unwrap()));
         // A board KiCad finds connected has nothing to repair.

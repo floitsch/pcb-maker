@@ -43,11 +43,45 @@ const STEP: f64 = 0.005;
 /// widest first, so that the path runs near a corridor's centre line.
 const MARGINS: [f64; 4] = [0.01, 0.005, 0.002, 0.0005];
 
-/// Something a path's point keeps away from: an obstacle's shape and the
-/// distance a track's centre must keep from it, or the outline.
+/// Something a path's point keeps away from: an obstacle's shape, the
+/// distance a track's centre must keep from it and its index in the
+/// board's obstacles, or the outline.
 enum Keep<'a> {
-    Shape(&'a crate::geometry::Shape, f64),
+    Shape(&'a crate::geometry::Shape, f64, usize),
     Edge(crate::geometry::Point, crate::geometry::Point, f64),
+}
+
+/// What a corridor path's search saw of the region the rules leave
+/// (`Router::corridor_path` with a trace; `Router::static_wall`). A
+/// record: the search does not read it.
+#[derive(Default)]
+struct PathTrace {
+    /// The search reached the window's edge: the rules leave the region
+    /// open beyond the window.
+    reached_edge: bool,
+    /// Per raster point the keep nearest its limit (its index in the
+    /// search's keeps, `OUTLINE` outside the outline); empty until the
+    /// search sizes it.
+    nearest: Vec<u32>,
+    /// The keeps that stopped the search at the narrowest margin
+    /// (indices as `nearest`).
+    stopped_by: HashSet<u32>,
+}
+
+/// `PathTrace`'s index for the board's outline (a point outside it).
+const OUTLINE: u32 = u32::MAX;
+
+/// What walls a terminal whose pocket the lattice closes
+/// (`Router::static_wall`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(super) struct StaticWall {
+    /// The rules leave a way out of the pocket (a track of the net keeps
+    /// its clearances to the window's edge or to a node with an open
+    /// pocket): the lattice walls the terminal, not the board.
+    pub leaves: bool,
+    /// Else the labels of the obstacles that bound the region the rules
+    /// leave around the terminal, sorted (`board edge` for the outline).
+    pub by: Vec<String>,
 }
 
 impl Router {
@@ -181,6 +215,7 @@ impl Router {
                 &pocket,
                 escapes,
                 counts,
+                None,
             );
             let Some((cell, polyline, margin)) = found else {
                 continue;
@@ -241,6 +276,102 @@ impl Router {
         }
     }
 
+    /// What walls `terminal` of `net` (`OpenReason::NoPathStatic`,
+    /// `NoLatticeExit`): for a single-layer terminal whose nodes lie in a
+    /// pocket the lattice closes (`pocket`, at the neck where the terminal
+    /// may neck down: an escape pad, or a pad in its net's neck zones),
+    /// whether the rules leave a way out (`corridor_path`'s region at the
+    /// net's widths reaches the window's edge or a node with an open
+    /// pocket), else the obstacles that bound that region. None where the
+    /// terminal has no node, spans layers, or its pocket is open: nothing
+    /// is known of a wall at the pad.
+    ///
+    /// For the result's report only (`open_terminals`): it keeps no stub
+    /// and counts no work.
+    pub(super) fn static_wall(&self, net: NetId, terminal: usize) -> Option<StaticWall> {
+        let description = &self.board.nets[net as usize];
+        let state = &self.nets[net as usize];
+        let nodes = state.terminal_nodes.get(terminal)?;
+        let terminal = description.terminals.get(terminal)?;
+        if terminal.layers.count_ones() != 1 {
+            return None;
+        }
+        let layer = terminal.layers.trailing_zeros() as usize;
+        let class = description.class;
+        let starts: Vec<usize> = nodes
+            .iter()
+            .filter(|node| node.layer as usize == layer)
+            .map(|node| node.cell as usize)
+            .collect();
+        if starts.is_empty() {
+            return None;
+        }
+        let necks = nodes.iter().any(|node| state.escapes.contains_key(node))
+            || self.grid.nearest_node(terminal.anchor).is_some_and(|cell| {
+                let (x, y) = self.grid.xy(cell);
+                zone_class(0, 1, &state.neck_zones, x, y) == 1
+            });
+        let neck_class = self.neck_of[class].filter(|_| necks);
+        let out_box = self.board.obstacles[terminal.pad]
+            .shape
+            .aabb()
+            .inflated(POCKET_ESCAPE);
+        // The report's own counts: no work of the run.
+        let mut counts = [0u64; 2];
+        let pocket = self.pocket(
+            net,
+            layer,
+            neck_class.unwrap_or(class),
+            terminal.pad,
+            &starts,
+            out_box,
+            &mut counts,
+        )?;
+        let track = self.width_on(class, layer);
+        let neck = self.neck_width_on(class, layer);
+        let mut widths = vec![(track, class)];
+        if let Some(neck_class) = neck_class.filter(|_| neck < track) {
+            widths.push((neck, neck_class));
+        }
+        let mut wall = StaticWall::default();
+        for (width, width_class) in widths {
+            let keeps = self.corridor_keeps(net, layer, class, terminal.anchor, out_box, width);
+            let mut trace = PathTrace::default();
+            let found = self.corridor_path(
+                net,
+                layer,
+                width_class,
+                terminal,
+                out_box,
+                &keeps,
+                &pocket,
+                &state.escapes,
+                &mut counts,
+                Some(&mut trace),
+            );
+            if found.is_some() || trace.reached_edge {
+                return Some(StaticWall {
+                    leaves: true,
+                    by: Vec::new(),
+                });
+            }
+            // The narrowest width's bounds are the wall.
+            wall.by = trace
+                .stopped_by
+                .iter()
+                .map(|&index| match keeps.get(index as usize) {
+                    Some(Keep::Shape(_, _, obstacle)) => {
+                        self.board.obstacles[*obstacle].label.clone()
+                    }
+                    _ => "board edge".to_string(),
+                })
+                .collect();
+            wall.by.sort();
+            wall.by.dedup();
+        }
+        Some(wall)
+    }
+
     /// What a corridor path of `width` keeps away from in `window`: other
     /// nets' copper, keepouts and holes on `layer` with the clearances
     /// `stub_is_clear` asks (no fit tolerance), and the outline's edges.
@@ -255,7 +386,7 @@ impl Router {
     ) -> Vec<Keep<'_>> {
         let half = width / 2.0;
         let mut keeps = Vec::new();
-        for obstacle in &self.board.obstacles {
+        for (index, obstacle) in self.board.obstacles.iter().enumerate() {
             if obstacle.net == Some(net)
                 || obstacle.layers & (1 << layer) == 0
                 || !obstacle.blocks_tracks
@@ -279,7 +410,7 @@ impl Router {
                     }
                 };
             if obstacle.shape.aabb().intersects(window.inflated(required)) {
-                keeps.push(Keep::Shape(&obstacle.shape, required));
+                keeps.push(Keep::Shape(&obstacle.shape, required, index));
             }
         }
         let required = half + self.board.edge_clearance + SAFETY;
@@ -302,7 +433,8 @@ impl Router {
     /// finds one), from `anchor` to the first raster point at a legal node
     /// of `class` outside `pocket` (and not another pad's escape) whose
     /// own pocket is open; straightened. The node, the polyline and the
-    /// margin it kept.
+    /// margin it kept. With a `trace`, what the search saw is recorded
+    /// there (`PathTrace`); the search is the same with and without.
     #[allow(clippy::too_many_arguments)]
     fn corridor_path(
         &self,
@@ -315,6 +447,7 @@ impl Router {
         pocket: &HashSet<usize>,
         escapes: &HashMap<Node, Escape>,
         counts: &mut [u64; 2],
+        mut trace: Option<&mut PathTrace>,
     ) -> Option<(usize, Vec<crate::geometry::Point>, f64)> {
         let anchor = terminal.anchor;
         let nx = ((window.maximum[0] - window.minimum[0]) / STEP).ceil() as usize + 1;
@@ -326,27 +459,41 @@ impl Router {
             ]
         };
         let mut slack = vec![f32::NAN; nx * ny];
-        let mut slack_at = |index: usize, counts: &mut [u64; 2]| -> f64 {
-            if slack[index].is_nan() {
-                let point = at(index);
-                let mut least = f64::INFINITY;
-                for keep in keeps {
-                    counts[1] += 1;
-                    let value = match keep {
-                        Keep::Shape(shape, required) => shape.distance_to_point(point) - required,
-                        Keep::Edge(a, b, required) => {
-                            crate::geometry::point_segment_distance(point, *a, *b) - required
+        if let Some(trace) = trace.as_deref_mut() {
+            trace.nearest = vec![OUTLINE; nx * ny];
+        }
+        let mut slack_at =
+            |index: usize, counts: &mut [u64; 2], trace: Option<&mut PathTrace>| -> f64 {
+                if slack[index].is_nan() {
+                    let point = at(index);
+                    let mut least = f64::INFINITY;
+                    let mut nearest = OUTLINE;
+                    for (keep_index, keep) in keeps.iter().enumerate() {
+                        counts[1] += 1;
+                        let value = match keep {
+                            Keep::Shape(shape, required, _) => {
+                                shape.distance_to_point(point) - required
+                            }
+                            Keep::Edge(a, b, required) => {
+                                crate::geometry::point_segment_distance(point, *a, *b) - required
+                            }
+                        };
+                        if value < least {
+                            nearest = keep_index as u32;
                         }
-                    };
-                    least = least.min(value);
+                        least = least.min(value);
+                    }
+                    if !crate::geometry::point_in_polygon(point, &self.board.outline) {
+                        least = -1.0;
+                        nearest = OUTLINE;
+                    }
+                    slack[index] = least as f32;
+                    if let Some(trace) = trace {
+                        trace.nearest[index] = nearest;
+                    }
                 }
-                if !crate::geometry::point_in_polygon(point, &self.board.outline) {
-                    least = -1.0;
-                }
-                slack[index] = least as f32;
-            }
-            slack[index] as f64
-        };
+                slack[index] as f64
+            };
         let start = {
             let x = ((anchor[0] - window.minimum[0]) / STEP).round() as usize;
             let y = ((anchor[1] - window.minimum[1]) / STEP).round() as usize;
@@ -356,6 +503,9 @@ impl Router {
         let mut closed: HashSet<usize> = pocket.clone();
         let mut open: HashSet<usize> = HashSet::new();
         for margin in MARGINS {
+            if let Some(trace) = trace.as_deref_mut() {
+                trace.stopped_by.clear();
+            }
             let mut parent = vec![u32::MAX; nx * ny];
             parent[start] = start as u32;
             let mut queue = std::collections::VecDeque::from([start]);
@@ -405,13 +555,24 @@ impl Router {
                     }
                 }
                 let (x, y) = ((index % nx) as i64, (index / nx) as i64);
+                if let Some(trace) = trace.as_deref_mut() {
+                    trace.reached_edge |=
+                        x == 0 || y == 0 || x + 1 >= nx as i64 || y + 1 >= ny as i64;
+                }
                 for (dx, dy) in crate::grid::DIRECTIONS {
                     let (x, y) = (x + dx as i64, y + dy as i64);
                     if x < 0 || y < 0 || x >= nx as i64 || y >= ny as i64 {
                         continue;
                     }
                     let next = y as usize * nx + x as usize;
-                    if parent[next] != u32::MAX || slack_at(next, counts) < margin {
+                    if parent[next] != u32::MAX {
+                        continue;
+                    }
+                    if slack_at(next, counts, trace.as_deref_mut()) < margin {
+                        if let Some(trace) = trace.as_deref_mut() {
+                            let nearest = trace.nearest[next];
+                            trace.stopped_by.insert(nearest);
+                        }
                         continue;
                     }
                     parent[next] = index as u32;
@@ -431,7 +592,7 @@ fn straighten_path(
 ) -> Vec<crate::geometry::Point> {
     let clear = |a: crate::geometry::Point, b: crate::geometry::Point| {
         keeps.iter().all(|keep| match keep {
-            Keep::Shape(shape, required) => shape.distance_to_segment(a, b) >= *required,
+            Keep::Shape(shape, required, _) => shape.distance_to_segment(a, b) >= *required,
             Keep::Edge(p, q, required) => {
                 crate::geometry::segment_segment_distance(a, b, *p, *q) >= *required
             }

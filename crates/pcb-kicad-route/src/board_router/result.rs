@@ -23,6 +23,11 @@ pub struct KiCadBoardRouterNet {
     /// How the hard repair found an open net it took up.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repair: Option<KiCadNetRepair>,
+    /// What route mode's open repair after the ladder did to the net
+    /// (`route_open_repair.rs`): the net's other fields then describe the
+    /// board written, this one what the router had left.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub open_repair: Option<super::route_open_repair::KiCadNetOpenRepair>,
     /// Where the router keeps several nets of this name (a panel's
     /// sub-boards or cells: `outline_pieces::split_router_nets`): which of
     /// them this is, counted in `nets` order from 0, and all its
@@ -40,14 +45,49 @@ pub const OPEN_PADS_LISTED: usize = 16;
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct KiCadOpenTerminals {
     /// `pcb_router::OpenReason::name`: `no_access`, `net_not_routable`,
-    /// `no_path_static`, `repair_skipped:<why>`, `no_path_hard:<scope>`,
-    /// `lost:<phase>`, `pour_apart_before_stitching`, `copper_check`,
-    /// `unknown`.
+    /// `no_path_static`, `no_lattice_exit`, `repair_skipped:<why>`,
+    /// `no_path_hard:<scope>`, `lost:<phase>`,
+    /// `pour_apart_before_stitching`, `copper_check`, `unknown`.
     pub reason: String,
     /// How many (exact).
     pub terminals: usize,
     /// Their labels (`U1.3`), the first `OPEN_PADS_LISTED`.
     pub pads: Vec<String>,
+    /// `no_path_static`, `no_lattice_exit`: the pads the wall is at
+    /// (`pcb_router::OpenTerminal::walled`: the net's pads whose pocket is
+    /// closed on the lattice, which may be the pads the search started
+    /// from and none of `pads`), the first `OPEN_PADS_LISTED`. Absent
+    /// where no pad's pocket is closed.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub walled: Vec<String>,
+    /// `no_path_static` with `walled`: whose copper bounds the region the
+    /// rules leave there: `input` (the board's pads, copper, rule areas,
+    /// holes and edge), `router` (vias the router planned before it
+    /// routed: a BGA's fan-out, vias in pads) or `input_and_router`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wall: Option<&'static str>,
+    /// What bounds it, by label, the first `WALL_LISTED`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub blocked_by: Vec<String>,
+}
+
+/// At most this many labels in a `KiCadOpenTerminals::blocked_by`.
+pub const WALL_LISTED: usize = 8;
+
+/// Whether an obstacle of this label is copper the router planned before
+/// it routed, not the input's: a BGA fan-out's stub, via and hole
+/// (`lower/fanout.rs`) or a via in a pad (`lower/pad.rs`).
+pub(crate) fn router_planned(label: &str) -> bool {
+    [
+        " fan-out stub",
+        " fan-out via ring",
+        " fan-out via",
+        " fan-out hole",
+        " via in pad ring",
+        " via in pad",
+    ]
+    .iter()
+    .any(|suffix| label.ends_with(suffix))
 }
 
 /// The hard repair's account of a net (`pcb_router::RepairEntry`).
@@ -90,6 +130,9 @@ pub(crate) fn open_terminals_of(
                     reason,
                     terminals: 0,
                     pads: Vec::new(),
+                    walled: Vec::new(),
+                    wall: None,
+                    blocked_by: Vec::new(),
                 });
                 groups.len() - 1
             }
@@ -98,6 +141,21 @@ pub(crate) fn open_terminals_of(
         group.terminals += 1;
         if group.pads.len() < OPEN_PADS_LISTED {
             group.pads.push(open.label.clone());
+        }
+        for label in &open.walled {
+            if !group.walled.contains(label) && group.walled.len() < OPEN_PADS_LISTED {
+                group.walled.push(label.clone());
+            }
+        }
+        for label in &open.wall {
+            group.wall = Some(match (group.wall, router_planned(label)) {
+                (None | Some("router"), true) => "router",
+                (None | Some("input"), false) => "input",
+                _ => "input_and_router",
+            });
+            if !group.blocked_by.contains(label) && group.blocked_by.len() < WALL_LISTED {
+                group.blocked_by.push(label.clone());
+            }
         }
         listed += 1;
     }
@@ -108,6 +166,9 @@ pub(crate) fn open_terminals_of(
                 reason: "unknown".into(),
                 terminals: unconnected - listed,
                 pads: Vec::new(),
+                walled: Vec::new(),
+                wall: None,
+                blocked_by: Vec::new(),
             }),
         }
     }
@@ -205,7 +266,10 @@ pub struct KiCadBoardRouterResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_candidate_errors: Option<usize>,
     /// Native verification and `saved_copper` include a later repair. Core
-    /// search metrics and per-net route totals precede it.
+    /// search metrics precede it, and so do the per-net route totals and
+    /// the counts summed from them, but after route mode's open repair
+    /// (`open_repair`: its nets carry `nets[].open_repair` and the totals
+    /// count its copper).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub model_precedes_additive_repair: bool,
     /// Route mode's open repair after the ladder (`route_open_repair.rs`).
@@ -1182,6 +1246,8 @@ mod open_report_tests {
             terminal: 0,
             label: label.into(),
             reason,
+            walled: Vec::new(),
+            wall: Vec::new(),
         }
     }
 
@@ -1214,6 +1280,9 @@ mod open_report_tests {
                 reason: "lost:clean_up".into(),
                 terminals: 1,
                 pads: vec!["R1.1".into()],
+                walled: Vec::new(),
+                wall: None,
+                blocked_by: Vec::new(),
             }
         );
         // Fewer recorded than the net's count: the rest is `unknown`.
@@ -1225,9 +1294,90 @@ mod open_report_tests {
                 reason: "unknown".into(),
                 terminals: 2,
                 pads: Vec::new(),
+                walled: Vec::new(),
+                wall: None,
+                blocked_by: Vec::new(),
             }
         );
         assert!(open_terminals_of(&diagnostics, 2, 0).is_empty());
+    }
+
+    #[test]
+    fn a_static_wall_names_the_walled_pads_and_whose_copper_it_is() {
+        let walled = |label: &str, reason, at: &[&str], wall: &[&str]| core::OpenTerminal {
+            walled: at.iter().map(|pad| pad.to_string()).collect(),
+            wall: wall.iter().map(|label| label.to_string()).collect(),
+            ..open(0, label, reason)
+        };
+        let group = |open: Vec<core::OpenTerminal>| {
+            let diagnostics = core::Diagnostics {
+                open,
+                ..Default::default()
+            };
+            let count = diagnostics.open.len();
+            let mut groups = open_terminals_of(&diagnostics, 0, count);
+            assert_eq!(groups.len(), 1);
+            groups.remove(0)
+        };
+        // The tree started at the walled pad: the open pads are the ones
+        // it did not reach, the wall is at C18.1, by the router's own
+        // fan-out vias.
+        let router = group(vec![
+            walled(
+                "U30.H8",
+                core::OpenReason::NoPathStatic,
+                &["C18.1"],
+                &["U30.G8 fan-out hole", "U30.G9 fan-out via"],
+            ),
+            walled(
+                "C20.1",
+                core::OpenReason::NoPathStatic,
+                &["C18.1"],
+                &["U30.G8 fan-out hole", "U30.G9 fan-out via"],
+            ),
+        ]);
+        assert_eq!(router.reason, "no_path_static");
+        assert_eq!(router.pads, ["U30.H8", "C20.1"]);
+        assert_eq!(router.walled, ["C18.1"]);
+        assert_eq!(router.wall, Some("router"));
+        assert_eq!(
+            router.blocked_by,
+            ["U30.G8 fan-out hole", "U30.G9 fan-out via"]
+        );
+        // The board's own pads and edge.
+        let input = group(vec![walled(
+            "R62.1",
+            core::OpenReason::NoPathStatic,
+            &["R62.1"],
+            &["R62.2", "board edge"],
+        )]);
+        assert_eq!(input.wall, Some("input"));
+        // Both.
+        let both = group(vec![walled(
+            "U11.R13",
+            core::OpenReason::NoPathStatic,
+            &["U11.R13"],
+            &["SW9.1 via in pad", "U11.R12"],
+        )]);
+        assert_eq!(both.wall, Some("input_and_router"));
+        // The lattice's wall names the pads and no copper; a wall that is
+        // at no pad names nothing.
+        let lattice = group(vec![walled(
+            "U1.6",
+            core::OpenReason::NoLatticeExit,
+            &["U1.6"],
+            &[],
+        )]);
+        assert_eq!(lattice.reason, "no_lattice_exit");
+        assert_eq!(lattice.walled, ["U1.6"]);
+        assert_eq!((lattice.wall, lattice.blocked_by.len()), (None, 0));
+        let elsewhere = group(vec![open(0, "J3.5", core::OpenReason::NoPathStatic)]);
+        assert!(elsewhere.walled.is_empty() && elsewhere.wall.is_none());
+        let json = serde_json::to_value(&elsewhere).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({"reason": "no_path_static", "terminals": 1, "pads": ["J3.5"]})
+        );
     }
 
     #[test]

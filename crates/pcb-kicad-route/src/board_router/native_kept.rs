@@ -302,6 +302,7 @@ impl NativeInput {
                     // KiCad's connectivity of the input: no router facts.
                     open: Vec::new(),
                     repair: None,
+                    open_repair: None,
                     copy: None,
                     pads: Vec::new(),
                 }
@@ -695,7 +696,9 @@ fn opens(report: &Value) -> Result<usize, String> {
     Ok(opens)
 }
 
-fn open_nets(pcb: &Expr, report: &Value) -> Option<BTreeMap<String, usize>> {
+/// KiCad's unconnected items of `report` on `pcb` per net (its connection
+/// name); None where an item names no single net.
+pub(super) fn open_nets(pcb: &Expr, report: &Value) -> Option<BTreeMap<String, usize>> {
     let count = opens(report).ok()?;
     if count == 0 {
         return Some(BTreeMap::new());

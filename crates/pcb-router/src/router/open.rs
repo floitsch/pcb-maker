@@ -9,7 +9,12 @@
 //! made. A record, not an input: nothing reads it to route, and recording
 //! adds no search.
 
+use super::corridors::StaticWall;
 use super::*;
+
+/// Where a terminal's static wall is (`Router::static_walls`): the
+/// terminals it is at (indices in the net) and what walls them.
+type WallAt = Option<(Vec<usize>, StaticWall)>;
 
 impl Router {
     /// Whether `net` has something to connect: not trivial, not given up
@@ -137,11 +142,76 @@ impl Router {
         }
     }
 
+    /// Where the wall is for the terminals of `net` recorded
+    /// `NoPathStatic` (a board-wide search from the net's tree did not
+    /// reach them): per terminal of the net, the terminals whose pocket
+    /// the lattice closes and what walls them (`static_wall`). The
+    /// terminal's own pocket, else the tree's (the net's terminals without
+    /// that record) where every one of its terminals is in a closed
+    /// pocket: then the wall is at the tree, not
+    /// at the terminals it did not reach. None where neither is closed.
+    /// Computed for the result's report, for the nets that end open with
+    /// such a terminal: no search of the run reads it.
+    fn static_walls(&self, net: usize) -> Vec<WallAt> {
+        let count = self.nets[net].connected.len();
+        let recorded = self.open_reasons.get(net);
+        let unreachable = |terminal: usize| {
+            recorded.and_then(|reasons| reasons.get(terminal)) == Some(&OpenReason::NoPathStatic)
+        };
+        let mut walls: Vec<Option<Option<StaticWall>>> = vec![None; count];
+        let mut wall_of = |terminal: usize| -> Option<StaticWall> {
+            walls[terminal]
+                .get_or_insert_with(|| self.static_wall(net as NetId, terminal))
+                .clone()
+        };
+        // The tree's wall: every terminal of the tree in a closed pocket.
+        let tree: Vec<usize> = (0..count)
+            .filter(|terminal| !unreachable(*terminal))
+            .collect();
+        let mut tree_wall: WallAt = None;
+        if !tree.is_empty() && tree.len() < count {
+            let mut merged = StaticWall {
+                leaves: true,
+                by: Vec::new(),
+            };
+            let mut closed = true;
+            for &terminal in &tree {
+                let Some(wall) = wall_of(terminal) else {
+                    closed = false;
+                    break;
+                };
+                merged.leaves &= wall.leaves;
+                merged.by.extend(wall.by);
+            }
+            if closed {
+                merged.by.sort();
+                merged.by.dedup();
+                if merged.leaves {
+                    merged.by.clear();
+                }
+                tree_wall = Some((tree, merged));
+            }
+        }
+        (0..count)
+            .map(|terminal| {
+                if !unreachable(terminal) {
+                    return None;
+                }
+                wall_of(terminal)
+                    .map(|wall| (vec![terminal], wall))
+                    .or_else(|| tree_wall.clone())
+            })
+            .collect()
+    }
+
     /// The open terminals of a result of `status` (`Diagnostics::open`):
     /// a `Partial` net's unconnected terminals, or those the copper check
     /// left `apart` (per net its terminals), and every terminal of an
     /// `Unreachable` net. A terminal without a lattice node is
-    /// `NoAccess` whatever was recorded.
+    /// `NoAccess` whatever was recorded. A terminal recorded
+    /// `NoPathStatic` names the terminals the wall is at and what walls
+    /// them where a pad's pocket is closed (`static_walls`), and is
+    /// `NoLatticeExit` where the rules leave a way out of that pocket.
     pub(super) fn open_terminals(
         &self,
         status: &[NetStatus],
@@ -155,8 +225,9 @@ impl Router {
                 state.terminal_nodes[terminal].is_empty()
                     && !state.on_plane.get(terminal).copied().unwrap_or(false)
             };
+            let mut walls: Option<Vec<WallAt>> = None;
             let mut push = |terminal: usize, reason: OpenReason| {
-                open.push(OpenTerminal {
+                let mut entry = OpenTerminal {
                     net: net as NetId,
                     terminal,
                     label: description.terminals[terminal].label.clone(),
@@ -165,7 +236,27 @@ impl Router {
                     } else {
                         reason
                     },
-                });
+                    walled: Vec::new(),
+                    wall: Vec::new(),
+                };
+                if entry.reason == OpenReason::NoPathStatic
+                    && let Some((walled, wall)) = walls
+                        .get_or_insert_with(|| self.static_walls(net))
+                        .get(terminal)
+                        .cloned()
+                        .flatten()
+                {
+                    entry.walled = walled
+                        .iter()
+                        .map(|other| description.terminals[*other].label.clone())
+                        .collect();
+                    if wall.leaves {
+                        entry.reason = OpenReason::NoLatticeExit;
+                    } else {
+                        entry.wall = wall.by;
+                    }
+                }
+                open.push(entry);
             };
             match status {
                 NetStatus::Unreachable => {
