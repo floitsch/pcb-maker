@@ -258,7 +258,7 @@ def test_the_routers_reasons_name_the_open_items(tmp_path):
         item(pad(1, "SDA", "U4"), pad(2, "SDA", "R1")),   # two listed pads: the first reason in precedence
         item(pad(6, "RXD", "U1"), track("RXD")),          # the lattice's wall
         item(pad("H8", "+1V2", "U30"), track("+1V2")),    # the router's own vias wall the pad
-        item(track("+1V2"), track("+1V2")),               # not listed: the net's only reason, the same
+        item(pad(1, "+1V2", "C18"), track("+1V2")),       # the walled pad the search started from
         item(pad(1, "VIN", "R62"), track("VIN")),         # the input's wall
     ]
     write_night(night, {"route": [board(night / "route", "repo__Open", items, {}, router)]})
@@ -268,11 +268,11 @@ def test_the_routers_reasons_name_the_open_items(tmp_path):
         "open:repair_skipped:budget": 1, "open:no_path_static": 2, "unexplained:open_unknown": 1,
         "open:other": 1, "dead_pad:off_lattice": 1, "open:no_lattice_exit": 1,
         "open:no_path_static:router_copper": 2}
-    assert stage["open_by_net"] == 2
+    assert stage["open_by_net"] == 1
     assert stage["unexplained"] == 2
     text = causes.markdown({"previous": None, "stages": {"route": stage}})
     assert "| open: the hard repair found no path around other nets' copper on the whole board | 2 | 1 |" in text
-    assert "- items under an `open:` cause by their net's only reason (their pads not listed): 2" in text
+    assert "- items under an `open:` cause by their net's only reason (their pads not listed): 1" in text
 
 
 def test_pads_the_pour_model_counted_joined_are_named_apart_from_the_stitchings_losses(tmp_path):

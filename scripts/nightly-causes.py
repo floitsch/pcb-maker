@@ -22,7 +22,9 @@ name). Each item goes to the first cause of PRECEDENCE that names it:
 - two pads of a net the router split (`nets[].copy`) in two different
   copies (`nets[].pads`);
 - an end pad among the router's open terminals of the net
-  (`nets[].open[].pads`): the router's reason (`open:<reason>`; of two
+  (`nets[].open[].pads`, and `walled`: the pads a static wall is at, which
+  are the search's own start where it began at the walled pad): the
+  router's reason (`open:<reason>`; of two
   ends' reasons the first in CAUSES: the searches', then the phases that
   lost a terminal, then the router's model counting a terminal joined
   that was not, `pour_apart_before_stitching` and `copper_check`);
@@ -245,7 +247,9 @@ def facts_of(verdict, router):
             for group in net.get("open") or []:
                 reason = group_reason(group)
                 reasons[reason] = reasons.get(reason, 0) + (group.get("terminals") or 0)
-                for label in group.get("pads") or []:
+                # The pads the tree did not reach and the pads the wall is at (`walled`: the tree's own
+                # where the search started from the walled pad).
+                for label in dict.fromkeys((group.get("pads") or []) + (group.get("walled") or [])):
                     open_pads.setdefault(label, []).append((reason, key))
             copies.setdefault(key, []).append({"status": net.get("status"), "reasons": reasons,
                                                "pads": set(net.get("pads") or [])})
