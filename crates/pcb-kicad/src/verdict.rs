@@ -1671,6 +1671,9 @@ pub struct KiCadRunFacts {
     pub terminal_launch_advice: Option<pcb_kicad_route::open_repair::TerminalLaunchAdvice>,
     pub prepared_row_escape_advice: Option<pcb_kicad_route::open_repair::PreparedRowEscapeAdvice>,
     pub local_open_repair: Option<crate::board_layout::LayoutOpenRepair>,
+    /// Route mode's open repair after the ladder (board-router.json's
+    /// `open_repair`).
+    pub open_repair: Option<crate::board_router::KiCadRouteOpenRepair>,
     pub zone_island_recovery: Option<crate::KiCadZoneIslandRecovery>,
     /// Route mode with `diff_pairs`: the differential pairs found and what
     /// became of them, with per-pair entries for measured unmatched ends.
@@ -2797,6 +2800,7 @@ impl KiCadRunFacts {
             terminal_launch_advice: None,
             prepared_row_escape_advice: None,
             local_open_repair: None,
+            open_repair: None,
             zone_island_recovery: None,
             diff_pairs: None,
             diff_pair_why: BTreeMap::new(),
@@ -3111,9 +3115,16 @@ pub struct KiCadVerdict {
     pub terminal_launch_advice: Option<pcb_kicad_route::open_repair::TerminalLaunchAdvice>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prepared_row_escape_advice: Option<pcb_kicad_route::open_repair::PreparedRowEscapeAdvice>,
-    /// Outcome of the default bounded local repair of the selected layout.
+    /// Outcome of the default bounded local repair of the selected layout:
+    /// where `accepted`, copper added after the router on its `nets`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub local_open_repair: Option<crate::board_layout::LayoutOpenRepair>,
+    /// Route mode's open repair after the ladder (board-router.json's
+    /// `open_repair`): where `accepted`, copper added after the router on
+    /// its `nets` (`added_copper` objects), KiCad's unconnected items
+    /// `opens_before` and `opens_after`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub open_repair: Option<crate::board_router::KiCadRouteOpenRepair>,
     /// Schematic-paired capacitors outside their template's near distance.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub decoupling_near_suggestions: Vec<crate::quality::KiCadDecouplingTarget>,
@@ -6469,6 +6480,7 @@ pub(crate) fn judge_at(
         terminal_launch_advice: facts.terminal_launch_advice.clone(),
         prepared_row_escape_advice: facts.prepared_row_escape_advice.clone(),
         local_open_repair: facts.local_open_repair.clone(),
+        open_repair: facts.open_repair.clone(),
         decoupling_near_suggestions,
         zone_island_recovery: facts.zone_island_recovery.clone(),
         held_pad_shorts,
@@ -6587,6 +6599,7 @@ pub fn route_facts(
         None
     };
     facts.repairs = Some(KiCadRepairs::of(result));
+    facts.open_repair = result.open_repair.clone();
     facts.route_reuse = result
         .route_reuse
         .as_ref()
@@ -9336,6 +9349,40 @@ mod tests {
             "{action}"
         );
         assert!(!action.contains("C1.1"), "{action}");
+    }
+
+    #[test]
+    fn the_verdict_shows_route_modes_open_repair() {
+        // MegaDrive in route mode: copper added after the router on four
+        // nets, KiCad's unconnected items 82 to 75.
+        let mut result = crate::KiCadBoardRouterResult::default();
+        let route = route_facts("route-kicad-board", &result, Path::new("")).unwrap();
+        assert!(
+            serde_json::to_value(judge(&route))
+                .unwrap()
+                .get("open_repair")
+                .is_none()
+        );
+        result.open_repair = Some(crate::board_router::KiCadRouteOpenRepair {
+            status: "accepted",
+            reason: None,
+            opens_before: 82,
+            opens_after: 75,
+            nets: vec!["GND".into(), "/VA9".into()],
+            added_copper: 31,
+            native_checks: 5,
+            search_work_seconds: 12.5,
+        });
+        let route = route_facts("route-kicad-board", &result, Path::new("")).unwrap();
+        let verdict = serde_json::to_value(judge(&route)).unwrap();
+        assert_eq!(
+            verdict["open_repair"],
+            serde_json::json!({
+                "status": "accepted", "opens_before": 82, "opens_after": 75,
+                "nets": ["GND", "/VA9"], "added_copper": 31,
+                "native_checks": 5, "search_work_seconds": 12.5,
+            })
+        );
     }
 
     #[test]
