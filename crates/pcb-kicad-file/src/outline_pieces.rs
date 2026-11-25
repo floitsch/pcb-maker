@@ -3114,4 +3114,22 @@ mod tests {
             0
         );
     }
+
+    #[test]
+    fn an_open_within_one_cell_is_never_excused() {
+        // The upper cell's two GND pads are apart (a real open on that
+        // board): one's track runs into the lower cell's box (to y 22),
+        // the other's is a stub. KiCad's item between them has one end in
+        // each box but both on the upper cell's copper: it counts. The
+        // item that joins the two cells is the one excused.
+        let cells = Pieces::of_boxes(vec![[0.0, 0.0, 20.0, 20.0], [0.0, 20.0, 20.0, 40.0]]);
+        let pcb = cells_board(&["a 3,5 10,22", "b 17,5 15,8", "c 3,25 17,25"]);
+        let within = track_item(("a", [10.0, 22.0]), ("b", [15.0, 8.0]));
+        let across = track_item(("a", [10.0, 22.0]), ("c", [10.0, 25.0]));
+        let mut alone = serde_json::json!({"unconnected_items": [within.clone()]});
+        assert_eq!(excuse_across(&mut alone, &pcb, &cells, None), 0);
+        let mut both = serde_json::json!({"unconnected_items": [within.clone(), across]});
+        assert_eq!(excuse_across(&mut both, &pcb, &cells, None), 1);
+        assert_eq!(both["unconnected_items"], serde_json::json!([within]));
+    }
 }
