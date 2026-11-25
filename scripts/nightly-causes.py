@@ -77,7 +77,14 @@ CAUSES = (
     ("open:net_not_routable", "open: the net was never searched (fewer than two of its pads have access)",
      "`nets[].open[].reason`"),
     ("open:no_path_static", "open: no path on the whole board even through other nets' copper "
-                            "(pads, keepouts, the outline in the way)", "the same"),
+                            "(the input's pads, copper, keepouts or outline in the way, or a wall the router "
+                            "did not locate at a pad)", "the same; `walled` the pads the wall is at, `wall` input"),
+    ("open:no_path_static:router_copper", "open: no path on the whole board even through other nets' copper, "
+                                          "the walled pad bounded by vias the router planned itself "
+                                          "(a fan-out's, vias in pads)",
+     "`nets[].open[]` with `reason` no_path_static and `wall` router or input_and_router"),
+    ("open:no_lattice_exit", "open: the walled pad's pocket is closed on the lattice, the rules leave a way out "
+                             "(the lattice's limit, not the board's)", "`nets[].open[].reason`, `walled`"),
     ("open:no_path_hard:board", "open: the hard repair found no path around other nets' copper on the whole board",
      "the same"),
     ("open:no_path_hard:window", "open: the hard repair found no path around other nets' copper in its window",
@@ -236,9 +243,10 @@ def facts_of(verdict, router):
             statuses.setdefault(key, set()).add(net.get("status"))
             reasons = {}
             for group in net.get("open") or []:
-                reasons[group.get("reason")] = reasons.get(group.get("reason"), 0) + (group.get("terminals") or 0)
+                reason = group_reason(group)
+                reasons[reason] = reasons.get(reason, 0) + (group.get("terminals") or 0)
                 for label in group.get("pads") or []:
-                    open_pads.setdefault(label, []).append((group.get("reason"), key))
+                    open_pads.setdefault(label, []).append((reason, key))
             copies.setdefault(key, []).append({"status": net.get("status"), "reasons": reasons,
                                                "pads": set(net.get("pads") or [])})
     conflicted = {net_key(net) for net in (router.get("diagnostics") or {}).get("conflicted_nets") or []}
@@ -249,6 +257,16 @@ def facts_of(verdict, router):
             "across_items": None if across_items is None else {frozenset(pair) for pair in across_items},
             "across": int(outlines.get("unconnected_across") or 0) if across_items is None else 0,
             "lacking_access": lacking_access}
+
+
+def group_reason(group):
+    """The reason of one of the router's open groups (`nets[].open[]`) as
+    the census keys it: `no_path_static` with the router's own planned vias
+    among what bounds the walled pad (`wall`) is its own cause."""
+    reason = group.get("reason")
+    if reason == "no_path_static" and group.get("wall") in ("router", "input_and_router"):
+        return "no_path_static:router_copper"
+    return reason
 
 
 def open_cause(reason):
