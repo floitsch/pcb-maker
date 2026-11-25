@@ -131,6 +131,7 @@ deadline is skipped and reported as cut.
 | 13 | Final ladder (while connections or starved thermals stay and at least 240 s of work are left) | `route_kicad_board` on `placed/` rewritten with the final poses and no copper (the route flow below); kept when better | `result-ladder/` renamed to `result/` |
 | 14 | Starved thermals made solid | `solidify_starved_thermals`, board_router/route.rs | the board, kept where KiCad finds it better |
 | 15 | Neck repair | `repair_necks` (route.rs), `repair_connection_width` (necks.rs) | the board, rechecked by KiCad |
+| 15a | Additive open repair (when KiCad still finds opens and work is left; the final ladder and the neck repair leave `additive_repair::reserve` for it) | `repair_layout_opens` (pcb-kicad-route open_repair.rs), board_layout/additive_repair.rs | the board with copper added for up to four open nets, kept where KiCad finds it better |
 | 16 | Report | `finish_report`, board_layout/report.rs | `board-layout.json`, `KiCadBoardLayoutResult` |
 | 17 | Verdict | `route_facts` and `judge` (verdict.rs), `write_verdict` (agent_cli.rs) | `verdict.json`, the exit code |
 
@@ -151,6 +152,7 @@ need, then calls `route_kicad_board` (crates/pcb-kicad-route/src/board_router/ro
 | 3 | Parse and plan | `parse_board` (canonical_order.rs), `plan_vias_in_pads` (`plan` in via_in_pad.rs, re-exported by board_router/mod.rs), `MemoryLimits` (memory.rs) | the `Expr`, layer table, pour nets, memory limits |
 | 4 | The attempt ladder | `Ladder::new` and `Ladder::run`, board_router/ladder.rs, over `KiCadRunner` (route.rs). Rungs are pour modes (`ladder_rungs`), pitches the regular one then 0.075 and 0.05 mm (`ladder_pitches`). In order: probe every rung (75 s each, three rungs or more) and continue the leader; the leader's variants first, then other rungs, finer pitches and seed rounds; last the narrow-signal and minimum-clearance steps while connections stay open. Each attempt runs isolated (a panic is recorded, not fatal); KiCad checks are gated (`CheckGate`, budget.rs). | the best attempt's directory, a `KiCadBoardRouterResult` |
 | 5 | Starved thermals, neck repair | `solidify_starved_thermals`, `repair_necks` | the board, rechecked |
+| 5a | Open repair (not in a layout's own ladders, a provisional reroute or a run without KiCad) | `after_ladder`, board_router/route_open_repair.rs, over `repair_layout_opens` (open_repair.rs) | each net KiCad still finds open routed alone against the kept copper (up to four), kept where KiCad finds the board better; `open_repair` in `board-router.json` |
 | 6 | Report | route.rs | `board-router.json`; `<out>.partial` renamed to `<out>` |
 | 7 | Verdict | `route_facts`, `judge`, `write_verdict` | `verdict.json`, the exit code |
 

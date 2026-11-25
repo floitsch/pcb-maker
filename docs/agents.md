@@ -2705,9 +2705,14 @@ can verify stored connectivity.
 ## Verify an additive repair for open connections
 
 After selecting a partial layout, `layout-kicad-board` uses any remaining
-modeled work to try one additive local repair on one native open net.
-The stage reserves work for its native checks and for requested zone-fill
-publication. It uses the layout's routing rules. On two-layer boards it
+modeled work to try additive local repairs on up to four native open nets,
+the shortest native witness first. The final ladder and the neck repair
+leave work for it. The stage reserves work for its native checks and for
+requested zone-fill publication. `route-kicad-board` runs the same repair
+after its ladder (`open_repair` in `board-router.json`). Library-only
+findings (`lib_footprint_issues`, `lib_footprint_mismatch`, `text_height`,
+`text_thickness`) do not count as a capped report that blocks the repair,
+and the repair is not refused for adding them. It uses the layout's routing rules. On two-layer boards it
 can try a pair inferred only from exact complementary net names when
 coupling is off and neither member has an applicable coupling, length
 or skew rule. The local report gives the companion in
