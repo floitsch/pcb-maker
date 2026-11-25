@@ -1931,9 +1931,9 @@ struct CellItem {
 /// one cell's net may run over another cell's box, which joins nothing.
 /// Items join as KiCad's connectivity joins them: a track's end, a via's
 /// or a pad's centre inside the other's copper on a common layer. Zones
-/// do not join (KiCad's fill decides, as in `board_split_nets`). A net is
-/// split when its pads lie on two cells or more and no group of joined
-/// items holds pads of two cells.
+/// are not read: a net with a zone is never split here (KiCad's fill may
+/// join cells). A net is split when its pads lie on two cells or more and
+/// no group of joined items holds pads of two cells.
 fn cell_split_nets(pcb: &Expr, pieces: &Pieces) -> CellSplit {
     let codes = crate::kicad_nets::net_codes(pcb);
     let mut copper: Vec<String> = Vec::new();
@@ -2052,11 +2052,22 @@ fn cell_split_nets(pcb: &Expr, pieces: &Pieces) -> CellSplit {
             pad_cell: None,
         });
     }
+    // A net with a zone is not split: KiCad's fill of one zone may join
+    // two cells' copper, and then fewer items than the cells less one
+    // join them, so that an allowance of the cells less one would excuse
+    // an open within a cell.
+    let zoned: BTreeSet<String> = board_zones(pcb)
+        .into_iter()
+        .filter_map(|zone| crate::kicad_nets::item_net(zone, &codes).map(unescaped))
+        .collect();
     let mut split = CellSplit {
         nets: BTreeMap::new(),
         cells: BTreeMap::new(),
     };
     for (net, items) in of_net {
+        if zoned.contains(&net) {
+            continue;
+        }
         let pad_cells: BTreeSet<usize> = items
             .iter()
             .filter_map(|item| item.pad_cell.flatten())
@@ -3113,6 +3124,25 @@ mod tests {
             excused(&stray, track_item(("e", [9.0, 30.0]), ("a", [10.0, 22.0]))),
             0
         );
+    }
+
+    #[test]
+    fn a_cells_net_with_a_zone_is_not_excused() {
+        // A GND zone over both cells may join them in KiCad's fill: then an
+        // item across the cells can be an open within one, and none is
+        // excused.
+        let cells = Pieces::of_boxes(vec![[0.0, 0.0, 20.0, 20.0], [0.0, 20.0, 20.0, 40.0]]);
+        let mut pcb = cells_board(&["a 3,5 17,5", "c 3,25 17,25"]);
+        let zone = crate::kicad_sexpr::parse(
+            r#"(zone (net "GND") (layer "B.Cu") (uuid "z") (polygon (pts (xy 0 0) (xy 20 0) (xy 20 40) (xy 0 40))))"#,
+        )
+        .unwrap();
+        if let Expr::List(items) = &mut pcb {
+            items.push(zone);
+        }
+        let mut report = serde_json::json!({"unconnected_items": [
+            track_item(("a", [10.0, 5.0]), ("c", [10.0, 25.0]))]});
+        assert_eq!(excuse_across(&mut report, &pcb, &cells, None), 0);
     }
 
     #[test]
