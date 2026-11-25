@@ -10,7 +10,8 @@ use pcb_router as core;
 /// the stub's end (its copper `lead`, `reach` around it) along the tracks
 /// whose end there touches nothing else of the net (no other track, via,
 /// pad or kept copper), up to the first junction (KiCad's
-/// `track_dangling`, an error in some projects).
+/// `track_dangling`, an error in some projects) or the first track other
+/// copper of the net meets along its length.
 pub(super) fn prune_stub(
     board: &core::Board,
     route: &mut core::NetRoute,
@@ -47,7 +48,12 @@ pub(super) fn prune_stub(
         }) else {
             break;
         };
-        if end_touches(route, &own, index, point, layer) {
+        // A track the net's other copper meets along its length (the
+        // fallback's route ending on the stub) stays: removing it would
+        // leave the net's copper in more pieces.
+        if end_touches(route, &own, index, point, layer)
+            || pieces(route, &own, Some(index)) > pieces(route, &own, None)
+        {
             break;
         }
         let segment = route.segments.remove(index);
@@ -586,7 +592,8 @@ fn centreline_contact(route: &core::NetRoute, own: &[&core::Obstacle], a: usize,
 
 /// Removes `net`'s tracks with an end that joins nothing else of the net
 /// (no track, via, pad or kept copper its copper overlaps there, but the
-/// tracks meeting its other end), and its vias that join no copper (a via
+/// tracks meeting its other end) where that splits no piece of the net's
+/// copper, and its vias that join no copper (a via
 /// with copper on one layer stays: a zone, a designer's teardrop, may hold
 /// it), until none is left; also a track no longer than its
 /// width whose end lies in no other copper (KiCad finds such an end
@@ -620,10 +627,14 @@ pub(super) fn prune_dangling(board: &core::Board, route: &mut core::NetRoute, ne
     let ends =
         |segment: &core::Segment| [(segment.start, segment.end), (segment.end, segment.start)];
     loop {
+        // Never a track whose removal splits the net's copper (another
+        // track ends on it), though one of its ends joins nothing.
+        let whole = pieces(route, &own, None);
         let dangling = (0..route.segments.len()).find(|&index| {
             ends(&route.segments[index])
                 .into_iter()
                 .any(|(point, far)| !held(route, index, point, far, false))
+                && pieces(route, &own, Some(index)) <= whole
         });
         if let Some(index) = dangling {
             route.segments.remove(index);

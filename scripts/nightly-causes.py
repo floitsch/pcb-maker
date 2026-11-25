@@ -26,6 +26,9 @@ name). Each item goes to the first cause of PRECEDENCE that names it:
 - else the router's net of the item's net name (where the router split the
   name, the copy holding the item's pads): routed, or open for one reason
   only (`nets[].open`, its counts exact) when the pads were not listed;
+  where the router keeps several nets of the name, each routed, and the
+  item's copy is not known, the copies routed (the item may join two of
+  them: as many items as one fewer than the copies, the rest routed);
 - the rest is `unexplained`, split by what the router says of its net.
 
 A verdict without `unconnected_across_items` (an older binary) names no
@@ -99,6 +102,9 @@ CAUSES = (
     ("open:copper_check", "open: the router counted it joined, its emitted copper leaves it apart", "the same"),
     ("open:no_access", "open: the router's terminal has no lattice node", "the same"),
     ("open:other", "open: another reason the router names", "the same"),
+    ("copies_routed", "the router's nets of the name (a panel's sub-boards or cells) each routed: "
+                      "the items join them (one fewer than the nets at most)",
+     "board-router.json `nets[]` of one `connection`, each `status` routed"),
     ("router_counts_routed", "the router counts the net routed, KiCad does not",
      "board-router.json `nets[].status` routed"),
 )
@@ -120,7 +126,7 @@ PRECEDENCE = [key for key, _, _ in CAUSES] + [key for key, _ in UNEXPLAINED]
 LABELS = {key: label for key, label, *_ in CAUSES + UNEXPLAINED}
 # Where separate_outlines takes its count from: the unexplained first, then
 # the router's routed nets; never an item a named fact claims.
-COUNT_TAKES = [key for key, _ in UNEXPLAINED] + ["router_counts_routed"]
+COUNT_TAKES = [key for key, _ in UNEXPLAINED] + ["router_counts_routed", "copies_routed"]
 
 PAD = re.compile(r"^(?:PTH |NPTH )?[Pp]ad (?P<number>\S*) (?:\[.*?\] )?of (?P<ref>\S+)")
 ESCAPES = {"{slash}": "/", "{backslash}": "\\", "{quote}": '"', "{lt}": "<", "{gt}": ">", "{colon}": ":",
@@ -296,8 +302,8 @@ def cause_of(item, facts):
     if len(statuses) > 1:  # copies that disagree, the item's not known
         return "unexplained:net_split", False
     status = next(iter(statuses))
-    if status == "routed":
-        return "router_counts_routed", False
+    if status == "routed":  # several copies, the item's not known: they may be what it joins
+        return ("copies_routed" if len(copies) > 1 else "router_counts_routed"), False
     if status in ("partial", "unreachable"):
         reasons = {}
         for copy in copies:
@@ -328,6 +334,16 @@ def census_board(board, count):
         notes["report_items"] = len(items)
         return ({"unexplained:no_outputs": count} if count else {}), notes
     causes = [cause_of(item, facts) for item in items]
+    # The router's copies of a name join with one item fewer than the
+    # copies (KiCad's one net): more items than that are open within a copy.
+    joins = {}
+    for kind in ("split_across_copies", "copies_routed"):
+        for index, item in enumerate(items):
+            if causes[index][0] == kind:
+                net = next((e["net"] for e in map(end_of, item.get("items") or []) if e["net"]), None)
+                joins[net] = joins.get(net, 0) + 1
+                if kind == "copies_routed" and joins[net] > len(facts["copies"].get(net) or []) - 1:
+                    causes[index] = ("router_counts_routed", False)
     notes["open_by_net"] = sum(1 for cause, named in causes if cause.startswith("open:") and not named)
     # An older verdict's outlines count takes items no fact names, the
     # unexplained first.

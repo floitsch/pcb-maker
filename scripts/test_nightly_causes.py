@@ -298,3 +298,17 @@ def test_items_across_outlines_are_named_by_their_uuids(tmp_path):
     # The item named by its uuids, not the first unexplained one.
     assert stage["per_board"]["repo__Hub"]["causes"] == {
         "separate_outlines": 1, "unexplained:net_open": 1, "router_counts_routed": 1}
+
+
+def test_items_of_a_name_the_router_keeps_as_routed_copies(tmp_path):
+    # Business-Cards: the router keeps +5V as three nets (three sub-boards),
+    # each routed; KiCad's one net needs two items to join them, a third is
+    # open within one of them.
+    night = tmp_path / "2026-11-26"
+    router = {"nets": [{"connection": "+5V", "status": "routed"}] * 3
+              + [{"connection": "VBUS", "status": "routed"}]}
+    items = [item(track("+5V"), track("+5V")), item(pad(2, "+5V", "RGB1"), track("+5V")),
+             item(track("+5V"), track("+5V")), item(track("VBUS"), track("VBUS"))]
+    write_night(night, {"sweep": [board(night / "sweep", "repo__Cards", items, {}, router, mode="layout")]})
+    stage = causes.census({"sweep": (night / "sweep.log", night / "sweep")}, night.name)["stages"]["sweep"]
+    assert stage["per_board"]["repo__Cards"]["causes"] == {"copies_routed": 2, "router_counts_routed": 2}

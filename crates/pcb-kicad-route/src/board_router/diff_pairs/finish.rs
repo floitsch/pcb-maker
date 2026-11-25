@@ -167,8 +167,69 @@ pub fn finish_pairs(
             result.status[net] = core::NetStatus::Routed;
         }
     }
+    let pair_nets: BTreeSet<core::NetId> = plan
+        .pairs
+        .iter()
+        .flat_map(|pair| [pair.positive, pair.negative])
+        .collect();
+    recheck_pair_nets(&finish.restored, result, &pair_nets);
     let report = finish.totals();
     Some((finish.restored, copper_out, report))
+}
+
+/// The pairs' nets as their copper now joins them: the fallback, the
+/// prunes, the skews and the return vias changed their routes after the
+/// router's own copper check (`pcb_router::verify::copper_components`), so
+/// a routed pair net whose copper leaves terminals apart is partial, those
+/// terminals open by `copper_check` (as the router's finish counts it).
+pub(super) fn recheck_pair_nets(
+    board: &core::Board,
+    result: &mut core::RoutingResult,
+    nets: &BTreeSet<core::NetId>,
+) {
+    for &net in nets {
+        let index = net as usize;
+        if result.status.get(index) != Some(&core::NetStatus::Routed)
+            || board.planes.iter().any(|plane| plane.net == net)
+        {
+            continue;
+        }
+        let components = core::verify::copper_components(board, net, &result.routes[index]);
+        let mut sizes: BTreeMap<usize, usize> = BTreeMap::new();
+        for component in &components {
+            *sizes.entry(*component).or_default() += 1;
+        }
+        // The largest piece (of equal ones the lowest numbered) is the net.
+        let Some((&main, &largest)) = sizes.iter().max_by(|a, b| a.1.cmp(b.1).then(b.0.cmp(a.0)))
+        else {
+            continue;
+        };
+        let apart = components.len() - largest;
+        if apart == 0 {
+            continue;
+        }
+        if debug() {
+            eprintln!(
+                "diff pairs: {} left {apart} of {} terminals apart after the fallback",
+                board.nets[index].name,
+                components.len()
+            );
+        }
+        result.status[index] = core::NetStatus::Partial {
+            unconnected_terminals: apart,
+        };
+        result.diagnostics.open.retain(|open| open.net != net);
+        for (terminal, component) in components.iter().enumerate() {
+            if *component != main {
+                result.diagnostics.open.push(core::OpenTerminal {
+                    net,
+                    terminal,
+                    label: board.nets[index].terminals[terminal].label.clone(),
+                    reason: core::OpenReason::CopperCheck,
+                });
+            }
+        }
+    }
 }
 
 /// The router's diagnostics of the links' nets named for their pairs'
