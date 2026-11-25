@@ -515,8 +515,8 @@ pub fn alive(pid: u32, ticks: Option<u64>) -> bool {
     {
         let _ = ticks;
         // SAFETY: signal 0 only checks that the process exists.
-        unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
-        || io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+        let signalled = unsafe { libc::kill(pid as libc::pid_t, 0) == 0 };
+        signalled || io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
     }
     #[cfg(not(unix))]
     {
