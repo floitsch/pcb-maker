@@ -3127,11 +3127,30 @@ pub fn excuse_across_file(
     Ok(moved)
 }
 
-/// The last outline's pieces (`Pieces::of_loops_cached`): its hash, its
-/// parts' hash where they judged a neck, and its pieces. Route mode's
-/// ladder and the layout's moves lower one outline many times.
-type CachedPieces = (u64, Option<u64>, Option<std::sync::Arc<Pieces>>);
+/// The last outline's pieces (`Pieces::of_loops_cached`): its hash, what
+/// its necks were judged by where its parts judged one (`Judged`), and its
+/// pieces. Route mode's ladder and the layout's moves lower one outline
+/// many times.
+type CachedPieces = (u64, Option<Judged>, Option<std::sync::Arc<Pieces>>);
 static PIECES_CACHE: std::sync::Mutex<Option<CachedPieces>> = std::sync::Mutex::new(None);
+
+/// What an outline's necks were judged by (`Sides`): each part's piece
+/// with every neck kept as a tab (`parts`, `Necks::keep`). A layout's
+/// moves change the parts' places, and the pieces only where a part
+/// changes piece.
+struct Judged {
+    parts: std::sync::Arc<Pieces>,
+    assigned: Vec<(String, Option<usize>)>,
+}
+
+impl Judged {
+    fn assigned(parts: &Pieces, cuts: &Cuts) -> Vec<(String, Option<usize>)> {
+        cuts.parts
+            .iter()
+            .map(|(reference, at)| (reference.clone(), parts.piece_at(*at)))
+            .collect()
+    }
+}
 
 impl Pieces {
     /// `of_loops`, remembered for the last outline.
@@ -3165,30 +3184,35 @@ impl Pieces {
             }
         }
         let key = hasher.finish();
-        // The parts, where a narrow neck was judged by them (`Sides`):
-        // a layout's moves change them, and only such an outline's pieces
-        // with them.
-        let parts_key = || {
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            for (reference, at) in &cuts.parts {
-                reference.hash(&mut hasher);
-                at[0].to_bits().hash(&mut hasher);
-                at[1].to_bits().hash(&mut hasher);
-            }
-            hasher.finish()
-        };
         if let Ok(cache) = PIECES_CACHE.lock()
-            && let Some((cached, parts, pieces)) = cache.as_ref()
+            && let Some((cached, judged, pieces)) = cache.as_ref()
             && *cached == key
-            && parts.is_none_or(|parts| parts == parts_key())
+            && judged
+                .as_ref()
+                .is_none_or(|judged| judged.assigned == Judged::assigned(&judged.parts, cuts))
         {
             return pieces.clone();
         }
         let mut necks = Necks::default();
         let pieces =
             Pieces::raster_pieces(loops, cutouts, cuts, None, &mut necks).map(std::sync::Arc::new);
+        let judged = if necks.judged {
+            let mut kept = Necks {
+                keep: true,
+                ..Necks::default()
+            };
+            Pieces::raster_pieces(loops, cutouts, cuts, None, &mut kept).map(|parts| {
+                let assigned = Judged::assigned(&parts, cuts);
+                Judged {
+                    parts: std::sync::Arc::new(parts),
+                    assigned,
+                }
+            })
+        } else {
+            None
+        };
         if let Ok(mut cache) = PIECES_CACHE.lock() {
-            *cache = Some((key, necks.judged.then(parts_key), pieces.clone()));
+            *cache = Some((key, judged, pieces.clone()));
         }
         pieces
     }
@@ -3410,6 +3434,41 @@ mod tests {
         // Without parts at all (a bare outline) the strip parts nothing.
         let (outline, hole) = lego(30.0, &STRIP);
         assert!(Pieces::of_loops(&[outline], &[hole], &Cuts::default()).is_none());
+    }
+
+    #[test]
+    fn the_cache_follows_the_parts_from_piece_to_piece() {
+        // A copy of U1 on the board above, three more parts below.
+        let (outline, hole) = lego(30.0, &STRIP);
+        let cuts = |upper: &str, at: [f64; 2]| Cuts {
+            parts: [
+                (upper, at),
+                ("U1", [10.0, 38.0]),
+                ("J1", [10.0, 55.0]),
+                ("R1", [5.0, 55.0]),
+                ("R2", [15.0, 55.0]),
+            ]
+            .map(|(reference, at)| (reference.to_string(), at))
+            .to_vec(),
+            ..Cuts::default()
+        };
+        let pieces = |cuts: &Cuts| {
+            Pieces::of_loops_cached(
+                std::slice::from_ref(&outline),
+                std::slice::from_ref(&hole),
+                cuts,
+            )
+            .map(|pieces| pieces.count())
+        };
+        assert_eq!(pieces(&cuts("U1", [10.0, 8.0])), Some(2));
+        // Moved within its board: as before.
+        assert_eq!(pieces(&cuts("U1", [5.0, 8.0])), Some(2));
+        // A part of another reference there: no copies, one board.
+        assert_eq!(pieces(&cuts("U2", [5.0, 8.0])), None);
+        assert_eq!(pieces(&cuts("U1", [5.0, 8.0])), Some(2));
+        // The copy moved onto the board below: the board above holds no
+        // part, and the board's parts are not mostly copies.
+        assert_eq!(pieces(&cuts("U1", [5.0, 45.0])), None);
     }
 
     #[test]
