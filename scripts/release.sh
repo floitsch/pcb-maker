@@ -82,10 +82,24 @@ publish() {
 Archives: $(cd "$dist" && ls pcb-maker-*.tar.gz | sed 's/^/`/; s/$/`/' | paste -sd, - | sed 's/,/, /g'). Each holds the \`pcb-maker\` binary, README.md, LICENSE, VERSION, docs/agents.md and skills/pcb-maker/SKILL.md. KiCad 10 (\`kicad-cli\`) must be on the PATH.
 
 This is a moving pre-release: every push to \`main\` replaces it. To pin a version, keep the archive and record the commit in \`VERSION\` (\`pcb-maker --version\` prints it), or build that commit from source (\`git checkout <commit> && cargo build --release\`)."
-  # Delete and recreate: no asset of an older commit survives.
-  gh release delete "$tag" --cleanup-tag --yes 2> /dev/null || true
-  gh release create "$tag" --prerelease --target "$sha" --title "Snapshot $short" --notes "$notes" \
-    "${archives[@]}" "$dist/VERSION" "$dist/SHA256SUMS"
+  # Delete and recreate: no asset of an older commit survives. GitHub's API
+  # fails now and then (a delete that did not happen leaves the create
+  # refused as "already exists"), so both are tried a few times and a
+  # failing delete is shown.
+  local attempt
+  for attempt in 1 2 3 4 5; do
+    if gh release view "$tag" > /dev/null 2>&1; then
+      gh release delete "$tag" --cleanup-tag --yes || true
+    fi
+    if gh release create "$tag" --prerelease --target "$sha" --title "Snapshot $short" --notes "$notes" \
+      "${archives[@]}" "$dist/VERSION" "$dist/SHA256SUMS"; then
+      return 0
+    fi
+    echo "publish: attempt $attempt failed" >&2
+    sleep 30
+  done
+  echo "publish: the release was not created" >&2
+  exit 1
 }
 
 # The host's platform name, as the archives call it.
