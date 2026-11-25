@@ -501,16 +501,25 @@ them under the cause the run's own outputs name. It writes `causes.json`
 (per board too) and summary.md's "Open causes" table, with the change
 against the newest earlier night that has a `causes.json`. An item goes to
 the first cause that names it: a pad of an `unplaced` part; across two
-board outlines (`board_outlines.unconnected_across`, a count: it takes that
-many of the board's items no other fact names, unexplained first); a
-`closed_pads` pad; a dead pad by `access` (`no_legal_access`,
-`off_lattice`, `no_lattice_node`, `stubs_blocked`, `start_blocked`,
-`escape_not_kept`); a `walled_pads` pad; the `zone_island_recovery` zone;
-a net the router counts routed (board-router.json `nets[].status`). Ends
-are matched by name only (`REF.NUMBER` and net, the zone's uuid), never by
+board outlines (both ends' uuids in `board_outlines.unconnected_across_items`;
+a verdict without the list gives only the count, which takes that many of
+the board's items no other fact names, unexplained first); a `closed_pads`
+pad; a dead pad by `access` (`no_legal_access`, `off_lattice`,
+`no_lattice_node`, `stubs_blocked`, `start_blocked`, `escape_not_kept`); a
+`walled_pads` pad; the `zone_island_recovery` zone; two pads in two copies
+of a net the router split (board-router.json `nets[].copy` and `pads`); an
+end pad the router lists open (`nets[].open[].pads`), under the router's
+reason (`open:no_path_hard:board`, `open:repair_skipped:budget`,
+`open:lost:clean_up`, ...; docs/agents.md, `routed.nets[]`); then by the
+router's net of the item's name (of a split name, the copy holding the
+item's pads): routed (the router counts it routed), or open for one reason
+only (the item's pads not listed; the stage notes how many). Ends are
+matched by name only (`REF.NUMBER` and net, an end's uuid), never by
 geometry. The rest is `unexplained`, split by what the router wrote: a dead
-pad without `access` (outputs of an older binary), the net left open and
-in `conflicted_nets` or not, the router's nets of the name disagreeing (a
+pad without `access` (outputs of an older binary), an open terminal whose
+reason is `unknown`, a net open for several reasons none listed for the
+item, the net left open without reasons (an older binary) and in
+`conflicted_nets` or not, the router's nets of the name disagreeing (a
 split net), no status, no outputs. Boards without a result are listed
 apart. On any error the script writes one line and exits 0. By hand:
 `scripts/nightly-causes.py build/nightly/<date> --output <dir>` (read-only)
