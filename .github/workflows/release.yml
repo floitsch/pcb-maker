@@ -4,9 +4,11 @@ name: release
 # Every push to main rebuilds the rolling `snapshot` pre-release
 # (https://github.com/floitsch/pcb-maker/releases/tag/snapshot): one
 # archive per platform, VERSION and SHA256SUMS, always the latest commit
-# that passed scripts/check.sh --fast. The release and its tag are deleted
-# and made again (scripts/release.sh publish), so no archive of an older
-# commit survives. scripts/release.sh does the same by hand.
+# that passed scripts/check.sh --fast. The release is updated in place
+# (scripts/release.sh publish: the tag moves, the archives are replaced, an
+# archive this build lacks is removed), so no archive of an older commit
+# survives and a failing GitHub call never leaves no release.
+# scripts/release.sh does the same by hand.
 #
 # linux-x86_64 runs the gate and must build; macos-aarch64 only builds and
 # may fail without holding the release (it then lacks the macOS archive).
@@ -74,7 +76,7 @@ jobs:
     name: update the snapshot release
     needs: build
     runs-on: ubuntu-latest
-    # Never cancelled half way (between the delete and the create); a newer
+    # Never cancelled half way (between the tag's move and the last asset); a newer
     # run's publish waits for it.
     concurrency:
       group: release-publish

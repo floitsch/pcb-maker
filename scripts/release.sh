@@ -61,6 +61,31 @@ package() {
   echo "$dist/$stage.tar.gz"
 }
 
+# One try of the publish: creates the release where there is none, else
+# updates it in place (see publish).
+publish_once() {
+  local sha="$1" short="$2" notes="$3"
+  shift 3
+  if ! gh release view "$tag" > /dev/null 2>&1; then
+    gh release create "$tag" --prerelease --target "$sha" --title "Snapshot $short" --notes "$notes" "$@"
+    return
+  fi
+  gh api -X PATCH "repos/{owner}/{repo}/git/refs/tags/$tag" -f sha="$sha" -F force=true > /dev/null || return 1
+  gh release upload "$tag" --clobber "$@" || return 1
+  local have name keep file
+  have="$(gh release view "$tag" --json assets -q '.assets[].name')" || return 1
+  for name in $have; do
+    keep=0
+    for file in "$@"; do
+      [ "$(basename "$file")" = "$name" ] && keep=1
+    done
+    if [ "$keep" = 0 ]; then
+      gh release delete-asset "$tag" "$name" --yes || return 1
+    fi
+  done
+  gh release edit "$tag" --prerelease --draft=false --target "$sha" --title "Snapshot $short" --notes "$notes" > /dev/null
+}
+
 publish() {
   local dist="$1"
   local sha short notes
@@ -82,23 +107,22 @@ publish() {
 Archives: $(cd "$dist" && ls pcb-maker-*.tar.gz | sed 's/^/`/; s/$/`/' | paste -sd, - | sed 's/,/, /g'). Each holds the \`pcb-maker\` binary, README.md, LICENSE, VERSION, docs/agents.md and skills/pcb-maker/SKILL.md. KiCad 10 (\`kicad-cli\`) must be on the PATH.
 
 This is a moving pre-release: every push to \`main\` replaces it. To pin a version, keep the archive and record the commit in \`VERSION\` (\`pcb-maker --version\` prints it), or build that commit from source (\`git checkout <commit> && cargo build --release\`)."
-  # Delete and recreate: no asset of an older commit survives. GitHub's API
-  # fails now and then (a delete that did not happen leaves the create
-  # refused as "already exists"), so both are tried a few times and a
-  # failing delete is shown.
-  local attempt
+  # The release is updated in place and never deleted first: a failing
+  # GitHub call must not leave no release at all (on 2026-11-25 the delete
+  # went through and the create did not). The tag moves to this commit, the
+  # archives are replaced, VERSION and SHA256SUMS last, and an asset this
+  # build does not have (a platform whose build failed) is removed, so no
+  # asset of an older commit survives a successful publish. GitHub's API
+  # fails now and then, so the whole update is tried a few times.
+  local attempt files=("${archives[@]}" "$dist/VERSION" "$dist/SHA256SUMS")
   for attempt in 1 2 3 4 5; do
-    if gh release view "$tag" > /dev/null 2>&1; then
-      gh release delete "$tag" --cleanup-tag --yes || true
-    fi
-    if gh release create "$tag" --prerelease --target "$sha" --title "Snapshot $short" --notes "$notes" \
-      "${archives[@]}" "$dist/VERSION" "$dist/SHA256SUMS"; then
+    if publish_once "$sha" "$short" "$notes" "${files[@]}"; then
       return 0
     fi
     echo "publish: attempt $attempt failed" >&2
     sleep 30
   done
-  echo "publish: the release was not created" >&2
+  echo "publish: the release was not updated" >&2
   exit 1
 }
 
