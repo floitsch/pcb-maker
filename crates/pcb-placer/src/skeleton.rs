@@ -789,6 +789,8 @@ fn skeleton_stage(stage: &str) -> Option<&'static str> {
         "global" => Some("skeleton_global"),
         "annealed" => Some("skeleton_annealed"),
         "legal" => Some("skeleton_legal"),
+        "refined" => Some("skeleton_refined"),
+        "repaired" => Some("skeleton_repaired"),
         "final" => Some("skeleton_final"),
         _ => None,
     }
