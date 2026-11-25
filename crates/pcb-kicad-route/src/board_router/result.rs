@@ -76,7 +76,7 @@ pub const WALL_LISTED: usize = 8;
 
 /// Whether an obstacle of this label is copper the router planned before
 /// it routed, not the input's: a BGA fan-out's stub, via and hole
-/// (`lower/fanout.rs`) or a via in a pad (`lower/pad.rs`).
+/// (`lower/fanout.rs`) or a via in a pad and its hole (`lower/pad.rs`).
 pub(crate) fn router_planned(label: &str) -> bool {
     [
         " fan-out stub",
@@ -85,6 +85,7 @@ pub(crate) fn router_planned(label: &str) -> bool {
         " fan-out hole",
         " via in pad ring",
         " via in pad",
+        " via in pad hole",
     ]
     .iter()
     .any(|suffix| label.ends_with(suffix))
@@ -1360,6 +1361,19 @@ mod open_report_tests {
             &["SW9.1 via in pad", "U11.R12"],
         )]);
         assert_eq!(both.wall, Some("input_and_router"));
+        // Every label the lowering gives the copper it plans.
+        for label in [
+            "U30.G8 fan-out stub",
+            "U30.G8 fan-out via ring",
+            "U30.G8 fan-out via",
+            "U30.G8 fan-out hole",
+            "SW9.1 via in pad ring",
+            "SW9.1 via in pad",
+            "SW9.1 via in pad hole",
+        ] {
+            assert!(router_planned(label), "{label}");
+        }
+        assert!(!router_planned("U11 keepout") && !router_planned("board edge"));
         // The lattice's wall names the pads and no copper; a wall that is
         // at no pad names nothing.
         let lattice = group(vec![walled(
