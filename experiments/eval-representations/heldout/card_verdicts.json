@@ -1,0 +1,102 @@
+{
+ "h0": {
+  "net": "Board_2-/PORT+",
+  "cause": "raster_path_rejected_by_kicad",
+  "because": "a track of the class's width joins the two ends with every other net's copper kept: 4.6 mm, 2 via(s), on B.Cu, In2.Cu; written as copper, KiCad's DRC still finds it open and reports new errors: drill_out_of_range x2",
+  "kicad_judgement": {
+   "judged": true,
+   "copper_added": {
+    "segments": 9,
+    "vias": 2,
+    "width_mm": 0.1
+   },
+   "kicad_unconnected_before": 3,
+   "kicad_unconnected_after": 3,
+   "new_kicad_errors": {
+    "drill_out_of_range": 2
+   },
+   "accepted": false,
+   "board": "/home/flo/programming/pcb-maker/build/scratch/cards-heldout/cases/h0/dossier/verify-item0/pcb-panel.kicad_pcb"
+  }
+ },
+ "h1": {
+  "net": "CH_SDA",
+  "cause": "end_walled_by_fixed_objects",
+  "because": "the ends are 58.7 mm apart, but end B cannot leave its pad even with every other net's tracks and vias removed: closed in by drilled hole, CH_VCC",
+  "kicad_judgement": null
+ },
+ "h2": {
+  "net": "+3V3E",
+  "cause": "walled_by_routed_copper",
+  "because": "no path with the copper kept; the cheapest path (at 0.250 mm) crosses the routed copper of KB_BOOT, SH_DIN, GND, LCD_INS, SH_CLK",
+  "kicad_judgement": null
+ },
+ "h3": {
+  "net": "Net-(U106-DS)",
+  "cause": "walled_by_fixed_objects",
+  "because": "no path even with every other net's tracks and vias removed",
+  "kicad_judgement": null
+ },
+ "h4": {
+  "net": "M1C_PWM_L\\",
+  "cause": "end_walled_by_fixed_objects",
+  "because": "the ends are 20.9 mm apart, but end B cannot leave its pad even with every other net's tracks and vias removed: closed in by U15.6, U15.8, M1B_PWM_H",
+  "kicad_judgement": null
+ },
+ "h5": {
+  "net": "+3.3V",
+  "cause": "walled_by_routed_copper",
+  "because": "no path with the copper kept; the cheapest path (at 0.300 mm) crosses the routed copper of Net-(U4-VREF), /4G LTE/SIM_CLK, /AUDIO/CODEC_LHP, Net-(U9-EN)",
+  "kicad_judgement": null
+ },
+ "h6": {
+  "net": "Net-(D18-A)",
+  "cause": "raster_path_rejected_by_kicad",
+  "because": "a track of the class's width joins the two ends with every other net's copper kept: 17.0 mm, 2 via(s), on F.Cu, In1.Cu; written as copper, KiCad's DRC finds the item closed and reports new errors: copper_edge_clearance x3",
+  "kicad_judgement": {
+   "judged": true,
+   "copper_added": {
+    "segments": 9,
+    "vias": 2,
+    "width_mm": 0.152
+   },
+   "kicad_unconnected_before": 1,
+   "kicad_unconnected_after": 0,
+   "new_kicad_errors": {
+    "copper_edge_clearance": 3
+   },
+   "accepted": false,
+   "board": "/home/flo/programming/pcb-maker/build/scratch/cards-heldout/cases/h6/dossier/verify-item0/eurorack-pmod-pcb.kicad_pcb"
+  }
+ },
+ "h7": {
+  "net": "/GPIO0_D3/CC_INT_L",
+  "cause": "long",
+  "because": "the ends are 72.1 mm apart: not a local problem; see each end's reach",
+  "kicad_judgement": null
+ },
+ "h8": {
+  "net": "+1V1",
+  "cause": "walled_by_routed_copper",
+  "because": "no path with the copper kept; the cheapest path (at 0.127 mm) crosses the routed copper of REB, QSPI_SCLK, +3V3, /RP2040_D-",
+  "kicad_judgement": null
+ },
+ "h9": {
+  "net": "D-C",
+  "cause": "long",
+  "because": "the ends are 22.2 mm apart: not a local problem; see each end's reach",
+  "kicad_judgement": null
+ },
+ "h10": {
+  "net": "/DDR3 Memory/ddr-dqs0-",
+  "cause": "walled_by_routed_copper",
+  "because": "no path with the copper kept; the cheapest path (at 0.102 mm) crosses the routed copper of /DDR3 Memory/dqs1-, /DDR3 Memory/ddr-dqs0+, /DDR3 Memory/ddr-dqs1-, Net-(D4-BK), /DDR3 Memory/ddr-d4, /DDR3 Memory/ddr-dm1, /DDR3 Memory/ddr-d2, USB0_ID",
+  "kicad_judgement": null
+ },
+ "h11": {
+  "net": "/HIDRV1",
+  "cause": "walled_by_routed_copper",
+  "because": "no path with the copper kept; the cheapest path (at 0.110 mm) crosses the routed copper of /SW1, /BTST1",
+  "kicad_judgement": null
+ }
+}
