@@ -537,26 +537,30 @@ pub fn finding_types_at_cap<'a>(report: &'a Value, key: &str) -> Vec<&'a str> {
         .collect()
 }
 
+/// `finding_counts` of `report`'s `key` without the copper-independent
+/// violations (`COPPER_INDEPENDENT_TYPES`): what two checks of one board
+/// with different copper can be compared by.
+pub(crate) fn copper_finding_counts(report: &Value, key: &str) -> Result<Findings, String> {
+    if key != "violations"
+        || !report[key]
+            .as_array()
+            .is_some_and(|all| all.iter().any(copper_independent))
+    {
+        return finding_counts(report, key);
+    }
+    let mut copper = report.clone();
+    if let Some(findings) = copper[key].as_array_mut() {
+        findings.retain(|finding| !copper_independent(finding));
+    }
+    finding_counts(&copper, key)
+}
+
 /// Whether the candidate has a finding more often than the baseline. The
 /// copper-independent findings do not count: copper does not change them,
 /// and where KiCad caps them two checks may list different ones.
 fn adds_findings(baseline: &Value, candidate: &Value, key: &str) -> Result<bool, String> {
-    let counts = |report: &Value| -> Result<Findings, String> {
-        if key != "violations"
-            || !report[key]
-                .as_array()
-                .is_some_and(|all| all.iter().any(copper_independent))
-        {
-            return finding_counts(report, key);
-        }
-        let mut copper = report.clone();
-        if let Some(findings) = copper[key].as_array_mut() {
-            findings.retain(|finding| !copper_independent(finding));
-        }
-        finding_counts(&copper, key)
-    };
-    let before = counts(baseline)?;
-    let after = counts(candidate)?;
+    let before = copper_finding_counts(baseline, key)?;
+    let after = copper_finding_counts(candidate, key)?;
     Ok(after
         .iter()
         .any(|(finding, count)| before.get(finding).unwrap_or(&0) < count))

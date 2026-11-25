@@ -3015,9 +3015,11 @@ layout charges the local routing work, native checks and connectivity
 proofs to its budget. See `generated_pad_via_recovery` for the outcome and
 `saved_copper` for the published board's geometry. The retry remains
 available when the layout runs short of work.
-If native findings hit KiCad's report cap, the repair leaves the board
-alone and identifies the evidence limit. Restore missing project libraries
-before retrying.
+If a native finding type that copper can change hits KiCad's report cap,
+the repair leaves the board alone and identifies the evidence limit. The
+library and text findings (`lib_footprint_issues`, `lib_footprint_mismatch`,
+`text_height`, `text_thickness`) at their cap do not stop it, and they are
+not compared between its checks.
 
 Automatic layout repair tries locally short native opens first and
 submits at most one ordinary trial to native DRC. On a single board it
