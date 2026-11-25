@@ -2085,7 +2085,7 @@ A finished run also carries it as `verdict` in its report:
 | `open_pad_concentration` | When at least half of the nets with native opens name local singleton pads at up to three footprints, lists the count of distinct nets, the footprint references, and the pad UUID and net for each. Each reported footprint has at least four distinct nets. The saved-board copper check requires one pad in each reported group and omits nets with ordinary pours. Review the named pad rows and nearby copper together. |
 | `missing_schematic_footprints` | Components KiCad found missing from the PCB. Use the reported reference and symbol value to check the footprint assignment and update the PCB from the current schematic. Set **Exclude from board** on a symbol intended to remain schematic-only. |
 | `missing_schematic_pads`, `schematic_net_mismatches` | Pin-level evidence from the saved PCB's native parity check. When KiCad can export the checked schematic, a missing-pad entry's `schematic_netlist` gives the net, terminal count and pin type for an unambiguous reference and pin. It distinguishes a no-connect marker, a no-connect symbol pin type, an isolated single-pin net and a connected pin. The native parity checks still govern acceptance. For a net mismatch, compare the PCB and schematic nets at the reported reference and pin. `physical_pads` counts the affected lands when a pin uses several pads. |
-| `rear_routing_candidates` | On a legally placed layout with native opens and a crowded front, lists exact passive SMD references that could use estimated rear headroom. If rear assembly is permitted, add approved names from `allow_back_additions` to `placer.allow_back` and rerun placement and routing. The area estimates include placement spacing. |
+| `rear_routing_candidates` | On a legally placed layout with native opens and a crowded front (that the crowding causes the opens is a hypothesis, not shown), lists exact passive SMD references that could use estimated rear headroom. If rear assembly is permitted, add approved names from `allow_back_additions` to `placer.allow_back` and rerun placement and routing. The area estimates include placement spacing. |
 | `starved_thermals`, `internal_violations` | Pads short of thermal spokes; the router's own clearance check. |
 | `closed_pads` | Route and layout: per footprint, the pads no track leaves and no via may enter (board-router.json's `vias_in_pads.closed`; route.log's `pads no track leaves, no via allowed`): `part`, `footprint`, `pads` (`AC9 (RESET)`), `nets`, `open_nets` (those KiCad reports unconnected, else the router) and `why`. KiCad reports such pads open until the class, the footprint or the via-in-pad rule changes; absent where there are none. |
 | `board_outlines` | Route and layout, when the board file holds two separate board outlines or more (Edge.Cuts loops that do not touch: several boards in one file): `outlines`, their `boxes`, and `unconnected_across`, KiCad's unconnected items whose two ends lie on two different outlines (each end on the outline that holds its place, else the nearest), which no track or pour can join. The open connections' actions say so first, and a pour's action says that `keep_whole` keeps a piece whole within one outline only. |
@@ -2109,7 +2109,9 @@ A finished run also carries it as `verdict` in its report:
 | `free_dimension` | A layout with `free_dimension`: `chosen` (the size in mm), `kind` (`probe`, `retry`, `confirm` or `closest`: which run the result is), `clean`, `probes` (layouts run), `reason` (the smaller sizes and how they failed, a price threshold exceeded, sizes left untried), `edge`, the search's `work_seconds` and `wall_seconds` (the verdict's own fields are the chosen layout's), `report` (`free-dimension.json`). |
 
 `room` says how full the board is and how large it would need to be, so
-that an agent enlarges it in one step:
+that an agent enlarges it in one step. `room`, `utilization` and
+`target_utilization` measure whether a legal placement fits, not whether
+it routes:
 
 | Field | Meaning |
 | --- | --- |
@@ -2259,6 +2261,14 @@ wirelength stages describe the base solver seed, when one applies. Pool
 work still covers the original placement run. Solver diagnostics tied to
 the original placement remain in its archived report when they do not
 apply to the selected placement.
+
+The placer's own numbers do not predict whether the board routes: board-placer.json's
+`wirelength_source_mm`, `wirelength_global_mm`, `wirelength_legal_mm`,
+`wirelength_final_mm`, `global_iterations`, `global_overflow` and
+`skeleton_race.skeleton_wirelength_mm`, board-layout.json's `congestion`
+(RUDY `scores`, ratsnest `crossings`; the race's pre-ranking, also in
+layout.log) and place-kicad-board's "wirelength source" line are the
+placer's objective. The routed probes and KiCad's native checks decide.
 
 ## When it does not work out
 
@@ -3653,7 +3663,8 @@ Score the designer's board and yours side by side.
 
 - `pcb-maker swap-kicad-pins <project-dir> <board-id> <out-dir> <pin-swaps.json> [config.json]`
   reassigns interchangeable pins to shorten the ratsnest, board and
-  schematic together, without routing ([pin-swap.md](pin-swap.md)); the
+  schematic together, without routing ([pin-swap.md](pin-swap.md)); a
+  shorter ratsnest is not shown to route better; the
   layout does the same with `swappable` or `pin_swaps`.
 - `pcb-maker strip-kicad-tracks <source.kicad_pcb> <output.kicad_pcb> [--keep-nets <net>[,<net>...]]`
   removes tracks, vias and small zones (copper pours stay): a designer's
@@ -3688,7 +3699,9 @@ Score the designer's board and yours side by side.
   (wirelength, escape demand's channel overflow, exits facing a body,
   overlapping parts, ratsnest crossings, also weighted by net size and
   within buses, pins whose row faces away from their net, the global
-  route's overflow and soft overflow at 0.5), and per moved part of both placements its escape (demand per
+  route's overflow and soft overflow at 0.5; these are the placer's own
+  objective terms and do not predict the routed result: route the
+  variants), and per moved part of both placements its escape (demand per
   side, the body it faces, the gap and the channel's capacity, the board
   edge, its connections' distance). Settings: `large_pads` (20),
   `passive_pads` (4), `passive_mm` (3), `repair` (true), `groups` (only

@@ -137,7 +137,7 @@ function draw(k) {
     if (c.size[0] * scale > 22) { ctx.fillStyle = '#cfe'; ctx.font = '10px sans-serif';
       const m = rot(c.center, a); ctx.fillText(c.name, X(px + m[0]) - 8, Y(py + m[1]) + 3); }
   });
-  info.textContent = `iteration ${f.i}  overflow ${f.o.toFixed(3)}  wirelength ${f.w.toFixed(1)} mm`;
+  info.textContent = `iteration ${f.i}  overflow ${f.o.toFixed(3)}  wirelength ${f.w.toFixed(1)} mm (placer objective, not routability)`;
 }
 slider.oninput = () => draw(+slider.value);
 let timer = null;
