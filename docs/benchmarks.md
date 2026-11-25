@@ -1028,8 +1028,11 @@ as `build/bin/pcb-maker-nightly-<date>-<sha12>`, and runs, through the
 memory ledger with `--ledger-priority nightly`: the fingerprints, the
 expansion tier, the short tier, the matched designer tier and the layout
 sweep. It writes `build/nightly/<date>/`: each stage's log and output,
-`summary.md` (per stage and board), `nightly.json`, `gap.txt` and
-`diff-<stage>.txt` against the previous night that ran the stage.
+`summary.md` (per stage and board), `nightly.json`, `gap.txt`,
+`diff-<stage>.txt` against the previous night that ran the stage, and
+`causes.json`: KiCad's unconnected items per cause the run's own outputs
+name, also summary.md's "Open causes" (benchmarks/agent-tasks/README.md,
+"Nightly").
 
 **Publishing.** `scripts/nightly-report.py --commit` (the last step)
 writes the night into the main checkout and commits it on main as

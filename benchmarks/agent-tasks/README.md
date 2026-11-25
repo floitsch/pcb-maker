@@ -491,9 +491,30 @@ nothing (`--force` runs anyway). One night at a time (`build/nightly/.lock`).
 **What a night leaves**, in `build/nightly/<date>/`: each stage's output
 directory, `<stage>.log` (the rows) and `<stage>.err`, `nightly.log`,
 `gap.txt` (`compare.py --gap --targets`), `diff-<stage>.txt` (compare.py
-against the previous night that ran the stage), `nightly.json` and
-`summary.md`. Nights beyond the newest 14 keep only their logs and
-summaries.
+against the previous night that ran the stage), `nightly.json`,
+`summary.md` and `causes.json`. Nights beyond the newest 14 keep only their
+logs and summaries.
+
+**Open causes.** `scripts/nightly-causes.py` (after the summary) counts per
+stage KiCad's unconnected items (each board's drc.json) and the boards with
+them under the cause the run's own outputs name. It writes `causes.json`
+(per board too) and summary.md's "Open causes" table, with the change
+against the newest earlier night that has a `causes.json`. An item goes to
+the first cause that names it: a pad of an `unplaced` part; across two
+board outlines (`board_outlines.unconnected_across`, a count: it takes that
+many of the board's items no other fact names, unexplained first); a
+`closed_pads` pad; a dead pad by `access` (`no_legal_access`,
+`off_lattice`, `no_lattice_node`, `stubs_blocked`, `start_blocked`,
+`escape_not_kept`); a `walled_pads` pad; the `zone_island_recovery` zone;
+a net the router counts routed (board-router.json `nets[].status`). Ends
+are matched by name only (`REF.NUMBER` and net, the zone's uuid), never by
+geometry. The rest is `unexplained`, split by what the router wrote: a dead
+pad without `access` (outputs of an older binary), the net left open and
+in `conflicted_nets` or not, the router's nets of the name disagreeing (a
+split net), no status, no outputs. Boards without a result are listed
+apart. On any error the script writes one line and exits 0. By hand:
+`scripts/nightly-causes.py build/nightly/<date> --output <dir>` (read-only)
+or `--run NAME=<run.py output> --output <dir>`.
 
 **Into the docs** (on by default; `--no-commit-report` or
 `PCB_NIGHTLY_COMMIT_REPORT=0` turns it off). `scripts/nightly-report.py

@@ -203,6 +203,14 @@ def test_the_summary(two_nights):
     record = json.loads((directory / "nightly.json").read_text())
     assert record["stages"]["short"]["diff"]["gained"] == ["repo__Beta"]
     assert record["gap"]["placement_share"] == 0.4
+    # The census of open causes (scripts/nightly-causes.py): the stub's rows
+    # have no board outputs, so every item is unexplained.
+    assert summary.count("## Open causes") == 1 and "against 2026-10-22." in summary
+    assert "**short**: 5 items on 1 of 3 boards, 5 unexplained (items -2 against 2026-10-22)." in summary
+    assert "| unexplained: the board's outputs are missing or unreadable | 5 | 1 | -2, -1 |" in summary
+    causes = json.loads((directory / "causes.json").read_text())
+    assert causes["previous"] == "2026-10-22" and causes["stages"]["expansion"]["no_result"] == ["repo__Gamma"]
+    assert "## Open causes" in first and "no earlier census." in first
 
 
 def test_an_unchanged_main_is_not_measured_again(two_nights):
