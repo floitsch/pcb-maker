@@ -13,6 +13,139 @@ pub struct KiCadBoardRouterNet {
     pub unconnected_terminals: usize,
     pub vias: usize,
     pub length_mm: f64,
+    /// A `partial` or `unreachable` net's open terminals by why the router
+    /// left them open (`pcb_router::OpenReason`), as many as
+    /// `unconnected_terminals` or more (an unreachable net lists all its
+    /// terminals); where the router recorded fewer, the rest under
+    /// `unknown`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub open: Vec<KiCadOpenTerminals>,
+    /// How the hard repair found an open net it took up.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repair: Option<KiCadNetRepair>,
+    /// Where the router keeps several nets of this name (a panel's
+    /// sub-boards or cells: `outline_pieces::split_router_nets`): which of
+    /// them this is, counted in `nets` order from 0, and all its
+    /// terminals' labels.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub copy: Option<usize>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub pads: Vec<String>,
+}
+
+/// At most this many labels in a `KiCadOpenTerminals::pads`.
+pub const OPEN_PADS_LISTED: usize = 16;
+
+/// A net's open terminals for one reason (`KiCadBoardRouterNet::open`).
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct KiCadOpenTerminals {
+    /// `pcb_router::OpenReason::name`: `no_access`, `net_not_routable`,
+    /// `no_path_static`, `repair_skipped:<why>`, `no_path_hard:<scope>`,
+    /// `lost:<phase>`, `copper_check`, `unknown`.
+    pub reason: String,
+    /// How many (exact).
+    pub terminals: usize,
+    /// Their labels (`U1.3`), the first `OPEN_PADS_LISTED`.
+    pub pads: Vec<String>,
+}
+
+/// The hard repair's account of a net (`pcb_router::RepairEntry`).
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct KiCadNetRepair {
+    /// When the negotiation ended: whether it had joined all its
+    /// terminals, and whether it was in conflict with other nets' copper.
+    pub complete: bool,
+    pub in_conflict: bool,
+    /// Why the repair did not search it: `work_deadline`, `hopeless`,
+    /// `budget`.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub skipped: String,
+    /// The nets whose copper covered its first conflicting nodes, and
+    /// where the first one was (its layer, `via` for the via map).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub conflicted_with: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conflict_at: Option<[f64; 2]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conflict_layer: Option<String>,
+}
+
+/// `net`'s open terminals of `diagnostics` by reason, in the order the
+/// reasons first come, `unconnected` of them at least (the rest
+/// `unknown`).
+pub(crate) fn open_terminals_of(
+    diagnostics: &core::Diagnostics,
+    net: core::NetId,
+    unconnected: usize,
+) -> Vec<KiCadOpenTerminals> {
+    let mut groups: Vec<KiCadOpenTerminals> = Vec::new();
+    let mut listed = 0;
+    for open in diagnostics.open.iter().filter(|open| open.net == net) {
+        let reason = open.reason.name();
+        let index = match groups.iter().position(|group| group.reason == reason) {
+            Some(index) => index,
+            None => {
+                groups.push(KiCadOpenTerminals {
+                    reason,
+                    terminals: 0,
+                    pads: Vec::new(),
+                });
+                groups.len() - 1
+            }
+        };
+        let group = &mut groups[index];
+        group.terminals += 1;
+        if group.pads.len() < OPEN_PADS_LISTED {
+            group.pads.push(open.label.clone());
+        }
+        listed += 1;
+    }
+    if listed < unconnected {
+        match groups.iter_mut().find(|group| group.reason == "unknown") {
+            Some(group) => group.terminals += unconnected - listed,
+            None => groups.push(KiCadOpenTerminals {
+                reason: "unknown".into(),
+                terminals: unconnected - listed,
+                pads: Vec::new(),
+            }),
+        }
+    }
+    groups
+}
+
+/// The hard repair's entry for `net` in `diagnostics`, its nets named (by
+/// `nets`, the board's) and its place in mm (rounded to µm) on KiCad's
+/// layer (`layer_names`; the board's `layer_count` is the via map).
+pub(crate) fn net_repair_of(
+    diagnostics: &core::Diagnostics,
+    nets: &[core::Net],
+    layer_count: usize,
+    net: core::NetId,
+    layer_names: &[String],
+) -> Option<KiCadNetRepair> {
+    let entry = diagnostics.repair.iter().find(|entry| entry.net == net)?;
+    let round = |value: f64| (value * 1000.0).round() / 1000.0;
+    Some(KiCadNetRepair {
+        complete: entry.complete,
+        in_conflict: entry.conflicted,
+        skipped: entry.skipped.to_string(),
+        conflicted_with: entry
+            .conflicted_with
+            .iter()
+            .filter_map(|other| nets.get(*other as usize))
+            .map(|other| other.name.clone())
+            .collect(),
+        conflict_at: entry
+            .conflict_at
+            .map(|(_, at)| [round(at[0]), round(at[1])]),
+        conflict_layer: entry.conflict_at.map(|(layer, _)| {
+            layer_names
+                .get(layer)
+                .filter(|_| layer < layer_count)
+                .cloned()
+                .unwrap_or_else(|| "via".into())
+        }),
+    })
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1031,6 +1164,130 @@ mod layer_name_tests {
         assert_eq!(
             name_layers("the layer 1 of it", &names),
             "the layer 1 of it"
+        );
+    }
+}
+
+#[cfg(test)]
+mod open_report_tests {
+    use super::*;
+
+    fn open(net: core::NetId, label: &str, reason: core::OpenReason) -> core::OpenTerminal {
+        core::OpenTerminal {
+            net,
+            terminal: 0,
+            label: label.into(),
+            reason,
+        }
+    }
+
+    #[test]
+    fn a_nets_open_terminals_are_grouped_by_reason_with_exact_counts() {
+        let mut diagnostics = core::Diagnostics::default();
+        for index in 0..20 {
+            diagnostics.open.push(open(
+                0,
+                &format!("U1.{index}"),
+                core::OpenReason::NoPathHard("board"),
+            ));
+        }
+        diagnostics
+            .open
+            .push(open(0, "R1.1", core::OpenReason::Lost("clean_up")));
+        diagnostics
+            .open
+            .push(open(1, "R2.1", core::OpenReason::NoPathStatic));
+        let groups = open_terminals_of(&diagnostics, 0, 21);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].reason, "no_path_hard:board");
+        assert_eq!(groups[0].terminals, 20);
+        // The labels bounded, the count exact.
+        assert_eq!(groups[0].pads.len(), OPEN_PADS_LISTED);
+        assert_eq!(groups[0].pads[0], "U1.0");
+        assert_eq!(
+            groups[1],
+            KiCadOpenTerminals {
+                reason: "lost:clean_up".into(),
+                terminals: 1,
+                pads: vec!["R1.1".into()],
+            }
+        );
+        // Fewer recorded than the net's count: the rest is `unknown`.
+        let groups = open_terminals_of(&diagnostics, 1, 3);
+        assert_eq!(groups[0].reason, "no_path_static");
+        assert_eq!(
+            groups[1],
+            KiCadOpenTerminals {
+                reason: "unknown".into(),
+                terminals: 2,
+                pads: Vec::new(),
+            }
+        );
+        assert!(open_terminals_of(&diagnostics, 2, 0).is_empty());
+    }
+
+    #[test]
+    fn the_repairs_entry_names_the_nets_and_kicads_layer() {
+        let net = |name: &str| core::Net {
+            name: name.into(),
+            class: 0,
+            terminals: Vec::new(),
+        };
+        let nets = vec![net("A"), net("B"), net("C")];
+        let names: Vec<String> = ["F.Cu", "B.Cu"].map(String::from).to_vec();
+        let mut diagnostics = core::Diagnostics::default();
+        diagnostics.repair.push(core::RepairEntry {
+            net: 0,
+            complete: true,
+            conflicted: true,
+            skipped: "budget",
+            conflict_at: Some((1, [1.23456, 7.0])),
+            conflicted_with: vec![1, 2],
+        });
+        diagnostics.repair.push(core::RepairEntry {
+            net: 1,
+            complete: false,
+            conflicted: true,
+            skipped: "",
+            conflict_at: Some((2, [0.0, 0.0])),
+            conflicted_with: vec![0],
+        });
+        assert_eq!(
+            net_repair_of(&diagnostics, &nets, 2, 0, &names),
+            Some(KiCadNetRepair {
+                complete: true,
+                in_conflict: true,
+                skipped: "budget".into(),
+                conflicted_with: vec!["B".into(), "C".into()],
+                conflict_at: Some([1.235, 7.0]),
+                conflict_layer: Some("B.Cu".into()),
+            })
+        );
+        // The layer count stands for the via map.
+        let via = net_repair_of(&diagnostics, &nets, 2, 1, &names).unwrap();
+        assert_eq!(via.conflict_layer.as_deref(), Some("via"));
+        assert!(net_repair_of(&diagnostics, &nets, 2, 2, &names).is_none());
+    }
+
+    #[test]
+    fn a_panels_copies_of_a_net_are_counted_in_net_order() {
+        let names = [
+            Some("GND"),
+            Some("A"),
+            Some("GND"),
+            None,
+            Some("A"),
+            Some("GND"),
+            Some("B"),
+        ];
+        assert_eq!(
+            crate::board_router::attempt::copy_indices(&names),
+            vec![Some(0), Some(0), Some(1), None, Some(1), Some(2), None]
+        );
+        // A copy not reported is not counted.
+        assert_eq!(
+            crate::board_router::attempt::copy_indices(&[Some("C"), None]),
+            vec![None, None]
         );
     }
 }

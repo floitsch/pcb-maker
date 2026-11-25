@@ -189,7 +189,18 @@ fn name_links_for_pairs(result: &mut core::RoutingResult, plan: &PairPlan) {
     }
     for entry in &mut result.diagnostics.repair {
         entry.net = pair_net(entry.net);
+        for other in &mut entry.conflicted_with {
+            *other = pair_net(*other);
+        }
+        entry.conflicted_with.sort_unstable();
+        entry.conflicted_with.dedup();
     }
+    // A link's open terminals go with the link: what it leaves open is
+    // the fallback's to route (`fall_back`), with records of its own.
+    result
+        .diagnostics
+        .open
+        .retain(|open| (open.net as usize) < plan.nets);
     for net in &mut result.diagnostics.conflicted {
         *net = pair_net(*net);
     }

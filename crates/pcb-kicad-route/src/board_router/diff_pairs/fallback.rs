@@ -47,6 +47,31 @@ pub(super) fn route_fallback(
             .extend(from.segments.iter().cloned());
         result.routes[net].vias.extend(from.vias.iter().cloned());
         result.status[net] = routed.status[net];
+        // The pair's nets' diagnostics are the fallback's (a record).
+        result
+            .diagnostics
+            .open
+            .retain(|open| open.net as usize != net);
+        result.diagnostics.open.extend(
+            routed
+                .diagnostics
+                .open
+                .iter()
+                .filter(|open| open.net as usize == net)
+                .cloned(),
+        );
+        result
+            .diagnostics
+            .repair
+            .retain(|entry| entry.net as usize != net);
+        result.diagnostics.repair.extend(
+            routed
+                .diagnostics
+                .repair
+                .iter()
+                .filter(|entry| entry.net as usize == net)
+                .cloned(),
+        );
         if debug() {
             eprintln!(
                 "diff pair fallback: {} {:?}",

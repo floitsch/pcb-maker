@@ -410,6 +410,8 @@ impl Router {
             last_conflicted: Vec::new(),
             repair_entries: Vec::new(),
             repair_skipped: Vec::new(),
+            repair_failed: Vec::new(),
+            open_reasons: Vec::new(),
             released: Vec::new(),
             probe_shapes: Arc::default(),
             mem_token: Default::default(),

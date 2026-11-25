@@ -80,6 +80,10 @@ pub struct Diagnostics {
     /// The nets the negotiation gave up (`Board::attachment`'s `give_up`:
     /// a differential pair's links), in the order they went, with why.
     pub released: Vec<super::ReleasedNet>,
+    /// Every terminal the result leaves open, with why (`OpenReason`): of
+    /// a `Partial` net its unconnected terminals, of an `Unreachable` net
+    /// all of them. A record, not an input.
+    pub open: Vec<OpenTerminal>,
 }
 
 /// A net as the hard repair found it (`Diagnostics::repair`).
@@ -96,6 +100,83 @@ pub struct RepairEntry {
     /// `work_deadline` (the attempt's work deadline had passed), `budget`
     /// (the repair's own budget ran out); empty where it searched.
     pub skipped: &'static str,
+    /// Where it was in conflict when the negotiation ended: the first of
+    /// its conflicting nodes (`Router::conflicts`), as the layer (the
+    /// layer count for the via map) and the node's centre.
+    pub conflict_at: Option<(usize, crate::geometry::Point)>,
+    /// The nets whose copper's clearance covered its first conflicting
+    /// nodes then (at most `CONFLICT_PARTNERS`, sorted). Empty in a
+    /// layout's move trial, which does not look.
+    pub conflicted_with: Vec<NetId>,
+}
+
+/// At most this many conflicting nodes of a net are looked up for
+/// `RepairEntry::conflicted_with`, and at most this many nets named.
+pub const CONFLICT_PARTNERS: usize = 4;
+
+/// A terminal the result leaves open (`Diagnostics::open`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct OpenTerminal {
+    pub net: NetId,
+    /// Its index in the net's terminals.
+    pub terminal: usize,
+    /// The terminal's label (`U1.3`).
+    pub label: String,
+    pub reason: OpenReason,
+}
+
+/// Why a terminal stays open, as the router decided it at the point it
+/// left the terminal (`Diagnostics::open`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpenReason {
+    /// The terminal has no lattice node (a dead pad: `dead_pads` says how
+    /// open it is). Decided when the net is prepared.
+    NoAccess,
+    /// The net was never searched: fewer than two of its terminals have a
+    /// lattice node (status `Unreachable`).
+    NetNotRoutable,
+    /// The negotiation's board-wide search found no path to it from the
+    /// net's tree, other nets' copper passable at a price: only pads, rule
+    /// areas, the outline and fixed copper stop that search
+    /// (`NetState::unreachable` when the last negotiation ended).
+    NoPathStatic,
+    /// Open when the negotiation ended and the hard repair did not search
+    /// the net again: `work_deadline`, `hopeless` or `budget`
+    /// (`RepairEntry::skipped`).
+    RepairSkipped(&'static str),
+    /// The hard repair searched, every other net's copper impassable, and
+    /// found no path to it: within `corridor` (the trouble repair's
+    /// victims only search corridors), `window` or the whole `board`.
+    NoPathHard(&'static str),
+    /// Joined after the hard repair; a later phase left it open (its name:
+    /// `hard_repair` for the repair's own forced connections and links
+    /// retried, `trouble_repair`, `clean_up`, `via_reduction`, `bends`,
+    /// `thermal_spokes`, `straighten`, `compaction`, `pour_stitching`,
+    /// `manual_spokes`).
+    Lost(&'static str),
+    /// The router counted it joined, but the copper it emits leaves it
+    /// apart from the rest of the net (an escape stub dropped at emission:
+    /// the copper check that turns a routed net partial).
+    CopperCheck,
+    /// None of the above was recorded for it.
+    Unknown,
+}
+
+impl OpenReason {
+    /// The name in the reports: the reason, then its detail after a colon
+    /// (`no_path_hard:board`, `lost:clean_up`).
+    pub fn name(self) -> String {
+        match self {
+            Self::NoAccess => "no_access".into(),
+            Self::NetNotRoutable => "net_not_routable".into(),
+            Self::NoPathStatic => "no_path_static".into(),
+            Self::RepairSkipped(why) => format!("repair_skipped:{why}"),
+            Self::NoPathHard(scope) => format!("no_path_hard:{scope}"),
+            Self::Lost(phase) => format!("lost:{phase}"),
+            Self::CopperCheck => "copper_check".into(),
+            Self::Unknown => "unknown".into(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

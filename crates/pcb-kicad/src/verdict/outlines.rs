@@ -23,6 +23,10 @@ pub struct KiCadBoardOutlines {
     /// outlines (each end on the outline that holds its place, else the
     /// nearest): no track or pour can join them.
     pub unconnected_across: usize,
+    /// Those items, each as its two ends' uuids as KiCad's report names
+    /// them (empty for an end without one), in the report's order.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unconnected_across_items: Vec<[String; 2]>,
 }
 
 /// The board's outlines when it has two or more, with KiCad's items
@@ -32,11 +36,12 @@ pub(super) fn of_board(board: &Expr, report: Option<&Value>) -> Option<KiCadBoar
     if loops.piece_loops.len() < 2 {
         return None;
     }
-    let unconnected_across = report.map_or(0, |report| across(report, &loops.piece_loops));
+    let items = report.map_or_else(Vec::new, |report| across(report, &loops.piece_loops));
     Some(KiCadBoardOutlines {
         outlines: loops.piece_loops.len(),
         boxes: loops.pieces.clone(),
-        unconnected_across,
+        unconnected_across: items.len(),
+        unconnected_across_items: items,
     })
 }
 
@@ -87,8 +92,8 @@ fn distance_to_ring(ring: &[[f64; 2]], point: [f64; 2]) -> f64 {
 }
 
 /// KiCad's unconnected items (errors and warnings it counts) whose two
-/// ends lie on two different loops.
-fn across(report: &Value, loops: &[Vec<[f64; 2]>]) -> usize {
+/// ends lie on two different loops, as their ends' uuids.
+fn across(report: &Value, loops: &[Vec<[f64; 2]>]) -> Vec<[String; 2]> {
     report["unconnected_items"]
         .as_array()
         .into_iter()
@@ -106,7 +111,16 @@ fn across(report: &Value, loops: &[Vec<[f64; 2]>]) -> usize {
                 .collect();
             matches!(ends[..], [Some(a), Some(b)] if a != b)
         })
-        .count()
+        .map(|item| {
+            let uuid = |index: usize| {
+                item["items"][index]["uuid"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string()
+            };
+            [uuid(0), uuid(1)]
+        })
+        .collect()
 }
 
 impl KiCadBoardOutlines {
@@ -156,8 +170,10 @@ mod tests {
         ]);
         let item = |a: [f64; 2], b: [f64; 2]| {
             serde_json::json!({"items": [
-                {"description": "Zone [GND] on F.Cu", "pos": {"x": a[0], "y": a[1]}},
-                {"description": "Zone [GND] on F.Cu", "pos": {"x": b[0], "y": b[1]}},
+                {"description": "Zone [GND] on F.Cu", "pos": {"x": a[0], "y": a[1]},
+                 "uuid": format!("z{}", a[0])},
+                {"description": "Zone [GND] on F.Cu", "pos": {"x": b[0], "y": b[1]},
+                 "uuid": format!("z{}", b[0])},
             ]})
         };
         let report = serde_json::json!({"unconnected_items": [
@@ -168,6 +184,14 @@ mod tests {
         let outlines = of_board(&pcb, Some(&report)).unwrap();
         assert_eq!(outlines.outlines, 3);
         assert_eq!(outlines.unconnected_across, 2);
+        // The items counted, by their ends' uuids.
+        assert_eq!(
+            outlines.unconnected_across_items,
+            vec![
+                ["z0.5".to_string(), "z30.5".to_string()],
+                ["z30.5".to_string(), "z79.9".to_string()]
+            ]
+        );
         let action = outlines.across_action().unwrap();
         assert!(action.contains("3 separate board outlines"), "{action}");
         assert!(

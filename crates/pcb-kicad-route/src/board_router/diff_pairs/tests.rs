@@ -2264,6 +2264,8 @@ fn a_links_cause_not_routed_is_read_from_the_diagnostics() {
         complete,
         conflicted,
         skipped,
+        conflict_at: None,
+        conflicted_with: Vec::new(),
     };
     let mut diagnostics = core::Diagnostics::default();
     assert_eq!(not_routed_cause(&diagnostics, 7), "lost after the repair");

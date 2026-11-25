@@ -41,6 +41,7 @@ mod heap;
 mod manual_spokes;
 mod negotiate;
 mod occupancy;
+mod open;
 mod order;
 mod output;
 mod pad_exits;
@@ -78,7 +79,8 @@ pub use pad_exits::{ClosedPad, ExitBlocker, ExitProbe, ProbeCounts, label_part, 
 pub use pour_report::{PourLayerReport, StarvedThermal};
 pub use profile::{ProcessAccounting, build_totals, process_accounting};
 pub use result::{
-    DeadPad, DeadPadAccess, Diagnostics, HotSpot, NetStatus, RepairEntry, RoutingResult,
+    CONFLICT_PARTNERS, DeadPad, DeadPadAccess, Diagnostics, HotSpot, NetStatus, OpenReason,
+    OpenTerminal, RepairEntry, RoutingResult,
 };
 pub use subset::{SubsetNet, SubsetStanding};
 pub use trouble::TROUBLE_REPAIR_DEFAULT;
@@ -383,6 +385,11 @@ struct NetState {
     /// Its searches leave it out, so that one pad walled in by pads does
     /// not stop the rest of the net. Empty: none.
     unreachable: Vec<bool>,
+    /// Where the net's last hard route (`route_net` with `hard`) found no
+    /// path: the widest search it ran then (`corridor`, `window`,
+    /// `board`); empty when it found every path it looked for. A record
+    /// for `OpenReason::NoPathHard`, not an input.
+    hard_failure: &'static str,
     /// Per layer: the rule class describing the pour there.
     plane_class: Vec<usize>,
     /// When set, only these pour nodes (the main piece) are valid targets.
@@ -1956,6 +1963,13 @@ pub struct Router {
     /// (`resolve_remaining`'s last call).
     repair_entries: Vec<RepairEntry>,
     repair_skipped: Vec<(NetId, &'static str)>,
+    /// The nets `resolve_remaining`'s last call routed hard and left
+    /// incomplete, with where their search gave up
+    /// (`NetState::hard_failure`).
+    repair_failed: Vec<(NetId, &'static str)>,
+    /// Per net and terminal, why the last `finish` left it open where it
+    /// is open (`OpenReason`, `open.rs`); empty before a finish.
+    open_reasons: Vec<Vec<OpenReason>>,
     /// The nets the negotiation gave up (`give_up_round`), in the order
     /// they went (`Diagnostics::released`).
     released: Vec<ReleasedNet>,
@@ -1978,6 +1992,8 @@ pub fn route(board: &Board, config: &Config) -> RoutingResult {
 
 #[cfg(test)]
 mod corridor_tests;
+#[cfg(test)]
+mod open_tests;
 #[cfg(test)]
 mod rule_tests;
 #[cfg(test)]

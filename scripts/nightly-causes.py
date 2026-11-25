@@ -13,11 +13,24 @@ Only facts a run wrote are counted: KiCad's items from the board's
 drc.json (the verdict's `outputs.drc`, else drc.json beside the verdict or
 in `result/`), the router's facts from verdict.json and board-router.json.
 Nothing is derived from geometry: an item's ends are matched to the facts
-by name only (a pad's `REF.NUMBER` and net, a zone's uuid, the net's name).
-Each item goes to the first cause of PRECEDENCE that names it; an item no
-fact names is `unexplained`, split by what the router says of its net. `board_outlines.unconnected_across` names
-no item, only a count: it takes that many of the board's items not named
-by another fact, the unexplained ones first.
+by name only (a pad's `REF.NUMBER` and net, an item end's uuid, the net's
+name). Each item goes to the first cause of PRECEDENCE that names it:
+
+- an end on a part the layout left unplaced; both ends' uuids among the
+  verdict's `board_outlines.unconnected_across_items`; a closed, dead or
+  walled pad; islands of one zone;
+- two pads of a net the router split (`nets[].copy`) in two different
+  copies (`nets[].pads`);
+- an end pad among the router's open terminals of the net
+  (`nets[].open[].pads`): the router's reason (`open:<reason>`);
+- else the router's net of the item's net name (where the router split the
+  name, the copy holding the item's pads): routed, or open for one reason
+  only (`nets[].open`, its counts exact) when the pads were not listed;
+- the rest is `unexplained`, split by what the router says of its net.
+
+A verdict without `unconnected_across_items` (an older binary) names no
+item across outlines, only a count: it takes that many of the board's items
+not named by another fact, the unexplained ones first.
 
 Against the previous night with a causes.json: the change per cause. On
 any error the script prints one line (into summary.md too) and exits 0:
@@ -52,12 +65,49 @@ CAUSES = (
     ("dead_pad:escape_not_kept", "dead pad, escape_not_kept", "the same"),
     ("walled_pad", "pad wired through its own footprint's copper", "verdict `walled_pads`"),
     ("zone_island", "islands of one zone", "verdict `zone_island_recovery.zone_uuid`"),
+    ("split_across_copies", "pads of two copies of a net the router split (a panel's sub-boards or cells)",
+     "board-router.json `nets[].copy`, `nets[].pads`"),
+    # The router's reasons (board-router.json `nets[].open`, pcb_router::OpenReason).
+    ("open:net_not_routable", "open: the net was never searched (fewer than two of its pads have access)",
+     "`nets[].open[].reason`"),
+    ("open:no_path_static", "open: no path on the whole board even through other nets' copper "
+                            "(pads, keepouts, the outline in the way)", "the same"),
+    ("open:no_path_hard:board", "open: the hard repair found no path around other nets' copper on the whole board",
+     "the same"),
+    ("open:no_path_hard:window", "open: the hard repair found no path around other nets' copper in its window",
+     "the same"),
+    ("open:no_path_hard:corridor", "open: the hard repair found no path around other nets' copper in its corridor",
+     "the same"),
+    ("open:repair_skipped:work_deadline", "open: open when the negotiation stopped, the hard repair skipped it "
+                                          "(the attempt's work deadline)", "the same"),
+    ("open:repair_skipped:budget", "open: open when the negotiation stopped, the hard repair skipped it "
+                                   "(the repair's budget)", "the same"),
+    ("open:repair_skipped:hopeless", "open: open when the negotiation stopped, the hard repair skipped it "
+                                     "(the attempt judged hopeless)", "the same"),
+    ("open:lost:hard_repair", "open: joined, then lost in the hard repair (a forced connection, a link retried)",
+     "the same"),
+    ("open:lost:trouble_repair", "open: joined, then lost in the trouble repair (displaced)", "the same"),
+    ("open:lost:clean_up", "open: joined, then lost in the clean-up", "the same"),
+    ("open:lost:via_reduction", "open: joined, then lost in the via reduction", "the same"),
+    ("open:lost:bends", "open: joined, then lost in the bend round", "the same"),
+    ("open:lost:thermal_spokes", "open: joined, then lost freeing thermal spokes", "the same"),
+    ("open:lost:straighten", "open: joined, then lost in the straightening", "the same"),
+    ("open:lost:compaction", "open: joined, then lost in the compaction", "the same"),
+    ("open:lost:pour_stitching", "open: joined, then lost in the pour stitching (off the pour's main piece)",
+     "the same"),
+    ("open:lost:manual_spokes", "open: joined, then lost adding manual spokes", "the same"),
+    ("open:copper_check", "open: the router counted it joined, its emitted copper leaves it apart", "the same"),
+    ("open:no_access", "open: the router's terminal has no lattice node", "the same"),
+    ("open:other", "open: another reason the router names", "the same"),
     ("router_counts_routed", "the router counts the net routed, KiCad does not",
      "board-router.json `nets[].status` routed"),
 )
 UNEXPLAINED = (  # in the order they are tried
     ("unexplained:dead_pad_without_access", "unexplained: a dead pad without `access` (an older binary)"),
     ("unexplained:dead_pad_access_unknown", "unexplained: a dead pad with access unknown (not measured)"),
+    ("unexplained:open_unknown", "unexplained: the router left it open and recorded no reason (`unknown`)"),
+    ("unexplained:net_open_mixed",
+     "unexplained: the router left the net open for several reasons, none listed for the item's pads"),
     ("unexplained:net_open_conflicted",
      "unexplained: the router left the net open, in conflict when it stopped (`conflicted_nets`)"),
     ("unexplained:net_open", "unexplained: the router left the net open, not in conflict"),
@@ -167,13 +217,42 @@ def facts_of(verdict, router):
         name(f"{walled.get('part')}.{walled.get('pad')}", "walled_pad", walled.get("net"))
     island = (verdict.get("zone_island_recovery") or {}).get("zone_uuid")
     statuses = {}  # net key -> the statuses of the router's nets of that name (a split net has several)
+    copies = {}  # net key -> the router's nets of that name: status, open reasons with counts, pads
+    open_pads = {}  # "REF.NUMBER" -> [(the router's reason, net key)]
     for net in router.get("nets") or []:
         if isinstance(net, dict) and net.get("connection") is not None:
-            statuses.setdefault(net_key(net["connection"]), set()).add(net.get("status"))
+            key = net_key(net["connection"])
+            statuses.setdefault(key, set()).add(net.get("status"))
+            reasons = {}
+            for group in net.get("open") or []:
+                reasons[group.get("reason")] = reasons.get(group.get("reason"), 0) + (group.get("terminals") or 0)
+                for label in group.get("pads") or []:
+                    open_pads.setdefault(label, []).append((group.get("reason"), key))
+            copies.setdefault(key, []).append({"status": net.get("status"), "reasons": reasons,
+                                               "pads": set(net.get("pads") or [])})
     conflicted = {net_key(net) for net in (router.get("diagnostics") or {}).get("conflicted_nets") or []}
+    outlines = verdict.get("board_outlines") or {}
+    across_items = outlines.get("unconnected_across_items")
     return {"unplaced": unplaced, "pads": pads, "island": island, "statuses": statuses, "conflicted": conflicted,
-            "across": int((verdict.get("board_outlines") or {}).get("unconnected_across") or 0),
+            "copies": copies, "open_pads": open_pads,
+            "across_items": None if across_items is None else {frozenset(pair) for pair in across_items},
+            "across": int(outlines.get("unconnected_across") or 0) if across_items is None else 0,
             "lacking_access": lacking_access}
+
+
+def open_cause(reason):
+    """The census key of a router's reason (`nets[].open[].reason`)."""
+    if reason == "unknown":
+        return "unexplained:open_unknown"
+    key = f"open:{reason}"
+    return key if key in LABELS else "open:other"
+
+
+def copy_of(ends, copies):
+    """The indices of the router's nets of a split name (`copies`) holding
+    each pad end, a set per pad end."""
+    return [{index for index, copy in enumerate(copies) if end["pad"] in copy["pads"]}
+            for end in ends if end["pad"]]
 
 
 def cause_of(item, facts):
@@ -190,21 +269,44 @@ def cause_of(item, facts):
     if facts["island"] and len(ends) == 2 and all(e["kind"] == "Zone" and e["uuid"] == facts["island"]
                                                   for e in ends):
         found.append("zone_island")
+    if facts["across_items"] and len(ends) == 2 and frozenset(e["uuid"] for e in ends) in facts["across_items"]:
+        found.append("separate_outlines")
+    net = next((e["net"] for e in ends if e["net"]), None)
+    copies = facts["copies"].get(net) or []
+    holding = copy_of(ends, copies) if len(copies) > 1 else []
+    if len(holding) == 2 and all(len(h) == 1 for h in holding) and holding[0] != holding[1]:
+        found.append("split_across_copies")
+    for end in ends:
+        for reason, open_net in facts["open_pads"].get(end["pad"], []) if end["pad"] else []:
+            if end["net"] is None or open_net == end["net"]:
+                found.append(open_cause(reason))
     named = [cause for cause in found if not cause.startswith("unexplained:")]
     if named:
         return min(named, key=PRECEDENCE.index), True
-    if found:  # a dead pad the router did not classify
+    if found:  # a dead pad the router did not classify, an open terminal without a reason
         return min(found, key=PRECEDENCE.index), False
-    net = next((e["net"] for e in ends if e["net"]), None)
     statuses = facts["statuses"].get(net) if net is not None else None
     if not statuses:
         return "unexplained:no_net_status", False
-    if len(statuses) > 1:  # several router nets of the name (sub-boards, copies) that disagree
+    if len(copies) > 1:  # several router nets of the name (sub-boards, copies): the one holding the pads
+        held = set.intersection(*holding) if holding else set()
+        if len(held) == 1:
+            copies = [copies[next(iter(held))]]
+            statuses = {copies[0]["status"]}
+    if len(statuses) > 1:  # copies that disagree, the item's not known
         return "unexplained:net_split", False
     status = next(iter(statuses))
     if status == "routed":
         return "router_counts_routed", False
     if status in ("partial", "unreachable"):
+        reasons = {}
+        for copy in copies:
+            for reason, count in copy["reasons"].items():
+                reasons[reason] = reasons.get(reason, 0) + count
+        if len(reasons) == 1:  # every open terminal of the net open for one reason
+            return open_cause(next(iter(reasons))), False
+        if len(reasons) > 1:
+            return "unexplained:net_open_mixed", False
         return ("unexplained:net_open_conflicted" if net in facts["conflicted"] else "unexplained:net_open"), False
     return "unexplained:net_other", False
 
@@ -226,7 +328,9 @@ def census_board(board, count):
         notes["report_items"] = len(items)
         return ({"unexplained:no_outputs": count} if count else {}), notes
     causes = [cause_of(item, facts) for item in items]
-    # The outlines' count takes items no fact names, the unexplained first.
+    notes["open_by_net"] = sum(1 for cause, named in causes if cause.startswith("open:") and not named)
+    # An older verdict's outlines count takes items no fact names, the
+    # unexplained first.
     take = facts["across"]
     for target in COUNT_TAKES:
         for index, (cause, named) in enumerate(causes):
@@ -247,6 +351,7 @@ def census_stage(compare, rows_source, boards_directory):
     rows = compare.by_name(compare.rows_of(rows_source))
     stage = {"boards": len(rows), "items": 0, "boards_with_items": 0, "no_result": [], "without_outputs": [],
              "lacking_access": [], "capped": [], "router_open_connections": 0, "router_unconnected_terminals": 0,
+             "open_by_net": 0,
              "router_complete_kicad_open": [], "causes": {}, "per_board": {}}
     for name, row in sorted(rows.items()):
         count = compare.unconnected(row)
@@ -266,6 +371,7 @@ def census_stage(compare, rows_source, boards_directory):
             stage["capped"].append(name)
         stage["router_open_connections"] += notes.get("open_connections") or 0
         stage["router_unconnected_terminals"] += notes.get("unconnected_terminals") or 0
+        stage["open_by_net"] += notes.get("open_by_net") or 0
         if count and notes.get("outputs") and not notes.get("open_connections") \
                 and not notes.get("unconnected_terminals"):
             stage["router_complete_kicad_open"].append(name)
@@ -383,6 +489,9 @@ def markdown(record):
                                                          "nothing open")):
             if stage[key]:
                 notes.append(f"{text}: {len(stage[key])} ({names(stage[key])})")
+        if stage.get("open_by_net"):
+            notes.append(f"items under an `open:` cause by their net's only reason (their pads not listed): "
+                         f"{stage['open_by_net']}")
         notes.append(f"the router's own count: {stage['router_open_connections']} open connections, "
                      f"{stage['router_unconnected_terminals']} unconnected terminals")
         lines += [""] + [f"- {note}" for note in notes]
