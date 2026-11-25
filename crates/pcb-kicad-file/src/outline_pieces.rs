@@ -1904,6 +1904,227 @@ pub fn board_split_nets(pcb: &Expr, pieces: &Pieces) -> BTreeMap<String, usize> 
         .collect()
 }
 
+/// A panel's cells split by what copper connects (`cell_split_nets`).
+struct CellSplit {
+    /// The nets with pads on two cells or more and no copper joining two
+    /// cells' pads, each with the number of cells its pads lie on.
+    nets: BTreeMap<String, usize>,
+    /// Per item of those nets (pad, track, arc, via) by its uuid, the cell
+    /// of the pads its copper joins; None where it joins no pad on a cell.
+    cells: BTreeMap<String, Option<usize>>,
+}
+
+/// One copper item of a net (`cell_split_nets`): its shape, the points
+/// KiCad joins it by (a track's ends, a via's or pad's centre), its copper
+/// layers as bits and, for a pad, its cell.
+struct CellItem {
+    uuid: Option<String>,
+    shape: core::geometry::Shape,
+    anchors: Vec<[f64; 2]>,
+    layers: u64,
+    pad_cell: Option<Option<usize>>,
+}
+
+/// The nets a placement's cells (`Pieces::of_boxes`: no tabs, one board)
+/// split, by what the board's copper connects rather than where it lies:
+/// the router keeps a net per cell (`split_router_nets`) but its tracks of
+/// one cell's net may run over another cell's box, which joins nothing.
+/// Items join as KiCad's connectivity joins them: a track's end, a via's
+/// or a pad's centre inside the other's copper on a common layer. Zones
+/// do not join (KiCad's fill decides, as in `board_split_nets`). A net is
+/// split when its pads lie on two cells or more and no group of joined
+/// items holds pads of two cells.
+fn cell_split_nets(pcb: &Expr, pieces: &Pieces) -> CellSplit {
+    let codes = crate::kicad_nets::net_codes(pcb);
+    let mut copper: Vec<String> = Vec::new();
+    if let Some(stack) = pcb.child("layers") {
+        for entry in stack.children().iter().skip(1) {
+            if let Some(name) = entry.children().get(1).and_then(Expr::atom)
+                && name.ends_with(".Cu")
+                && !copper.iter().any(|known| known == name)
+            {
+                copper.push(name.to_string());
+            }
+        }
+    }
+    let all = if copper.len() >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << copper.len()) - 1
+    };
+    let bit = |name: &str| {
+        copper
+            .iter()
+            .position(|known| known == name)
+            .map_or(0, |index| 1u64 << index.min(63))
+    };
+    let layer_bits = |names: &[&str]| {
+        names.iter().fold(0u64, |bits, name| match *name {
+            "*.Cu" => all,
+            "F&B.Cu" => bits | bit("F.Cu") | bit("B.Cu"),
+            name => bits | bit(name),
+        })
+    };
+    fn names_of(form: Option<&Expr>) -> Vec<&str> {
+        form.map(|form| {
+            form.children()
+                .iter()
+                .skip(1)
+                .filter_map(Expr::atom)
+                .collect()
+        })
+        .unwrap_or_default()
+    }
+    let mut of_net: BTreeMap<String, Vec<CellItem>> = BTreeMap::new();
+    for item in pcb.children() {
+        let Some(head) = item.head() else { continue };
+        if head == "footprint" {
+            let Ok(at) = form_at(item) else { continue };
+            for pad in item
+                .children()
+                .iter()
+                .filter(|child| child.head() == Some("pad"))
+            {
+                let Some(net) = crate::kicad_nets::item_net(pad, &codes) else {
+                    continue;
+                };
+                let Ok(lowered) = crate::copper_geometry::lower_pad(pad, at) else {
+                    continue;
+                };
+                let layers = layer_bits(&names_of(pad.child("layers")));
+                if layers == 0 {
+                    continue;
+                }
+                of_net.entry(unescaped(net)).or_default().push(CellItem {
+                    uuid: crate::kicad_nets::footprint_uuid(pad),
+                    shape: lowered.geometry.router_shape(),
+                    anchors: vec![lowered.center],
+                    layers,
+                    pad_cell: Some(pieces.piece_at(lowered.center)),
+                });
+            }
+            continue;
+        }
+        let Some(net) = crate::kicad_nets::item_net(item, &codes) else {
+            continue;
+        };
+        let point = |name: &str| crate::kicad_sexpr::form_xy(item, name).ok();
+        let (shape, anchors, layers) = match head {
+            "segment" | "arc" => {
+                let (Some(start), Some(end)) = (point("start"), point("end")) else {
+                    continue;
+                };
+                let radius = crate::kicad_sexpr::form_f64(item, "width", 1).unwrap_or(0.0) / 2.0;
+                let capsule = |start, end| core::geometry::Shape::Capsule { start, end, radius };
+                let shape = match point("mid") {
+                    Some(mid) => core::geometry::Shape::Union {
+                        parts: vec![capsule(start, mid), capsule(mid, end)],
+                    },
+                    None => capsule(start, end),
+                };
+                let layer = crate::kicad_sexpr::form_atom(item, "layer", 1).unwrap_or("");
+                (shape, vec![start, end], bit(layer))
+            }
+            "via" => {
+                let Some(at) = point("at") else { continue };
+                let radius = crate::kicad_sexpr::form_f64(item, "size", 1).unwrap_or(0.0) / 2.0;
+                let names = names_of(item.child("layers"));
+                let span: Vec<usize> = names
+                    .iter()
+                    .filter_map(|name| copper.iter().position(|known| known == name))
+                    .collect();
+                let layers = match (names.contains(&"*.Cu"), span.as_slice()) {
+                    (true, _) => all,
+                    (false, [a, b]) => (*a.min(b)..=*a.max(b))
+                        .fold(0, |bits, index| bits | (1u64 << index.min(63))),
+                    _ => layer_bits(&names),
+                };
+                let shape = core::geometry::Shape::Circle { center: at, radius };
+                (shape, vec![at], layers)
+            }
+            _ => continue,
+        };
+        of_net.entry(unescaped(net)).or_default().push(CellItem {
+            uuid: crate::kicad_nets::footprint_uuid(item),
+            shape,
+            anchors,
+            layers,
+            pad_cell: None,
+        });
+    }
+    let mut split = CellSplit {
+        nets: BTreeMap::new(),
+        cells: BTreeMap::new(),
+    };
+    for (net, items) in of_net {
+        let pad_cells: BTreeSet<usize> = items
+            .iter()
+            .filter_map(|item| item.pad_cell.flatten())
+            .collect();
+        if pad_cells.len() < 2 {
+            continue;
+        }
+        // Joined items by union-find, pairs whose boxes meet.
+        let mut parent: Vec<usize> = (0..items.len()).collect();
+        fn root(parent: &mut [usize], mut at: usize) -> usize {
+            while parent[at] != at {
+                parent[at] = parent[parent[at]];
+                at = parent[at];
+            }
+            at
+        }
+        let boxes: Vec<_> = items.iter().map(|item| item.shape.aabb()).collect();
+        let mut order: Vec<usize> = (0..items.len()).collect();
+        order.sort_by(|a, b| boxes[*a].minimum[0].total_cmp(&boxes[*b].minimum[0]));
+        const TOUCH_MM: f64 = 1.0e-4;
+        let inside = |anchors: &[[f64; 2]], shape: &core::geometry::Shape| {
+            anchors
+                .iter()
+                .any(|anchor| shape.distance_to_point(*anchor) <= TOUCH_MM)
+        };
+        for (position, &a) in order.iter().enumerate() {
+            for &b in &order[position + 1..] {
+                if boxes[b].minimum[0] > boxes[a].maximum[0] + TOUCH_MM {
+                    break;
+                }
+                let (first, second) = (&items[a], &items[b]);
+                if first.layers & second.layers == 0
+                    || !boxes[a].inflated(TOUCH_MM).intersects(boxes[b])
+                    || !(inside(&first.anchors, &second.shape)
+                        || inside(&second.anchors, &first.shape))
+                {
+                    continue;
+                }
+                let (ra, rb) = (root(&mut parent, a), root(&mut parent, b));
+                parent[ra] = rb;
+            }
+        }
+        // Each group's cells, from its pads.
+        let mut group_cells: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
+        for (index, item) in items.iter().enumerate() {
+            let group = root(&mut parent, index);
+            let cells = group_cells.entry(group).or_default();
+            if let Some(Some(cell)) = item.pad_cell {
+                cells.insert(cell);
+            }
+        }
+        if group_cells.values().any(|cells| cells.len() >= 2) {
+            continue;
+        }
+        for (index, item) in items.iter().enumerate() {
+            if let Some(uuid) = &item.uuid {
+                let group = root(&mut parent, index);
+                split.cells.insert(
+                    uuid.to_ascii_lowercase(),
+                    group_cells[&group].first().copied(),
+                );
+            }
+        }
+        split.nets.insert(net, pad_cells.len());
+    }
+    split
+}
+
 /// How far beyond the board an unconnected item's place may lie and still
 /// count on the nearest piece (mm). It was made for zones (KiCad places a
 /// zone's item at the first corner of its outline, which designers draw
@@ -2084,7 +2305,14 @@ pub fn excuse_across_with(
     if items.is_empty() {
         return 0;
     }
-    let mut split = board_split_nets(pcb, pieces);
+    // A placement's cells: the nets and their items' cells by what the
+    // copper joins (`cell_split_nets`); an outline's pieces by where it
+    // lies.
+    let cells = pieces.boxed().then(|| cell_split_nets(pcb, pieces));
+    let mut split = match &cells {
+        Some(cells) => cells.nets.clone(),
+        None => board_split_nets(pcb, pieces),
+    };
     if let Some(designed) = designed {
         let designed: BTreeSet<String> = designed.iter().map(|net| unescaped(net)).collect();
         split.retain(|net, _| designed.contains(net));
@@ -2116,6 +2344,12 @@ pub fn excuse_across_with(
                                 .clone(),
                             _ => End::Unplaced,
                         }
+                    } else if let Some(cell) = cells.as_ref().and_then(|cells| {
+                        let uuid = end["uuid"].as_str()?.to_ascii_lowercase();
+                        cells.cells.get(&uuid)
+                    }) {
+                        // On a cell's copper: the cell of the pads it joins.
+                        cell.map_or(End::Unplaced, End::On)
                     } else {
                         match at {
                             [Some(x), Some(y)] => pieces
@@ -2789,6 +3023,94 @@ mod tests {
                     zone_item(("zf", [30.0, 47.0]), ("zb", [30.0, 25.0])),
                     zone_item(("zf", [30.0, 47.0]), ("zb", [30.0, 25.0]))]}),
             ),
+            0
+        );
+    }
+
+    /// A panel's two cells (y 0 to 20 and 20 to 40, one outline), GND pads
+    /// at x 3 and 17 on each, and `tracks`.
+    fn cells_board(tracks: &[&str]) -> Expr {
+        let part = |x: f64, y: f64| {
+            format!(
+                r#"(footprint "J1" (at {x} {y}) (property "Reference" "J1") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "GND")))"#
+            )
+        };
+        let tracks: String = tracks
+            .iter()
+            .map(|track| {
+                let [uuid, from, to] = track.split(' ').collect::<Vec<_>>()[..] else {
+                    panic!("uuid start end");
+                };
+                let xy = |point: &str| point.replace(',', " ");
+                format!(
+                    r#"(segment (start {}) (end {}) (width 0.2) (layer "F.Cu") (net "GND") (uuid "{uuid}"))"#,
+                    xy(from),
+                    xy(to)
+                )
+            })
+            .collect();
+        crate::kicad_sexpr::parse(&format!(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user)) (gr_rect (start 0 0) (end 20 40) (layer "Edge.Cuts")) {} {} {} {} {tracks})"#,
+            part(3.0, 5.0),
+            part(17.0, 5.0),
+            part(3.0, 25.0),
+            part(17.0, 25.0),
+        ))
+        .unwrap()
+    }
+
+    /// KiCad's item between the GND tracks `a` and `b`, each at `pos`.
+    fn track_item(a: (&str, [f64; 2]), b: (&str, [f64; 2])) -> serde_json::Value {
+        serde_json::json!({"type": "unconnected_items", "items": [
+            {"description": "Track [GND] on F.Cu, length 1 mm", "pos": {"x": a.1[0], "y": a.1[1]}, "uuid": a.0},
+            {"description": "Track [GND] on F.Cu, length 1 mm", "pos": {"x": b.1[0], "y": b.1[1]}, "uuid": b.0}]})
+    }
+
+    #[test]
+    fn a_cells_copper_over_another_cells_box_joins_nothing() {
+        // PolyKybd's molecules: the router keeps a net per cell, and one
+        // cell's GND runs through the other cell's box (to y 22) without
+        // touching its copper. KiCad's item between the two cells' GND
+        // lies with both ends in the lower box: across the cells all the
+        // same, by the pads each end's copper joins.
+        let cells = Pieces::of_boxes(vec![[0.0, 0.0, 20.0, 20.0], [0.0, 20.0, 20.0, 40.0]]);
+        let excused = |tracks: &[&str], item: serde_json::Value| {
+            let pcb = cells_board(tracks);
+            let mut report = serde_json::json!({"unconnected_items": [item]});
+            excuse_across(&mut report, &pcb, &cells, None)
+        };
+        let wandering = ["a 3,5 10,22", "b 10,22 17,5", "c 3,25 17,25"];
+        assert_eq!(
+            excused(
+                &wandering,
+                track_item(("a", [10.0, 22.0]), ("c", [10.0, 25.0]))
+            ),
+            1
+        );
+        // A track joining the two cells' pads: GND is one net, and an item
+        // of it counts.
+        let joined = [
+            "a 3,5 10,22",
+            "b 10,22 17,5",
+            "c 3,25 17,25",
+            "d 17,5 17,25",
+        ];
+        assert_eq!(
+            excused(
+                &joined,
+                track_item(("a", [10.0, 22.0]), ("c", [10.0, 25.0]))
+            ),
+            0
+        );
+        // A track joined to no pad: its cell is unknown.
+        let stray = [
+            "a 3,5 10,22",
+            "b 10,22 17,5",
+            "c 3,25 17,25",
+            "e 9,30 11,30",
+        ];
+        assert_eq!(
+            excused(&stray, track_item(("e", [9.0, 30.0]), ("a", [10.0, 22.0]))),
             0
         );
     }

@@ -183,7 +183,11 @@ On a panel, same-named nets of different boards share no copper.
 finds the outline's pieces (necks under 2 mm,
 mouse-bite rows and V-cuts cut it), and `split_router_nets` gives each piece
 its own net unless a terminal or pour joins two pieces; `excuse_across`
-moves KiCad's cross-piece items to `unconnected_across_sub_boards`.
+moves KiCad's cross-piece items to `unconnected_across_sub_boards`. A
+panel's cells the placement found on one outline (repeated references)
+split the same way, and there an item end's cell is that of the pads its
+copper joins, not the box it lies in: a cell's tracks may run through
+another cell's box.
 Setting `tuning.sub_board_nets` (on).
 
 ## The lattice
