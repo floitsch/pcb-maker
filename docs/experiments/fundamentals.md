@@ -45,7 +45,7 @@ Every branch merged into main without conflicts on 2026-11-25.
 | Window census, A (`fund-window`, 15556e91) | Would an exact (SAT) window solver close the residue? | No go: 14 of 117 open items SAT, and 13 of those needed no other net moved. [window-census.md](window-census.md) | Everything: lab command `census-kicad-window`, `Router::window_census`, `Router::footprint_of` (additive, research only), `experiments/window-census/` |
 | Cut census and skeleton gate, B and C (`fund-cuts`, 6fc15944, inside `fund-objective-terms`) | Are designer gaps sized to track quanta? Does the skeleton objective prefer the designer? | Gap thesis killed. Ours packs about twice as many gaps below one track. The skeleton objective ranks the designer's skeleton worse. [cut-census.md](cut-census.md) | Everything: a `skeleton_objective` trace line under `PCB_PLACER_TRACE`, `experiments/cut-census/` |
 | Objective terms (`fund-objective-terms`, 1d3d8b55) | Which objective term misjudges the designer? | None to add: candidate terms C1 (pin room) and C2 (`constraint_weight` 10) are both dropped. The objective prefers the designer's active parts with our passives on Glasgow and the 4in1, not on the 4in1-mini. Refinement walks away from them. [objective-terms.md](objective-terms.md) | Everything (Python and docs) |
-| Evaluation representations (`fund-eval-representations`, 8a664fd0) | What helps an agent see why a connection is open, or which placement routes better? | Per-open-item cards (annotated window and evidence, judged by KiCad): 12 of 12 correct at a quarter of the time. Every placement representation is at chance, and pre-routing measures mislead. [evaluation-representations.md](evaluation-representations.md) | Everything (Python, cases, subject prompts, results; 0.34 MB) |
+| Evaluation representations (`fund-eval-representations`, 8a664fd0) | What helps an agent see why a connection is open, or which placement routes better? | Per-open-item cards (annotated window and evidence, judged by KiCad): 12 of 12 correct at a quarter of the time. On 12 held-out cases ([cards-heldout.md](cards-heldout.md)) that does not hold: the generator's own verdict was right 4 of 12, subjects with cards 8 of 12, subjects with raw outputs 8 of 12; the cards are cheaper (47k against 69k tokens, 49 s against 195 s). Every placement representation is at chance, and pre-routing measures mislead. [evaluation-representations.md](evaluation-representations.md) | Everything (Python, cases, subject prompts, results; 0.34 MB) |
 | Noise sources, E3 and E2 (`fund-noise`, d6340d12) | Is the A/B noise placer or router? Do counter-based random numbers keep pairs paired? | Router × placer interaction is about 72 %. Pairing removes no variance with either RNG, and the counter RNG left 3 of 8 protoesp placements illegal (cause unknown). [noise-sources.md](noise-sources.md) | **Write-up and `experiments/noise-sources/` only.** The RNG prototype and placebo hooks (`PCB_PLACER_COUNTER_RANDOM`, `PCB_PLACER_PLACEBO`) stay on `fund-noise`: the verdict is not to adopt them, and main prunes switches |
 
 ### What changes behaviour on main
@@ -132,10 +132,15 @@ Run outputs stay outside the tree, in the shared untracked `build/`:
    - **Judging it:** several placer seeds per board, because of the noise
      finding.
    - **Evidence:** objective-terms.md section 4.
-2. **Per-open-item cards and `open_items` in `verdict.json`**
-   (evaluation-representations.md). Build them on the retry's single-net
-   KiCad-judged search. The misleading outputs the same study found are
-   being handled in [misleading-outputs.md](misleading-outputs.md).
+2. **Per-open-item evidence in `verdict.json`**
+   (evaluation-representations.md). The held-out test
+   ([cards-heldout.md](cards-heldout.md)) found the cards' generated
+   verdict right on 4 of 12, so do not port it; the picture of the window
+   and the reach data are the useful part (subjects were right where they
+   overrode the verdict from them), and they cost an agent less than the
+   raw outputs. Build them on the retry's single-net KiCad-judged search.
+   The misleading outputs the same study found are being handled in
+   [misleading-outputs.md](misleading-outputs.md).
 3. **The final ladder overruns its own budget.**
    - **Effect:** WLED_Matrix used 360 s of work against 258 s, so the repair's
      reserve was eaten and the repair skipped (`insufficient_remaining_work`).
@@ -155,6 +160,9 @@ Run outputs stay outside the tree, in the shared untracked `build/`:
 8. **What leaves tonight's near misses open, if not single-net misses?** The
    retry found no local path on the 11-24 sweep's 17. Look at the model walls
    on those boards, the window census's classes, before any joint solver.
+   Main since records the router's own reason per open terminal
+   (`routed.nets[]`'s `open`, [agents.md](../agents.md)), and the nightly
+   has a census of open causes (`scripts/nightly-causes.py`).
 9. **Unexplained:** the counter RNG's illegal placements (only on
    `fund-noise`), and why the 2026-11-24 nightly's layouts took about 6 h of
    wall time for about 25 min of CPU. Load and the memory ledger are likely,
