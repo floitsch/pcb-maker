@@ -90,7 +90,34 @@ none, plus reCamera@sweep-1118, 4 to 0). Two causes:
   32 nets), and 30 s of ladder work split over three attempts stops the
   negotiation after two iterations (`negotiation_work_limit`).
 
-At four times the budget (120 s), against the kept tier at the same budget: pending (queued behind the load gate on 2026-11-24).
+The four boards the bug stopped, rerun with the fix at 30 s (rel15-fix):
+RP2040_base@designer-1124 7 to 83, the laptop keyboard@designer-1124 2 to
+20, its motherboard@designer-1124 2 to 41, the keyboard@sweep-1118 2 to 14:
+all 38 boards together 99 to 571 at 30 s.
+
+**At four times the budget (120 s) it is still a loss, so the loss is not
+the budget's.** Against the kept tier at the same 120 s (base-x4 and
+rel15-x4, 3 x 2, all 38 boards with a result, one release row cut):
+
+| 120 s of ladder work | kept (base-x4) | released 1.5 mm (rel15-x4) |
+| --- | ---: | ---: |
+| unconnected (99 before) | 79 | 419 |
+| boards that closed some / opened some | 13 / 0 | 6 / 29 |
+| closed by the local repair | 1 | 5 |
+| strict passes | 4 | 5 |
+| work / CPU, summed | 2553 s / 6222 s | 3760 s / 9475 s |
+| wall of the run | 1726 s | 3438 s |
+
+- Four times the work buys the kept tier two more items (81 to 79) and
+  one more pass (poly_kybd_split72_right@designer-1124, 1 to 0) for 2.4
+  times the wall: 30 s is the tier's budget.
+- The released window ends near where it ended at 30 s (419 against 571
+  with the four repaired rows): the work is not what it lacks.
+- It does close two boards the kept resume cannot at either budget:
+  reCamera@sweep-1118 (1 kept, 0 released) and
+  poly_kybd_split72_left@sweep-1118 (1 kept, 0 released). These are the
+  boards where the copper next to the open item is in the way, which is
+  the case proposal A is for.
 
 A cut through stored copper is a poor stand-in for a window solve: every
 crossing becomes a terminal the router has to reach again, at the cut,
