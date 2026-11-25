@@ -7,20 +7,29 @@ use super::*;
 use pcb_kicad_route::open_repair::{LayoutRepairBudget, repair_layout_opens, same_as_standalone};
 use sha2::{Digest, Sha256};
 
-/// The optional post-route repair. The result's ordinary routing metrics
-/// still describe the core route. Native and board quality describe the
-/// selected board after any accepted additional copper.
+/// The optional post-route repair. Where it is `accepted`, the router's
+/// result (`routed`: its nets, counts and totals), KiCad's check and the
+/// board quality describe the selected board with the added copper
+/// (`account_open_repair`); the search metrics are the router's.
 #[derive(Clone, Debug, Serialize)]
 pub struct LayoutOpenRepair {
     pub status: &'static str,
+    /// Why not, for a repair skipped, failed or without improvement; on
+    /// an accepted one `nets not accounted: ...` where the router's nets
+    /// and counts could not be brought to the repaired board (the
+    /// result's `model_precedes_additive_repair` is then set).
     pub reason: Option<String>,
+    /// The nets whose copper KiCad accepted (`routed.nets[].open_repair`
+    /// says what the router had left on each), and the objects added.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub nets: Vec<String>,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub added_copper: usize,
     pub native_checks: usize,
     pub search_work_seconds: f64,
     pub work_seconds: f64,
     pub opens_before: usize,
     pub opens_after: usize,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub model_precedes_additive_repair: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub report: Option<&'static str>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -30,6 +39,10 @@ pub struct LayoutOpenRepair {
     pub same_board_search_complete: bool,
     #[serde(skip)]
     completed_search: bool,
+}
+
+fn is_zero(count: &usize) -> bool {
+    *count == 0
 }
 
 const MIN_SEARCH_SECONDS: f64 = 4.0;
@@ -71,12 +84,13 @@ pub(super) fn recover(
     let mut repair = LayoutOpenRepair {
         status: "skipped",
         reason: None,
+        nets: Vec::new(),
+        added_copper: 0,
         native_checks: 0,
         search_work_seconds: 0.0,
         work_seconds: 0.0,
         opens_before: before.selected_net_unconnected_items,
         opens_after: before.selected_net_unconnected_items,
-        model_precedes_additive_repair: false,
         report: None,
         same_board_search_complete: false,
         completed_search: false,
@@ -183,8 +197,26 @@ pub(super) fn recover(
     // the old physical board and its reports through any recoverable failure.
     let mut selected = routed.clone();
     let accepted_opens = native.selected_net_unconnected_items;
+    // The router's nets, counts and totals describe the board with the
+    // repair's copper, as route mode's do.
+    let accepted: Vec<String> = candidate
+        .trials
+        .iter()
+        .filter(|trial| trial.status == "accepted")
+        .map(|trial| trial.net.clone())
+        .collect();
+    let accounted = crate::board_router::account_open_repair(
+        &mut selected,
+        &result,
+        &trial,
+        ctx.board_id,
+        &accepted,
+    );
+    if let Err(error) = &accounted {
+        selected.model_precedes_additive_repair = true;
+        eprintln!("layout: local open repair: nets not accounted: {error}");
+    }
     selected.native = Some(native);
-    selected.model_precedes_additive_repair = true;
     selected.closed_reuse_drc = None;
     match pcb_kicad_file::board_stats::inspect_kicad_saved_copper(
         &trial.join(format!("{}.kicad_pcb", ctx.board_id)),
@@ -218,7 +250,11 @@ pub(super) fn recover(
     *routed = selected;
     repair.status = "accepted";
     repair.opens_after = accepted_opens;
-    repair.model_precedes_additive_repair = true;
+    repair.nets = accepted;
+    repair.added_copper = candidate.added_copper;
+    repair.reason = accounted
+        .err()
+        .map(|error| format!("nets not accounted: {error}"));
     repair.report = Some("result/open-repair.json");
     if repair.opens_after == 0 {
         repair.retry_argv.clear();
@@ -353,8 +389,32 @@ mod tests {
         copy_directory_tree(&source, &result).unwrap();
         let verified = verification::verify_materialized_rung(&result, "board").unwrap();
         assert_eq!(verified.selected_net_unconnected_items, 1);
+        // The router's own result on the board: LINK left open.
+        let link = KiCadBoardRouterNet {
+            connection: "LINK".into(),
+            terminals: 2,
+            status: "partial".into(),
+            unconnected_terminals: 1,
+            vias: 0,
+            length_mm: 0.0,
+            open: vec![crate::board_router::KiCadOpenTerminals {
+                reason: "no_path_hard:board".into(),
+                terminals: 1,
+                pads: vec!["J2.1".into()],
+                walled: Vec::new(),
+                wall: None,
+                blocked_by: Vec::new(),
+            }],
+            repair: None,
+            open_repair: None,
+            copy: None,
+            pads: Vec::new(),
+        };
         let mut routed = KiCadBoardRouterResult {
             native: Some(verified),
+            routable_connections: 1,
+            unconnected_terminals: 1,
+            nets: vec![link],
             ..Default::default()
         };
         work.work = ctx.work_deadline;
@@ -404,7 +464,26 @@ mod tests {
         assert_eq!(accepted.native_checks, 2);
         assert_eq!(accepted.work_seconds, work.work);
         assert!(accepted.search_work_seconds > 0.0);
-        assert!(routed.model_precedes_additive_repair);
+        // The result, and the report written beside the board, describe
+        // the board with the repair's copper.
+        assert_eq!(accepted.reason, None);
+        assert_eq!(accepted.nets, ["LINK"]);
+        assert!(accepted.added_copper > 0);
+        assert!(!routed.model_precedes_additive_repair);
+        assert_eq!(
+            (routed.routed_connections, routed.unconnected_terminals),
+            (1, 0)
+        );
+        let net = &routed.nets[0];
+        assert_eq!(net.status, "routed");
+        assert!(net.open.is_empty() && net.length_mm > 12.0, "{net:?}");
+        let note = net.open_repair.as_ref().unwrap();
+        assert_eq!(
+            (note.status, note.unconnected_terminals_before),
+            ("closed", 1)
+        );
+        assert_eq!(note.open_before[0].pads, ["J2.1"]);
+        assert_eq!(routed.length_mm, net.length_mm);
         let copper = routed.saved_copper.unwrap();
         assert!(copper.segments > 0 && copper.track_length_mm > 10.0);
         let report: serde_json::Value =
@@ -413,6 +492,8 @@ mod tests {
             report["saved_copper"],
             serde_json::to_value(copper).unwrap()
         );
+        assert_eq!(report["nets"][0]["open_repair"]["status"], "closed");
+        assert_eq!(report["unconnected_terminals"], 0);
         assert!(routed.native.unwrap().complete);
         assert!(result.join("open-repair.json").is_file());
         let disk = fs::read_to_string(result.join("board.kicad_pcb")).unwrap();

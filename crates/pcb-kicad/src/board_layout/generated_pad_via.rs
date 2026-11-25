@@ -114,9 +114,8 @@ pub(super) fn recover(
     let selected = (|| -> Result<KiCadBoardRouterResult, String> {
         fs::copy(result.join("erc.json"), trial.join("erc.json"))
             .map_err(|error| error.to_string())?;
-        if routed.model_precedes_additive_repair {
-            preserve_local_repair_reports(&result, &trial)?;
-        }
+        // The reports of an open repair adopted before, where there are any.
+        preserve_local_repair_reports(&result, &trial)?;
         let native = verification::record_verified_additive_board(
             &trial,
             ctx.board_id,
