@@ -217,3 +217,84 @@ def test_end_of_reads_kicads_descriptions():
     end = causes.end_of({"description": "Zone 'GND Fill' [GND] on F.Cu, B.Cu and 3 more, priority 0", "uuid": "z"})
     assert (end["kind"], end["net"], end["pad"]) == ("Zone", "GND", None)
     assert causes.net_key("/RAIL{slash}2") == causes.net_key("RAIL/2") == "RAIL/2"
+
+
+def open_group(reason, terminals, *pads):
+    return {"reason": reason, "terminals": terminals, "pads": list(pads)}
+
+
+def test_the_routers_reasons_name_the_open_items(tmp_path):
+    night = tmp_path / "2026-11-26"
+    router = {"nets": [
+        {"connection": "SDA", "status": "partial", "unconnected_terminals": 3,
+         "open": [open_group("no_path_hard:board", 2, "U3.1", "U4.1"), open_group("lost:clean_up", 1, "R1.2")]},
+        {"connection": "SCL", "status": "partial", "unconnected_terminals": 40,
+         "open": [open_group("repair_skipped:budget", 40, "U3.2")]},
+        {"connection": "MISO", "status": "partial", "unconnected_terminals": 2,
+         "open": [open_group("no_path_static", 1, "U5.1"), open_group("unknown", 1)]},
+        {"connection": "MOSI", "status": "partial", "open": [open_group("unknown", 2)]},
+        {"connection": "CS", "status": "partial", "open": [open_group("some_new_reason", 1, "U6.1")]},
+        {"connection": "GND", "status": "partial", "open": [open_group("no_access", 1, "C19.1")]},
+    ], "diagnostics": {"conflicted_nets": ["SDA"],
+                       "dead_pads": [{"pad": "C19.1", "net": "GND", "access": "off_lattice"}]}}
+    items = [
+        item(pad(1, "SDA", "U3"), track("SDA")),          # a listed pad: its reason
+        item(track("SDA"), pad(2, "SDA", "R1")),          # the other end listed
+        item(pad(9, "SDA", "U9"), track("SDA")),          # not listed, the net's reasons are mixed
+        item(pad(7, "SCL", "U7"), track("SCL")),          # not listed: the net's only reason
+        item(pad(1, "MISO", "U5"), track("MISO")),        # listed
+        item(track("MOSI"), track("MOSI")),               # the net's only reason is unknown
+        item(pad(1, "CS", "U6"), track("CS")),            # a reason the census does not know
+        item(pad(1, "GND", "C19"), track("GND")),         # the dead pad's cause comes first
+        item(pad(1, "SDA", "U4"), pad(2, "SDA", "R1")),   # two listed pads: the first reason in precedence
+    ]
+    write_night(night, {"route": [board(night / "route", "repo__Open", items, {}, router)]})
+    stage = causes.census({"route": (night / "route.log", night / "route")}, night.name)["stages"]["route"]
+    assert stage["per_board"]["repo__Open"]["causes"] == {
+        "open:no_path_hard:board": 2, "open:lost:clean_up": 1, "unexplained:net_open_mixed": 1,
+        "open:repair_skipped:budget": 1, "open:no_path_static": 1, "unexplained:open_unknown": 1,
+        "open:other": 1, "dead_pad:off_lattice": 1}
+    assert stage["open_by_net"] == 1
+    assert stage["unexplained"] == 2
+    text = causes.markdown({"previous": None, "stages": {"route": stage}})
+    assert "| open: the hard repair found no path around other nets' copper on the whole board | 2 | 1 |" in text
+    assert "- items under an `open:` cause by their net's only reason (their pads not listed): 1" in text
+
+
+def test_a_split_nets_items_go_to_the_copy_holding_their_pads(tmp_path):
+    night = tmp_path / "2026-11-26"
+    router = {"nets": [
+        {"connection": "GND", "status": "routed", "copy": 0, "pads": ["C1.2", "U1.4"]},
+        {"connection": "GND", "status": "partial", "copy": 1, "pads": ["C101.2", "U101.4", "R101.1"],
+         "open": [open_group("no_path_hard:window", 1, "R101.1")]},
+        {"connection": "GND", "status": "partial", "copy": 2, "pads": ["C201.2", "U201.4"],
+         "open": [open_group("repair_skipped:hopeless", 1)]},
+        {"connection": "VCC", "status": "routed", "copy": 0, "pads": ["U1.1"]},
+        {"connection": "VCC", "status": "partial", "copy": 1, "pads": ["U101.1"]},
+    ]}
+    items = [
+        item(pad(2, "GND", "C1"), pad(2, "GND", "C101")),   # two copies: the router split them by design
+        item(pad(4, "GND", "U1"), track("GND")),            # copy 0, routed
+        item(pad(1, "GND", "R101"), track("GND")),          # listed open in copy 1
+        item(pad(4, "GND", "U201"), track("GND")),          # copy 2, its only reason
+        item(track("GND"), track("GND")),                   # no pad: the copies disagree
+        item(pad(1, "VCC", "U101"), track("VCC")),          # copy 1 open, no reasons (an older binary)
+    ]
+    write_night(night, {"sweep": [board(night / "sweep", "repo__Panel", items, {}, router, mode="layout")]})
+    stage = causes.census({"sweep": (night / "sweep.log", night / "sweep")}, night.name)["stages"]["sweep"]
+    assert stage["per_board"]["repo__Panel"]["causes"] == {
+        "split_across_copies": 1, "router_counts_routed": 1, "open:no_path_hard:window": 1,
+        "open:repair_skipped:hopeless": 1, "unexplained:net_split": 1, "unexplained:net_open": 1}
+
+
+def test_items_across_outlines_are_named_by_their_uuids(tmp_path):
+    night = tmp_path / "2026-11-26"
+    items = [item(zone("GND", "a"), zone("GND", "b")), item(zone("GND", "c"), zone("GND", "d")),
+             item(pad(1, "VBUS", "J2"), track("VBUS"))]
+    verdict = {"board_outlines": {"outlines": 2, "unconnected_across": 1, "unconnected_across_items": [["b", "a"]]}}
+    router = {"nets": [{"connection": "GND", "status": "partial"}, {"connection": "VBUS", "status": "routed"}]}
+    write_night(night, {"sweep": [board(night / "sweep", "repo__Hub", items, verdict, router, mode="layout")]})
+    stage = causes.census({"sweep": (night / "sweep.log", night / "sweep")}, night.name)["stages"]["sweep"]
+    # The item named by its uuids, not the first unexplained one.
+    assert stage["per_board"]["repo__Hub"]["causes"] == {
+        "separate_outlines": 1, "unexplained:net_open": 1, "router_counts_routed": 1}
