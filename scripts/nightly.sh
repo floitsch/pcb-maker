@@ -59,7 +59,9 @@
 #      log (<stage>.log, the rows) and stderr (<stage>.err), build.log,
 #      gap.txt (compare.py --gap --targets), diff-<stage>.txt (compare.py
 #      against the previous nightly that ran the stage), nightly.json and
-#      summary.md (scripts/nightly-report.py --summarize). Nights beyond
+#      summary.md (scripts/nightly-report.py --summarize), and causes.json
+#      with summary.md's "Open causes" (scripts/nightly-causes.py: KiCad's
+#      unconnected items per cause the run's own outputs name). Nights beyond
 #      the newest 14 keep their logs and summaries; their stages' board
 #      directories are removed.
 #   4. Refreshes the estimates (tier_estimates.py --refresh): the night's
@@ -395,6 +397,9 @@ python3 "$here/scripts/nightly-report.py" --summarize "$directory" --nights "$ni
   --binary "$snapshot" --harness "$source_dir" --planned "${planned[@]}" --statuses "${statuses[@]}" \
   --seconds "$(($(date +%s) - started))" ${PCB_NIGHTLY_MIN_RESULTS:+--min-results "$PCB_NIGHTLY_MIN_RESULTS"}
 echo "summary $directory/summary.md"
+# The census of open causes: causes.json and a section of summary.md
+# (scripts/nightly-causes.py; it never fails the night).
+python3 "$here/scripts/nightly-causes.py" "$directory" --nights "$nights" --harness "$source_dir" || true
 
 # The estimates follow the binary: tonight's rows into the nightly's own
 # sidecar (from the committed one on the first night).
