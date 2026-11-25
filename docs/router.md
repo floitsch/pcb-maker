@@ -1048,6 +1048,11 @@ copper, pours or non-through vias. On a partly coupled pair, a generated
 fallback leaf can also go when its centreline is inside a longer
 parallel generated track and the removal preserves the copper components.
 `parallel_branches_removed` gives the count in the differential-pair report.
+The prunes of failed stubs and dangling tracks never take a track whose
+removal splits the net's copper (the fallback's route may end on a stub's
+middle), and at the end every routed pair net is checked again as the
+router's finish checks it (`verify::copper_components`): one its copper
+leaves apart is partial, its terminals open by `copper_check`.
 
 **Skew and length.** After the fallback `match_skew` meanders the shorter
 net of each kept pair, measured with vias at stackup height

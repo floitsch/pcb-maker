@@ -2486,6 +2486,100 @@ fn a_failed_stub_is_pruned_through_its_via() {
     assert_eq!(route.vias.len(), 1);
 }
 
+/// Sisu's I_MIC_P (designer tier, 2026-11-25): the fallback's route ends
+/// on the middle of a failed link's stub, whose own end dangles. Neither
+/// prune may take the stub: the net's two pads would be apart (and the
+/// rest of the fallback's route dangle after it), the net still counted
+/// routed.
+#[test]
+fn a_stub_the_fallback_ends_on_stays() {
+    let pad = |x: f64| core::Obstacle {
+        shape: core::Shape::Circle {
+            center: [x, 0.0],
+            radius: 0.3,
+        },
+        layers: 0b11,
+        kind: core::ObstacleKind::Copper,
+        net: Some(0),
+        clearance: 0.0,
+        clearance_override: None,
+        plated: false,
+        blocks_tracks: true,
+        blocks_vias: true,
+        label: "pad".into(),
+    };
+    let mut board = lowered().0;
+    board.obstacles = vec![pad(0.0), pad(10.0)];
+    let segment = |start: Point, end: Point| core::Segment {
+        layer: 0,
+        start,
+        end,
+        width: 0.2,
+    };
+    let route = core::NetRoute {
+        segments: vec![
+            // The stub, from the pad out to (6, 0), its end loose.
+            segment([0.0, 0.0], [6.0, 0.0]),
+            // The fallback's route from the other pad onto its middle.
+            segment([10.0, 0.0], [10.0, 3.0]),
+            segment([10.0, 3.0], [3.0, 3.0]),
+            segment([3.0, 3.0], [3.0, 0.0]),
+        ],
+        vias: Vec::new(),
+    };
+    let own: Vec<&core::Obstacle> = board.obstacles.iter().collect();
+    assert_eq!(pieces(&route, &own, None), 1);
+    let mut stubbed = route.clone();
+    prune_stub(&board, &mut stubbed, 0, ([5.8, 0.0], [6.0, 0.0]), 0.2);
+    assert_eq!(stubbed.segments.len(), 4, "{:?}", stubbed.segments);
+    let mut dangling = route.clone();
+    prune_dangling(&board, &mut dangling, 0);
+    assert_eq!(dangling.segments.len(), 4, "{:?}", dangling.segments);
+    assert_eq!(pieces(&dangling, &own, None), 1);
+}
+
+/// After the pairs' finish a routed pair net is rechecked by the router's
+/// copper check: one whose copper no longer joins its pads is partial, its
+/// terminals apart open by `copper_check`.
+#[test]
+fn a_pair_net_its_copper_leaves_apart_is_reported_open() {
+    let (board, config) = lowered();
+    let mut result = core::route(&board, &core_config(&config));
+    let net = (0..board.nets.len())
+        .find(|&net| {
+            board.nets[net].terminals.len() >= 2
+                && result.status[net] == core::NetStatus::Routed
+                && !result.routes[net].segments.is_empty()
+                && board.planes.iter().all(|plane| plane.net as usize != net)
+        })
+        .expect("a routed net") as core::NetId;
+    let nets = BTreeSet::from([net]);
+    // As routed: unchanged.
+    recheck_pair_nets(&board, &mut result, &nets);
+    assert_eq!(result.status[net as usize], core::NetStatus::Routed);
+    // Its tracks and vias gone (a prune that cut them): open.
+    result.routes[net as usize] = core::NetRoute::default();
+    recheck_pair_nets(&board, &mut result, &nets);
+    let terminals = board.nets[net as usize].terminals.len();
+    assert_eq!(
+        result.status[net as usize],
+        core::NetStatus::Partial {
+            unconnected_terminals: terminals - 1
+        }
+    );
+    let open: Vec<_> = result
+        .diagnostics
+        .open
+        .iter()
+        .filter(|open| open.net == net)
+        .collect();
+    assert_eq!(open.len(), terminals - 1);
+    assert!(
+        open.iter()
+            .all(|open| open.reason == core::OpenReason::CopperCheck)
+    );
+}
+
 /// The fallback adds its work to the report's, beside what the stub repair
 /// added before it (it set the report's, and the repair's work dropped
 /// out of the work charged to the ladder).
