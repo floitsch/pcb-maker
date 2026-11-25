@@ -7,7 +7,9 @@
 //! negotiation's board-wide searches, the hard repair's searches and
 //! budget, each later phase's before and after), read when the result is
 //! made. A record, not an input: nothing reads it to route, and recording
-//! adds no search.
+//! adds no search of the run. Where a static wall is (`static_walls`) is
+//! found when the result is made, for the nets that end open, by a test
+//! that counts no work.
 
 use super::corridors::StaticWall;
 use super::*;
@@ -148,8 +150,8 @@ impl Router {
     /// the lattice closes and what walls them (`static_wall`). The
     /// terminal's own pocket, else the tree's (the net's terminals without
     /// that record) where every one of its terminals is in a closed
-    /// pocket: then the wall is at the tree, not
-    /// at the terminals it did not reach. None where neither is closed.
+    /// pocket: then the wall is at the tree, not at the terminals it did
+    /// not reach. None where neither is closed.
     /// Computed for the result's report, for the nets that end open with
     /// such a terminal: no search of the run reads it.
     fn static_walls(&self, net: usize) -> Vec<WallAt> {
