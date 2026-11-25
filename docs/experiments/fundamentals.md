@@ -149,21 +149,19 @@ Run outputs stay outside the tree, in the shared untracked `build/`:
      packages.
 4. **`relocated_open_repair.rs`:** `native_evidence_limit` still refuses on
    the library cap. Apply the `COPPER_INDEPENDENT_TYPES` exemption there too.
-5. **Show route mode's `open_repair` in `verdict.json`** (today it is only in
-   `board-router.json`).
-6. **Three router defects** found by the evaluation study:
+5. **Three router defects** found by the evaluation study:
    - the neck rule ignores same-net copper (confirmed by the retry);
    - an escape is dropped beside duplicate pads (not checked);
    - same-number pads on two layers are merged (not checked).
-7. **The race:** test n placements × m router seeds at an equal probe budget
+6. **The race:** test n placements × m router seeds at an equal probe budget
    (noise-sources.md). Replicating router seeds is plausible but not shown.
-8. **What leaves tonight's near misses open, if not single-net misses?** The
+7. **What leaves tonight's near misses open, if not single-net misses?** The
    retry found no local path on the 11-24 sweep's 17. Look at the model walls
    on those boards, the window census's classes, before any joint solver.
    Main since records the router's own reason per open terminal
    (`routed.nets[]`'s `open`, [agents.md](../agents.md)), and the nightly
    has a census of open causes (`scripts/nightly-causes.py`).
-9. **Unexplained:** the counter RNG's illegal placements (only on
+8. **Unexplained:** the counter RNG's illegal placements (only on
    `fund-noise`), and why the 2026-11-24 nightly's layouts took about 6 h of
    wall time for about 25 min of CPU. Load and the memory ledger are likely,
    but neither was diagnosed.
