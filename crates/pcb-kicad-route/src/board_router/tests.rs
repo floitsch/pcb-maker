@@ -1916,6 +1916,47 @@ mod pour_request_tests {
     }
 
     #[test]
+    fn keep_whole_parts_skip_footprints_without_a_reference() {
+        // Two reference-less footprints of three pads each (six together)
+        // must not become a part named "".
+        let anon = |x: i32| {
+            format!(
+                r#"(footprint "m" (at {x} 5) (property "Reference" "")
+            (fp_rect (start -2 -2) (end 2 2) (layer "F.CrtYd"))
+            (pad "1" smd rect (at 0 0) (size 0.4 0.4) (layers "F.Cu") (net "/GND"))
+            (pad "2" smd rect (at 1 0) (size 0.4 0.4) (layers "F.Cu") (net "/GND"))
+            (pad "3" smd rect (at 2 0) (size 0.4 0.4) (layers "F.Cu") (net "/GND")))"#
+            )
+        };
+        let pcb = parse(&format!(
+            r#"(kicad_pcb
+          (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+          (gr_rect (start 0 0) (end 40 10) (layer "Edge.Cuts"))
+          (footprint "u" (at 30 5) (property "Reference" "U1")
+            (fp_rect (start -2 -2) (end 2 2) (layer "F.CrtYd"))
+(pad "1" smd rect (at 0.5 0) (size 0.4 0.4) (layers "F.Cu") (net "/GND"))
+(pad "2" smd rect (at 1.0 0) (size 0.4 0.4) (layers "F.Cu") (net "/GND"))
+(pad "3" smd rect (at 1.5 0) (size 0.4 0.4) (layers "F.Cu") (net "/GND"))
+(pad "4" smd rect (at 2.0 0) (size 0.4 0.4) (layers "F.Cu") (net "/GND"))
+(pad "5" smd rect (at 2.5 0) (size 0.4 0.4) (layers "F.Cu") (net "/GND"))
+(pad "6" smd rect (at 3.0 0) (size 0.4 0.4) (layers "F.Cu") (net "/GND")))
+          {} {})"#,
+            anon(5),
+            anon(15)
+        ))
+        .unwrap();
+        let layers = LayerTable::from_pcb(&pcb).unwrap();
+        let pads = region_pads(&pcb, &layers).unwrap();
+        let parts = keep_whole_parts(&pcb, &pads).unwrap();
+        let names: Vec<&str> = parts.iter().map(|part| part.0.as_str()).collect();
+        assert_eq!(names, vec!["U1"]);
+        assert_eq!(
+            keep_whole_candidates(&parts, &pads, "GND", 0, None),
+            vec!["U1".to_string()]
+        );
+    }
+
+    #[test]
     fn a_plane_request_keeps_tracks_off_its_layer_by_a_rule_area() {
         // The fence's four layers: GND's zone on In1.Cu exists; a plane
         // request adds the rule area alone, once.

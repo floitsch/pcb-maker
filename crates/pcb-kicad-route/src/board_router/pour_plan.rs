@@ -685,6 +685,12 @@ pub(crate) fn keep_whole_parts(
         .filter(|item| item.head() == Some("footprint"))
     {
         let reference = footprint_reference(footprint).unwrap_or_default();
+        // A footprint without a reference cannot be named by a `parts`
+        // selector, and its pads would be counted together with every
+        // other reference-less footprint's.
+        if reference.is_empty() {
+            continue;
+        }
         let count = pads.iter().filter(|pad| pad.reference == reference).count();
         if count < KEEP_WHOLE_PADS {
             continue;
