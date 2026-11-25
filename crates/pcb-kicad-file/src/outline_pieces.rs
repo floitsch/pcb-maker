@@ -774,9 +774,9 @@ impl Pieces {
             return None;
         }
         // The tabs: components of the inside cells on no piece that touch
-        // two pieces.
+        // two pieces, each with the pieces it touches and its cells.
         let mut seen = vec![false; columns * rows];
-        let mut tabs = Vec::new();
+        let mut tabs: Vec<([f64; 4], BTreeSet<u16>, Vec<usize>)> = Vec::new();
         // The cells of the tabs V-cuts make, which the cut lines report
         // (`cut_line_tabs`).
         let mut scored_members: Vec<usize> = Vec::new();
@@ -843,7 +843,7 @@ impl Pieces {
                 if members.iter().any(|at| scored[*at]) {
                     scored_members.extend(members);
                 } else {
-                    tabs.push(to_mm(b));
+                    tabs.push((to_mm(b), touching, members));
                 }
             }
         }
@@ -853,28 +853,25 @@ impl Pieces {
             let gap = NECK_RADIUS_MM;
             a[0] <= b[2] + gap && b[0] <= a[2] + gap && a[1] <= b[3] + gap && b[1] <= a[3] + gap
         };
-        let mut merged: Vec<[f64; 4]> = Vec::new();
+        let mut merged: Vec<([f64; 4], BTreeSet<u16>, Vec<usize>)> = Vec::new();
         for tab in tabs {
-            let mut tab = tab;
-            while let Some(index) = merged.iter().position(|other| near(other, &tab)) {
-                let other = merged.remove(index);
+            let (mut tab, mut touching, mut members) = tab;
+            while let Some(index) = merged.iter().position(|other| near(&other.0, &tab)) {
+                let (other, other_touching, other_members) = merged.remove(index);
                 tab = [
                     tab[0].min(other[0]),
                     tab[1].min(other[1]),
                     tab[2].max(other[2]),
                     tab[3].max(other[3]),
                 ];
+                touching.extend(other_touching);
+                members.extend(other_members);
             }
-            merged.push(tab);
+            merged.push((tab, touching, members));
         }
-        merged.extend(
-            cut_line_tabs(&scored_members, columns, origin, cell, &cuts.lines).unwrap_or_default(),
-        );
-        let tabs = merged;
-        // What cut each tab: a hole or a V-cut within the neck radius of
-        // its box, else the outline's own narrowing.
-        let mut kinds: BTreeSet<usize> = BTreeSet::new();
-        for tab in &tabs {
+        // What cut a tab: a hole or a V-cut within the neck radius of its
+        // box (1, 2), else the outline's own narrowing (0).
+        let kind_of = |tab: &[f64; 4]| {
             let grown = NECK_RADIUS_MM;
             let (first_row, last_row) = cell_range(tab[1] - grown, tab[3] + grown, origin[1], rows);
             let (first_column, last_column) =
@@ -894,7 +891,115 @@ impl Pieces {
                     }
                 }
             }
-            kinds.insert(kind);
+            kind
+        };
+        // A neck of the outline itself shorter and narrower than twice
+        // the neck radius (its box under that both ways) is a waist of one
+        // outline, not a bridge between boards: RS485M's LEGO holes leave
+        // two of 1.65 x 0.70 mm between its halves. The pieces it joins
+        // are one, its cells theirs. A bridge drawn as a strip (1.5 mm wide
+        // and 5 mm long: its box reaches past 2 mm) stays a tab, and so do
+        // the tabs of mouse bites and V-cuts.
+        let waist = |tab: &[f64; 4]| {
+            tab[2] - tab[0] < 2.0 * NECK_RADIUS_MM
+                && tab[3] - tab[1] < 2.0 * NECK_RADIUS_MM
+                && kind_of(tab) == 0
+        };
+        let mut joined: Vec<u16> = (0..pieces).collect();
+        fn root(joined: &mut [u16], mut at: u16) -> u16 {
+            while joined[at as usize] != at {
+                joined[at as usize] = joined[joined[at as usize] as usize];
+                at = joined[at as usize];
+            }
+            at
+        }
+        let mut waists: Vec<([f64; 4], u16, Vec<usize>)> = Vec::new();
+        merged.retain(|(tab, touching, members)| {
+            if !waist(tab) {
+                return true;
+            }
+            let mut touched = touching.iter().copied();
+            let first = touched.next().expect("a tab touches two pieces");
+            for other in touched {
+                let (a, b) = (root(&mut joined, first), root(&mut joined, other));
+                joined[a.max(b) as usize] = a.min(b);
+            }
+            waists.push((*tab, first, members.clone()));
+            false
+        });
+        if !waists.is_empty() {
+            // Renumbered in the order of their first piece.
+            let mut number = vec![NONE; pieces as usize];
+            let mut count = 0u16;
+            for piece in 0..pieces {
+                let at = root(&mut joined, piece);
+                if number[at as usize] == NONE {
+                    number[at as usize] = count;
+                    count += 1;
+                }
+                number[piece as usize] = number[at as usize];
+            }
+            let mut joined_boxes = vec![
+                [
+                    f64::INFINITY,
+                    f64::INFINITY,
+                    f64::NEG_INFINITY,
+                    f64::NEG_INFINITY,
+                ];
+                count as usize
+            ];
+            let mut grow = |piece: u16, b: [f64; 4]| {
+                let into = &mut joined_boxes[number[piece as usize] as usize];
+                *into = [
+                    into[0].min(b[0]),
+                    into[1].min(b[1]),
+                    into[2].max(b[2]),
+                    into[3].max(b[3]),
+                ];
+            };
+            for (piece, b) in boxes.iter().enumerate() {
+                grow(piece as u16, *b);
+            }
+            for (tab, piece, _) in &waists {
+                grow(*piece, *tab);
+            }
+            for label in labels.iter_mut().filter(|label| **label != NONE) {
+                *label = number[*label as usize];
+            }
+            for (_, piece, members) in &waists {
+                for at in members {
+                    labels[*at] = number[*piece as usize];
+                }
+            }
+            // A tab that now touches one piece alone is that piece's.
+            merged.retain(|(_, touching, members)| {
+                let touched: BTreeSet<u16> = touching
+                    .iter()
+                    .map(|piece| number[*piece as usize])
+                    .collect();
+                if touched.len() >= 2 {
+                    return true;
+                }
+                if let Some(piece) = touched.first() {
+                    for at in members {
+                        labels[*at] = *piece;
+                    }
+                }
+                false
+            });
+            boxes = joined_boxes;
+            pieces = count;
+            if pieces < 2 {
+                return None;
+            }
+        }
+        let mut tabs: Vec<[f64; 4]> = merged.into_iter().map(|(tab, _, _)| tab).collect();
+        tabs.extend(
+            cut_line_tabs(&scored_members, columns, origin, cell, &cuts.lines).unwrap_or_default(),
+        );
+        let mut kinds: BTreeSet<usize> = BTreeSet::new();
+        for tab in &tabs {
+            kinds.insert(kind_of(tab));
         }
         let cut_by: Vec<&'static str> = kinds
             .iter()
@@ -2883,6 +2988,69 @@ mod tests {
             ..pieces
         };
         assert_eq!(pieces.outline_frames(), vec![false, false]);
+    }
+
+    /// RS485M's outline (a LEGO unit, 20.6 x 28 mm) from `top`: notches
+    /// from both sides (half circles of 3.55 mm about (2.3, 18.3) and
+    /// (18.3, 18.3)), with `above` (the outline's points from its top
+    /// right corner to its top left one) drawn first, and its hole (2.8 mm about
+    /// (10.3, 18.3)) as a cutout. Between notches and hole two necks of
+    /// 1.65 mm.
+    fn lego(top: f64, above: &[[f64; 2]]) -> (Vec<[f64; 2]>, Vec<[f64; 2]>) {
+        let arc = |centre: [f64; 2], radius: f64, from: f64, to: f64| {
+            (0..=32).map(move |step| {
+                let angle = (from + (to - from) * step as f64 / 32.0).to_radians();
+                [
+                    centre[0] + radius * angle.cos(),
+                    top + centre[1] + radius * angle.sin(),
+                ]
+            })
+        };
+        let mut outline = vec![[20.6, top]];
+        outline.extend(above.iter().copied());
+        outline.push([0.0, top]);
+        outline.push([0.0, top + 14.75]);
+        outline.extend(arc([2.3, 18.3], 3.55, -90.0, 90.0));
+        outline.push([0.0, top + 21.85]);
+        outline.push([0.0, top + 28.0]);
+        outline.push([20.6, top + 28.0]);
+        outline.push([20.6, top + 21.85]);
+        outline.extend(arc([18.3, 18.3], 3.55, 90.0, 270.0));
+        outline.push([20.6, top + 14.75]);
+        let hole: Vec<[f64; 2]> = arc([10.3, 18.3], 2.8, 0.0, 360.0).collect();
+        (outline, hole)
+    }
+
+    #[test]
+    fn a_waist_of_the_outline_is_no_tab() {
+        // RS485M: its necks of 1.65 mm between the LEGO holes are a waist
+        // of one board, not tabs between two.
+        let (outline, hole) = lego(0.0, &[]);
+        assert!(Pieces::of_loops(&[outline], &[hole], &Cuts::default()).is_none());
+        // A board above it joined by a strip 1.6 mm wide and 5 mm long:
+        // the strip is a tab between two boards, the necks are not.
+        let strip = [
+            [11.1, 30.0],
+            [11.1, 25.0],
+            [20.6, 25.0],
+            [20.6, 0.0],
+            [0.0, 0.0],
+            [0.0, 25.0],
+            [9.5, 25.0],
+            [9.5, 30.0],
+        ];
+        let (outline, hole) = lego(30.0, &strip);
+        let pieces = Pieces::of_loops(&[outline], &[hole], &Cuts::default()).expect("pieces");
+        assert_eq!(pieces.count(), 2);
+        assert_eq!(pieces.tabs.len(), 1);
+        assert_eq!(pieces.cut_by, vec!["narrow outline"]);
+        let below = pieces.piece_at([10.0, 31.0]);
+        assert!(below.is_some());
+        assert_eq!(pieces.piece_at([10.0, 57.0]), below);
+        assert_eq!(pieces.piece_at([10.3, 48.3 + 2.8 + 0.8]), below);
+        assert_ne!(pieces.piece_at([10.0, 10.0]), below);
+        assert!(pieces.piece_at([10.0, 10.0]).is_some());
+        assert_eq!(pieces.boxes.len(), 2);
     }
 
     /// Two 20 x 20 pieces (y 0 to 20 and 25 to 45) joined by a 4 mm

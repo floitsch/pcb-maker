@@ -261,6 +261,29 @@ def test_the_routers_reasons_name_the_open_items(tmp_path):
     assert "- items under an `open:` cause by their net's only reason (their pads not listed): 1" in text
 
 
+def test_pads_the_pour_model_counted_joined_are_named_apart_from_the_stitchings_losses(tmp_path):
+    night = tmp_path / "2026-11-26"
+    router = {"nets": [
+        {"connection": "GND", "status": "partial", "unconnected_terminals": 3,
+         "open": [open_group("pour_apart_before_stitching", 2, "C1.2", "C2.2"),
+                  open_group("lost:pour_stitching", 1, "C3.2")]},
+    ]}
+    items = [
+        item(pad(2, "GND", "C1"), zone("GND", "z")),     # off the main piece at the stitching's first look
+        item(pad(2, "GND", "C3"), zone("GND", "z")),     # joined then, open after: lost there
+        item(pad(2, "GND", "C3"), pad(2, "GND", "C2")),  # both: the loss comes first in precedence
+    ]
+    write_night(night, {"route": [board(night / "route", "repo__Pour", items, {}, router)]})
+    stage = causes.census({"route": (night / "route.log", night / "route")}, night.name)["stages"]["route"]
+    assert stage["per_board"]["repo__Pour"]["causes"] == {
+        "open:pour_apart_before_stitching": 1, "open:lost:pour_stitching": 2}
+    assert causes.PRECEDENCE.index("open:lost:pour_stitching") < causes.PRECEDENCE.index(
+        "open:pour_apart_before_stitching") < causes.PRECEDENCE.index("open:copper_check")
+    text = causes.markdown({"previous": None, "stages": {"route": stage}})
+    assert ("| open: the pour model counted it joined, the pour stitching's first look found it off the pour's "
+            "main piece and did not join it | 1 | 1 |") in text
+
+
 def test_a_split_nets_items_go_to_the_copy_holding_their_pads(tmp_path):
     night = tmp_path / "2026-11-26"
     router = {"nets": [

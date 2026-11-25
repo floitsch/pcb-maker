@@ -22,7 +22,10 @@ name). Each item goes to the first cause of PRECEDENCE that names it:
 - two pads of a net the router split (`nets[].copy`) in two different
   copies (`nets[].pads`);
 - an end pad among the router's open terminals of the net
-  (`nets[].open[].pads`): the router's reason (`open:<reason>`);
+  (`nets[].open[].pads`): the router's reason (`open:<reason>`; of two
+  ends' reasons the first in CAUSES: the searches', then the phases that
+  lost a terminal, then the router's model counting a terminal joined
+  that was not, `pour_apart_before_stitching` and `copper_check`);
 - else the router's net of the item's net name (where the router split the
   name, the copy holding the item's pads): routed, or open for one reason
   only (`nets[].open`, its counts exact) when the pads were not listed;
@@ -99,6 +102,8 @@ CAUSES = (
     ("open:lost:pour_stitching", "open: joined, then lost in the pour stitching (off the pour's main piece)",
      "the same"),
     ("open:lost:manual_spokes", "open: joined, then lost adding manual spokes", "the same"),
+    ("open:pour_apart_before_stitching", "open: the pour model counted it joined, the pour stitching's first look "
+                                         "found it off the pour's main piece and did not join it", "the same"),
     ("open:copper_check", "open: the router counted it joined, its emitted copper leaves it apart", "the same"),
     ("open:no_access", "open: the router's terminal has no lattice node", "the same"),
     ("open:other", "open: another reason the router names", "the same"),

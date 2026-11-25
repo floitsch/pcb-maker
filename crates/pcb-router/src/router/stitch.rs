@@ -226,7 +226,10 @@ impl Router {
         trimmed
     }
 
-    pub(super) fn stitch_pours(&mut self, net: NetId, order: &[NetId]) -> usize {
+    /// Returns the stitching vias added and the terminals its first pour
+    /// analysis, before any change, found off the main piece (for
+    /// `OpenReason::PourApartBeforeStitching`).
+    pub(super) fn stitch_pours(&mut self, net: NetId, order: &[NetId]) -> (usize, Vec<usize>) {
         let class = self.board.classes[self.board.nets[net as usize].class];
         let layers = self.board.layer_count;
         let terminal_count = self.nets[net as usize].terminal_nodes.len();
@@ -235,12 +238,16 @@ impl Router {
         let mut rerouted = false;
         let mut previous_islands = usize::MAX;
         let mut stalled = 0;
+        let mut first_apart = None;
         for _ in 0..1500 {
             let (pours, mut parent, main, spoke_islands) = self.analyze_pours_full(net, &|_| false);
             let terminal_base = pours.pieces + 1;
             let islands: Vec<usize> = (0..terminal_count)
                 .filter(|terminal| find(&mut parent, terminal_base + terminal) != main)
                 .collect();
+            if first_apart.is_none() {
+                first_apart = Some(islands.clone());
+            }
             if islands.is_empty() && spoke_islands.is_empty() {
                 break;
             }
@@ -444,6 +451,6 @@ impl Router {
             complete &= *connected;
         }
         state.complete = complete;
-        stitches
+        (stitches, first_apart.unwrap_or_default())
     }
 }
