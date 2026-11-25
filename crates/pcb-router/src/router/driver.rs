@@ -514,6 +514,8 @@ impl Router {
             hot_spots,
             repair: self.repair_entries.clone(),
             released: self.released.clone(),
+            // `finish` fills it in (open.rs).
+            open: Vec::new(),
         }
     }
 

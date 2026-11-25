@@ -100,6 +100,7 @@ impl Router {
         let clock = self.clock();
         let mut skipped = 0;
         self.repair_skipped.clear();
+        self.repair_failed.clear();
         let link_budget = self.negotiation_seconds.max(60.0);
         for net in &removed {
             let budget = if link(*net) { link_budget } else { budget };
@@ -117,6 +118,10 @@ impl Router {
             }
             self.route_net_seq(*net, 0.0, true, 4.0);
             self.stamp(*net);
+            let state = &self.nets[*net as usize];
+            if !state.complete {
+                self.repair_failed.push((*net, state.hard_failure));
+            }
             if debug {
                 let state = &self.nets[*net as usize];
                 eprintln!(

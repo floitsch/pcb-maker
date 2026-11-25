@@ -243,6 +243,9 @@ impl Router {
             self.grid.cells() * self.board.layer_count,
             self.grid.cells(),
         );
+        if hard {
+            net_state.hard_failure = "";
+        }
         let groups = self.net_groups(net, net_state);
         scratch.tree.clear();
         let mut tree = Tree {
@@ -584,6 +587,16 @@ impl Router {
     ) {
         let terminal_count = self.board.nets[net as usize].terminals.len();
         let in_tree = &tree.in_tree;
+        if hard {
+            // The widest search `tree_search` ran (`OpenReason::NoPathHard`).
+            net_state.hard_failure = if !fallback {
+                "corridor"
+            } else if self.hard_scope == HardScope::Window {
+                "window"
+            } else {
+                "board"
+            };
+        }
         if fallback && !hard {
             net_state.hopeless_searches = net_state.hopeless_searches.saturating_add(1);
             // The board-wide search reached none of the open
@@ -862,6 +875,9 @@ impl Router {
                     );
                 }
                 failed[root] = true;
+                if hard {
+                    net_state.hard_failure = "board";
+                }
                 continue;
             };
             let first = self.state(path[0]);

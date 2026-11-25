@@ -82,23 +82,50 @@ impl Router {
         }
         let resolve_started = std::time::Instant::now();
         let mark = self.phase_mark();
-        // What the repair takes up, for the diagnostics.
-        let entries: Vec<RepairEntry> = order
-            .iter()
-            .filter(|&&net| !self.nets[net as usize].released)
-            .filter_map(|&net| {
-                let complete = self.nets[net as usize].complete;
-                let conflicted = !self.conflicts(net).is_empty();
-                (!complete || conflicted).then_some(RepairEntry {
-                    net,
-                    complete,
-                    conflicted,
-                    skipped: "",
-                })
-            })
-            .collect();
+        // What the repair takes up, for the diagnostics: where each net
+        // was in conflict and (but in a move's trial) with which nets.
+        let mut entries: Vec<RepairEntry> = Vec::new();
+        for &net in order {
+            if self.nets[net as usize].released {
+                continue;
+            }
+            let complete = self.nets[net as usize].complete;
+            let conflicts = self.conflicts(net);
+            if complete && conflicts.is_empty() {
+                continue;
+            }
+            entries.push(RepairEntry {
+                net,
+                complete,
+                conflicted: !conflicts.is_empty(),
+                skipped: "",
+                conflict_at: conflicts
+                    .first()
+                    .map(|&(layer, cell)| (layer, self.grid.center_of(cell as usize))),
+                conflicted_with: Vec::new(),
+            });
+        }
+        if !self.in_trial {
+            let conflicted: Vec<(NetId, Vec<(u32, u32)>)> = entries
+                .iter()
+                .filter(|entry| entry.conflicted)
+                .map(|entry| (entry.net, self.conflict_maps(entry.net)))
+                .collect();
+            let partners = self.conflict_partners(&conflicted);
+            for ((net, _), partners) in conflicted.iter().zip(partners) {
+                if let Some(entry) = entries.iter_mut().find(|entry| entry.net == *net) {
+                    entry.conflicted_with = partners;
+                }
+            }
+        }
+        // Why what stays open stays open (open.rs): the negotiation's
+        // board-wide misses now, each phase's outcome below.
+        self.open_reasons_start();
+        let negotiated = self.open_flags();
         self.repair_skipped.clear();
         self.resolve_remaining(order);
+        self.note_repair();
+        self.note_lost(&negotiated, "hard_repair", true);
         self.repair_entries = entries;
         if super::negotiate::link_trace() {
             self.trace_links(order, "repaired");
@@ -117,12 +144,15 @@ impl Router {
         // keeps it: boards far from complete get no polish and no moves,
         // and video's layout lost its gain (185 to 199) without it there.
         if !self.hopeless && self.config.trouble_repair && !self.in_trial {
+            let before = self.open_flags();
             self.repair_trouble(order, super::trouble::TroubleSettings::from_env());
+            self.note_lost(&before, "trouble_repair", false);
         }
         self.phase_charge(1, mark);
         self.profile.resolve += resolve_started.elapsed().as_secs_f64();
         let cleanup_started = std::time::Instant::now();
         let mark = self.phase_mark();
+        let before = self.open_flags();
         let improved = if self.hopeless {
             0
         } else {
@@ -133,6 +163,7 @@ impl Router {
         if !self.hopeless && self.config.cleanup_passes > 0 {
             self.repair_lengths(order);
         }
+        self.note_lost(&before, "clean_up", false);
         self.phase_charge(2, mark);
         let cleaned = cleanup_started.elapsed().as_secs_f64();
         self.profile.cleanup += cleaned;
@@ -141,9 +172,11 @@ impl Router {
         }
         let reduction_started = std::time::Instant::now();
         let mark = self.phase_mark();
+        let before = self.open_flags();
         self.in_via_reduction = true;
         self.reduce_vias(order);
         self.in_via_reduction = false;
+        self.note_lost(&before, "via_reduction", false);
         self.phase_charge(3, mark);
         self.profile.via_reduction += reduction_started.elapsed().as_secs_f64();
         if std::env::var_os("PCB_ROUTER_FINGERPRINT").is_some() {
@@ -157,7 +190,9 @@ impl Router {
         if self.config.cleanup_passes > 0 && !self.hopeless {
             let started = std::time::Instant::now();
             let mark = self.phase_mark();
+            let before = self.open_flags();
             self.reduce_bends(order);
+            self.note_lost(&before, "bends", false);
             self.phase_charge(2, mark);
             self.profile.cleanup += started.elapsed().as_secs_f64();
             if std::env::var_os("PCB_ROUTER_FINGERPRINT").is_some() {
@@ -170,8 +205,10 @@ impl Router {
         let spokes_started = std::time::Instant::now();
         let mark = self.phase_mark();
         if self.config.cleanup_passes > 0 || self.config.via_reduction_rounds > 0 {
+            let before = self.open_flags();
             self.free_thermal_spokes();
             self.free_lost_spokes();
+            self.note_lost(&before, "thermal_spokes", false);
         }
         self.phase_charge(4, mark);
         self.profile.thermal_spokes += spokes_started.elapsed().as_secs_f64();
@@ -186,7 +223,9 @@ impl Router {
         // straightening keeps out of the spoke corridors they freed.
         if self.config.straighten && self.config.cleanup_passes > 0 && !self.hopeless {
             let mark = self.phase_mark();
+            let before = self.open_flags();
             self.straighten(order);
+            self.note_lost(&before, "straighten", false);
             self.phase_charge(2, mark);
             if std::env::var_os("PCB_ROUTER_FINGERPRINT").is_some() {
                 eprintln!(
@@ -198,7 +237,9 @@ impl Router {
             // stay (compact.rs).
             {
                 let mark = self.phase_mark();
+                let before = self.open_flags();
                 self.compact(order);
+                self.note_lost(&before, "compaction", false);
                 self.phase_charge(2, mark);
                 if std::env::var_os("PCB_ROUTER_FINGERPRINT").is_some() {
                     eprintln!("fingerprint after compaction: {:016x}", self.fingerprint());
@@ -216,6 +257,7 @@ impl Router {
             .copied()
             .filter(|net| !self.nets[*net as usize].plane.is_empty())
             .collect();
+        let before = self.open_flags();
         for net in plane_nets {
             // The skeleton is trimmed first so that stitching only adds the
             // vias the pour pieces really need.
@@ -254,13 +296,16 @@ impl Router {
                 );
             }
         }
+        self.note_lost(&before, "pour_stitching", false);
         if self.config.manual_spokes
             && self.config.kicad_spokes
             && (self.config.cleanup_passes > 0 || self.config.via_reduction_rounds > 0)
         {
             let started = std::time::Instant::now();
             let mark = self.phase_mark();
+            let before = self.open_flags();
             let added = self.add_manual_spokes();
+            self.note_lost(&before, "manual_spokes", false);
             self.phase_charge(6, mark);
             let now = self.phase_mark();
             self.manual_spokes_work += (now.0 - mark.0) + (now.1 - mark.1);
@@ -339,6 +384,7 @@ impl Router {
         // dropped above) makes it partial, so that a complete route by the
         // router's count is one KiCad finds connected. A pour net's
         // connections are the pour model's.
+        let mut apart_terminals: Vec<(usize, Vec<usize>)> = Vec::new();
         for net in 0..self.board.nets.len() {
             if !matches!(status[net], NetStatus::Routed) || !self.nets[net].plane.is_empty() {
                 continue;
@@ -352,6 +398,20 @@ impl Router {
             let largest = sizes.values().copied().max().unwrap_or(0);
             let apart = components.len() - largest;
             if apart > 0 {
+                // The terminals apart: off the largest component (of
+                // equal ones the lowest numbered), as many as `apart`.
+                let main = sizes
+                    .iter()
+                    .filter(|(_, size)| **size == largest)
+                    .map(|(component, _)| *component)
+                    .min()
+                    .unwrap_or(0);
+                apart_terminals.push((
+                    net,
+                    (0..components.len())
+                        .filter(|terminal| components[*terminal] != main)
+                        .collect(),
+                ));
                 if self.config.verbose || std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
                     eprintln!(
                         "copper check: {} leaves {apart} of {} terminals apart",
@@ -370,7 +430,8 @@ impl Router {
                 *total += value;
             }
         }
-        let diagnostics = self.diagnostics();
+        let mut diagnostics = self.diagnostics();
+        diagnostics.open = self.open_terminals(&status, &apart_terminals);
         self.profile.emit += emit_started.elapsed().as_secs_f64();
         write_net_work();
         if self.config.verbose {
