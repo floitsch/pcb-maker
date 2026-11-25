@@ -34,6 +34,23 @@ pub struct LayoutOpenRepair {
 
 const MIN_SEARCH_SECONDS: f64 = 4.0;
 
+/// The search work the final ladder leaves to the repair (`reserve`).
+const RESERVE_SEARCH_SECONDS: f64 = 10.0;
+
+/// The work the final ladder leaves for this repair on a board KiCad finds
+/// open: the fill publication's checks, the repair's baseline and trial
+/// checks and a search. Without it, a final ladder that used the layout's
+/// work left the repair nothing (`insufficient_remaining_work`: 10 of the
+/// 34 sweep layouts the repair would have tried on the night of
+/// 2026-11-24, among them MIDAS with 1 unconnected item, katia and
+/// protoesp with 3).
+pub(super) fn reserve(ctx: &LayoutContext, has_pours: bool) -> f64 {
+    if ctx.config.stop_after_first_route || ctx.router_config.skip_native_verification {
+        return 0.0;
+    }
+    ctx.fill_check_reserve(has_pours) + 2.0 * ctx.check_seconds + RESERVE_SEARCH_SECONDS
+}
+
 pub(super) fn recover(
     ctx: &LayoutContext,
     ledger: &mut WorkLedger,

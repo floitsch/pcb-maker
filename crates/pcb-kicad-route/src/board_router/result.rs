@@ -208,6 +208,9 @@ pub struct KiCadBoardRouterResult {
     /// search metrics and per-net route totals precede it.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub model_precedes_additive_repair: bool,
+    /// Route mode's open repair after the ladder (`route_open_repair.rs`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub open_repair: Option<KiCadRouteOpenRepair>,
     /// The saved copper and native result include a verified pad-via move.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub model_precedes_generated_pad_via_repair: bool,

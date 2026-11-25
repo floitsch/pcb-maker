@@ -848,6 +848,44 @@ class CommittedTaskLists(unittest.TestCase):
             _, tasks = self.load("v7")
             self.assertLessEqual(set(entry["boards"]), set(tasks), tier)
 
+    def test_the_endgame_tier_names_tasks_of_the_committed_list(self):
+        entry = json.loads(run.TIERS["endgame"].read_text())
+        self.assertEqual(entry["kind"], "endgame")
+        self.assertEqual(entry["tasks"], "benchmarks/agent-tasks/tasks/v7/tasks.json")
+        _, tasks = self.load("v7")
+        for key, board in entry["boards"].items():
+            self.assertEqual(key.split("@")[0], board["task"], key)
+            self.assertIn(board["task"], tasks, key)
+            self.assertGreater(board["unconnected_before"], 0, key)
+            self.assertFalse(board["project"].startswith("build/nightly"), key)
+
+    def test_endgame_tasks_rename_and_leave_reserve_out(self):
+        tier = {"boards": {"a@x": {"task": "a"}, "a@y": {"task": "a", "reserve": True}, "b@x": {"task": "gone"}}}
+        tasks = [{"name": "a", "board_id": "a"}]
+        self.assertEqual([task["name"] for task in run.endgame_tasks(tier, tasks)], ["a@x"])
+        named = run.endgame_tasks(tier, tasks, only=["a@y"])
+        self.assertEqual([task["name"] for task in named], ["a@x", "a@y"])
+        self.assertEqual(named[1]["endgame"], {"task": "a", "reserve": True})
+        self.assertEqual(named[1]["board_id"], "a")
+
+    def test_release_window_removes_the_copper_near_the_opens(self):
+        board = ('(kicad_pcb\n  (version 20241229)\n'
+                 '  (segment\n    (start 0 0)\n    (end 1 0)\n    (net "A")\n    (uuid "s1"))\n'
+                 '  (via\n    (at 10 10)\n    (net "B")\n    (uuid "v1"))\n'
+                 '  (segment\n    (start 0.5 -0.2)\n    (end 0.5 -3)\n    (net "C (x)")\n    (uuid "s2")))\n')
+        drc = {"unconnected_items": [{"items": [{"pos": {"x": 0, "y": -1}}, {"pos": {"x": 2, "y": -1}}]}]}
+        with tempfile.TemporaryDirectory() as directory:
+            path, report = Path(directory) / "b.kicad_pcb", Path(directory) / "drc.json"
+            path.write_text(board)
+            report.write_text(json.dumps(drc))
+            released = run.release_window(path, report, 1.5)
+            text = path.read_text()
+        self.assertEqual(released, {"segments": 2, "vias": 0, "nets": ["A", "C (x)"]})
+        self.assertIn('(uuid "v1")', text)
+        self.assertNotIn('"s1"', text)
+        # The last item held the board's closing parenthesis.
+        self.assertEqual(run.text_balance(text), 0)
+
     def test_v6_and_v7_differ_only_on_six_panels(self):
         # The quick and short tiers moved from v6 to v7 (2026-10-21): none of
         # their boards is one of the six, so their older v6 logs stay bases.
