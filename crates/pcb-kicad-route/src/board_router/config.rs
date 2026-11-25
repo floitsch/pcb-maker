@@ -731,8 +731,9 @@ crate::tuning_group! {
         /// The repairs after routing that start from KiCad's report on the
         /// routed board (docs/router.md, "Repairs from KiCad's report";
         /// default on): a layout's local open repair, via detour, generated
-        /// pad-via move and same-hatch width repair, and the neck repair's
-        /// round pad-to-via bridge in both commands. False skips them and
+        /// pad-via move and same-hatch width repair, route mode's open
+        /// repair after its ladder, and the neck repair's round pad-to-via
+        /// bridge in both commands. False skips them and
         /// their KiCad checks; diagnostics that change no copper still run.
         /// Not given, `PCB_KICAD_NO_POST_ROUTE_REPAIRS` set (any value)
         /// turns them off.

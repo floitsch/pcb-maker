@@ -36,9 +36,9 @@ pub struct KiCadRouteOpenRepair {
 /// Route mode's repair after its ladder, on the board kept in `directory`:
 /// not in a layout's own ladders (`kicad_kept`: the layout repairs the
 /// board it keeps, `board_layout/additive_repair.rs`), a provisional
-/// reroute or a run without KiCad; skipped past the wall guard. Charges its
-/// work to the ladder and notes it in `result.open_repair`. Returns whether
-/// it ran.
+/// reroute or a run without KiCad; skipped with `tuning.post_route_repairs`
+/// off and past the wall guard. Charges its work to the ladder and notes it
+/// in `result.open_repair`. Returns whether it ran.
 pub(super) fn after_ladder(
     result: &mut KiCadBoardRouterResult,
     directory: &Path,
@@ -52,7 +52,7 @@ pub(super) fn after_ladder(
     {
         return Ok(false);
     }
-    let repair = if ladder.past_deadline() {
+    let repair = if ladder.past_deadline() && config.post_route_repairs_on() {
         result
             .native
             .as_ref()
@@ -75,7 +75,9 @@ pub(super) fn after_ladder(
 
 /// Runs the repair on the board kept in `directory` (the run's staging
 /// directory) when KiCad finds connections open there, and adopts the
-/// repaired project in its place. Returns the search work charged.
+/// repaired project in its place. With `tuning.post_route_repairs` off it
+/// is skipped (`post_route_repairs_off`): no search, no KiCad check, the
+/// board untouched. Returns the search work charged.
 pub(super) fn repair_route_opens(
     result: &mut KiCadBoardRouterResult,
     directory: &Path,
@@ -91,6 +93,14 @@ pub(super) fn repair_route_opens(
     else {
         return Ok(None);
     };
+    // A repair from KiCad's report (docs/router.md, "Repairs from KiCad's
+    // report").
+    if !config.post_route_repairs_on() {
+        return Ok(result
+            .native
+            .as_ref()
+            .map(|native| KiCadRouteOpenRepair::skipped(native, "post_route_repairs_off")));
+    }
     let mut repair = KiCadRouteOpenRepair {
         status: "skipped",
         reason: None,
@@ -268,6 +278,27 @@ mod tests {
             native: Some(native),
             ..Default::default()
         };
+        // With `tuning.post_route_repairs` false the repair is skipped with
+        // its reason: no search, no KiCad check, the board untouched.
+        let mut off = config.clone();
+        off.tuning.post_route_repairs = Some(false);
+        let skipped = repair_route_opens(&mut result, &directory, "board", &off, 0.0)
+            .unwrap()
+            .unwrap();
+        assert_eq!(skipped.status, "skipped");
+        assert_eq!(skipped.reason.as_deref(), Some("post_route_repairs_off"));
+        assert_eq!((skipped.opens_before, skipped.opens_after), (1, 1));
+        assert_eq!(
+            (skipped.native_checks, skipped.search_work_seconds),
+            (0, 0.0)
+        );
+        assert!(!result.model_precedes_additive_repair);
+        assert!(result.saved_copper.is_none());
+        assert_eq!(
+            fs::read_to_string(directory.join("board.kicad_pcb")).unwrap(),
+            pcb
+        );
+        assert!(!directory.join("open-repair.json").exists());
         // No work left: the floor still searches.
         let repair = repair_route_opens(&mut result, &directory, "board", &config, 0.0)
             .unwrap()

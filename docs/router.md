@@ -647,8 +647,11 @@ repair (`board_layout/additive_repair.rs`, from KiCad's open
 connections), the via detour (`via_detour.rs`, from a via/track short),
 the generated pad-via move (`generated_pad_via.rs`, from an open next to
 a generated via) and the same-hatch width repair (`unchanged_hatch.rs`,
-from width errors), and in both commands the neck repair's round
-pad-to-via bridge above. They are on by default; the router setting
+from width errors), in route mode the open repair after the ladder
+(`board_router/route_open_repair.rs`, from KiCad's open connections;
+`board-router.json`'s `open_repair` says `skipped`,
+`post_route_repairs_off` when it is off), and in both commands the neck
+repair's round pad-to-via bridge above. They are on by default; the router setting
 `tuning.post_route_repairs: false` (or `PCB_KICAD_NO_POST_ROUTE_REPAIRS`
 set, where the settings do not give it) skips them and their KiCad
 checks. The neck repair proper, the solid step, the fill hand-off
