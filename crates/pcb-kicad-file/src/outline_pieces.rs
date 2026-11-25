@@ -2310,6 +2310,12 @@ pub fn excuse_across_with(
     designed: Option<&BTreeSet<String>>,
     fills: &mut dyn FnMut() -> Option<Expr>,
 ) -> usize {
+    // A report judged per sub-board already (its items across moved out)
+    // is not judged again: the allowances would be spent twice, and the
+    // list left is no longer KiCad's, whose length tells the cap.
+    if report.get(ACROSS_KEY).is_some() {
+        return 0;
+    }
     let Some(items) = report["unconnected_items"].as_array() else {
         return 0;
     };
@@ -2388,8 +2394,9 @@ pub fn excuse_across_with(
     }
     // KiCad lists at most `KICAD_REPORT_CAP` unconnected items: at the cap
     // the items left are a lower bound, and none left would be a pass
-    // KiCad's list cannot show; then nothing moves.
-    let capped = items.len() >= KICAD_REPORT_CAP;
+    // KiCad's list cannot show; then nothing moves (below: an excuse at the
+    // cap always leaves an item counted, so the run stays incomplete).
+    let capped = items.len() >= KICAD_REPORT_CAP || report[CAPPED_KEY] == true;
     if !capped {
         // The nets with an item on a zone over several pieces (rule above).
         let mut of_net: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
@@ -3124,6 +3131,85 @@ mod tests {
             excused(&stray, track_item(("e", [9.0, 30.0]), ("a", [10.0, 22.0]))),
             0
         );
+    }
+
+    /// `cells` cells in a row (x 0 to 10 each, y 0 to 10), a GND pad with
+    /// uuid `p<i>` at the centre of each, and in cell 0 a second one
+    /// (`q0`) its copper does not join: GND is split, and KiCad's items
+    /// between the cells are what joining them takes.
+    fn capped_cells(cells: usize) -> (Expr, Pieces) {
+        let pad = |uuid: &str, x: f64| {
+            format!(
+                r#"(footprint "J1" (at {x} 5) (property "Reference" "J1") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "GND") (uuid "{uuid}")))"#
+            )
+        };
+        let mut parts: Vec<String> = (0..cells)
+            .map(|cell| pad(&format!("p{cell}"), 10.0 * cell as f64 + 5.0))
+            .collect();
+        parts.push(pad("q0", 2.0));
+        let pcb = crate::kicad_sexpr::parse(&format!(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user)) {})"#,
+            parts.join(" ")
+        ))
+        .unwrap();
+        let boxes = (0..cells)
+            .map(|cell| [10.0 * cell as f64, 0.0, 10.0 * cell as f64 + 10.0, 10.0])
+            .collect();
+        (pcb, Pieces::of_boxes(boxes))
+    }
+
+    fn pad_item(a: &str, b: &str) -> serde_json::Value {
+        serde_json::json!({"type": "unconnected_items", "items": [
+            {"description": "Pad 1 [GND] of J1 on F.Cu", "pos": {"x": 0, "y": 0}, "uuid": a},
+            {"description": "Pad 1 [GND] of J1 on F.Cu", "pos": {"x": 0, "y": 0}, "uuid": b}]})
+    }
+
+    #[test]
+    fn a_capped_report_is_never_excused_to_nothing() {
+        // 501 cells: KiCad's list stops at 499 items, every one of them
+        // across two cells. Excusing them all would leave nothing counted,
+        // a pass KiCad's list cannot show (more items, opens within a
+        // cell, may lie beyond the cap): nothing moves.
+        let (pcb, cells) = capped_cells(501);
+        let across: Vec<_> = (0..499)
+            .map(|cell| pad_item(&format!("p{cell}"), &format!("p{}", cell + 1)))
+            .collect();
+        let mut report = serde_json::json!({"unconnected_items": across});
+        assert_eq!(excuse_across(&mut report, &pcb, &cells, None), 0);
+        assert_eq!(report["unconnected_items"].as_array().unwrap().len(), 499);
+        assert!(report.get(CAPPED_KEY).is_none());
+        // At the cap with an open within cell 0 among them: the items
+        // across move, the open stays counted and the report says capped.
+        let mut items: Vec<_> = (0..498)
+            .map(|cell| pad_item(&format!("p{cell}"), &format!("p{}", cell + 1)))
+            .collect();
+        items.push(pad_item("p0", "q0"));
+        let mut report = serde_json::json!({"unconnected_items": items});
+        assert_eq!(excuse_across(&mut report, &pcb, &cells, None), 498);
+        assert_eq!(
+            report["unconnected_items"],
+            serde_json::json!([pad_item("p0", "q0")])
+        );
+        assert_eq!(report[CAPPED_KEY], true);
+        // Judged once: the report as left is not judged again (its list is
+        // no longer KiCad's, and the allowance is spent).
+        let judged = report.clone();
+        assert_eq!(excuse_across(&mut report, &pcb, &cells, None), 0);
+        assert_eq!(report, judged);
+    }
+
+    #[test]
+    fn a_report_is_judged_per_cell_once() {
+        // Two cells, so one item of GND joins them; KiCad lists two (one an
+        // open: which, its list does not say). Judged again, the item left
+        // would find the allowance fresh and go too: it stays.
+        let (pcb, cells) = capped_cells(2);
+        let mut report = serde_json::json!({"unconnected_items": [
+            pad_item("p0", "p1"), pad_item("q0", "p1")]});
+        assert_eq!(excuse_across(&mut report, &pcb, &cells, None), 1);
+        assert_eq!(report["unconnected_items"].as_array().unwrap().len(), 1);
+        assert_eq!(excuse_across(&mut report, &pcb, &cells, None), 0);
+        assert_eq!(report["unconnected_items"].as_array().unwrap().len(), 1);
     }
 
     #[test]

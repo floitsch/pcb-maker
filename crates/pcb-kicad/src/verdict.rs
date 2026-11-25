@@ -6962,6 +6962,34 @@ mod tests {
     }
 
     #[test]
+    fn a_capped_report_with_items_excused_is_never_complete() {
+        // KiCad's list at its cap of 499, 498 of them across a panel's
+        // cells and moved out (`outline_pieces::excuse_across`, which at
+        // the cap always leaves an item: here an open within one cell).
+        // The router's own count calls every connection routed. The run is
+        // incomplete on the item left, never complete on the excused ones.
+        let open = json!({"type": "unconnected_items", "severity": "error", "items": [
+            {"description": "Pad 1 [GND] of J1 on F.Cu", "pos": {"x": 5.0, "y": 5.0}, "uuid": "p0"},
+            {"description": "Pad 1 [GND] of J1 on F.Cu", "pos": {"x": 2.0, "y": 5.0}, "uuid": "q0"}]});
+        let across: Vec<Value> = (0..498).map(|_| open.clone()).collect();
+        let report = json!({
+            "unconnected_items": [open],
+            crate::outline_pieces::ACROSS_KEY: across,
+            crate::outline_pieces::CAPPED_KEY: true,
+            "violations": [],
+        });
+        let tally = tally_drc(&report);
+        assert_eq!(tally.unconnected, 1);
+        let verdict = judge(&routed(tally));
+        assert_eq!(verdict.status, KiCadRunStatus::Incomplete);
+        assert!(
+            verdict.reason.contains("1 unconnected items in KiCad"),
+            "{}",
+            verdict.reason
+        );
+    }
+
+    #[test]
     fn accepted_reuse_verdict_leads_with_saved_board_native_coverage() {
         let mut facts = routed(DrcTally::default());
         facts.route_reuse = Some(KiCadRouteReuseOutcome {
