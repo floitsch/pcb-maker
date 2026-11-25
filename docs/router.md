@@ -650,6 +650,12 @@ drop and nothing else gets worse; skipped past the deadline or without
 KiCad. `pcb-maker repair-kicad-necks` runs it alone. The router itself
 routes at the neck width within `neck_reach` (1.5 mm) of a net's narrow
 pads; `neck_width_mm` defaults to the project's minimum track width.
+In route mode its KiCad checks count as no work. Where a check counts as
+work (a layout: its final ladder and the board it keeps), the repair makes
+only the checks the work left pays for: the ladder's budget inside the
+ladder (`Ladder::checks_left`), the layout's work less the open repair's
+reserve after it; with fewer than three it does not run and its note
+says so.
 
 For a connection-width warning at a circular SMD pad and a nearly
 tangent same-net via, the repair can try one short radial track. It

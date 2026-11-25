@@ -1201,6 +1201,18 @@ impl<'a> Ladder<'a> {
         self.work_left() - self.reserve < self.last_attempt_work.max(120.0) + self.check_charge
     }
 
+    /// The KiCad checks the ladder's budget still pays for, where a check
+    /// counts as work (a layout's ladder); `None` where it counts as none
+    /// (route mode). The repairs after the attempts ask it: the neck
+    /// repair's checks, charged only afterwards, took WLED_Matrix's final
+    /// ladder to 414 s of work on a budget of 332 s (12 checks of 15.9 s),
+    /// and the layout's open repair found its reserve used.
+    pub(crate) fn checks_left(&self) -> Option<usize> {
+        (self.check_charge > 0.0).then(|| {
+            ((self.ladder_budget - self.work).max(0.0) / self.check_charge).floor() as usize
+        })
+    }
+
     /// Counts `checks` KiCad checks as work.
     pub(crate) fn charge_checks(&mut self, checks: usize) {
         let work = self.checks_charged.add(checks);
