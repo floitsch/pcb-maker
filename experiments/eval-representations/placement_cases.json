@@ -1,0 +1,14 @@
+{
+ "note": "Ground truth: build/nightly/2026-11-24/gap.txt. 'designer' is the designer's placement routed by pcb-maker (designer/<board>/placed), 'ours' the placer's (sweep/<board>/layout/placed); open connections after routing with the same budgets. The letters hide which is which.",
+ "nightly": "/home/flo/programming/pcb-maker/build/nightly/2026-11-24",
+ "cases": [
+  {"id": "p1", "name": "GlasgowEmbedded__glasgow__glasgow__revC3", "designer": "P", "open_ours": 85, "open_designer": 17,
+   "census": "cut census: ours closes 22 % of the pad-to-pad cuts to below one track against the designer's 13 %; the FPGA U30 and U1 lack planar escape"},
+  {"id": "p2", "name": "OpenDrone-hw__OpenESC-30x30__4in1", "designer": "Q", "open_ours": 78, "open_designer": 12,
+   "census": "cut census: closed cuts 35 % against 24 %; U10 short of escape without vias"},
+  {"id": "p3", "name": "apfaudio__eurorack-pmod__eurorack-pmod-pcb", "designer": "Q", "open_ours": 18, "open_designer": 1,
+   "census": "not in the cut census"},
+  {"id": "p4", "name": "CDFER__Business-Cards__Batch_1", "designer": "P", "open_ours": 137, "open_designer": 2,
+   "census": "a panel of three different boards whose parts our placement mixes"}
+ ]
+}
