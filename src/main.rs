@@ -397,6 +397,13 @@ const COMMANDS: &[Command] = &[
         run: lab_commands::cmd_probe_trouble_placement,
     },
     Command {
+        name: "census-kicad-window",
+        usage: Some(
+            "census-kicad-window <routed.kicad_pcb> <config.json> <clipped-out.kicad_pcb> <census-out.json>",
+        ),
+        run: lab_commands::cmd_census_kicad_window,
+    },
+    Command {
         name: "probe-coarse-placement",
         usage: Some(
             "probe-coarse-placement <placed.kicad_pcb> [router-config.json|auto] [--pitch-factor <1.0>] [--iterations <n>] [--hard-repair] [--trouble-repair] [--negotiation-share <0.5>] [--share <0.05>] [--total-seconds <1500>] [--work-seconds <s>] [--out <report.json>]",

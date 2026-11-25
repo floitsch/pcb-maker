@@ -523,6 +523,26 @@ pub(crate) fn cmd_probe_trouble_placement(mut arguments: Arguments) -> Result<()
     Ok(())
 }
 
+/// `census-kicad-window`: a routed board's window as the router's lattice
+/// (experiments/window-census).
+pub(crate) fn cmd_census_kicad_window(mut arguments: Arguments) -> Result<(), String> {
+    let usage = research_usage("census-kicad-window").unwrap_or_default();
+    let board = arguments.next().ok_or_else(|| usage.clone())?;
+    let config = arguments.next().ok_or_else(|| usage.clone())?;
+    let clipped = arguments.next().ok_or_else(|| usage.clone())?;
+    let out = arguments.next().ok_or_else(|| usage.clone())?;
+    let text = std::fs::read_to_string(&config)
+        .map_err(|error| format!("failed to read {config}: {error}"))?;
+    let config: pcb_kicad_lab::KiCadWindowCensusConfig =
+        serde_json::from_str(&text).map_err(|error| format!("{config}: {error}"))?;
+    pcb_kicad_lab::census_kicad_window(
+        Path::new(&board),
+        &config,
+        Path::new(&clipped),
+        Path::new(&out),
+    )
+}
+
 /// `probe-coarse-placement`: probes a placement on a coarse lattice.
 pub(crate) fn cmd_probe_coarse_placement(mut arguments: Arguments) -> Result<(), String> {
     let usage = research_usage("probe-coarse-placement").unwrap_or_default();
