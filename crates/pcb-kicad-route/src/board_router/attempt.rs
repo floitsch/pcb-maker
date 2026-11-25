@@ -112,6 +112,15 @@ fn emit_routes_preserving_tuning(
         }));
     }
     let mut nets = Vec::new();
+    // The names the router keeps several nets of (a panel's copies).
+    let copies = copy_indices(
+        &board
+            .nets
+            .iter()
+            .take(result.routes.len())
+            .map(|net| (!native_closed_planes.contains(&net.name)).then_some(net.name.as_str()))
+            .collect::<Vec<_>>(),
+    );
     for (net, route) in result.routes.iter().enumerate() {
         let description = &board.nets[net];
         if native_closed_planes.contains(&description.name) {
@@ -160,7 +169,39 @@ fn emit_routes_preserving_tuning(
                 ("unreachable", description.terminals.len().saturating_sub(1))
             }
         };
+        let open = matches!(status, "partial" | "unreachable");
+        let copy = copies[net];
         nets.push(KiCadBoardRouterNet {
+            open: if open {
+                open_terminals_of(
+                    &result.diagnostics,
+                    net as core::NetId,
+                    unconnected_terminals,
+                )
+            } else {
+                Vec::new()
+            },
+            repair: open
+                .then(|| {
+                    net_repair_of(
+                        &result.diagnostics,
+                        &board.nets,
+                        board.layer_count,
+                        net as core::NetId,
+                        layer_names,
+                    )
+                })
+                .flatten(),
+            copy,
+            pads: if copy.is_some() {
+                description
+                    .terminals
+                    .iter()
+                    .map(|terminal| terminal.label.clone())
+                    .collect()
+            } else {
+                Vec::new()
+            },
             connection: description.name.clone(),
             terminals: description.terminals.len(),
             status: status.into(),
@@ -177,6 +218,29 @@ fn emit_routes_preserving_tuning(
     }
     canonicalize_copper_net_names(pcb, &copper_net_names);
     Ok(nets)
+}
+
+/// Per net of `names` (None: a net not reported), where several reported
+/// nets share its name (a panel's copies the lowering split,
+/// `outline_pieces::split_router_nets`), its index among them in net
+/// order; None for a name of one net.
+pub(crate) fn copy_indices(names: &[Option<&str>]) -> Vec<Option<usize>> {
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    for name in names.iter().flatten() {
+        *counts.entry(name).or_default() += 1;
+    }
+    let mut seen: BTreeMap<&str, usize> = BTreeMap::new();
+    names
+        .iter()
+        .map(|name| {
+            let name = (*name)?;
+            (counts[name] > 1).then(|| {
+                let index = seen.entry(name).or_default();
+                *index += 1;
+                *index - 1
+            })
+        })
+        .collect()
 }
 
 /// A via's `layers` and kind token as KiCad writes them: `F.Cu B.Cu` and

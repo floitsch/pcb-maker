@@ -299,6 +299,11 @@ impl NativeInput {
                     unconnected_terminals: open,
                     vias: 0,
                     length_mm: 0.0,
+                    // KiCad's connectivity of the input: no router facts.
+                    open: Vec::new(),
+                    repair: None,
+                    copy: None,
+                    pads: Vec::new(),
                 }
             })
             .collect::<Vec<_>>();
