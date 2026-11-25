@@ -1786,6 +1786,9 @@ pub struct KiCadRunFacts {
     /// The board's separate outlines, when it has two or more
     /// (`outlines::KiCadBoardOutlines`).
     pub board_outlines: Option<outlines::KiCadBoardOutlines>,
+    /// The outline's narrow necks taken as waists of one board
+    /// (`outlines::KiCadOutlineWaists`).
+    pub outline_waists: Option<outlines::KiCadOutlineWaists>,
 }
 
 /// A part near a hot spot: its reference, its side (`front`, `back`) and
@@ -2832,6 +2835,7 @@ impl KiCadRunFacts {
             open_nets: Vec::new(),
             hot_spot: None,
             board_outlines: None,
+            outline_waists: None,
             fixed_parts: BTreeSet::new(),
             authored_layout_constraints: None,
             starved_pads: Vec::new(),
@@ -3059,6 +3063,14 @@ pub struct KiCadVerdict {
     /// join (`outlines::KiCadBoardOutlines`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub board_outlines: Option<outlines::KiCadBoardOutlines>,
+    /// The outline's narrow necks (under 2 mm) with no mouse bites or
+    /// V-cut at them whose two sides hold no copies of one board: the board
+    /// is checked and routed as one across them; per neck its box, the
+    /// parts on its sides and how many repeat a reference across, and
+    /// KiCad's unconnected items across the necks
+    /// (`outlines::KiCadOutlineWaists`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outline_waists: Option<outlines::KiCadOutlineWaists>,
     /// Pads no track leaves and no via may enter, per footprint
     /// (`KiCadClosedPadsNote`: board-router.json's `vias_in_pads.closed`,
     /// route.log's `pads no track leaves, no via allowed`), with the nets
@@ -3751,6 +3763,12 @@ fn next_actions(
                 .board_outlines
                 .as_ref()
                 .and_then(outlines::KiCadBoardOutlines::across_action),
+        );
+        actions.extend(
+            facts
+                .outline_waists
+                .as_ref()
+                .and_then(outlines::KiCadOutlineWaists::across_action),
         );
     }
     if facts.routes
@@ -6346,6 +6364,7 @@ pub(crate) fn judge_at(
             .cloned(),
         closed_pads: closed_pads(facts),
         board_outlines: facts.board_outlines.clone(),
+        outline_waists: facts.outline_waists.clone(),
         fixed_route_comparison: None,
         input_observations: observations,
         footprint_findings,
@@ -6619,6 +6638,7 @@ pub fn route_facts(
             ));
         }
         facts.board_outlines = outlines::of_board(&board, report.as_ref());
+        facts.outline_waists = outlines::waists_of_board(&board, report.as_ref());
         let project_exists = project.is_file();
         let has_native_opens = facts
             .native
