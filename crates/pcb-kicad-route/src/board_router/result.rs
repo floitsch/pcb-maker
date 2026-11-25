@@ -41,7 +41,8 @@ pub const OPEN_PADS_LISTED: usize = 16;
 pub struct KiCadOpenTerminals {
     /// `pcb_router::OpenReason::name`: `no_access`, `net_not_routable`,
     /// `no_path_static`, `repair_skipped:<why>`, `no_path_hard:<scope>`,
-    /// `lost:<phase>`, `copper_check`, `unknown`.
+    /// `lost:<phase>`, `pour_apart_before_stitching`, `copper_check`,
+    /// `unknown`.
     pub reason: String,
     /// How many (exact).
     pub terminals: usize,

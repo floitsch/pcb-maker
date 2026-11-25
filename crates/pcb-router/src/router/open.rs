@@ -85,6 +85,28 @@ impl Router {
         }
     }
 
+    /// After the pour stitching (`stitch_pour_nets`): the terminals it
+    /// left open as `note_lost` finds them, but those of `apart` (per
+    /// pour net, the terminals its first analysis found off the main
+    /// piece, before the stitching changed anything): the pour model
+    /// counted those joined and the stitching did not join them
+    /// (`OpenReason::PourApartBeforeStitching`), it did not lose them.
+    pub(super) fn note_stitching(&mut self, before: &[bool], apart: &[(usize, Vec<usize>)]) {
+        self.note_lost(before, "pour_stitching", false);
+        if self.open_reasons.len() != self.nets.len() {
+            return;
+        }
+        for (net, terminals) in apart {
+            for &terminal in terminals {
+                if let Some(reason) = self.open_reasons[*net].get_mut(terminal)
+                    && *reason == OpenReason::Lost("pour_stitching")
+                {
+                    *reason = OpenReason::PourApartBeforeStitching;
+                }
+            }
+        }
+    }
+
     /// After the hard repair (`resolve_remaining`): the terminals still
     /// open, without a reason, of the nets it did not search
     /// (`repair_skipped`: `OpenReason::RepairSkipped`) and of those it

@@ -152,8 +152,15 @@ pub enum OpenReason {
     /// `hard_repair` for the repair's own forced connections and links
     /// retried, `trouble_repair`, `clean_up`, `via_reduction`, `bends`,
     /// `thermal_spokes`, `straighten`, `compaction`, `pour_stitching`,
-    /// `manual_spokes`).
+    /// `manual_spokes`). `pour_stitching` only for a terminal the
+    /// stitching's first pour analysis found on the pour's main piece.
     Lost(&'static str),
+    /// The negotiation's pour model counted it joined, but the pour
+    /// stitching's first analysis of its net, before the stitching
+    /// changed anything, found it off the pour's main piece, and the
+    /// stitching left it there: the model's join, not the stitching,
+    /// left it open.
+    PourApartBeforeStitching,
     /// The router counted it joined, but the copper it emits leaves it
     /// apart from the rest of the net (an escape stub dropped at emission:
     /// the copper check that turns a routed net partial).
@@ -173,6 +180,7 @@ impl OpenReason {
             Self::RepairSkipped(why) => format!("repair_skipped:{why}"),
             Self::NoPathHard(scope) => format!("no_path_hard:{scope}"),
             Self::Lost(phase) => format!("lost:{phase}"),
+            Self::PourApartBeforeStitching => "pour_apart_before_stitching".into(),
             Self::CopperCheck => "copper_check".into(),
             Self::Unknown => "unknown".into(),
         }

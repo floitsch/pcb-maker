@@ -6,7 +6,7 @@
 //! that has it.
 
 use super::*;
-use crate::board::{Net, Obstacle, ObstacleKind, RuleClass, Terminal};
+use crate::board::{Net, Obstacle, ObstacleKind, Plane, RuleClass, Terminal};
 use crate::geometry::Shape;
 
 /// One layer, 30 x 20 mm: per net its pads (round, 0.3 mm), labelled
@@ -310,4 +310,89 @@ fn the_copper_checks_terminals_apart_are_named() {
             reason: OpenReason::CopperCheck,
         }]
     );
+}
+
+#[test]
+fn the_stitchings_losses_are_told_from_pads_its_first_look_found_apart() {
+    // A routed alone; the stitching opens both its terminals. Of those
+    // its first analysis found off the pour's main piece (A.1) the pour
+    // model's join left it open; the other one the stitching lost.
+    let board = crossing();
+    let mut router = Router::new(&board, &config());
+    router.route_net_seq(0, 0.0, false, 1.0);
+    router.stamp(0);
+    router.open_reasons_start();
+    let before = router.open_flags();
+    router.rip_up(0);
+    router.note_stitching(&before, &[(0, vec![1])]);
+    assert_eq!(
+        router.open_reasons[0],
+        vec![
+            OpenReason::Lost("pour_stitching"),
+            OpenReason::PourApartBeforeStitching
+        ]
+    );
+    assert_eq!(
+        router.open_reasons[0][1].name(),
+        "pour_apart_before_stitching"
+    );
+    // A terminal open before the stitching keeps its reason.
+    router.open_reasons[0] = vec![OpenReason::NoPathStatic; 2];
+    let before = router.open_flags();
+    router.note_stitching(&before, &[(0, vec![0, 1])]);
+    assert_eq!(router.open_reasons[0], vec![OpenReason::NoPathStatic; 2]);
+}
+
+#[test]
+fn a_pad_the_pour_model_counted_joined_but_the_stitching_found_apart() {
+    // G's pour covers the board; a ring of keepouts round G.1 parts its
+    // fill there from the rest. The flags say joined (the pour model's
+    // count); the stitching's first analysis finds one pad off the main
+    // piece, and with one layer and the deadline past it can neither
+    // stitch nor reroute it: open, by the model's join.
+    let mut board = board_of(
+        &[("G", vec![[3.0, 10.0], [20.0, 10.0]])],
+        &[
+            ([20.0, 8.0], [2.2, 0.2]),
+            ([20.0, 12.0], [2.2, 0.2]),
+            ([18.0, 10.0], [0.2, 2.2]),
+            ([22.0, 10.0], [0.2, 2.2]),
+        ],
+    );
+    board.planes.push(Plane {
+        net: 0,
+        class: 0,
+        layer: 0,
+        polygon: board.outline.clone(),
+        excluded: Vec::new(),
+        above: Vec::new(),
+        connect: true,
+        thermal_reach: 0.0,
+        thermal_gap: 0.0,
+        exclusive: false,
+        solid: true,
+        hatch: None,
+        island_min_area: Some(0.0),
+    });
+    let mut router = Router::new(
+        &board,
+        &Config {
+            deadline: Some(std::time::Instant::now()),
+            ..config()
+        },
+    );
+    let joined = vec![true; router.nets[0].connected.len()];
+    router.nets[0].connected = joined;
+    router.nets[0].complete = true;
+    router.open_reasons_start();
+    router.stitch_pour_nets(&[0]);
+    let open: Vec<usize> = (0..2)
+        .filter(|terminal| !router.nets[0].connected[*terminal])
+        .collect();
+    assert_eq!(open.len(), 1, "{:?}", router.nets[0].connected);
+    assert_eq!(
+        router.open_reasons[0][open[0]],
+        OpenReason::PourApartBeforeStitching
+    );
+    assert_eq!(router.open_reasons[0][1 - open[0]], OpenReason::Unknown);
 }

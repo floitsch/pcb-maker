@@ -252,51 +252,7 @@ impl Router {
                 cleanup_started.elapsed().as_secs_f64() - cleaned
             );
         }
-        let plane_nets: Vec<NetId> = order
-            .iter()
-            .copied()
-            .filter(|net| !self.nets[*net as usize].plane.is_empty())
-            .collect();
-        let before = self.open_flags();
-        for net in plane_nets {
-            // The skeleton is trimmed first so that stitching only adds the
-            // vias the pour pieces really need.
-            let stitching_started = std::time::Instant::now();
-            let mark = self.phase_mark();
-            let trimmed = self.trim_skeleton(net);
-            if std::env::var_os("PCB_ROUTER_FINGERPRINT").is_some() {
-                let name = &self.board.nets[net as usize].name;
-                match self.uncharged(|| self.analyze_pours_full(net, &|_| false)) {
-                    Some((pours, _, main, spoke_islands)) => eprintln!(
-                        "fingerprint before stitching {name}: {:016x}, {} pieces, main {main}, spoke islands {:?}",
-                        self.fingerprint(),
-                        pours.pieces,
-                        spoke_islands
-                    ),
-                    None => eprintln!(
-                        "fingerprint before stitching {name}: {:016x}",
-                        self.fingerprint()
-                    ),
-                }
-            }
-            let stitches = self.stitch_pours(net, order);
-            let tails = self.trim_dangling_plane_ends(net);
-            if self.config.verbose && tails > 0 {
-                eprintln!(
-                    "pour {}: {tails} nodes of plane ends without fill trimmed",
-                    self.board.nets[net as usize].name
-                );
-            }
-            self.profile.stitching += stitching_started.elapsed().as_secs_f64();
-            self.phase_charge(5, mark);
-            if self.config.verbose {
-                eprintln!(
-                    "pour {}: {stitches} stitching vias, {trimmed} skeleton nodes trimmed, complete {}",
-                    self.board.nets[net as usize].name, self.nets[net as usize].complete
-                );
-            }
-        }
-        self.note_lost(&before, "pour_stitching", false);
+        self.stitch_pour_nets(order);
         if self.config.manual_spokes
             && self.config.kicad_spokes
             && (self.config.cleanup_passes > 0 || self.config.via_reduction_rounds > 0)
@@ -551,16 +507,76 @@ impl Router {
         ok
     }
 
+    /// The pour nets' stitching (`trim_skeleton`, `stitch_pours`,
+    /// `trim_dangling_plane_ends`) in `order`, with why it leaves
+    /// terminals open (`note_stitching`).
+    pub(super) fn stitch_pour_nets(&mut self, order: &[NetId]) {
+        let plane_nets: Vec<NetId> = order
+            .iter()
+            .copied()
+            .filter(|net| !self.nets[*net as usize].plane.is_empty())
+            .collect();
+        let before = self.open_flags();
+        let mut apart: Vec<(usize, Vec<usize>)> = Vec::new();
+        for net in plane_nets {
+            // The skeleton is trimmed first so that stitching only adds the
+            // vias the pour pieces really need.
+            let stitching_started = std::time::Instant::now();
+            let mark = self.phase_mark();
+            let (trimmed, trim_apart) = self.trim_skeleton(net);
+            if std::env::var_os("PCB_ROUTER_FINGERPRINT").is_some() {
+                let name = &self.board.nets[net as usize].name;
+                match self.uncharged(|| self.analyze_pours_full(net, &|_| false)) {
+                    Some((pours, _, main, spoke_islands)) => eprintln!(
+                        "fingerprint before stitching {name}: {:016x}, {} pieces, main {main}, spoke islands {:?}",
+                        self.fingerprint(),
+                        pours.pieces,
+                        spoke_islands
+                    ),
+                    None => eprintln!(
+                        "fingerprint before stitching {name}: {:016x}",
+                        self.fingerprint()
+                    ),
+                }
+            }
+            let (stitches, first_apart) = self.stitch_pours(net, order);
+            // The stitching's first analysis: the trim's where it ran one.
+            apart.push((net as usize, trim_apart.unwrap_or(first_apart)));
+            let tails = self.trim_dangling_plane_ends(net);
+            if self.config.verbose && tails > 0 {
+                eprintln!(
+                    "pour {}: {tails} nodes of plane ends without fill trimmed",
+                    self.board.nets[net as usize].name
+                );
+            }
+            self.profile.stitching += stitching_started.elapsed().as_secs_f64();
+            self.phase_charge(5, mark);
+            if self.config.verbose {
+                eprintln!(
+                    "pour {}: {stitches} stitching vias, {trimmed} skeleton nodes trimmed, complete {}",
+                    self.board.nets[net as usize].name, self.nets[net as usize].complete
+                );
+            }
+        }
+        self.note_stitching(&before, &apart);
+    }
+
     /// Drops the parts of the plane skeleton that lie in solid pour copper:
     /// the pour provides that connection itself. What remains (hops to pads
     /// off the pour, runs squeezed between foreign copper) ends on the pour.
-    /// Returns the number of nodes removed.
-    pub(super) fn trim_skeleton(&mut self, net: NetId) -> usize {
+    /// Returns the number of nodes removed and, where it analysed the
+    /// pour, the terminals that analysis found off the main piece (the
+    /// stitching's first analysis: `OpenReason::PourApartBeforeStitching`).
+    pub(super) fn trim_skeleton(&mut self, net: NetId) -> (usize, Option<Vec<usize>>) {
         let fixed = self.nets[net as usize].fixed;
         if fixed == 0 {
-            return 0;
+            return (0, None);
         }
-        let (pours, _, _) = self.analyze_pours(net);
+        let (pours, mut parent, main) = self.analyze_pours(net);
+        let terminal_base = pours.pieces + 1;
+        let apart: Vec<usize> = (0..self.nets[net as usize].terminal_nodes.len())
+            .filter(|terminal| find(&mut parent, terminal_base + terminal) != main)
+            .collect();
         let grid = self.grid.clone();
         let redundant =
             |node: &Node| pours.solid_around(&grid, node.layer as usize, node.cell as usize, 1);
@@ -628,7 +644,7 @@ impl Router {
         state.branches = kept;
         state.fixed = 0;
         self.stamp(net);
-        removed
+        (removed, Some(apart))
     }
 }
 
