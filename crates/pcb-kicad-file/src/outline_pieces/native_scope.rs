@@ -254,7 +254,11 @@ mod tests {
                 [0.0, 10.0],
             ]],
             &[],
-            &Default::default(),
+            // Two copies of one board, joined by a 1 mm neck.
+            &crate::outline_pieces::Cuts {
+                parts: vec![("U1".into(), [6.0, 5.0]), ("U1".into(), [21.0, 5.0])],
+                ..crate::outline_pieces::Cuts::default()
+            },
         )
         .unwrap();
         let route =

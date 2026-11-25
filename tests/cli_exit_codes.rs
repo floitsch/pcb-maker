@@ -1455,10 +1455,13 @@ fn local_open_repair_keeps_the_cross_gap_open_on_the_panel() {
 "#
         );
         for (index, x) in [3, 8, 22].into_iter().enumerate() {
+            // On the panel the right board is a copy of the left (its J0
+            // repeats the left's): what makes the 1 mm neck a tab.
+            let reference = if panel && index == 2 { 0 } else { index };
             board.push_str(&format!(
                 r#"  (footprint "test" (layer "F.Cu") (at {x} 5)
     (uuid "1b0aa000-13dd-462e-9898-234e65f5ff0{index}")
-    (property "Reference" "J{index}" (at 0 -2) (layer "F.SilkS")
+    (property "Reference" "J{reference}" (at 0 -2) (layer "F.SilkS")
       (effects (font (size 1 1) (thickness 0.15))))
     (pad "1" smd circle (at 0 0) (size 1 1) (layers "F.Cu") (net "/TARGET")
       (uuid "ef2ff1e8-13dd-462e-9898-234e65f5ff0{index}")))

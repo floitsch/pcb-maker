@@ -13,7 +13,10 @@
 //! - `Pieces`: the outline's pieces without its tabs: the board area
 //!   rasterised, opened by `NECK_RADIUS_MM` (eroded and grown back), so
 //!   that necks narrower than twice that (mouse bites, thin tabs) fall
-//!   away; each part of the opened area large enough is a piece.
+//!   away; each part of the opened area large enough is a piece. A neck
+//!   with no mouse bites or V-cut at it parts two boards only where the
+//!   parts on its sides are copies (`Sides`); else it is a waist of one
+//!   board (`Pieces::outline_waists`).
 //! - `split_router_nets`: the router's net split: a net whose pads lie on
 //!   two or more pieces, with none of its copper (pads, tracks, vias) on a
 //!   tab or spanning two pieces, is one net per piece (its pours clipped
@@ -151,7 +154,9 @@ const V_CUT_LABEL_REACH_MM: f64 = 10.0;
 /// What cuts a board's outline into pieces besides its own narrowing:
 /// rows of mouse bites drilled as separate holes (non-plated pads of
 /// footprints with no other pad), and V-cut lines (a graphic line on a
-/// user layer with a "V-CUT" or "V-SCORE" label at one end).
+/// user layer with a "V-CUT" or "V-SCORE" label at one end); and the
+/// board's parts, which say whether a narrow neck of the outline with
+/// neither parts two boards (`Sides`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Cuts {
     /// The mouse bites' holes: centre and radius.
@@ -160,6 +165,131 @@ pub struct Cuts {
     pub lines: Vec<[[f64; 2]; 2]>,
     /// How many rows of mouse bites the holes make.
     pub rows: usize,
+    /// The board's parts (`board_parts`): reference and anchor.
+    pub parts: Vec<(String, [f64; 2])>,
+}
+
+/// The board's parts that tell its necks apart (`Sides`): footprints with
+/// an annotated reference (not empty, no `?` or `*`: KiCad's unannotated
+/// `R?`, a logo's `REF**`) and a pad on a net, each with its reference and
+/// its anchor.
+fn board_parts(pcb: &Expr) -> Vec<(String, [f64; 2])> {
+    let codes = crate::kicad_nets::net_codes(pcb);
+    let mut parts = Vec::new();
+    for footprint in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+    {
+        let Some(reference) = crate::kicad_nets::footprint_reference(footprint) else {
+            continue;
+        };
+        let reference = reference.trim();
+        if reference.is_empty() || reference.contains(['?', '*']) {
+            continue;
+        }
+        let netted = footprint
+            .children()
+            .iter()
+            .filter(|child| child.head() == Some("pad"))
+            .any(|pad| crate::kicad_nets::item_net(pad, &codes).is_some_and(|net| !net.is_empty()));
+        if !netted {
+            continue;
+        }
+        let Ok(at) = form_at(footprint) else { continue };
+        parts.push((reference.to_string(), [at[0], at[1]]));
+    }
+    parts
+}
+
+/// What the parts on the two sides of a narrow neck say of it: two boards
+/// copied side by side (`Copies`), two halves of one circuit
+/// (`Different`), or nothing (`Unknown`: a side holds no part).
+///
+/// KiCad annotates a circuit's parts each with a reference of its own, so
+/// two footprints of one reference are two copies of a part: a board
+/// copied beside itself (a panel of copies; KiCad does this nowhere
+/// else), or a block copied in one layout. A neck parts two boards when
+/// the side with fewer parts is a copy: more than half of its parts have a
+/// reference the other side has too. The parts of one board on both
+/// sides of a waist share no reference.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Sides {
+    Copies,
+    Different,
+    Unknown,
+}
+
+impl Sides {
+    /// The sides' parts, as their references; with the parts on the side
+    /// with fewer and how many of those repeat a reference of the other.
+    fn of(a: &[&str], b: &[&str]) -> (Sides, usize) {
+        if a.is_empty() || b.is_empty() {
+            return (Sides::Unknown, 0);
+        }
+        let (fewer, more) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+        let other: BTreeSet<&str> = more.iter().copied().collect();
+        let repeated = fewer.iter().filter(|part| other.contains(*part)).count();
+        let sides = if 2 * repeated > fewer.len() {
+            Sides::Copies
+        } else {
+            Sides::Different
+        };
+        (sides, repeated)
+    }
+}
+
+/// Whether the board's parts are copies of one circuit: more than half of
+/// them share their reference with another part (`Sides`). What a neck
+/// with a side without parts is judged by.
+fn mostly_copies(parts: &[(String, [f64; 2])]) -> bool {
+    let mut count: BTreeMap<&str, usize> = BTreeMap::new();
+    for (reference, _) in parts {
+        *count.entry(reference.as_str()).or_default() += 1;
+    }
+    let repeated = parts
+        .iter()
+        .filter(|(reference, _)| count[reference.as_str()] >= 2)
+        .count();
+    2 * repeated > parts.len()
+}
+
+/// A narrow neck of the outline judged a waist of one board
+/// (`Pieces::outline_waists`): no mouse bites or V-cut at it, and its
+/// sides no copies of each other (`Sides`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct OutlineNeck {
+    /// The neck's box (mm): the board the opening took between the parts
+    /// of the outline it joins.
+    pub neck: [f64; 4],
+    /// The parts on its two sides (of the two sides that decided).
+    pub parts: [usize; 2],
+    /// Of the parts on the side with fewer, those with a reference the
+    /// other side has too.
+    pub repeated: usize,
+}
+
+/// The outline's necks judged waists (`Pieces::outline_waists`), with the
+/// pieces as if every neck parted two boards (`parts`): an item's ends on
+/// two of those pieces that the board's own pieces join lie across a
+/// waist.
+#[derive(Clone, Debug)]
+pub struct OutlineWaists {
+    pub necks: Vec<OutlineNeck>,
+    pub parts: Pieces,
+}
+
+/// What `raster_pieces` does with the outline's narrow necks and found of
+/// them.
+#[derive(Default)]
+struct Necks {
+    /// Keep every narrow neck as a tab, whatever its sides say (and note
+    /// the waists in `waists`).
+    keep: bool,
+    /// Whether a narrow neck was judged by the board's parts.
+    judged: bool,
+    /// The necks judged waists.
+    waists: Vec<OutlineNeck>,
 }
 
 /// Two holes of a perforation that separates a board's breakaway modules
@@ -289,7 +419,15 @@ impl Cuts {
             .zip(in_row)
             .filter_map(|(hole, keep)| keep.then_some(hole))
             .collect();
-        (Cuts { holes, lines, rows }, gaps)
+        (
+            Cuts {
+                holes,
+                lines,
+                rows,
+                parts: board_parts(pcb),
+            },
+            gaps,
+        )
     }
 
     /// The mouse bites and V-cuts of a KiCad board (`Cuts`).
@@ -338,6 +476,7 @@ impl Cuts {
             holes,
             lines: v_cut_lines(pcb),
             rows,
+            parts: board_parts(pcb),
         }
     }
 }
@@ -491,7 +630,8 @@ pub struct Pieces {
     /// Per piece, its area (mm²).
     pub areas: Vec<f64>,
     /// What cut the outline into its pieces: `narrow outline` (a neck of
-    /// the outline under 2 mm), `mouse bites` (a row of holes across a
+    /// the outline under 2 mm between copies of one board, `Sides`),
+    /// `mouse bites` (a row of holes across a
     /// wider bridge), `V-cuts`.
     pub cut_by: Vec<&'static str>,
 }
@@ -515,7 +655,32 @@ impl Pieces {
         cutouts: &[Vec<[f64; 2]>],
         cuts: &Cuts,
     ) -> Option<Pieces> {
-        Self::raster_pieces(loops, cutouts, cuts, None)
+        Self::raster_pieces(loops, cutouts, cuts, None, &mut Necks::default())
+    }
+
+    /// The narrow necks of a board's outline (no mouse bites or V-cut at
+    /// them) that its parts judge waists of one board (`Sides`), and the
+    /// pieces as if every neck parted two boards; None where no neck is a
+    /// waist.
+    pub fn outline_waists(pcb: &Expr) -> Result<Option<OutlineWaists>, String> {
+        let loops = outline::board_loops(pcb)?;
+        let mut necks = Necks {
+            keep: true,
+            ..Necks::default()
+        };
+        let parts = Self::raster_pieces(
+            &loops.piece_loops,
+            &loops.cutouts,
+            &Cuts::of_board(pcb),
+            None,
+            &mut necks,
+        );
+        Ok(parts.and_then(|parts| {
+            (!necks.waists.is_empty()).then_some(OutlineWaists {
+                necks: necks.waists,
+                parts,
+            })
+        }))
     }
 
     /// Exterior fabrication rails of a single-board outline. A rail has
@@ -528,7 +693,13 @@ impl Pieces {
     ) -> Vec<[f64; 4]> {
         let mut rails = Vec::new();
         if !cuts.holes.is_empty() || !cuts.lines.is_empty() {
-            Self::raster_pieces(loops, cutouts, cuts, Some(&mut rails));
+            Self::raster_pieces(
+                loops,
+                cutouts,
+                cuts,
+                Some(&mut rails),
+                &mut Necks::default(),
+            );
         }
         rails
     }
@@ -538,6 +709,7 @@ impl Pieces {
         cutouts: &[Vec<[f64; 2]>],
         cuts: &Cuts,
         rails: Option<&mut Vec<[f64; 4]>>,
+        necks: &mut Necks,
     ) -> Option<Pieces> {
         let mut all = [
             f64::INFINITY,
@@ -893,17 +1065,69 @@ impl Pieces {
             }
             kind
         };
-        // A neck of the outline itself shorter and narrower than twice
-        // the neck radius (its box under that both ways) is a waist of one
-        // outline, not a bridge between boards: RS485M's LEGO holes leave
-        // two of 1.65 x 0.70 mm between its halves. The pieces it joins
-        // are one, its cells theirs. A bridge drawn as a strip (1.5 mm wide
-        // and 5 mm long: its box reaches past 2 mm) stays a tab, and so do
-        // the tabs of mouse bites and V-cuts.
-        let waist = |tab: &[f64; 4]| {
-            tab[2] - tab[0] < 2.0 * NECK_RADIUS_MM
-                && tab[3] - tab[1] < 2.0 * NECK_RADIUS_MM
-                && kind_of(tab) == 0
+        // A neck of the outline itself (no mouse bites or V-cut at it: a
+        // tab of those is a designer's or KiKit's statement that the board
+        // breaks there) parts two boards only where its sides are copies
+        // (`Sides`); else, or with a side without parts on a board that is
+        // not mostly copies, it is a waist of one board: the pieces it
+        // joins are one, its cells theirs. RS485M's LEGO holes leave two
+        // necks of 1.65 mm between halves that hold different parts; the
+        // OpenESC 4in1 panel's boards repeat 145 references across its
+        // tabs.
+        let mut parts_on: Vec<Vec<&str>> = vec![Vec::new(); pieces as usize];
+        if merged.iter().any(|(tab, _, _)| kind_of(tab) == 0) {
+            necks.judged = true;
+            for (reference, at) in &cuts.parts {
+                let column = ((at[0] - origin[0]) / cell).floor();
+                let row = ((at[1] - origin[1]) / cell).floor();
+                if column < 0.0 || row < 0.0 {
+                    continue;
+                }
+                let (column, row) = (column as usize, row as usize);
+                if column < columns
+                    && row < rows
+                    && let Some(on) = parts_on.get_mut(labels[row * columns + column] as usize)
+                {
+                    on.push(reference.as_str());
+                }
+            }
+        }
+        let copies = mostly_copies(&cuts.parts);
+        let mut waist = |tab: &[f64; 4], touching: &BTreeSet<u16>| {
+            if kind_of(tab) != 0 {
+                return false;
+            }
+            let mut decided: Option<(Sides, [usize; 2], usize)> = None;
+            for (index, a) in touching.iter().enumerate() {
+                for b in touching.iter().skip(index + 1) {
+                    let (on_a, on_b) = (&parts_on[*a as usize], &parts_on[*b as usize]);
+                    let (sides, repeated) = Sides::of(on_a, on_b);
+                    let rank = |sides: Sides| match sides {
+                        Sides::Different => 2,
+                        Sides::Unknown => 1,
+                        Sides::Copies => 0,
+                    };
+                    if decided.is_none_or(|(known, _, _)| rank(sides) > rank(known)) {
+                        decided = Some((sides, [on_a.len(), on_b.len()], repeated));
+                    }
+                }
+            }
+            let Some((sides, parts, repeated)) = decided else {
+                return false;
+            };
+            let is_waist = match sides {
+                Sides::Copies => false,
+                Sides::Different => true,
+                Sides::Unknown => !copies,
+            };
+            if is_waist {
+                necks.waists.push(OutlineNeck {
+                    neck: *tab,
+                    parts,
+                    repeated,
+                });
+            }
+            is_waist && !necks.keep
         };
         let mut joined: Vec<u16> = (0..pieces).collect();
         fn root(joined: &mut [u16], mut at: u16) -> u16 {
@@ -915,7 +1139,7 @@ impl Pieces {
         }
         let mut waists: Vec<([f64; 4], u16, Vec<usize>)> = Vec::new();
         merged.retain(|(tab, touching, members)| {
-            if !waist(tab) {
+            if !waist(tab, touching) {
                 return true;
             }
             let mut touched = touching.iter().copied();
@@ -2903,11 +3127,11 @@ pub fn excuse_across_file(
     Ok(moved)
 }
 
-/// The last outline's pieces (`Pieces::of_loops_cached`): its hash and
-/// pieces. Route mode's ladder and the layout's moves lower one outline
-/// many times.
-static PIECES_CACHE: std::sync::Mutex<Option<(u64, Option<std::sync::Arc<Pieces>>)>> =
-    std::sync::Mutex::new(None);
+/// The last outline's pieces (`Pieces::of_loops_cached`): its hash, its
+/// parts' hash where they judged a neck, and its pieces. Route mode's
+/// ladder and the layout's moves lower one outline many times.
+type CachedPieces = (u64, Option<u64>, Option<std::sync::Arc<Pieces>>);
+static PIECES_CACHE: std::sync::Mutex<Option<CachedPieces>> = std::sync::Mutex::new(None);
 
 impl Pieces {
     /// `of_loops`, remembered for the last outline.
@@ -2941,15 +3165,30 @@ impl Pieces {
             }
         }
         let key = hasher.finish();
+        // The parts, where a narrow neck was judged by them (`Sides`):
+        // a layout's moves change them, and only such an outline's pieces
+        // with them.
+        let parts_key = || {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            for (reference, at) in &cuts.parts {
+                reference.hash(&mut hasher);
+                at[0].to_bits().hash(&mut hasher);
+                at[1].to_bits().hash(&mut hasher);
+            }
+            hasher.finish()
+        };
         if let Ok(cache) = PIECES_CACHE.lock()
-            && let Some((cached, pieces)) = cache.as_ref()
+            && let Some((cached, parts, pieces)) = cache.as_ref()
             && *cached == key
+            && parts.is_none_or(|parts| parts == parts_key())
         {
             return pieces.clone();
         }
-        let pieces = Pieces::of_loops(loops, cutouts, cuts).map(std::sync::Arc::new);
+        let mut necks = Necks::default();
+        let pieces =
+            Pieces::raster_pieces(loops, cutouts, cuts, None, &mut necks).map(std::sync::Arc::new);
         if let Ok(mut cache) = PIECES_CACHE.lock() {
-            *cache = Some((key, pieces.clone()));
+            *cache = Some((key, necks.judged.then(parts_key), pieces.clone()));
         }
         pieces
     }
@@ -3021,26 +3260,96 @@ mod tests {
         (outline, hole)
     }
 
+    /// A board of `loops` (Edge.Cuts polygons, the first the outline, the
+    /// others cutouts) and `parts`, each a footprint of one reference at
+    /// a point with a pad on each of `nets`.
+    fn board_of(loops: &[Vec<[f64; 2]>], parts: &[(&str, [f64; 2], &[&str])]) -> Expr {
+        let polygons: String = loops
+            .iter()
+            .map(|points| {
+                let points: String = points
+                    .iter()
+                    .map(|p| format!("(xy {} {})", p[0], p[1]))
+                    .collect();
+                format!("(gr_poly (pts {points}) (layer \"Edge.Cuts\"))")
+            })
+            .collect();
+        let footprints: String = parts
+            .iter()
+            .map(|(reference, at, nets)| {
+                let pads: String = nets
+                    .iter()
+                    .enumerate()
+                    .map(|(index, net)| {
+                        format!(
+                            r#"(pad "{}" smd rect (at {} 0) (size 0.5 0.5) (layers "F.Cu") (net "{net}"))"#,
+                            index + 1,
+                            index
+                        )
+                    })
+                    .collect();
+                format!(
+                    r#"(footprint "Part" (at {} {}) (property "Reference" "{reference}") {pads})"#,
+                    at[0], at[1]
+                )
+            })
+            .collect();
+        crate::kicad_sexpr::parse(&format!(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user)) {polygons} {footprints})"#
+        ))
+        .unwrap()
+    }
+
+    /// A strip 1.6 mm wide and 5 mm long from the top edge of RS485M's
+    /// outline (`lego`) drawn 30 mm down to a 20.6 x 25 mm board above it.
+    const STRIP: [[f64; 2]; 8] = [
+        [11.1, 30.0],
+        [11.1, 25.0],
+        [20.6, 25.0],
+        [20.6, 0.0],
+        [0.0, 0.0],
+        [0.0, 25.0],
+        [9.5, 25.0],
+        [9.5, 30.0],
+    ];
+
     #[test]
-    fn a_waist_of_the_outline_is_no_tab() {
-        // RS485M: its necks of 1.65 mm between the LEGO holes are a waist
-        // of one board, not tabs between two.
+    fn a_waist_that_nets_cross_is_no_tab() {
+        // RS485M: its necks of 1.65 mm between the LEGO holes join two
+        // halves of one circuit: U1 above them, J1 below, RXD and GND
+        // crossing. One board, its necks reported as waists.
         let (outline, hole) = lego(0.0, &[]);
-        assert!(Pieces::of_loops(&[outline], &[hole], &Cuts::default()).is_none());
-        // A board above it joined by a strip 1.6 mm wide and 5 mm long:
-        // the strip is a tab between two boards, the necks are not.
-        let strip = [
-            [11.1, 30.0],
-            [11.1, 25.0],
-            [20.6, 25.0],
-            [20.6, 0.0],
-            [0.0, 0.0],
-            [0.0, 25.0],
-            [9.5, 25.0],
-            [9.5, 30.0],
+        let parts: [(&str, [f64; 2], &[&str]); 2] = [
+            ("U1", [10.0, 8.0], &["RXD", "GND"]),
+            ("J1", [10.0, 25.0], &["RXD", "GND"]),
         ];
-        let (outline, hole) = lego(30.0, &strip);
-        let pieces = Pieces::of_loops(&[outline], &[hole], &Cuts::default()).expect("pieces");
+        let pcb = board_of(&[outline, hole], &parts);
+        assert!(Pieces::of_board(&pcb).unwrap().is_none());
+        let waists = Pieces::outline_waists(&pcb).unwrap().expect("waists");
+        assert_eq!(waists.necks.len(), 2);
+        assert_eq!(waists.necks[0].parts, [1, 1]);
+        assert_eq!(waists.necks[0].repeated, 0);
+        // The pieces as if the necks parted boards: U1 and J1 apart.
+        assert_ne!(
+            waists.parts.piece_at([10.0, 8.0]),
+            waists.parts.piece_at([10.0, 25.0])
+        );
+    }
+
+    #[test]
+    fn a_neck_between_copies_is_a_tab() {
+        // A board copied above RS485M, joined by a strip: the copy repeats
+        // U1 and J1 (and their nets) across the strip, a panel of two
+        // boards. Each board's own necks still join halves of one circuit.
+        let (outline, hole) = lego(30.0, &STRIP);
+        let parts: [(&str, [f64; 2], &[&str]); 4] = [
+            ("U1", [10.0, 8.0], &["RXD", "GND"]),
+            ("J1", [10.0, 20.0], &["RXD", "GND"]),
+            ("U1", [10.0, 38.0], &["RXD", "GND"]),
+            ("J1", [10.0, 55.0], &["RXD", "GND"]),
+        ];
+        let pcb = board_of(&[outline, hole], &parts);
+        let pieces = Pieces::of_board(&pcb).unwrap().expect("pieces");
         assert_eq!(pieces.count(), 2);
         assert_eq!(pieces.tabs.len(), 1);
         assert_eq!(pieces.cut_by, vec!["narrow outline"]);
@@ -3051,6 +3360,67 @@ mod tests {
         assert_ne!(pieces.piece_at([10.0, 10.0]), below);
         assert!(pieces.piece_at([10.0, 10.0]).is_some());
         assert_eq!(pieces.boxes.len(), 2);
+        assert_eq!(board_split_nets(&pcb, &pieces).len(), 2);
+        // The lower board's necks are its waists; the strip is no waist.
+        let waists = Pieces::outline_waists(&pcb).unwrap().expect("waists");
+        assert_eq!(waists.necks.len(), 2);
+        assert!(waists.necks.iter().all(|neck| neck.neck[1] > 30.0));
+    }
+
+    #[test]
+    fn a_neck_between_different_parts_is_one_board_and_said_so() {
+        // The strip between two boards that share net names but no part:
+        // nothing says two boards (no mouse bites, no V-cut, no copies),
+        // so it is one board, and the strip is reported as a waist.
+        let (outline, hole) = lego(30.0, &STRIP);
+        let parts: [(&str, [f64; 2], &[&str]); 3] = [
+            ("U2", [10.0, 8.0], &["RXD", "GND"]),
+            ("U1", [10.0, 38.0], &["RXD", "GND"]),
+            ("J1", [10.0, 55.0], &["RXD", "GND"]),
+        ];
+        let pcb = board_of(&[outline, hole], &parts);
+        assert!(Pieces::of_board(&pcb).unwrap().is_none());
+        let waists = Pieces::outline_waists(&pcb).unwrap().expect("waists");
+        assert_eq!(waists.necks.len(), 3);
+        assert!(waists.necks.iter().any(|neck| neck.neck[3] <= 30.5));
+    }
+
+    #[test]
+    fn a_neck_with_no_parts_beside_it_is_judged_by_the_whole_board() {
+        // No part on the board above: its parts tell nothing of the strip.
+        // A board whose parts are not mostly copies is one board ...
+        let (outline, hole) = lego(30.0, &STRIP);
+        let lower: [(&str, [f64; 2], &[&str]); 2] = [
+            ("U1", [10.0, 38.0], &["RXD", "GND"]),
+            ("J1", [10.0, 55.0], &["RXD", "GND"]),
+        ];
+        let pcb = board_of(&[outline.clone(), hole.clone()], &lower);
+        assert!(Pieces::of_board(&pcb).unwrap().is_none());
+        // ... and one of copies (a panel whose parts lie off its boards,
+        // or some of them on one) keeps the strip as a tab.
+        let copies: [(&str, [f64; 2], &[&str]); 4] = [
+            ("U1", [10.0, 38.0], &["RXD", "GND"]),
+            ("U1", [40.0, 38.0], &["RXD", "GND"]),
+            ("J1", [10.0, 55.0], &["RXD", "GND"]),
+            ("J1", [40.0, 55.0], &["RXD", "GND"]),
+        ];
+        let pcb = board_of(&[outline, hole], &copies);
+        let pieces = Pieces::of_board(&pcb).unwrap().expect("pieces");
+        assert_eq!(pieces.count(), 2);
+        // Without parts at all (a bare outline) the strip parts nothing.
+        let (outline, hole) = lego(30.0, &STRIP);
+        assert!(Pieces::of_loops(&[outline], &[hole], &Cuts::default()).is_none());
+    }
+
+    #[test]
+    fn copies_are_told_by_the_side_with_fewer_parts() {
+        let (sides, repeated) = Sides::of(&["U1", "R1", "C1"], &["U1", "R1", "C1", "C2"]);
+        assert_eq!((sides, repeated), (Sides::Copies, 3));
+        // One duplicate reference (a mistake of annotation) is no copy.
+        let (sides, repeated) = Sides::of(&["U1", "R1", "C1"], &["U2", "R1", "C2"]);
+        assert_eq!((sides, repeated), (Sides::Different, 1));
+        assert_eq!(Sides::of(&[], &["U1"]).0, Sides::Unknown);
+        assert!(!mostly_copies(&[]));
     }
 
     /// Two 20 x 20 pieces (y 0 to 20 and 25 to 45) joined by a 4 mm

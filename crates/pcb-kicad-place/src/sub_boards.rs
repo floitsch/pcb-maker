@@ -1811,6 +1811,18 @@ mod tests {
         .unwrap()
     }
 
+    /// `two_pieces` with a V-cut across its bridge (y 22.5): a tab between
+    /// two boards by the designer's word, whatever parts lie on them.
+    fn two_boards(bridge: f64, lower: f64, extra: &str) -> Expr {
+        two_pieces(
+            bridge,
+            lower,
+            &format!(
+                r#"(gr_line (start -1 22.5) (end 21 22.5) (stroke (width 0.4) (type default)) (layer "Cmts.User")) (gr_text "V-CUT" (at -4 22.5 0) (layer "Cmts.User")) {extra}"#
+            ),
+        )
+    }
+
     /// A footprint of `count` non-plated holes of `drill` mm at `pitch`
     /// along x from `x`, at y 22.5 (a row of mouse bites across the
     /// bridge).
@@ -1845,7 +1857,7 @@ mod tests {
             part("R5", "unknown", "dup"),
         ]
         .join("\n");
-        let pcb = two_pieces(1.5, 20.0, &footprints);
+        let pcb = two_boards(1.5, 20.0, &footprints);
         let config = crate::board_placer::KiCadBoardPlacerConfig::default();
         let mut lowered = crate::board_placer::lower_placement(&pcb, &config).unwrap();
         for component in &mut lowered.problem.components[..5] {
@@ -1892,7 +1904,7 @@ mod tests {
 
     #[test]
     fn exact_sub_board_entries_check_pin_ownership_and_never_claim_drawings() {
-        let pcb = two_pieces(
+        let pcb = two_boards(
             1.5,
             20.0,
             r#"(footprint "R" (at 5 5) (property "Reference" "R1")
@@ -1987,7 +1999,7 @@ mod tests {
                     )
                 })
                 .collect();
-            two_pieces(1.5, 20.0, &parts)
+            two_boards(1.5, 20.0, &parts)
         };
         let pcb = board([[-30.0, -30.0]; 4]);
         let config = crate::board_placer::KiCadBoardPlacerConfig::default();
@@ -2111,7 +2123,11 @@ mod tests {
                 [0.0, 20.0],
             ]],
             &[],
-            &Cuts::default(),
+            // Two copies of one board, joined by a 1.5 mm neck.
+            &Cuts {
+                parts: vec![("U1".into(), [2.0, 2.0]), ("U1".into(), [35.0, 10.0])],
+                ..Cuts::default()
+            },
         )
         .expect("two pieces");
         assert_eq!(pieces.count(), 2);
@@ -2121,12 +2137,32 @@ mod tests {
 
     #[test]
     fn tabs_are_narrow_bridges_rows_of_mouse_bites_and_v_cuts() {
-        // A bridge of 1.5 mm: the outline's own neck.
-        let narrow = Pieces::of_board(&two_pieces(1.5, 20.0, ""))
+        // A bridge of 1.5 mm: the outline's own neck, a tab between
+        // copies of one board (R1 on each) ...
+        let part = |x: f64, y: f64| {
+            format!(
+                r#"(footprint "R" (at {x} {y}) (property "Reference" "R1") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "GND")))"#
+            )
+        };
+        let copies = format!("{} {}", part(5.0, 5.0), part(5.0, 35.0));
+        let narrow = Pieces::of_board(&two_pieces(1.5, 20.0, &copies))
             .unwrap()
             .expect("pieces");
         assert_eq!(narrow.count(), 2);
         assert_eq!(narrow.cut_by, vec!["narrow outline"]);
+        // ... and a waist of one board where nothing says two boards (no
+        // part, or parts that are no copies).
+        assert!(
+            Pieces::of_board(&two_pieces(1.5, 20.0, ""))
+                .unwrap()
+                .is_none()
+        );
+        let one = format!("{} {}", part(5.0, 5.0), part(5.0, 35.0).replace("R1", "R2"));
+        assert!(
+            Pieces::of_board(&two_pieces(1.5, 20.0, &one))
+                .unwrap()
+                .is_none()
+        );
         // A solid bridge of 6 mm is board.
         assert!(
             Pieces::of_board(&two_pieces(6.0, 20.0, ""))
