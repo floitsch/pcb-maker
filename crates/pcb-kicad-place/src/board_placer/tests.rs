@@ -3228,7 +3228,7 @@ fn the_start_reads_the_designers_poses_and_the_trace_is_well_formed() {
     config.start = Some(std::sync::Arc::new(start));
     let placement = core::place(&lowered.problem, &config);
     let trace = root.join("trace.json");
-    trace_placements(&lowered, &[placement], &[7], &config, &trace).unwrap();
+    trace_placements(&lowered, &[placement], &[7], &config, None, &trace).unwrap();
     let json: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&trace).unwrap()).unwrap();
     let seed = &json["seeds"][0];

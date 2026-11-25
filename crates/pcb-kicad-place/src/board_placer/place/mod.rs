@@ -117,6 +117,10 @@ pub fn place_kicad_board_with_rear_retry(
             &seeds.placements,
             &seeds.kept_seeds,
             &placer_config,
+            skeleton_race
+                .as_ref()
+                .filter(|race| race.budget_ok)
+                .map(|race| (race.passive.as_slice(), race.settings)),
             Path::new(&trace),
         )?;
     }

@@ -114,6 +114,41 @@ impl Router {
         state.stamped = stamped;
     }
 
+    /// The (map, cell) stamps `branches` and `escapes` of `net` would make,
+    /// the occupancy left alone (`marks`: a scratch of `stamp_mark`'s size,
+    /// left clear). The window census's footprints, lab only
+    /// (`window_census`).
+    pub(in crate::router) fn footprint_of(
+        &self,
+        marks: &mut Vec<u64>,
+        net: NetId,
+        branches: &[Branch],
+        escapes: &HashMap<Node, Escape>,
+    ) -> Vec<(u32, u32)> {
+        let words = self.grid.cells().div_ceil(64);
+        if marks.len() != self.occupancy.len() * words {
+            *marks = vec![0; self.occupancy.len() * words];
+        }
+        let mut stamped = Stamped::with_capacity(256, self.occupancy.len(), self.grid.cells());
+        self.mark_stamps(
+            &mut Marker {
+                marks,
+                words,
+                stamped: &mut stamped,
+                size: (self.grid.nx as i64, self.grid.ny as i64),
+                grid: &self.grid,
+            },
+            net,
+            branches,
+            escapes,
+        );
+        let list: Vec<(u32, u32)> = stamped.iter().collect();
+        for &(map, cell) in &list {
+            marks[map as usize * words + cell as usize / 64] &= !(1u64 << (cell % 64));
+        }
+        list
+    }
+
     /// Marks the footprints of `net`'s branches and escape stubs on every
     /// querying class's maps.
     fn mark_stamps(
