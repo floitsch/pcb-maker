@@ -1,8 +1,7 @@
 # Do the why-open cards hold on held-out cases? (2026-11-25)
 
-A held-out test of `experiments/eval-representations/whyopen.py`, unchanged (blob 67daf0c3, branch
-`fund-eval-representations`), against `evaluation-representations.md`'s 12 of 12. Data and scripts:
-`experiments/eval-representations/heldout/`; transcripts, cards and judged boards under
+A held-out test of `whyopen.py`, unchanged (blob 67daf0c3), against `evaluation-representations.md`'s
+12 of 12. Data: `experiments/eval-representations/heldout/`; transcripts, cards, judged boards:
 `build/scratch/cards-heldout/` (not in git).
 
 ## Verdict
@@ -23,11 +22,9 @@ run** (not among the cases it was iterated on). whyopen.py ran without a crash o
 
 ## Ground truth (written before the subjects ran: `heldout/truth.json`)
 
-From KiCad's DRC on hand-drawn copper (a copy of the board, tracks and vias added, DRC with refill against
-the untouched copy), the router's reports and logs, pcbnew geometry, and two raster checks of our own (not
-derived from whyopen). The study's classes (A single-net path exists, B walled by routed copper, C walled
-by the input, D pour island, E long) and its scoring rule (the letter must match). Pre-registered: h0 is
-scored, and totals are also given without truths under 60 % confidence (h0, h5).
+From KiCad's DRC on hand-drawn copper, the router's reports and logs, pcbnew geometry and two raster
+checks of our own. The study's classes (A single-net path, B routed copper, C input, D pour, E long) and
+scoring rule (the letter must match); totals also without truths under 60 % confidence (h0, h5).
 
 | case | board (stage) | net | truth (conf.) | card verdict | card arm | raw arm | tokens card / raw | s card / raw |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -81,22 +78,19 @@ B), raw is 11/12 and card 9/12; if A and E are one answer for a long item with f
   the WLCSP wall in the picture. At h9 a legal path exists and the card subject took "long".
 - **h0 the wrong copy.** It worked where KiCad's text points, on a copy already joined: its path changed
   nothing (3 open before and after) and its vias broke the drill rule.
-- **Right on B** (h2, h8, h10, h11): reach kept against stripped, read in 30 s. The nets it names are the
-  cheapest path's, not always the walling ones (h2, h8; not scored).
+- **Right on B** (h2, h8, h10, h11), read in 30 s; the nets it names are not always the walling ones.
 
 ## Causes the generator cannot name
 
 1. A path through a via smaller than the class's or a via in a pad (h0, h3, h5).
 2. For ends over 20 mm apart, anything but a walled end: a long legal path (A) or congestion on the way (B).
-3. Anything where the widths come from custom rules it does not read (h7).
-4. A legal path next to the raster's rejected one: no retry with a margin (h6).
-5. A KiCad item that names the wrong copy of a panel (h0).
+3. Anything where the widths come from custom rules it does not read (h7); a legal path next to the
+   raster's rejected one, for want of a retry (h6); a KiCad item naming the wrong copy of a panel (h0).
 
 ## Conclusion
 
-The card does not beat raw on correctness (8 against 8; 7 against 8 on confident truths), and its verdict
-alone is right a third of the time. It wins on cost: a third fewer tokens, a third of the tool calls, a
-quarter of the time. On B it is as good as raw and cheaper; on A it is worse, because its search cannot find
+The card does not beat raw on correctness (8 against 8; 7 against 8 on confident truths); its verdict
+alone is right a third of the time. It wins on cost: 32 % fewer tokens, 37 % of the tool calls, 25 % of the time. On B it is as good as raw and cheaper; on A it is worse, because its search cannot find
 the small-via, edge-strip and long paths that raw subjects found by drawing copper or running a maze.
 Before a port: search with every via the router may use and vias in pads, retry with a margin before
 calling a path rejected, search across long items, read custom rules, and show the verdict as evidence.
