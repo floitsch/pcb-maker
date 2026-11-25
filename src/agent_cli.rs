@@ -2125,7 +2125,7 @@ fn place(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     let parts = result.footprints.len();
     let others = result.components.saturating_sub(parts);
     println!(
-        "placed {} of {} parts ({} kept where they are{}), {} nets: wirelength source {:.0} mm, global {:.0}, legal {:.0}, final {:.0}; {} global iterations, overflow {:.3}; unplaced {:?}, illegal {:?}; {:.2}s",
+        "placed {} of {} parts ({} kept where they are{}), {} nets: wirelength source {:.0} mm, global {:.0}, legal {:.0}, final {:.0}; {} global iterations, overflow {:.3} (the placer's objective: it does not predict routing); unplaced {:?}, illegal {:?}; {:.2}s",
         result.movable,
         parts,
         parts.saturating_sub(result.movable),

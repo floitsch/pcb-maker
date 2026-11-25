@@ -240,7 +240,7 @@ pub(super) fn pre_rank(
     );
     let keep: Vec<usize> = order.iter().copied().take(probes).collect();
     eprintln!(
-        "placement pre-ranking ({}): {} placements scored in {:.2} s (lowering {:.2} s, scoring {:.2} s); probing {:?} (scores {:?})",
+        "placement pre-ranking ({}): {} placements scored in {:.2} s (lowering {:.2} s, scoring {:.2} s); probing {:?} (scores {:?}; a pre-ranking, not a prediction of the routed result)",
         config.tuning.congestion_score,
         pool.len(),
         ranked.seconds,
@@ -335,7 +335,9 @@ pub(super) fn probe_order(
                 score_rank[*index],
             )
         });
-        eprintln!("placement pre-ranking: ratsnest crossings {counts:?}, order {order:?}");
+        eprintln!(
+            "placement pre-ranking: ratsnest crossings {counts:?}, order {order:?} (a pre-ranking, not a prediction of the routed result)"
+        );
     }
     order.sort_by_key(|index| {
         (

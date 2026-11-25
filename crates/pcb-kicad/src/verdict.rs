@@ -3741,7 +3741,7 @@ fn next_actions(
     }
     if let Some(rear) = facts.rear_mounting_advice() {
         actions.push(format!(
-            "The front is above the placement's area target and KiCad reports open connections. If the assembly permits rear mounting, add approved exact references from rear_routing_candidates.allow_back_additions to placer.allow_back and rerun layout. The {} candidate surface-mount passives account for {:.1} mm² of modeled front-side area including spacing, with {:.1} mm² of estimated rear headroom. Check placement and native connectivity on the retry.",
+            "The front is above the placement's area target and KiCad reports open connections; that crowding causes them is a hypothesis, not shown. If the assembly permits rear mounting, add approved exact references from rear_routing_candidates.allow_back_additions to placer.allow_back and rerun layout. The {} candidate surface-mount passives account for {:.1} mm² of modeled front-side area including spacing, with {:.1} mm² of estimated rear headroom. Check placement and native connectivity on the retry.",
             rear.allow_back_additions.len(), rear.front_body_area_mm2, rear.rear_headroom_mm2,
         ));
     }
