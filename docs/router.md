@@ -285,6 +285,25 @@ free, not from where the router starts: a plain pad's centre,
 `escape_starts`) and `escape_not_kept`. Only the first two are walls by
 the router's rules.
 
+**Where a static wall is.** `no_path_static` is recorded on the terminals
+a board-wide search from the net's tree did not reach, which are not the
+walled ones when the tree started at the walled pad. When the result is
+made, `Router::static_walls` (`router/open.rs`) looks for the wall at a
+pad, for the nets that end open with such a terminal: the terminal's own
+pocket on the lattice (`pocket`, within 1 mm of the pad), else the
+pockets of the tree's terminals when each is closed
+(`Router::static_wall`, `router/corridors.rs`). The open terminal then
+names those pads (`nets[].open[].walled`). The corridor's 5 µm raster
+search runs for them as a test only: where the net's track keeps its
+clearances to the pocket window's edge or to a node with an open pocket,
+the rules leave a way out and the reason is `no_lattice_exit` (the
+lattice's wall); else the obstacles that bound the raster region are the
+wall (`blocked_by`), and `wall` tells the input's (`input`) from vias the
+router planned before it routed (`router`: a fan-out's stub, via and
+hole, a via in a pad; `board_router/result.rs`, `router_planned`). No
+stub is kept, nothing is searched again, and its counts are not the
+run's work: routes and work units are the same with and without it.
+
 **A pad walled by its own footprint's copper.** To KiCad 10.0.7 a copper
 graphic of a footprint that is not a net tie is copper of no net, also
 where it touches or covers a pad of that footprint: it never conducts
@@ -655,7 +674,9 @@ a generated via) and the same-hatch width repair (`unchanged_hatch.rs`,
 from width errors), in route mode the open repair after the ladder
 (`board_router/route_open_repair.rs`, from KiCad's open connections;
 `board-router.json`'s `open_repair` says `skipped`,
-`post_route_repairs_off` when it is off), and in both commands the neck
+`post_route_repairs_off` when it is off; when KiCad accepts its copper
+the result's nets, counts and totals describe the repaired board and
+`nets[].open_repair` what the router had left), and in both commands the neck
 repair's round pad-to-via bridge above. They are on by default; the router setting
 `tuning.post_route_repairs: false` (or `PCB_KICAD_NO_POST_ROUTE_REPAIRS`
 set, where the settings do not give it) skips them and their KiCad

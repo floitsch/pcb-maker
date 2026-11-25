@@ -226,6 +226,8 @@ pub(super) fn recheck_pair_nets(
                     terminal,
                     label: board.nets[index].terminals[terminal].label.clone(),
                     reason: core::OpenReason::CopperCheck,
+                    walled: Vec::new(),
+                    wall: Vec::new(),
                 });
             }
         }

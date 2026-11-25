@@ -192,6 +192,7 @@ fn emit_routes_preserving_tuning(
                     )
                 })
                 .flatten(),
+            open_repair: None,
             copy,
             pads: if copy.is_some() {
                 description

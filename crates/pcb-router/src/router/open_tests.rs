@@ -155,6 +155,116 @@ fn a_pad_walled_in_by_keepouts_has_no_path_on_the_board() {
     );
 }
 
+/// The result's open terminals as (label, reason name, walled, wall).
+fn walls_of(result: &RoutingResult) -> Vec<(String, String, Vec<String>, Vec<String>)> {
+    result
+        .diagnostics
+        .open
+        .iter()
+        .map(|open| {
+            (
+                open.label.clone(),
+                open.reason.name(),
+                open.walled.clone(),
+                open.wall.clone(),
+            )
+        })
+        .collect()
+}
+
+/// A ring of keepouts round (8, 10), its inner faces 1.3 mm from the
+/// centre; with `gap`, the right wall leaves a gap that wide centred on
+/// y = 10.05, between the lattice's lines at 10.0 and 10.1.
+fn ring(gap: Option<f64>) -> Vec<([f64; 2], [f64; 2])> {
+    let mut walls = vec![
+        ([8.0, 8.5], [1.7, 0.2]),
+        ([8.0, 11.5], [1.7, 0.2]),
+        ([6.5, 10.0], [0.2, 1.7]),
+    ];
+    match gap {
+        None => walls.push(([9.5, 10.0], [0.2, 1.7])),
+        Some(gap) => {
+            let (top, bottom) = (10.05 - gap / 2.0, 10.05 + gap / 2.0);
+            walls.push(([9.5, (8.3 + top) / 2.0], [0.2, (top - 8.3) / 2.0]));
+            walls.push(([9.5, (bottom + 11.7) / 2.0], [0.2, (11.7 - bottom) / 2.0]));
+        }
+    }
+    walls
+}
+
+#[test]
+fn the_walled_pad_is_named_also_where_the_search_started_from_it() {
+    // The walled pad as a terminal the search reaches for: it is the open
+    // one, and the wall is at it.
+    let pads = |walled_first: bool| {
+        let mut pads = vec![[3.0, 10.0], [27.0, 4.0], [27.0, 16.0]];
+        pads.insert(if walled_first { 0 } else { 1 }, [8.0, 10.0]);
+        pads
+    };
+    let board = board_of(&[("G", pads(false))], &ring(None));
+    let result = Router::new(&board, &config()).run();
+    assert_eq!(
+        walls_of(&result),
+        vec![(
+            "G.1".to_string(),
+            "no_path_static".to_string(),
+            vec!["G.1".to_string()],
+            vec!["wall".to_string()]
+        )]
+    );
+    // The walled pad as the net's first terminal, where the search's tree
+    // starts: the terminals the tree did not reach are the open ones by
+    // the net's count, and each names the pad the wall is at.
+    let board = board_of(&[("G", pads(true))], &ring(None));
+    let result = Router::new(&board, &config()).run();
+    let open = walls_of(&result);
+    assert_eq!(
+        open.iter().map(|open| open.0.as_str()).collect::<Vec<_>>(),
+        ["G.1", "G.2", "G.3"]
+    );
+    for (_, reason, walled, wall) in &open {
+        assert_eq!(reason, "no_path_static");
+        assert_eq!(walled, &["G.0"]);
+        assert_eq!(wall, &["wall"]);
+    }
+}
+
+#[test]
+fn a_wall_the_rules_leave_a_way_out_of_is_the_lattices() {
+    // A gap of 0.27 mm in the ring: the 0.25 mm track passes it within
+    // 10 um of y = 10.05, where the lattice has no line. The rules leave
+    // a way out; the lattice does not take it.
+    for walled_first in [false, true] {
+        let mut pads = vec![[3.0, 10.0], [27.0, 4.0], [27.0, 16.0]];
+        pads.insert(if walled_first { 0 } else { 1 }, [8.0, 10.0]);
+        let board = board_of(&[("G", pads)], &ring(Some(0.27)));
+        let result = Router::new(&board, &config()).run();
+        let origin = result.grid.origin[1].rem_euclid(0.1);
+        assert!(origin.min(0.1 - origin) < 1.0e-9);
+        let open = walls_of(&result);
+        assert_eq!(open.len(), if walled_first { 3 } else { 1 }, "{open:?}");
+        let walled = if walled_first { "G.0" } else { "G.1" };
+        for (_, reason, at, wall) in &open {
+            assert_eq!(reason, "no_lattice_exit");
+            assert_eq!(at, &[walled]);
+            assert!(wall.is_empty());
+        }
+    }
+    // A gap of 0.2 mm: no 0.25 mm track passes it at any resolution.
+    let pads = vec![[3.0, 10.0], [8.0, 10.0], [27.0, 4.0], [27.0, 16.0]];
+    let board = board_of(&[("G", pads)], &ring(Some(0.2)));
+    let result = Router::new(&board, &config()).run();
+    assert_eq!(
+        walls_of(&result),
+        vec![(
+            "G.1".to_string(),
+            "no_path_static".to_string(),
+            vec!["G.1".to_string()],
+            vec!["wall".to_string()]
+        )]
+    );
+}
+
 #[test]
 fn a_net_with_one_pad_of_access_is_never_searched() {
     // B.1 lies inside a keepout: no lattice node, so B has one terminal
@@ -308,6 +418,8 @@ fn the_copper_checks_terminals_apart_are_named() {
             terminal: 1,
             label: "A.1".into(),
             reason: OpenReason::CopperCheck,
+            walled: Vec::new(),
+            wall: Vec::new(),
         }]
     );
 }

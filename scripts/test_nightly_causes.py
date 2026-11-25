@@ -235,6 +235,15 @@ def test_the_routers_reasons_name_the_open_items(tmp_path):
         {"connection": "MOSI", "status": "partial", "open": [open_group("unknown", 2)]},
         {"connection": "CS", "status": "partial", "open": [open_group("some_new_reason", 1, "U6.1")]},
         {"connection": "GND", "status": "partial", "open": [open_group("no_access", 1, "C19.1")]},
+        # The wall is at U1.6 (the lattice's), at C18.1 (the router's own fan-out vias) and at R62.1 (the input's).
+        {"connection": "RXD", "status": "partial",
+         "open": [dict(open_group("no_lattice_exit", 1, "U1.6"), walled=["U1.6"])]},
+        {"connection": "+1V2", "status": "partial",
+         "open": [dict(open_group("no_path_static", 1, "U30.H8"), walled=["C18.1"], wall="router",
+                       blocked_by=["U30.G8 fan-out hole"])]},
+        {"connection": "VIN", "status": "partial",
+         "open": [dict(open_group("no_path_static", 1, "R62.1"), walled=["R62.1"], wall="input",
+                       blocked_by=["R62.2"])]},
     ], "diagnostics": {"conflicted_nets": ["SDA"],
                        "dead_pads": [{"pad": "C19.1", "net": "GND", "access": "off_lattice"}]}}
     items = [
@@ -247,13 +256,18 @@ def test_the_routers_reasons_name_the_open_items(tmp_path):
         item(pad(1, "CS", "U6"), track("CS")),            # a reason the census does not know
         item(pad(1, "GND", "C19"), track("GND")),         # the dead pad's cause comes first
         item(pad(1, "SDA", "U4"), pad(2, "SDA", "R1")),   # two listed pads: the first reason in precedence
+        item(pad(6, "RXD", "U1"), track("RXD")),          # the lattice's wall
+        item(pad("H8", "+1V2", "U30"), track("+1V2")),    # the router's own vias wall the pad
+        item(pad(1, "+1V2", "C18"), track("+1V2")),       # the walled pad the search started from
+        item(pad(1, "VIN", "R62"), track("VIN")),         # the input's wall
     ]
     write_night(night, {"route": [board(night / "route", "repo__Open", items, {}, router)]})
     stage = causes.census({"route": (night / "route.log", night / "route")}, night.name)["stages"]["route"]
     assert stage["per_board"]["repo__Open"]["causes"] == {
         "open:no_path_hard:board": 2, "open:lost:clean_up": 1, "unexplained:net_open_mixed": 1,
-        "open:repair_skipped:budget": 1, "open:no_path_static": 1, "unexplained:open_unknown": 1,
-        "open:other": 1, "dead_pad:off_lattice": 1}
+        "open:repair_skipped:budget": 1, "open:no_path_static": 2, "unexplained:open_unknown": 1,
+        "open:other": 1, "dead_pad:off_lattice": 1, "open:no_lattice_exit": 1,
+        "open:no_path_static:router_copper": 2}
     assert stage["open_by_net"] == 1
     assert stage["unexplained"] == 2
     text = causes.markdown({"previous": None, "stages": {"route": stage}})

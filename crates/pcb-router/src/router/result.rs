@@ -123,6 +123,17 @@ pub struct OpenTerminal {
     /// The terminal's label (`U1.3`).
     pub label: String,
     pub reason: OpenReason,
+    /// `NoPathStatic`, `NoLatticeExit`: the labels of the net's terminals
+    /// whose pocket the lattice closes, between which and the rest the
+    /// search found no path: this terminal, or the terminals of the
+    /// search's tree (the wall is at them, and this terminal is open
+    /// because the tree did not come out). Empty where no pad's pocket is
+    /// closed (the wall is elsewhere, `Router::static_wall`).
+    pub walled: Vec<String>,
+    /// `NoPathStatic` with `walled`: the labels of the obstacles that
+    /// bound the region the rules leave at those terminals (`board edge`
+    /// for the outline).
+    pub wall: Vec<String>,
 }
 
 /// Why a terminal stays open, as the router decided it at the point it
@@ -140,6 +151,13 @@ pub enum OpenReason {
     /// areas, the outline and fixed copper stop that search
     /// (`NetState::unreachable` when the last negotiation ended).
     NoPathStatic,
+    /// As `NoPathStatic`, where the pocket of the terminal, or of every
+    /// terminal of the search's tree, is closed on the lattice and the
+    /// rules leave a way out of it (`Router::static_wall`, a 5 um raster
+    /// search): the lattice's limit, not a wall of the board. Decided
+    /// when the result is made, for the terminals `NoPathStatic` was
+    /// recorded for.
+    NoLatticeExit,
     /// Open when the negotiation ended and the hard repair did not search
     /// the net again: `work_deadline`, `hopeless` or `budget`
     /// (`RepairEntry::skipped`).
@@ -177,6 +195,7 @@ impl OpenReason {
             Self::NoAccess => "no_access".into(),
             Self::NetNotRoutable => "net_not_routable".into(),
             Self::NoPathStatic => "no_path_static".into(),
+            Self::NoLatticeExit => "no_lattice_exit".into(),
             Self::RepairSkipped(why) => format!("repair_skipped:{why}"),
             Self::NoPathHard(scope) => format!("no_path_hard:{scope}"),
             Self::Lost(phase) => format!("lost:{phase}"),
