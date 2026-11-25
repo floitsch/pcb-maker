@@ -1,0 +1,6 @@
+Written 2026-11-25 before any subject of cases 0,1,2,4..11 ran (h3 subjects had run, h3-card answered).
+- Score = the study's rule: answer cause == truth class (exact letter).
+- Case 0 truth A at 45 % (the report misnames the board copy; KiCad accepts vias in pads that are
+  smaller than the router's): scored, and every total is also given without cases whose truth confidence
+  is under 60 %.
+- A case marked "truth unknown" is excluded.

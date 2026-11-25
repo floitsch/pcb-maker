@@ -146,7 +146,7 @@ fn capped_silk(report: &Value) -> Option<Findings> {
         || report[CAPPED_KEY] == true
         || report["unconnected_items"].as_array()?.len() >= KICAD_UNCONNECTED_CAP
         || !finding_types_at_cap(report, "schematic_parity").is_empty()
-        || finding_types_at_cap(report, "violations") != [KIND]
+        || copper_finding_types_at_cap(report) != [KIND]
     {
         return None;
     }

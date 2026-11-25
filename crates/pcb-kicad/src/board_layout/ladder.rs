@@ -81,6 +81,9 @@ pub(super) fn final_steps(
 ) -> Result<(KiCadBoardRouterResult, Option<f64>), String> {
     let router_config = &ctx.router_config;
     let fill_reserve = ctx.fill_check_reserve(copper.has_pours);
+    // A board KiCad finds open keeps work for the open repair after the
+    // ladder (`additive_repair::reserve`).
+    let open_reserve = super::additive_repair::reserve(ctx, copper.has_pours);
     let ladder_deadline = if routed
         .native
         .as_ref()
@@ -88,7 +91,7 @@ pub(super) fn final_steps(
     {
         ctx.work_deadline - fill_reserve
     } else {
-        ctx.work_deadline
+        ctx.work_deadline - open_reserve
     };
     let ladder_left = ledger.left(ladder_deadline);
     // Past the wall-clock guard the ladder would only lower the board and
@@ -151,7 +154,7 @@ pub(super) fn final_steps(
         )?;
     }
     board.routed.work_seconds += solid_first_work;
-    finish_kept_board(ctx, ledger, &mut board, fill_reserve)?;
+    finish_kept_board(ctx, ledger, &mut board, fill_reserve, open_reserve)?;
     Ok((board.routed, final_ladder_budget_seconds))
 }
 
@@ -453,6 +456,7 @@ fn finish_kept_board(
     ledger: &mut WorkLedger,
     board: &mut KeptBoard,
     fill_reserve: f64,
+    open_reserve: f64,
 ) -> Result<(), String> {
     let router_config = &ctx.router_config;
     let routed = &mut board.routed;
@@ -483,11 +487,13 @@ fn finish_kept_board(
     if (routed.native.is_some() || router_config.skip_native_verification)
         && ctx.stop.allows(LayoutStep::NeckRepair)
     {
-        let reserved = routed
-            .native
-            .as_ref()
-            .filter(|report| report.selected_net_unconnected_items == 0)
-            .map_or(0.0, |_| fill_reserve);
+        let reserved = routed.native.as_ref().map_or(0.0, |report| {
+            if report.selected_net_unconnected_items == 0 {
+                fill_reserve
+            } else {
+                open_reserve
+            }
+        });
         let left = ledger.left(ctx.work_deadline) - routed.work_seconds - reserved;
         let checks = crate::board_router::repair_necks(
             routed,

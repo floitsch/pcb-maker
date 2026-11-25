@@ -172,12 +172,17 @@ pub(super) fn start_from(
 /// it fell back to the plain placement and which parts the skeleton or the
 /// passives left without a legal place; `walk` the relaxation levels the
 /// placement ran (the passives' around a held skeleton), each with the
-/// parts it left without room.
+/// parts it left without room. Under the race over skeletons (`skeleton`:
+/// its passives and settings), `skeleton_objective` holds the objective by
+/// term on the skeleton's own problem (`core::skeleton::skeleton_problem`,
+/// without halos) at each `skeleton_*` stage's poses and at the
+/// designer's (docs/experiments/cut-census.md).
 pub(super) fn trace_placements(
     lowered: &LoweredPlacement,
     placements: &[core::Placement],
     seeds: &[u64],
     config: &core::Config,
+    skeleton: Option<(&[bool], core::skeleton::Settings)>,
     path: &Path,
 ) -> Result<(), String> {
     // The global placement's own problem (the fitted halos of its level).
@@ -187,6 +192,23 @@ pub(super) fn trace_placements(
         None => None,
     };
     let base = &lowered.problem;
+    // The skeleton's own problem as `place_skeleton` builds it, without
+    // halos: what its anneal and legaliser minimise, the passives absent.
+    let skeleton_problem = skeleton.map(|(passive, settings)| {
+        let absent = core::skeleton::absent_parts(base, passive);
+        let mut report = core::skeleton::Report::default();
+        let mut problem = core::skeleton::skeleton_problem(
+            base,
+            &absent,
+            &lowered.poured,
+            &settings,
+            &mut report,
+        );
+        for component in &mut problem.components {
+            component.halo = 0.0;
+        }
+        problem
+    });
     let count = base.components.len();
     let nets = base.net_weights.len();
     let mut members: Vec<Vec<(usize, usize)>> = vec![Vec::new(); nets];
@@ -349,6 +371,25 @@ pub(super) fn trace_placements(
             }
             result
         };
+        let skeleton_objective = skeleton_problem.as_ref().map(|problem| {
+            let mut result: serde_json::Map<String, serde_json::Value> = stages
+                .iter()
+                .filter(|(name, _)| name.starts_with("skeleton_"))
+                .map(|(name, poses)| {
+                    (
+                        name.to_string(),
+                        objective_json(&core::anneal::objective(problem, poses)),
+                    )
+                })
+                .collect();
+            if let Some(poses) = &designer {
+                result.insert(
+                    "designer".to_string(),
+                    objective_json(&core::anneal::objective(problem, poses)),
+                );
+            }
+            result
+        });
         let global_overflow = overflows(&relaxed);
         let global_overflow_global = overflows(&global_problem);
         let global_overflow_bare = overflows(&bare);
@@ -436,6 +477,7 @@ pub(super) fn trace_placements(
             "kept": rank == 0,
             "objective": objective,
             "objective_bare": objective_bare,
+            "skeleton_objective": skeleton_objective,
             "global_overflow_at": global_overflow,
             "global_overflow_at_bare": global_overflow_bare,
             "global_overflow_at_global": global_overflow_global,

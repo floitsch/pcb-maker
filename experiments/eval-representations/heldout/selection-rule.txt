@@ -1,0 +1,14 @@
+Selection rule, written 2026-11-25 before any listing of the population and before whyopen.py ran on any new board.
+
+Population: build/nightly/2026-11-24/sweep/<board>/layout/result/drc.json and
+build/nightly/2026-11-24/designer/<board>/route/drc.json with 1 to 6 entries in unconnected_items.
+Exclude: (a) every board name used by the study's 12 cases (any tier); (b) every board listed in
+benchmarks/expansion/holdout/manifest.json; (c) every (tier, board) pair the window census ran
+(build/scratch/fund-window/items.json; whyopen.py's 117-item run covered those), unless a stage keeps
+fewer than 6 boards after (c), then (c) is dropped for that stage.
+Pick: per stage, sort the remaining rows by board name; k = max(1, n // 6); take indices
+k//2, k//2 + k, ... until 6 rows. A board name already picked in the sweep is skipped in the designer
+list (take the next index up, wrapping). If a stage has fewer than 6, take all and fill from the other
+stage by continuing its sequence at the midpoints between picks.
+Item per board: unconnected_items[0] (whyopen.py --item 0).
+No other information (cause, item kind, distance, router reports) is looked at before the pick.

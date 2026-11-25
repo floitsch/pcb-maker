@@ -512,11 +512,37 @@ pub fn route_kicad_board(
                     input.publish_original(final_directory, &mut original, Some(output_directory));
                 let _ = fs::remove_dir_all(output_directory);
                 published?;
+                // The input kept is repaired as an attempt's board would be
+                // (split72_right on the endgame tier: kept by the trial on
+                // one run, by a wall-guarded preflight's absence on another).
+                if super::route_open_repair::after_ladder(
+                    &mut original,
+                    final_directory,
+                    board_id,
+                    config,
+                    &mut ladder,
+                )? {
+                    original.work_seconds = ladder.work;
+                    original.kicad_checks_charged = ladder.checks_charged.checks;
+                    write_atomically(
+                        &final_directory.join("board-router.json"),
+                        &serde_json::to_vec_pretty(&original).map_err(|error| error.to_string())?,
+                    )?;
+                }
                 return Ok(original);
             }
         }
         ladder.charge_checks(input_checks - before);
     }
+    // The nets KiCad still finds open, each routed alone against all the
+    // copper kept (`route_open_repair.rs`).
+    super::route_open_repair::after_ladder(
+        &mut result,
+        output_directory,
+        board_id,
+        config,
+        &mut ladder,
+    )?;
     result.cut = core::router::wall_cuts();
     result.work_seconds = ladder.work;
     result.work_bound_seconds = ladder.work_bound;
@@ -1259,6 +1285,7 @@ pub fn finish_routed_board(
         native,
         native_candidate_errors: None,
         model_precedes_additive_repair: false,
+        open_repair: None,
         model_precedes_generated_pad_via_repair: false,
         model_precedes_body_near_grid_retry: false,
         pours: String::new(),

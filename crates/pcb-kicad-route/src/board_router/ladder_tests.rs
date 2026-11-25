@@ -227,6 +227,7 @@ fn report(open: usize, work: f64, pitch: f64) -> KiCadBoardRouterResult {
         native: None,
         native_candidate_errors: None,
         model_precedes_additive_repair: false,
+        open_repair: None,
         model_precedes_generated_pad_via_repair: false,
         model_precedes_body_near_grid_retry: false,
         pours: String::new(),

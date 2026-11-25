@@ -900,7 +900,8 @@ first-route advantage on seven boards; the connectors alone -0.16, the
 three largest ICs 0.15. Our wirelength there is lower or within 2 % of
 our own on six of seven. So the gap is the active parts' arrangement as a
 whole (banks of repeated parts its sharpest case), which our objective
-accepts and our search does not reach; the passives around a good
+accepts on Glasgow and the 4in1 (with our passives around it; not on the
+4in1-mini) and our search does not reach; the passives around a good
 skeleton are not where the advantage is.
 
 ### Where the arrangement is lost
@@ -924,10 +925,22 @@ compared with our own pipeline (`stages.py`, four boards, two seeds):
 - **The legaliser and the refinement** keep the arrangement they are
   given (the designer's poses are a fixed point of the legaliser).
 - **The race** cannot pick an arrangement no seed holds.
-- **The objective is not what is wrong.** Legalised and refined, the
-  designer's arrangement scores 0.59 to 1.02 of our own placement's
-  objective, lower on the boards where the objectives differ (by crossings
-  and the two-pin and large nets' wire).
+- **The objective accepts the designer's active arrangement, not its
+  passives.** With the designer's active parts pinned and our passives
+  placed around them, the whole objective scores below every one of our
+  seeds on Glasgow and the 4in1 (by crossings and relations), and those
+  placements route better than ours; on the 4in1-mini it scores above
+  them (docs/experiments/objective-terms.md). The designer's own
+  placement scores worse than our seeds: longer two-pin wire, more
+  crossings, missed decoupling relations. Our search does not reach the
+  active arrangement, and our refinement walks away from it when given
+  it: on Glasgow's plain pipeline the legaliser costs 34 open terminals
+  (19 to 53) and the refinement 40 more (to 93), most of its objective
+  gain being the decoupling relations; today's pipeline moves the
+  active parts 5 mm in the skeleton's legaliser and refinement (114).
+  (On 2026-11-04 the designer's legalised placement scored 0.59 to 1.02
+  of one seed's whole objective; our plain placements have since
+  improved, the designer's has not changed.)
 
 What stays open: the OpenESC 4in1-mini loses under the netlist start
 (its 22 bulk capacitors on one rail solve to one spot, and the anneal
