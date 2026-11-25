@@ -512,8 +512,11 @@ end pad the router lists open (`nets[].open[].pads`), under the router's
 reason (`open:no_path_hard:board`, `open:repair_skipped:budget`,
 `open:lost:clean_up`, ...; docs/agents.md, `routed.nets[]`); then by the
 router's net of the item's name (of a split name, the copy holding the
-item's pads): routed (the router counts it routed), or open for one reason
-only (the item's pads not listed; the stage notes how many). Ends are
+item's pads): routed (the router counts it routed; where the router keeps
+several nets of the name, each routed, and the item's copy is not known,
+"copies routed" for as many items of the name as one fewer than the
+copies: what joining them takes), or open for one reason only (the item's
+pads not listed; the stage notes how many). Ends are
 matched by name only (`REF.NUMBER` and net, an end's uuid), never by
 geometry. The rest is `unexplained`, split by what the router wrote: a dead
 pad without `access` (outputs of an older binary), an open terminal whose
