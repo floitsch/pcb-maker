@@ -1,0 +1,74 @@
+[
+ {
+  "tier": "2026-11-24/sweep",
+  "name": "0xCB-dev__0xCB-1337__pcb-panel",
+  "unconnected": 3,
+  "item": 0
+ },
+ {
+  "tier": "2026-11-24/sweep",
+  "name": "CRImier__MyKiCad__protoesp",
+  "unconnected": 3,
+  "item": 0
+ },
+ {
+  "tier": "2026-11-24/sweep",
+  "name": "CRImier__MyKiCad__vaio_re",
+  "unconnected": 5,
+  "item": 0
+ },
+ {
+  "tier": "2026-11-24/sweep",
+  "name": "ISSUIUC__ISS-PCB__MIDAS-MK1.1__MIDAS-MK1.1-revA",
+  "unconnected": 1,
+  "item": 0
+ },
+ {
+  "tier": "2026-11-24/sweep",
+  "name": "Twisted-Fields__rp2040-motor-controller__RP2040_base",
+  "unconnected": 5,
+  "item": 0
+ },
+ {
+  "tier": "2026-11-24/sweep",
+  "name": "briskspirit__Sisu_SSE-9__Sisu_SSE-9",
+  "unconnected": 4,
+  "item": 0
+ },
+ {
+  "tier": "2026-11-24/designer",
+  "name": "apfaudio__eurorack-pmod__eurorack-pmod-pcb",
+  "unconnected": 1,
+  "item": 0
+ },
+ {
+  "tier": "2026-11-24/designer",
+  "name": "byrantech__laptop__motherboard",
+  "unconnected": 2,
+  "item": 0
+ },
+ {
+  "tier": "2026-11-24/designer",
+  "name": "obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized",
+  "unconnected": 3,
+  "item": 0
+ },
+ {
+  "tier": "2026-11-24/designer",
+  "name": "thpoll83__PolyKybd__poly_corne_split42_right",
+  "unconnected": 1,
+  "item": 0
+ },
+ {
+  "tier": "2026-11-24/designer",
+  "name": "vd-rd__sbc_allwinner_a13__module",
+  "unconnected": 3,
+  "item": 0
+ },
+ {
+  "tier": "2026-11-24/designer",
+  "name": "byrantech__laptop__power",
+  "unconnected": 1,
+  "item": 0
+ }
+]

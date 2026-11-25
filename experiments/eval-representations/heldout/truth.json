@@ -1,0 +1,201 @@
+[
+ {
+  "case": 0,
+  "name": "0xCB-dev__0xCB-1337__pcb-panel",
+  "tier": "2026-11-24/sweep",
+  "item": 0,
+  "net": "Board_1-/PORT+ (KiCad's text says Board_2-/PORT+)",
+  "class": "A",
+  "fault": "tool",
+  "blockers": [],
+  "cause": "Misattributed item: the four panel copies of J1 share pad UUIDs, so KiCad's report prints Board_2's J1.A6/B6 (60.14,147.60), where Board_2-/PORT+ is fully routed; the open pair is really Board_1-/PORT+ J1.A6-J1.B6 at (149.86/150.86, 33.40), a net the router left wholly unrouted (0 mm). There, KiCad accepts two 0.41/0.15 vias in the pads of A6 and B6 joined by 1 mm on In2.Cu (judge/c0b: unconnected 3 to 2, no error), so a single-net path exists; with the router's own 0.46/0.15 via it fails by 0.02 mm against Board_1-/PORT-'s In1 track, and on B.Cu A6 is boxed by A7/B7, the board edge (0.3 mm above the pads, a track needs 0.4) and Board_1-/PORT-'s track 0.19 mm below.",
+  "confidence": 45,
+  "doubts": "Two readings. (1) If vias must be the size the router uses (0.46/0.15), the answer is B, walled by Board_1-/PORT- (judge/c0c: with Board_1-/PORT-'s tracks removed a plain B.Cu loop under A7 is accepted). (2) The item as KiCad describes it (Board_2's J1) is not open at all: a reader who goes to the stated position sees a connected net; layout.log repeats the wrong name. Recommend scoring A or B as right only if the subject also notices the misattribution, or exclude the case from scoring as 'truth not answerable from the stated item'.",
+  "evidence": "duplicate pad tstamps 2a279697.../f936b7dd... in all four J1 copies (pcb-panel.kicad_pcb lines 70389-71278); board-router.json: Board_1-/PORT+ partial, 3 terminals, 2 unconnected, 0 mm, Board_2-/PORT+ routed; judge/c0a (0.46/0.14 vias: closes item 0 but drill below the board's 0.15 and a short to F.Cu VBUS at y 33.115), judge/c0d (0.46/0.15: clearance 0.08 to Board_1-/PORT- In1), judge/c0b (0.41/0.15 accepted), judge/c0c (B.Cu path with Board_1-/PORT- removed accepted)."
+ },
+ {
+  "case": 1,
+  "name": "CRImier__MyKiCad__protoesp",
+  "tier": "2026-11-24/sweep",
+  "item": 0,
+  "net": "CH_SDA",
+  "class": "E",
+  "fault": "congestion",
+  "blockers": [],
+  "cause": "Long connection never routed: U1.23 (SOIC, F.Cu) to CN12.2 (PTH) is 58.7 mm on a 2-layer board, the router lost the net in negotiation (conflicted, 0 mm of copper), and neither end is walled: U1.23 has free F.Cu room around its pad tip and CN12.2 is a through pad with 0.84 mm gaps to its neighbours (a class track needs 0.65) and open board below it.",
+  "confidence": 80,
+  "doubts": "Whether a 58.7 mm single-net path exists with the present copper (A) or the net is walled somewhere mid-board (B) was not searched; by the study's classes the item is E as long as no end is walled.",
+  "evidence": "board-router.json: CH_SDA partial, 2 terminals, 0 mm, in conflicted_nets, no dead pads; gt/c1a.png and gt/c1b.png (both ends, all copper kept); class 0.25/0.2, 2 layers."
+ },
+ {
+  "case": 2,
+  "name": "CRImier__MyKiCad__vaio_re",
+  "tier": "2026-11-24/sweep",
+  "item": 0,
+  "net": "+3V3E",
+  "class": "B",
+  "fault": "congestion",
+  "blockers": [
+   "SW_LID",
+   "KB_BOOT",
+   "SH_CLK",
+   "SH_DIN"
+  ],
+  "cause": "U6.1 (QFN-56, 0.4 mm pitch) is boxed by other nets' routed copper: SW_LID's 0.11 mm F.Cu track runs 0.21 mm from the pad's outer tip, and the pocket inside the pad ring is closed by KB_BOOT's via, SH_CLK's via and track, with SH_DIN's In1 track and Q1.1 leaving no room for a via; with SW_LID's tracks removed KiCad accepts a plain 0.25 mm F.Cu track from U6.1 round C44.2 to C44.1 (judge/c2b: the item closes, no new error).",
+  "confidence": 70,
+  "doubts": "That no single-net path exists with all copper kept rests on hand clearance arithmetic for the QFN-interior pocket (a via there misses by 0.03 to 0.09 mm against KB_BOOT's via, SH_DIN's In1 track and Q1.1) and on the pocket's F.Cu exits; no exhaustive search. A track along the ring to the net's own via at U6.48 is cut by +1V1E's track and SH_CLK's via (judge/c2a: 0.065 mm against SH_CLK).",
+  "evidence": "near.py at U6.1 (SW_LID F.Cu x=154.61); judge/c2a (interior route rejected: clearance 0.065 to SH_CLK); judge/c2b (with SW_LID removed: F.Cu 155.312,91.38 -> 154.75,91.38 -> 154.75,90.75 -> 154.2,90.2 -> 152.555,90.2 -> C44.1 accepted, unconnected 5 to 7 because SW_LID opens); gt/c2.png, gt/c2c.png."
+ },
+ {
+  "case": 3,
+  "name": "ISSUIUC__ISS-PCB__MIDAS-MK1.1__MIDAS-MK1.1-revA",
+  "tier": "2026-11-24/sweep",
+  "item": 0,
+  "net": "Net-(U106-DS)",
+  "class": "A",
+  "fault": "tool",
+  "blockers": [],
+  "cause": "Single-net miss: U106.H5 (0.5 mm BGA ball, F.Cu) needs one via down to R114.1 on B.Cu right beneath it; KiCad accepts a 0.25 mm F.Cu stub into the depopulated BGA centre, a 0.35/0.25 via (the router's own via size in U106's pads) at (151.5,87.75) and 0.5 mm of B.Cu to R114.1 (unconnected 1 to 0, errors unchanged: 4 hole_clearance before and after).",
+  "confidence": 80,
+  "doubts": "The class's via is 0.8/0.4, which does not fit there; the 0.35/0.25 via is the size the router itself put in five U106 pads on this board and KiCad's DRC has no class-via rule. If a subject insists on the class via, B or C could be argued.",
+  "evidence": "judge/c3b: judge.py F.Cu 151.25,87.75->151.5,87.75, via 0.35/0.25 at 151.5,87.75, B.Cu ->151.0,87.85; layout.log: vias in pads U106 (designer had one in H5)."
+ },
+ {
+  "case": 4,
+  "name": "Twisted-Fields__rp2040-motor-controller__RP2040_base",
+  "tier": "2026-11-24/sweep",
+  "item": 0,
+  "net": "M1C_PWM_L\\",
+  "class": "B",
+  "fault": "congestion",
+  "blockers": [
+   "M1C_PWM_H",
+   "M1B_PWM_H",
+   "/VDC_CS",
+   "+3V3"
+  ],
+  "cause": "U15.7 (RP2040 QFN, 0.4 mm pitch, class 0.2/0.2) is boxed by its neighbours' routed copper: U15.6's net M1C_PWM_H turns diagonally right under pad 7 (a 0.18 mm stub from the pad tip already violates it, judge/c4b), U15.8's M1B_PWM_H fans out beside it, and inside the ring the /VDC_CS and +3V3 vias leave 0.8 mm where a via needs 1.1; on a board stripped of other tracks the pad escapes straight down (gt/c4c.png) and the far end U1.6, a PTH pad, is free on all four layers.",
+  "confidence": 60,
+  "doubts": "The ends are 20.9 mm apart and the router never routed the net (0 mm, conflicted), so E is the other reading; I count it B because the pad cannot leave at all with the present copper. A full 21 mm path with only the named nets moved was not drawn; with M1C_PWM_H alone removed my first stub still hit /VDC_CLK and C12.1's mask (judge/c4a), so more of the pin 5-9 fan-out would have to move.",
+  "evidence": "board-router.json: M1C_PWM_L\\ partial, 0 mm, conflicted; near.py at U15.7; judge/c4b (stub violates M1C_PWM_H); judge/c4a; gt/c4a.png, gt/c4b.png, gt/c4c.png (stripped)."
+ },
+ {
+  "case": 5,
+  "name": "briskspirit__Sisu_SSE-9__Sisu_SSE-9",
+  "tier": "2026-11-24/sweep",
+  "item": 0,
+  "net": "+3.3V",
+  "class": "A",
+  "fault": "tool",
+  "blockers": [],
+  "cause": "U4.26 (QFN pin, F.Cu) is an island of its own: on F.Cu it is boxed in by its neighbours U4.25/U4.27, the routed Net-(U4-VREF) track 0.16 mm above its tip and the exposed pad below, but KiCad accepts a 0.25/0.15 through via inside the pad at (38.08,106.47) that drops into the +3.3V In3 pour (unconnected 4 to 3, the U4.26 item closed, error set unchanged), so a single-net connection exists with all other copper kept.",
+  "confidence": 55,
+  "doubts": "The only legal connection is a minimum-size via in a QFN signal pad; the router never puts vias in U4's pads (only where the designer had them) and the class via 0.5/0.3 does not fit: in the pad it shorts In2 /4G LTE/SIM_CLK and clears In3 /AUDIO/CODEC_LHP by 0.05 mm (judge/c5cls), and with a 0.4/0.2 via the same (judge/c5vip). Under a strict reading (class via, no via in pad) the cause is B, walled on F.Cu by the routed Net-(U4-VREF) (and Net-(U4-LSPKOUT)) tracks and under the pad by In2 /4G LTE/SIM_CLK; I did not draw the B path with those nets removed. A or B are both defensible; I score A, consistent with the study's rule that a single-net path KiCad accepts is class A.",
+  "evidence": "drc.json item 0: Track [+3.3V] F.Cu stub at (35.58,106.1475) (the end of U4.31's track, not a pour piece) || U4.26; judge/c5base (refill, no change): 4 unconnected, errors as drc.json; judge/c5vip2: via 0.25/0.15 at 38.08,106.47 -> 3 unconnected, no new error; near.py: VREF track (37.705-38.205, y 105.5, w0.1) over the pad tip at 105.71; In2 SIM_CLK diagonal 0.056 mm from the pad centre."
+ },
+ {
+  "case": 6,
+  "name": "apfaudio__eurorack-pmod__eurorack-pmod-pcb",
+  "tier": "2026-11-24/designer",
+  "item": 0,
+  "net": "Net-(D18-A)",
+  "class": "A",
+  "fault": "tool",
+  "blockers": [],
+  "cause": "Single-net miss: the 2-pad net D18.2 (an 0402 LED in the board's bottom-left corner) to RN11.5 (15 mm away) was never routed (length 0, '4 failed' searches from iteration 0), yet KiCad accepts a class-width (0.152 mm) path with two class vias (0.8/0.4) and all other copper kept: out of D18.2 to the left, up the 0.33 mm strip between the pad column and the left board edge (the board's copper-to-edge minimum is 0), diagonally to a via at (-17.2,105.5), In3.Cu up past J11 and between the vias at (-17.83,94.25) and (-16.95,93.38) to a via at (-17.2,91.0), and F.Cu down the corridor between the Net-(D16-A) and +12V tracks into RN11.5 from above (unconnected 1 to 0, errors unchanged: courtyards_overlap 41 and footprint_type_mismatch 1 before and after).",
+  "confidence": 75,
+  "doubts": "D18.2's only exits are that edge strip (the gaps to D17.2 above, 0.285 mm, and to D18.1, 0.380 mm, are below 0.152 + 2 x 0.127; a 0.127 neck needs 0.381) or a via overlapping the pad (the designer's own route uses a 0.5 mm via at (-18.95,109.37) half in D18.2). The edge strip passes only because the board's min_copper_edge_clearance is 0; if the router keeps an edge clearance, D18.2 is dead in its model, which a subject could call C (walled by the board edge, D17.2 and D18.1). RN11.5 itself is reachable only on F.Cu from above: no via fits between In2 VDD and /Net-(D17-K) next to it. KiCad says A.",
+  "evidence": "judge/c6d (refill): F.Cu -19.224,109.525 -> -19.723,109.525 -> -19.723,108.1 -> -17.2,105.5; via 0.8/0.4; In3 -17.2,105.5 -> -17.2,97.4 -> -16.9,97.1 -> -16.9,94.32 -> -17.9,93.32 -> -17.9,91.6 -> -17.2,91.0; via 0.8/0.4; F.Cu -> -16.0,92.2 -> -16.0,93.6 -> -15.557,94.2 -> RN11.5: unconnected 0, no new error. route.log: 4 failed searches every iteration; board-router: no dead pads, net partial length 0. Designer board (benchmarks/real/external): via 0.5 at (-18.954,109.368) next to D18.2."
+ },
+ {
+  "case": 7,
+  "name": "byrantech__laptop__motherboard",
+  "tier": "2026-11-24/designer",
+  "item": 0,
+  "net": "/GPIO0_D3/CC_INT_L",
+  "class": "C",
+  "fault": "input",
+  "blockers": [
+   "U13.A1",
+   "U13.A2",
+   "U13.A3",
+   "U13.B1",
+   "U13.B3",
+   "U13.C1",
+   "U13.C2",
+   "U13.C3 (U13's own neighbouring balls)"
+  ],
+  "cause": "End A is U13.B2, the centre ball of a 0.4 mm pitch WLCSP-9 (0.305 mm balls): its eight neighbours leave 0.095 mm orthogonally and 0.261 mm diagonally, less than any track (0.11 mm neck + 2 x 0.11 mm clearance = 0.33 mm), and no through via the board's rules allow (diameter at least 0.45 mm by the .kicad_dru, 0.5 mm by the board setup, drill 0.3, annular 0.1) fits in the pad (a 0.45 mm via leaves 0.023 mm to the neighbouring balls), so the pad cannot be reached even on a stripped board; the 72 mm distance to J1.264 is not the cause.",
+  "confidence": 85,
+  "doubts": "The board setup also lists microvia minimums (0.2/0.1); a 0.2 mm F.Cu-In1 microvia in B2 would keep 0.148 mm, but the router uses through vias only and the designer used a through via. The designer's own board has a 0.4/0.3 through via in B2 that violates these rules (annular 0.05, 0.048 mm to the neighbours; the designer's board carries 12 clearance findings in U13). route.log says it: 'no via size keeps its clearances in B2 (tried 0.5/0.3 mm)'. I did not check the far end J1.264 (not needed once one end is walled), nor run a DRC (the numbers are exact from the pad geometry).",
+  "evidence": "pcbnew: U13 balls at 0.4 mm pitch, 0.3048 mm round, B2 at (92.8,76.1) net /GPIO0_D3{slash}CC_INT_L, all eight neighbours other nets; motherboard.kicad_dru: via_diameter min 0.45, hole_size min 0.2; .kicad_pro: min_via_diameter 0.5, min_through_hole 0.3, min_via_annular 0.1, class clearance 0.11; route.log lines 4 and 229; benchmarks/real/external designer board: via 0.4/0.3 at B2. board-router: net partial, length 0, no dead pads listed."
+ },
+ {
+  "case": 8,
+  "name": "obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized",
+  "tier": "2026-11-24/designer",
+  "item": 0,
+  "net": "+1V1",
+  "class": "B",
+  "fault": "congestion",
+  "blockers": [
+   "USB1_D+",
+   "QSPI_SD3",
+   "/RP2040_D+",
+   "+3V3"
+  ],
+  "cause": "U1.50 (RP2040 DVDD, QFN 0.4 mm pitch, B.Cu) opens into a small pocket closed by routed copper: USB1_D+ (from R19.2 down at x 204.10 and along y 91.31), QSPI_SD3 below, /RP2040_D+ with R19.1 above and the +3V3 stub of U1.48/49; the gaps (R19.1 to R19.2 0.48 mm, SD3 to USB1_D+ 0.41 and 0.25 mm) are below a 0.127 mm neck plus 2 x 0.2 mm clearance and a via from the pocket lands in a closed F.Cu pocket, while with USB1_D+ removed KiCad accepts a straight B.Cu track from U1.50 to C16.1 (+1V1).",
+  "confidence": 75,
+  "doubts": "The 'no path with copper kept' half rests on my own raster reachability check (reach.py, 0.01 mm pixels, neck width 0.127 everywhere, the board's minimum via 0.5 mm, one clearance 0.2 mm), not on KiCad; a path that squeezes through a raster-rounding gap is not excluded but every gap I measured by hand is short by 0.05 mm or more. Main blocker is USB1_D+ (removing it alone opens the path); the others close the pocket's other sides.",
+  "evidence": "reach.py copper kept: NOT CONNECTED (0.127/0.5 via and 0.25/0.8 via); --strip: CONNECTED; --remove-net USB1_D+: CONNECTED. judge/c8b (refill, USB1_D+ removed): B.Cu 0.127 201.336,90.1125 -> 202.2,90.1125, 0.25 -> 204.5,90.1125 -> C16.1 204.98,90.58: +1V1 items open 0, errors unchanged (clearance 18, solder_mask_bridge 13, annular_width 6); unconnected 3 = the two other original items + USB1_D+ now open. board-router: +1V1 partial, conflicted; hot spot 2 at (201.2,88.6) with +3V3."
+ },
+ {
+  "case": 9,
+  "name": "thpoll83__PolyKybd__poly_corne_split42_right",
+  "tier": "2026-11-24/designer",
+  "item": 0,
+  "net": "D-C",
+  "class": "A",
+  "fault": "tool",
+  "blockers": [],
+  "cause": "Single-net miss over 31 mm: J30.10 (0.5 mm FPC pad, no copper on the net) is the one terminal of the 38-pad bus left out, and both ends are free: KiCad accepts a 0.2032 mm track (the router's own narrowed width for this net) up the B.Cu channel between the RESET and SCLK1 tracks of J30, past SW_K_29.3, one 0.61/0.30 via at (51.35,119.9), In1.Cu to a second via at (47.45,109.25) on the D-C track that leaves J29.10 (unconnected 1 to 0, error set unchanged).",
+  "confidence": 80,
+  "doubts": "Ends are 22 mm apart, so a subject may answer E by the prompt's wording; I score E wrong because a legal path exists with all other copper kept. At the class's full 0.254 mm my grid search finds no path; the router narrowed D-C (and 385 other nets) to 0.2032 itself (board-router.json rules.narrowed), so 0.2032 is within its rules. The path came from my own grid search (maze.py, 0.05 mm grid, 0.02 mm margin), not by hand.",
+  "evidence": "judge/c9b (--refill): after 0 unconnected, violations {shorting_items 2, clearance 8} = the pcbnew-saved baseline judge/c9base (1 unconnected, the same 2 shorts far away at SW1's NPTH, an artefact of saving, and 8 clearance); path in judge/c9-path.txt. maze.py at 0.254: no path."
+ },
+ {
+  "case": 10,
+  "name": "vd-rd__sbc_allwinner_a13__module",
+  "tier": "2026-11-24/designer",
+  "item": 0,
+  "net": "/DDR3 Memory/ddr-dqs0-",
+  "class": "B",
+  "fault": "congestion",
+  "blockers": [
+   "/DDR3 Memory/ddr-d4",
+   "/DDR3 Memory/ddr-dqs0+",
+   "/DDR3 Memory/dqs1-"
+  ],
+  "cause": "Walled by routed copper at both ends (the net has no copper): U200.G3 (0.8 mm BGA, class ddr-data-lower 0.1016 mm / 0.2 mm clearance, so no track passes between two balls) has all four diagonal escape spots taken by other nets' dogbone vias and tracks (ddr-d4 via at H3, ddr-dqs0+ track and via from F3, ddr-d6 and +1V5 vias), the open side to the BGA centre being 0.92 mm between the ddr-d4 and ddr-dqs0+ vias where 0.95 is needed; R11.1 is boxed in on F.Cu by the dqs1- via and track beside it; with ddr-d4, ddr-dqs0+ and dqs1- removed KiCad accepts a 24 mm path (F.Cu, B.Cu, In1, In2, a via at G3) and the item closes.",
+  "confidence": 80,
+  "doubts": "Non-existence with all copper kept rests on my grid search (maze.py, 0.025 mm grid, no margin: both ends trapped on F.Cu in a box under 2 mm) and the hand calculation at G3, not on a certificate. The blocker set is sufficient, not shown minimal (ddr-d6 or +1V5 might replace ddr-d4). The .kicad_dru is empty; class rules from the .kicad_pro. The closing path ends in a via 0.13 mm from G3's centre (via in pad), which KiCad accepts.",
+  "evidence": "maze.py: no path with copper kept (G3 reaches 400 cells, R11.1 1561, F.Cu only); no path with ddr-d4+ddr-dqs0+ removed (R11.1 still walled); from R11.1 with dqs1- removed the whole window is reached; judge/c10a (--remove-net dqs1-, ddr-d4, ddr-dqs0+, --refill): dqs0- closed, unconnected 3 to 5 (the three removed nets), violation types as the pcbnew-saved baseline judge/c10base. Input board (placed/) has no tracks: all walls are this run's routing."
+ },
+ {
+  "case": 11,
+  "name": "byrantech__laptop__power",
+  "tier": "2026-11-24/designer",
+  "item": 0,
+  "net": "/HIDRV1",
+  "class": "B",
+  "fault": "congestion",
+  "blockers": [
+   "/SW1",
+   "/BTST1"
+  ],
+  "cause": "Walled by routed copper: U4.31 (0.4 mm QFN, no copper on the net at all) can only leave downwards into a 0.58 mm channel between the routed /BTST1 track from U4.30 and the /SW1 track from U4.32, both at 45 degrees; the channel is too narrow for a via (needs 0.85 mm) and ends at C38.2 (BTST1) whose corner sits 0.27 mm from the SW1 track (a 0.127 mm track needs 0.43 mm there); with /SW1's tracks removed KiCad accepts a 0.127 mm F.Cu track past C38, a 0.5/0.3 via, In2.Cu to a via beside Q4 and a stub to Q4.4.",
+  "confidence": 85,
+  "doubts": "Non-existence with SW1 kept is argued from the channel geometry (all exits measured: pads 30/32 gap 0.2, EP gap 0.25, via in channel, C38.2 corner), not by a search; a first hand path with SW1 kept was rejected by KiCad at C38.2 (0.003 mm). BTST1 is the other wall; moving it instead of SW1 might also open it (a via between LODRV1 and SW1 would need 0.847 of 0.85 mm).",
+  "evidence": "judge/c11a (SW1 kept): clearance violation C38.2 vs HIDRV1 track 0.0032 mm; judge/c11b (--remove-net /SW1): HIDRV1 closed, no new error type (only SW1's own 6 unconnected). Rules: class 0.11/0.11, .kicad_dru outer track >= 0.127 and track-track 0.127, via >= 0.45 (board 0.5)/0.3. maze.py (0.025 mm grid, no margin, 0.127 clearance): copper kept, U4.31 reaches only an F.Cu pocket x 169.05-170.57, y 107.65-109.85; with /SW1 removed a 12.1 mm path is found."
+ }
+]
