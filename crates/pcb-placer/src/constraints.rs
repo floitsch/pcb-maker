@@ -330,6 +330,15 @@ pub struct Constraints {
     /// trial's rp2350-dual-usb, 2026-10-26: the RP2350 moved and its
     /// capacitors stayed behind, 15 mm from any pin).
     pub follow_anchors: bool,
+    /// Per part, whether the refinement leaves it where the legaliser
+    /// seated it (`Constraints::is_anchored`; empty: none): the active
+    /// parts, whose arrangement the global placement and the anneal chose
+    /// together. The refinement moves one part at a time to where its own
+    /// nets are shorter, which takes that arrangement apart piece by piece
+    /// (docs/experiments/keep-arrangement.md); the passives around them
+    /// are refined as before, and a relation's repair still moves the part
+    /// it names.
+    pub anchored: Vec<bool>,
     /// A panel's frames and tabs (the sub-boards of a panel): the
     /// keepouts over them and the parts that may reach over those.
     pub frames: Frames,
@@ -424,6 +433,12 @@ pub struct Follower {
 }
 
 impl Constraints {
+    /// Whether the refinement leaves part `index` where it is
+    /// (`Constraints::anchored`).
+    pub fn is_anchored(&self, index: usize) -> bool {
+        self.anchored.get(index).copied().unwrap_or(false)
+    }
+
     /// Records which parts `near` relations tie together (see `linked`).
     pub fn link_pairs(&mut self) {
         self.linked.clear();

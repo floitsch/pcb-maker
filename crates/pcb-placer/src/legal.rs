@@ -3885,6 +3885,7 @@ pub fn align_orientations(problem: &Problem, poses: &mut [Pose], tolerance: f64)
         // A pair's series parts turn to face the pair's ends instead
         // (`facing::face`).
         if !component.fixed
+            && !problem.constraints.is_anchored(index)
             && component.pins.len() >= 2
             && component.angle_options.len() > 1
             && !problem
@@ -4057,7 +4058,10 @@ pub fn refine_with(
                 break;
             }
             let component = &problem.components[index];
-            if component.fixed || component.pins.is_empty() {
+            if component.fixed
+                || component.pins.is_empty()
+                || problem.constraints.is_anchored(index)
+            {
                 continue;
             }
             // Where the other pins of this component's nets pull it.
@@ -4216,6 +4220,8 @@ pub fn refine_with(
                 let (first, second) = (&problem.components[a], &problem.components[b]);
                 if first.fixed
                     || second.fixed
+                    || problem.constraints.is_anchored(a)
+                    || problem.constraints.is_anchored(b)
                     || first.side != second.side
                     || first.round != second.round
                     || !first.angle_options.contains(&poses[b].angle)
@@ -4886,6 +4892,60 @@ pub(crate) mod tests {
         poses[1].position = [30.0 + offset[0], 30.0 + offset[1]];
         problem.poses = poses.clone();
         (problem, poses)
+    }
+
+    /// Three parts on two nets in a row, 10 mm apart, the middle one a
+    /// quarter turn off the others' angle.
+    fn row_on_a_net() -> (Problem, Vec<Pose>) {
+        let (mut problem, _) = pair(0.0, 0.0);
+        let mut part = resistor(0.0);
+        part.pins = vec![
+            crate::problem::Pin {
+                offset: [0.7, 0.0],
+                net: 0,
+            },
+            crate::problem::Pin {
+                offset: [-0.7, 0.0],
+                net: 1,
+            },
+        ];
+        part.angle_options = vec![0.0, 90.0, 180.0, 270.0];
+        problem.components = vec![part.clone(), part.clone(), part];
+        problem.net_weights = vec![1.0, 1.0];
+        let poses: Vec<Pose> = [(10.0, 0.0), (20.0, 90.0), (30.0, 0.0)]
+            .into_iter()
+            .map(|(x, angle)| Pose {
+                position: [x, 20.0],
+                angle,
+            })
+            .collect();
+        problem.poses = poses.clone();
+        (problem, poses)
+    }
+
+    #[test]
+    fn the_refinement_and_the_alignment_leave_an_anchored_part_where_it_is() {
+        // Free, every part moves towards the others.
+        let (problem, start) = row_on_a_net();
+        let mut poses = start.clone();
+        assert!(refine(&problem, &mut poses, 8) > 0);
+        assert!(poses.iter().zip(&start).all(|(now, then)| now != then));
+        // Anchored, the first two stay (the second at its angle, which the
+        // alignment would turn to the others' too) and the third comes to
+        // them.
+        let (mut problem, start) = row_on_a_net();
+        problem.constraints.anchored = vec![true, true, false];
+        let mut poses = start.clone();
+        assert!(refine(&problem, &mut poses, 8) > 0);
+        align_orientations(&problem, &mut poses, 100.0);
+        assert_eq!(poses[..2], start[..2]);
+        assert!(poses[2].position[0] < 25.0, "{poses:?}");
+        assert!(illegal_components(&problem, &poses).is_empty());
+        // Without the anchor the alignment turns the second part.
+        let (problem, start) = row_on_a_net();
+        let mut poses = start.clone();
+        assert!(align_orientations(&problem, &mut poses, 100.0) > 0);
+        assert_eq!(poses[1].angle, 0.0);
     }
 
     #[test]

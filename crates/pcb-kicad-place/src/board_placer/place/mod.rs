@@ -102,6 +102,13 @@ pub fn place_kicad_board_with_rear_retry(
     }
     let pieces = place_in_pieces(&context, &pcb, &mut lowered)?;
     add_routing_demand(&context, &pcb, &mut lowered)?;
+    // The active parts stay through the refinement where the legaliser
+    // seats them (`Constraints::anchored`): every part the class rule does
+    // not call a passive (`skeleton_passive`).
+    lowered.problem.constraints.anchored = passive_mask(&pcb, lowered.problem.components.len())
+        .iter()
+        .map(|passive| !passive)
+        .collect();
     let placer_config = placer_config(&context, &pcb, &lowered)?;
     let skeleton_race = skeleton_race(&context, &pcb, &lowered, &pieces);
     let mut seeds = place_seeds(
