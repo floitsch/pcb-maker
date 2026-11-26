@@ -159,11 +159,13 @@ pub(super) fn start_from(
 /// the global placement's density overflow at each stage's poses
 /// (at the placement's level, without halos, and at the global
 /// placement's own: `global_overflow_at`, `_bare`, `_global`),
-/// and per movable part each stage's pose, how far each stage moved it and
+/// and per movable part its class (`passive`: `skeleton_passive`'s rule),
+/// each stage's pose, how far each stage moved it and
 /// what it met where the annealer left it. Each seed says its seed
 /// number and whether it is the placement kept (the first). The stages
 /// are the placement's (`core::Placement::stage_poses`: the global
-/// placement's `start` first, the kept skeleton's `skeleton_*` before
+/// placement's `start` first, `refined` after the first refinement and
+/// `repaired` after the relation repair, the kept skeleton's `skeleton_*` before
 /// them under the race over skeletons), and `global_history` holds each
 /// global placement's descent every ten iterations (`iteration`,
 /// `overflow`, `lambda`, `gamma`, the wire gradient's and the weighted
@@ -183,6 +185,7 @@ pub(super) fn trace_placements(
     seeds: &[u64],
     config: &core::Config,
     skeleton: Option<(&[bool], core::skeleton::Settings)>,
+    passive: &[bool],
     path: &Path,
 ) -> Result<(), String> {
     // The global placement's own problem (the fitted halos of its level).
@@ -415,6 +418,9 @@ pub(super) fn trace_placements(
             let mut entry = serde_json::json!({
                 "reference": lowered.references[index],
                 "pins": component.pins.len(),
+                // A passive by the race over skeletons' class rule
+                // (`skeleton_passive`); the others are the active parts.
+                "passive": passive.get(index).copied().unwrap_or(false),
                 // Each pin's net (an index into the trace's `nets`).
                 "nets": component.pins.iter().map(|pin| pin.net).collect::<Vec<_>>(),
                 "body": [component.body_size[0], component.body_size[1]],

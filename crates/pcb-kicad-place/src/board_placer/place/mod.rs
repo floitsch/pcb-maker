@@ -121,6 +121,7 @@ pub fn place_kicad_board_with_rear_retry(
                 .as_ref()
                 .filter(|race| race.budget_ok)
                 .map(|race| (race.passive.as_slice(), race.settings)),
+            &passive_mask(&pcb, lowered.problem.components.len()),
             Path::new(&trace),
         )?;
     }

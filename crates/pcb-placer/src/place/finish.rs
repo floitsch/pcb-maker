@@ -16,13 +16,16 @@ use crate::{
 
 /// Refinement, edge-copper centring, relation repair and alignment (of
 /// orientations): what
-/// follows legalization.
+/// follows legalization. `stages` takes the poses after the first
+/// refinement (`refined`) and after the relation repair with its
+/// refinements (`repaired`), for the trace.
 fn finish(
     problem: &Problem,
     poses: &mut [Pose],
     passes: usize,
     groups: Option<&groups::BusGroups>,
     debug: bool,
+    stages: &mut Vec<(&'static str, Vec<Pose>)>,
 ) {
     let refine_mark = mark();
     // Escape demand: one state through the refinements, its measured
@@ -48,6 +51,7 @@ fn finish(
         groups,
     );
     phase_line(debug, "refine", refine_mark);
+    stages.push(("refined", poses.to_vec()));
     let repair_mark = mark();
     legal::center_edge_copper(problem, poses);
     // Moving one part can break a relation repaired before; repeat while
@@ -65,6 +69,7 @@ fn finish(
             groups,
         );
     }
+    stages.push(("repaired", poses.to_vec()));
     // Parts of a kind turned alike where it costs next to nothing.
     legal::align_orientations(problem, poses, 0.5);
     // A pair's series parts facing the pair's two ends.
@@ -142,6 +147,7 @@ impl Placing<'_> {
             config.refine_passes,
             self.bus_groups.as_deref(),
             debug,
+            &mut stage_poses,
         );
         if debug {
             eprintln!(
