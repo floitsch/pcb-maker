@@ -459,11 +459,23 @@ pub fn route_kicad_board(
         ladder.charge_checks(checks);
     }
     // The neck repair improves a checked board; past the deadline it is
-    // skipped (up to six more KiCad checks, uncounted as work).
+    // skipped. In route mode its KiCad checks count as no work; where a
+    // check counts as work (a layout's ladder) it makes only the checks
+    // the ladder's budget still pays for (`checks_left`).
     if result.native.is_some() && !ladder.past_deadline() {
         let remaining = config
             .provisional_native_check_limit
             .map(|limit| limit.saturating_sub(ladder.checks_charged.checks));
+        if let Some(paid) = ladder.checks_left() {
+            eprintln!(
+                "ladder: {:.1} s of work before the neck repair: what is left pays for {paid} KiCad checks",
+                ladder.work
+            );
+        }
+        let remaining = match (remaining, ladder.checks_left()) {
+            (Some(limit), Some(paid)) => Some(limit.min(paid)),
+            (limit, paid) => limit.or(paid),
+        };
         let checks = repair_necks(&mut result, output_directory, board_id, config, remaining)?;
         ladder.charge_checks(checks);
     }

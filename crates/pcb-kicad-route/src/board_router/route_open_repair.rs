@@ -5,9 +5,9 @@
 //! the local repair lowers them (`open_repair::lower_for_local`), and
 //! kept only where KiCad finds the board better (`repair_layout_opens`, the
 //! layout's additive repair). The result then describes the board written
-//! (`account`): the nets KiCad no longer finds open are routed, the
-//! repair's copper is in their totals, and what the router had left is in
-//! `nets[].open_repair`.
+//! (`account`, also for the layout's repair: `account_open_repair`): the
+//! nets KiCad no longer finds open are routed, the repair's copper is in
+//! their totals, and what the router had left is in `nets[].open_repair`.
 
 use super::*;
 use crate::open_repair::{LayoutRepairBudget, repair_layout_opens};
@@ -46,10 +46,18 @@ pub struct KiCadNetOpenRepair {
     /// `closed`: KiCad finds no unconnected item on the net after the
     /// repair (the net is `routed`, without `open`); `improved`: it still
     /// finds some (`kicad_unconnected_items`), and the net's own count and
-    /// `open` are the router's from before the repair, which names no pad.
+    /// `open` are the router's from before the repair. KiCad's items do
+    /// not say which terminals are apart after it: an item names the two
+    /// nearest objects of two parts of the net, a track as often as a pad,
+    /// and never a part's other pads.
     pub status: &'static str,
     /// KiCad's unconnected items on the net after the repair.
     pub kicad_unconnected_items: usize,
+    /// The pads those items name (`U1.3`, the first `OPEN_PADS_LISTED`):
+    /// each is at an end of a connection still missing. Absent where the
+    /// items name tracks, vias or zones only.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub kicad_unconnected_pads: Vec<String>,
     /// The router's own count and reasons before the repair (`open`'s
     /// form): what the repair closed, where `closed`.
     pub unconnected_terminals_before: usize,
@@ -62,12 +70,13 @@ pub struct KiCadNetOpenRepair {
 }
 
 /// A net whose copper KiCad accepted, as `account` takes it: its
-/// connection name, KiCad's unconnected items on it after the repair, and
-/// the vias and track length the repair added.
+/// connection name, KiCad's unconnected items on it after the repair with
+/// the pads they name, and the vias and track length the repair added.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct RepairedNet {
     pub name: String,
     pub still_open: usize,
+    pub open_pads: Vec<String>,
     pub vias: usize,
     pub length_mm: f64,
 }
@@ -85,6 +94,7 @@ pub(super) fn repaired_nets(
 ) -> Result<Vec<RepairedNet>, String> {
     let open = native_kept::open_nets(after, after_report)
         .ok_or("KiCad's unconnected items after the open repair name no single net each")?;
+    let open_pads = open_pads(after, after_report);
     let copper = |pcb: &Expr, name: &str| -> Result<(usize, f64), String> {
         let codes = kicad_nets::net_codes(pcb);
         let net_names = NetNames::of(pcb);
@@ -121,11 +131,82 @@ pub(super) fn repaired_nets(
             Ok(RepairedNet {
                 name: name.to_string(),
                 still_open: open.get(name).copied().unwrap_or(0),
+                open_pads: open_pads.get(name).cloned().unwrap_or_default(),
                 vias: vias_after.saturating_sub(vias_before),
                 length_mm: (length_after - length_before).max(0.0),
             })
         })
         .collect()
+}
+
+/// The pads KiCad's unconnected items of `report` name on `pcb`, per net
+/// (its connection name): `U1.3`, sorted, each once, the first
+/// `OPEN_PADS_LISTED`.
+fn open_pads(pcb: &Expr, report: &Value) -> BTreeMap<String, Vec<String>> {
+    let mut labels = BTreeMap::new();
+    for footprint in pcb.children() {
+        if footprint.head() != Some("footprint") {
+            continue;
+        }
+        let Some(reference) = kicad_nets::footprint_reference(footprint) else {
+            continue;
+        };
+        for pad in footprint.children() {
+            if pad.head() == Some("pad")
+                && let Some(id) = crate::open_repair::item_id(pad)
+                && let Some(number) = pad.children().get(1).and_then(Expr::atom)
+            {
+                labels.insert(id, format!("{reference}.{number}"));
+            }
+        }
+    }
+    let names = NetNames::of(pcb);
+    let codes = kicad_nets::net_codes(pcb);
+    let mut pads: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (net, items) in crate::open_repair::native_opens(pcb, report, &codes) {
+        for item in items {
+            if let Some(label) = item["uuid"]
+                .as_str()
+                .and_then(|id| labels.get(&id.to_ascii_lowercase()))
+            {
+                pads.entry(names.normalize(net).to_owned())
+                    .or_default()
+                    .insert(label.clone());
+            }
+        }
+    }
+    pads.into_iter()
+        .map(|(net, pads)| (net, pads.into_iter().take(OPEN_PADS_LISTED).collect()))
+        .collect()
+}
+
+/// The layout's and route mode's accounting of an accepted open repair:
+/// `result` describes the board in `before`; the repair wrote the board in
+/// `after` (with KiCad's report on it, `drc.json`) by adding copper to the
+/// nets `accepted`. Afterwards `result`'s nets, counts and totals describe
+/// the board in `after` (`account`). An error, with `result` untouched,
+/// where the boards or the report cannot be read or KiCad's items name no
+/// single net each.
+pub fn account_open_repair(
+    result: &mut KiCadBoardRouterResult,
+    before: &Path,
+    after: &Path,
+    board_id: &str,
+    accepted: &[String],
+) -> Result<(), String> {
+    let read = |directory: &Path| -> Result<Expr, String> {
+        let path = directory.join(format!("{board_id}.kicad_pcb"));
+        let source = fs::read_to_string(&path)
+            .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+        parse(&source).map_err(|error| format!("failed to parse {}: {error}", path.display()))
+    };
+    let report: Value = serde_json::from_str(
+        &fs::read_to_string(after.join("drc.json")).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let repaired = repaired_nets(&read(before)?, &read(after)?, &report, accepted)?;
+    account(result, &repaired);
+    Ok(())
 }
 
 /// Makes `result` describe the board the accepted repair wrote: each of
@@ -165,6 +246,7 @@ pub(super) fn account(result: &mut KiCadBoardRouterResult, repaired: &[RepairedN
                     "improved"
                 },
                 kicad_unconnected_items: net.still_open,
+                kicad_unconnected_pads: net.open_pads.clone(),
                 unconnected_terminals_before: entry.unconnected_terminals,
                 open_before: if net.still_open == 0 {
                     std::mem::take(&mut entry.open)
@@ -334,20 +416,6 @@ pub(super) fn repair_route_opens(
         .filter(|trial| trial.status == "accepted")
         .map(|trial| trial.net.clone())
         .collect();
-    // What the repair did per net, read before the directories change.
-    let repaired = (|| -> Result<Vec<RepairedNet>, String> {
-        let read = |directory: &Path| -> Result<Expr, String> {
-            let path = directory.join(format!("{board_id}.kicad_pcb"));
-            let source = fs::read_to_string(&path)
-                .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-            parse(&source).map_err(|error| format!("failed to parse {}: {error}", path.display()))
-        };
-        let report: Value = serde_json::from_str(
-            &fs::read_to_string(trial.join("drc.json")).map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| error.to_string())?;
-        repaired_nets(&read(directory)?, &read(&trial)?, &report, &accepted)
-    })();
     let previous = temporary_next_to(directory);
     fs::rename(directory, &previous)
         .map_err(|error| format!("stage the routed board for the open repair: {error}"))?;
@@ -360,18 +428,21 @@ pub(super) fn repair_route_opens(
         repair.reason = Some(format!("adopt the open repair: {error}"));
         return Ok(Some(repair));
     }
+    // What the repair did per net, from the board the ladder kept and the
+    // one adopted.
+    let accounted = account_open_repair(result, &previous, directory, board_id, &accepted);
     let _ = fs::remove_dir_all(previous);
     repair.status = "accepted";
     repair.opens_after = native.selected_net_unconnected_items;
     repair.added_copper = candidate.added_copper;
     repair.nets = accepted;
-    match repaired {
-        Ok(repaired) => account(result, &repaired),
-        // The nets' counts stay the router's from before the repair.
-        Err(error) => repair.reason = Some(format!("nets not accounted: {error}")),
+    // Not accounted: the nets' counts stay the router's from before the
+    // repair, and the result says so.
+    if let Err(error) = accounted {
+        repair.reason = Some(format!("nets not accounted: {error}"));
+        result.model_precedes_additive_repair = true;
     }
     result.native = Some(native);
-    result.model_precedes_additive_repair = true;
     result.closed_reuse_drc = None;
     result.saved_copper = Some(copper);
     Ok(Some(repair))
@@ -473,6 +544,11 @@ mod tests {
         let repaired = |name: &str, still_open, vias, length_mm| RepairedNet {
             name: name.into(),
             still_open,
+            open_pads: if still_open > 0 {
+                vec!["J2.b11".into()]
+            } else {
+                Vec::new()
+            },
             vias,
             length_mm,
         };
@@ -504,6 +580,18 @@ mod tests {
         assert_eq!(gnd.length_mm, 21.5);
         let note = gnd.open_repair.as_ref().unwrap();
         assert_eq!((note.status, note.kicad_unconnected_items), ("improved", 1));
+        // The pad KiCad's item names is in the note; `open` stays the
+        // router's.
+        assert_eq!(note.kicad_unconnected_pads, ["J2.b11"]);
+        assert_eq!(gnd.open[0].pads, ["U10.10"]);
+        assert!(
+            result.nets[0]
+                .open_repair
+                .as_ref()
+                .unwrap()
+                .kicad_unconnected_pads
+                .is_empty()
+        );
         assert!(result.nets[2].open_repair.is_none());
         // The totals follow the nets.
         assert_eq!(
@@ -524,8 +612,10 @@ mod tests {
             parse(&format!(
                 r#"(kicad_pcb (version 20241229)
                   (footprint "t" (layer "F.Cu") (at 3 5) (uuid "f1")
+                    (property "Reference" "J1" (at 0 0) (layer "F.SilkS"))
                     (pad "1" smd circle (at 0 0) (size 1 1) (layers "F.Cu") (net "/LINK") (uuid "p1")))
                   (footprint "t" (layer "F.Cu") (at 16 5) (uuid "f2")
+                    (property "Reference" "J2" (at 0 0) (layer "F.SilkS"))
                     (pad "1" smd circle (at 0 0) (size 1 1) (layers "F.Cu") (net "/LINK") (uuid "p2")))
                   (segment (start 3 5) (end 5 5) (width 0.2) (layer "F.Cu") (net "/LINK") (uuid "s1"))
                   (segment (start 0 0) (end 9 0) (width 0.2) (layer "F.Cu") (net "OTHER") (uuid "s2"))
@@ -545,6 +635,7 @@ mod tests {
             [RepairedNet {
                 name: "LINK".into(),
                 still_open: 0,
+                open_pads: Vec::new(),
                 vias: 1,
                 length_mm: 11.0,
             }]
@@ -554,6 +645,15 @@ mod tests {
             {"items": [{"uuid": "p1"}, {"uuid": "p2"}]}]});
         let repaired = repaired_nets(&before, &after, &report, &["/LINK".to_string()]).unwrap();
         assert_eq!(repaired[0].still_open, 1);
+        assert_eq!(repaired[0].open_pads, ["J1.1", "J2.1"]);
+        // An item between a pad and a track names the pad alone.
+        let report = serde_json::json!({"kicad_version": "10.0.7", "unconnected_items": [
+            {"items": [{"uuid": "s3"}, {"uuid": "P2"}]}]});
+        let repaired = repaired_nets(&before, &after, &report, &["/LINK".to_string()]).unwrap();
+        assert_eq!(
+            (repaired[0].still_open, &repaired[0].open_pads[..]),
+            (1, &["J2.1".to_string()][..])
+        );
     }
 
     #[test]
@@ -628,7 +728,8 @@ mod tests {
         assert_eq!(repair.nets, ["LINK"]);
         assert!(repair.native_checks >= 2);
         assert!(repair.search_work_seconds > 0.0);
-        assert!(result.model_precedes_additive_repair);
+        // Accounted: nothing of the result precedes the repair's copper.
+        assert!(!result.model_precedes_additive_repair);
         assert!(result.native.as_ref().unwrap().complete);
         assert!(result.saved_copper.as_ref().unwrap().segments > 0);
         assert!(directory.join("open-repair.json").is_file());

@@ -483,14 +483,11 @@ fn open_count(report: &Value) -> Result<usize, String> {
         .ok_or("native report is missing its list of opens".into())
 }
 
+/// Why KiCad's `reports` are no evidence for a relocation: a finding type
+/// that copper can change is at KiCad's cap, so a check may hide a finding
+/// the relocation causes. The library and text findings at their cap are
+/// none (`COPPER_INDEPENDENT_TYPES`, as in the open repair: `report_capped`).
 pub(crate) fn native_evidence_limit(reports: &[&Value]) -> Option<String> {
-    if reports.iter().any(|report| {
-        finding_types_at_cap(report, "violations")
-            .iter()
-            .any(|kind| matches!(*kind, "lib_footprint_issues" | "lib_footprint_mismatch"))
-    }) {
-        return Some("KiCad's footprint library findings reached the report cap. Restore the project's missing libraries. If they are installed in the user library tables, retry with PCB_MAKER_KICAD_USER_LIBS=1.".into());
-    }
     reports.iter().any(|report| {
         report_capped(report) || !finding_types_at_cap(report, "schematic_parity").is_empty()
     }).then(|| "KiCad's native findings reached the report cap. Review the native DRC before retrying relocation.".into())
@@ -1015,18 +1012,30 @@ mod tests {
     }
 
     #[test]
-    fn a_capped_library_report_explains_the_evidence_limit() {
-        let report = serde_json::json!({
-            "violations": vec![serde_json::json!({"type": "lib_footprint_issues"}); 199],
-            "unconnected_items": [],
-        });
-        assert!(
-            native_evidence_limit(&[&report])
-                .unwrap()
-                .contains("PCB_MAKER_KICAD_USER_LIBS=1")
-        );
+    fn only_a_capped_finding_copper_can_change_limits_the_evidence() {
+        let capped = |kind: &str| {
+            serde_json::json!({
+                "violations": vec![serde_json::json!({"type": kind}); 199],
+                "unconnected_items": [],
+            })
+        };
+        // The library and text findings at their cap hide nothing a
+        // relocation could cause.
+        for kind in [
+            "lib_footprint_issues",
+            "lib_footprint_mismatch",
+            "text_height",
+            "text_thickness",
+        ] {
+            assert_eq!(native_evidence_limit(&[&capped(kind)]), None, "{kind}");
+        }
         let control = serde_json::json!({"violations": [], "unconnected_items": []});
         assert_eq!(native_evidence_limit(&[&control]), None);
+        assert!(
+            native_evidence_limit(&[&control, &capped("solder_mask_bridge")])
+                .unwrap()
+                .contains("report cap")
+        );
     }
 
     #[test]

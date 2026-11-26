@@ -650,6 +650,14 @@ drop and nothing else gets worse; skipped past the deadline or without
 KiCad. `pcb-maker repair-kicad-necks` runs it alone. The router itself
 routes at the neck width within `neck_reach` (1.5 mm) of a net's narrow
 pads; `neck_width_mm` defaults to the project's minimum track width.
+In route mode its KiCad checks count as no work. Where a check counts as
+work (a layout: its final ladder and the board it keeps), the repair makes
+only the checks the work left pays for: inside the ladder its budget or
+its work deadline, whichever is nearer (`Ladder::checks_left`; the log
+says `ladder: ... what is left pays for N KiCad checks`), after it the
+layout's work less the open repair's
+reserve after it; with fewer than three it does not run and its note
+says so.
 
 For a connection-width warning at a circular SMD pad and a nearly
 tangent same-net via, the repair can try one short radial track. It
@@ -674,14 +682,21 @@ a generated via) and the same-hatch width repair (`unchanged_hatch.rs`,
 from width errors), in route mode the open repair after the ladder
 (`board_router/route_open_repair.rs`, from KiCad's open connections;
 `board-router.json`'s `open_repair` says `skipped`,
-`post_route_repairs_off` when it is off; when KiCad accepts its copper
-the result's nets, counts and totals describe the repaired board and
-`nets[].open_repair` what the router had left), and in both commands the neck
+`post_route_repairs_off` when it is off), and in both commands the neck
 repair's round pad-to-via bridge above. They are on by default; the router setting
 `tuning.post_route_repairs: false` (or `PCB_KICAD_NO_POST_ROUTE_REPAIRS`
 set, where the settings do not give it) skips them and their KiCad
 checks. The neck repair proper, the solid step, the fill hand-off
 (`save_zone_fills`) and the verdict's retry suggestions still run.
+
+When KiCad accepts an open repair's copper, in a layout as in route
+mode, the result's nets, counts and totals describe the repaired board
+(`route_open_repair.rs`, `account_open_repair`) and `nets[].open_repair`
+says what the router had left. A net improved but not closed keeps the
+router's count and `open`: KiCad's items name the two nearest objects of
+two parts of a net, not the pads of each part, so they do not say which
+terminals are apart afterwards; the pads they do name are in
+`kicad_unconnected_pads`.
 
 ### Plane skeleton
 

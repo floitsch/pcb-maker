@@ -16,7 +16,9 @@ pub struct OpenConnectivityProof {
 }
 
 /// Confirms that only ordinary native open witnesses differ before an
-/// electrical partition proof is attempted.
+/// electrical partition proof is attempted. The copper-independent
+/// findings (`COPPER_INDEPENDENT_TYPES`) are not compared: copper does not
+/// change them, and at their cap two checks may list different ones.
 pub fn eligible_open_partition(before: &Value, after: &Value) -> Result<bool, String> {
     let regular_witnesses = |report: &Value| {
         report["unconnected_items"].as_array().is_some_and(|items| {
@@ -40,7 +42,7 @@ pub fn eligible_open_partition(before: &Value, after: &Value) -> Result<bool, St
         return Ok(false);
     }
     for key in ["violations", "schematic_parity", ACROSS_KEY] {
-        if finding_counts(before, key)? != finding_counts(after, key)? {
+        if copper_finding_counts(before, key)? != copper_finding_counts(after, key)? {
             return Ok(false);
         }
     }
@@ -384,6 +386,32 @@ pub fn verify_native_partition_merges(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn capped_library_findings_do_not_decide_whether_two_checks_match() {
+        // 199 library warnings (KiCad's cap), listed differently by two
+        // checks of one board, and one open gone.
+        let report = |first: usize, opens: usize| {
+            let library: Vec<Value> = (first..first + 199)
+                .map(|index| {
+                    json!({"type": "lib_footprint_issues", "severity": "warning",
+                        "description": format!("library {index}"), "items": []})
+                })
+                .collect();
+            let open = json!({"type": "unconnected_items", "severity": "error",
+                "items": [{"uuid": "a"}, {"uuid": "b"}]});
+            json!({"kicad_version": "10.0.7", "violations": library,
+                "unconnected_items": vec![open; opens], "schematic_parity": []})
+        };
+        assert!(eligible_open_partition(&report(0, 2), &report(1, 1)).unwrap());
+        // A finding copper can change still has to match.
+        let mut other = report(1, 1);
+        other["violations"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"type": "clearance", "severity": "error", "items": []}));
+        assert!(!eligible_open_partition(&report(0, 2), &other).unwrap());
+    }
 
     fn partition(groups: &[(&str, &[&str])]) -> Partition {
         groups

@@ -23,9 +23,10 @@ pub struct KiCadBoardRouterNet {
     /// How the hard repair found an open net it took up.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repair: Option<KiCadNetRepair>,
-    /// What route mode's open repair after the ladder did to the net
-    /// (`route_open_repair.rs`): the net's other fields then describe the
-    /// board written, this one what the router had left.
+    /// What the open repair after the router (route mode's after its
+    /// ladder, a layout's additive repair: `route_open_repair.rs`) did to
+    /// the net: the net's other fields then describe the board written,
+    /// this one what the router had left.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub open_repair: Option<super::route_open_repair::KiCadNetOpenRepair>,
     /// Where the router keeps several nets of this name (a panel's
@@ -266,11 +267,13 @@ pub struct KiCadBoardRouterResult {
     /// Scoped severity-error DRC count used while ranking checked rungs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_candidate_errors: Option<usize>,
-    /// Native verification and `saved_copper` include a later repair. Core
-    /// search metrics precede it, and so do the per-net route totals and
-    /// the counts summed from them, but after route mode's open repair
-    /// (`open_repair`: its nets carry `nets[].open_repair` and the totals
-    /// count its copper).
+    /// Native verification and `saved_copper` include a later repair whose
+    /// copper the nets, their totals and the counts summed from them do
+    /// not: a terminal-launch retry's local trial, the same-hatch width
+    /// repair, or an open repair whose nets could not be accounted (its
+    /// `reason` says `nets not accounted`). An accounted open repair (route
+    /// mode's `open_repair`, a layout's `local_open_repair`) does not set
+    /// it: `nets[].open_repair` and the totals have its copper.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub model_precedes_additive_repair: bool,
     /// Route mode's open repair after the ladder (`route_open_repair.rs`).

@@ -2095,3 +2095,40 @@ fn the_layouts_lines_decisions_follow_the_switch() {
         }
     );
 }
+
+/// The repairs after a layout's ladder make only the KiCad checks its
+/// budget still pays for; in route mode a check counts as no work and
+/// nothing bounds them.
+#[test]
+fn a_layouts_ladder_pays_for_the_checks_after_its_attempts() {
+    let out = output("checks-left");
+    // WLED_Matrix's final ladder: 332 s, a check 15.9 s, 223 s used by its
+    // attempts and their four checks.
+    let mut config = KiCadBoardRouterConfig {
+        ladder_budget_seconds: Some(332.0),
+        deadline_work: Some(332.0),
+        kicad_check_work: Some(15.9),
+        ..Default::default()
+    };
+    let mut layout = ladder(&config, &out, 2);
+    assert_eq!(layout.checks_left(), Some(20));
+    layout.work = 159.8;
+    layout.charge_checks(4);
+    assert_eq!(layout.checks_left(), Some(6));
+    // Six checks end the ladder within its budget; none is left after.
+    layout.charge_checks(6);
+    assert!(layout.work <= 332.0);
+    assert_eq!(layout.checks_left(), Some(0));
+    layout.work = 400.0;
+    assert_eq!(layout.checks_left(), Some(0));
+    // A work deadline nearer than the budget (the seed pool's excess)
+    // counts: 258 s less the 170 s used pay for five checks, not eight.
+    config.deadline_work = Some(258.4);
+    config.ladder_budget_seconds = Some(301.4);
+    let mut layout = ladder(&config, &out, 2);
+    layout.work = 170.0;
+    assert_eq!(layout.checks_left(), Some(5));
+    config.deadline_work = None;
+    config.kicad_check_work = None;
+    assert_eq!(ladder(&config, &out, 2).checks_left(), None);
+}
