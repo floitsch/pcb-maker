@@ -30,7 +30,7 @@ free() {
   minutes=$((10#$(date +%H) * 60 + 10#$(date +%M)))
   summary="$here/build/nightly/$(date +%F)/summary.md"
   if [ "$minutes" -ge 105 ] && [ "$minutes" -lt 600 ] && [ ! -f "$summary" ]; then return 1; fi
-  awk -v load="$load" -v available="$available" 'BEGIN { exit !(load <= 20 && available >= 16) }'
+  awk -v busy="$load" -v room="$available" 'BEGIN { exit !(busy <= 20 && room >= 16) }'
 }
 
 arguments=()
