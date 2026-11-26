@@ -652,8 +652,10 @@ routes at the neck width within `neck_reach` (1.5 mm) of a net's narrow
 pads; `neck_width_mm` defaults to the project's minimum track width.
 In route mode its KiCad checks count as no work. Where a check counts as
 work (a layout: its final ladder and the board it keeps), the repair makes
-only the checks the work left pays for: the ladder's budget inside the
-ladder (`Ladder::checks_left`), the layout's work less the open repair's
+only the checks the work left pays for: inside the ladder its budget or
+its work deadline, whichever is nearer (`Ladder::checks_left`; the log
+says `ladder: ... what is left pays for N KiCad checks`), after it the
+layout's work less the open repair's
 reserve after it; with fewer than three it does not run and its note
 says so.
 
