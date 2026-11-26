@@ -14,8 +14,8 @@ budget places plain, the sweep's by skeleton). `report` reads every trace
 there and prints, per board and stage, the active parts' displacement (the
 parts `skeleton_passive` does not call passive) and the objective's terms.
 The runner waits while the 1-minute load is above 20 or less than 16 GB are
-available, starts nothing between 01:45 and 07:00, and skips units already
-done.
+available, starts nothing between 01:45 and the nightly's summary, and
+skips units already done.
 """
 
 import argparse
@@ -40,7 +40,11 @@ def machine_free():
             available = int(line.split()[1]) / 1e6
     now = time.localtime()
     minutes = now.tm_hour * 60 + now.tm_min
-    return load <= 20 and available >= 16 and not (105 <= minutes < 420)
+    # The nightly's window: from 01:45 until its summary is written (10:00
+    # at the latest).
+    summary = NIGHT.parent / time.strftime("%Y-%m-%d", now) / "summary.md"
+    window = 105 <= minutes < 600 and not summary.exists()
+    return load <= 20 and available >= 16 and not window
 
 
 def place_unit(out, binary, tier, board, seed, tuning=None):
