@@ -67,6 +67,23 @@ def main():
                     for side in sides]
         print("| pooled | | " + " | ".join(f"{pooled[i]:.0f} -> {pooled[i + 1]:.0f}" for i in range(0, 10, 2)) + " | | |")
         print()
+        # Boards by their unconnected items summed over the seeds both sides
+        # have, and the seeds a board passes strictly on.
+        better = same = worse = gained = lost = 0
+        for by_seed in boards.values():
+            pairs = [pair for pair in by_seed.values()
+                     if pair[0] and pair[1] and pair[0][0] is not None and pair[1][0] is not None]
+            if not pairs:
+                continue
+            change = sum(pair[1][0] - pair[0][0] for pair in pairs)
+            better += change < 0
+            same += change == 0
+            worse += change > 0
+            gained += sum(1 for pair in pairs if pair[1][1] and not pair[0][1])
+            lost += sum(1 for pair in pairs if pair[0][1] and not pair[1][1])
+        print(f"Boards by unconnected items over their seeds: {better} better, {same} same, {worse} worse; "
+              f"strict passes gained on {gained} board-seeds, lost on {lost}.")
+        print()
         if arguments.boards:
             print("| board | " + " | ".join(f"s{seed} off -> on" for seed in sorted(seeds)) + " | strict passes off -> on |")
             print("| --- | " + " | ".join("---" for _ in seeds) + " | --- |")
