@@ -861,7 +861,7 @@ ordinary board to find the smallest clean one.
 | switch | what it does |
 | --- | --- |
 | `PCB_PLACER_DEBUG` | per level and phase: wirelength, parts without room, work against CPU |
-| `PCB_PLACER_TRACE=<file>` | per kept seed: poses after each stage (start, global, annealed, legal, final; the skeleton's before them), the global descent's history, the level walk (`board_placer/trace.rs`) |
+| `PCB_PLACER_TRACE=<file>` | per kept seed: poses after each stage (start, global, annealed, legal, refined, repaired, final; the skeleton's before them), each part's class (`passive`), the global descent's history, the level walk (`board_placer/trace.rs`) |
 | `PCB_PLACER_DESIGNER=<board>` | the designer's placement judged by the placer's model, with `PCB_PLACER_DESIGNER_LEVEL` |
 | `PCB_PLACER_START=<board>` | start the stages from the designer's poses: `PCB_PLACER_START_STAGE` `global` (default), `anneal` or `legalize`; `PCB_PLACER_START_PARTS` names the parts that start there (`Config::start`) |
 | `PCB_PLACER_SKIP_ANNEAL` | no anneal at any level: each level's legaliser seats the global poses (`Config::skip_anneal`) |
@@ -895,9 +895,11 @@ compares (the gap line of the nightly report; see
 
 Pinning some of the designer's parts and placing the rest
 (`partialcopy.py`): with the designer's active parts pinned (a quarter of
-the parts), our layouts recover a median 0.92 of the designer's
-first-route advantage on seven boards; the connectors alone -0.16, the
-three largest ICs 0.15. Our wirelength there is lower or within 2 % of
+the parts), our layouts recovered a median 0.92 of the designer's
+first-route advantage on seven boards on 2026-11-04 (binary x1904) and
+recover 0.49 on three today, because our own seeds route better now
+(docs/experiments/objective-terms.md); the connectors alone -0.16, the
+three largest ICs 0.15 (2026-11-04). Our wirelength there is lower or within 2 % of
 our own on six of seven. So the gap is the active parts' arrangement as a
 whole (banks of repeated parts its sharpest case), which our objective
 accepts on Glasgow and the 4in1 (with our passives around it; not on the
@@ -922,8 +924,22 @@ compared with our own pipeline (`stages.py`, four boards, two seeds):
   loss holds only where small passives crowd many ICs (the 4in1,
   DSP-ADAU1452), packed by the decoupling relations (88 % of the 4in1's
   objective).
-- **The legaliser and the refinement** keep the arrangement they are
-  given (the designer's poses are a fixed point of the legaliser).
+- **The legaliser and the refinement do not keep the arrangement they
+  are given.** The designer's poses were a fixed point of the plain
+  legaliser on 2026-11-04; through today's stages the designer's active
+  parts move 1.1 mm in Glasgow's plain legaliser, 3.4 mm with its
+  refinement and 5 mm in the skeleton's two
+  (docs/experiments/objective-terms.md). On our own placements
+  (docs/experiments/keep-arrangement.md) the legaliser moves the active
+  parts 2.8 mm on the mean on plain seeds and 4.7 mm in the skeleton and
+  raises the objective on nearly every seed (7 to 11 % at the median, two
+  to five times on crowded boards: the anneal ends with overlaps it cannot
+  leave); the refinement lowers it by about as much and moves them a
+  further 2.7 and 8.0 mm, to where its own sum is lower, not back. The
+  relation repair moves them 0.03 to 0.3 mm. Neither move is what costs
+  our layouts their connections: holding the active parts through the
+  refinement routes worse, and an anneal that leaves the legaliser little
+  to move routes no better (below, "Tried and rejected").
 - **The race** cannot pick an arrangement no seed holds.
 - **The objective accepts the designer's active arrangement, not its
   passives.** With the designer's active parts pinned and our passives
@@ -1031,6 +1047,27 @@ Halos, legality and levels:
 - `join_pins` 0 in the skeleton (November): +3.0 % against the race.
 - Skipping the anneal (`PCB_PLACER_SKIP_ANNEAL`, November): +1.4 % at
   stage 1, worse on seven of eleven boards.
+- The active parts held through the refinement and the alignment where
+  the legaliser seats them (2026-11-26, the skeleton's class rule; under
+  the race the skeleton's own refinement gone): full layouts at three
+  placer seeds, the short tier 9 to 21 unconnected items (worse at each
+  seed) and 28 to 27 strict passes, 25 sweep boards 2173 to 2449 (worse at
+  each seed) and 33 to 33. The
+  refinement's moves of the active parts are worth connections
+  (docs/experiments/keep-arrangement.md).
+- A part in overlap reaching as far as the board in the anneal
+  (2026-11-26; a shift's reach drawn between the stage's radius and the
+  board's size): the overlap the anneal leaves fell on every board measured
+  (23 to 99 %) and the legaliser moved the parts less, the final objective
+  stayed (0.99), and full layouts were no better: the short tier 9 to 9
+  unconnected and 28 to 27 strict, 25 sweep boards 2171 to 2281 and 33 to
+  33 over three seeds, MegaDrive worse at each, protoesp without a legal
+  place for one part at one seed. On branch `keep-arrangement-n2`.
+- In the legaliser, a part legal where it stands keeping its spot from a
+  larger part that must move, and a crowded group pushed apart by areas
+  before the legaliser (2026-11-26, placement alone): the final objective
+  did not move (1.00 and 1.01 of main's), and the skeleton's own objective
+  rose with the first (the 4in1 1003 to 1107, MegaDrive 58 790 to 71 350).
 
 Objective terms:
 

@@ -132,6 +132,12 @@ Run outputs stay outside the tree, in the shared untracked `build/`:
    - **Judging it:** several placer seeds per board, because of the noise
      finding.
    - **Evidence:** objective-terms.md section 4.
+   - **Done (2026-11-26), and it loses:** [keep-arrangement.md](keep-arrangement.md).
+     On our own placements the legaliser and the refinement do move the
+     active parts, but holding them through the refinement routes worse
+     (the short tier 9 to 21 unconnected items, 25 sweep boards 2173 to
+     2449, three seeds each), and an anneal that leaves the legaliser
+     little to move routes no better. No placer change came of it.
 2. **Per-open-item evidence in `verdict.json`**
    (evaluation-representations.md). The held-out test
    ([cards-heldout.md](cards-heldout.md)) found the cards' generated
