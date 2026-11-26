@@ -1,0 +1,31 @@
+{
+ "failing": [
+  "GlasgowEmbedded__glasgow__glasgow__revC3",
+  "OpenDrone-hw__OpenESC-30x30__4in1",
+  "OpenDrone-hw__OpenESC-20x20__4in1-mini",
+  "CDFER__Business-Cards__Batch_1",
+  "stonedDiscord__MegaDrive__MegaDrive",
+  "doudar__SmartSpin2k__SmartSpin2k_Panelized",
+  "apfaudio__eurorack-pmod__eurorack-pmod-pcb",
+  "Twisted-Fields__rp2040-motor-controller__RP2040_base",
+  "stonedDiscord__nonSNES__SNSP-CPU-01",
+  "byrantech__laptop__power",
+  "OpenDrone-hw__OpenRX__OpenRX-panel-rev2",
+  "thpoll83__PolyKybd__poly_kb_molecule_4x4",
+  "CRImier__MyKiCad__protoesp"
+ ],
+ "passing": [
+  "0xCB-dev__0xCB-1337__1337-v4.0",
+  "CDFER__Business-Cards__WLED_Matrix",
+  "ISSUIUC__ISS-PCB__BAGEL-MK1",
+  "Ladniy__jiran-ble-lite__jiran-ble-lite",
+  "Spaceflight-Rocketry-Giessen-e-V__Telemetry__TelemetryOnboard",
+  "crmaykish__mackerel-68k__mackerel-10-v1",
+  "emertcakir__OpenAirScope__OpenAirScope",
+  "hackclub__OnBoard__koeg-board-pcb",
+  "little-red-rover__little-red-rover__little_red_rover",
+  "sporkus__capybully_keyboard__capybully",
+  "tomunderwood99__CharlieBoard__Blue_Line",
+  "tubbytwins__bumwings-kbd__bumwings_v001R64_rp2040zero_sd"
+ ]
+}

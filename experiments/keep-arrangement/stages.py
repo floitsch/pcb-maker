@@ -43,14 +43,14 @@ def machine_free():
     return load <= 20 and available >= 16 and not (105 <= minutes < 420)
 
 
-def place_unit(out, binary, tier, board, seed):
+def place_unit(out, binary, tier, board, seed, tuning=None):
     run = NIGHT / tier / board
     source = run / "source"
     board_id = next(source.glob("*.kicad_pcb")).stem
     layout = json.loads((run / "layout.json").read_text())
     router = run / "router.json"
     placer = dict(layout.get("placer", {}))
-    placer["tuning"] = {**placer.get("tuning", {}), "seed": seed}
+    placer["tuning"] = {**placer.get("tuning", {}), **(tuning or {}), "seed": seed}
     work = (Path(out) / tier / board / f"s{seed}").resolve()
     command = [str(Path(binary).resolve()), "place-kicad-board", str(source), board_id, str(work / "placed"),
                str(work / "layout.json"), "--router", str(router) if router.exists() else "auto"]
@@ -231,6 +231,7 @@ def main():
     p.add_argument("--binary", required=True)
     p.add_argument("--slots", type=int, default=6)
     p.add_argument("--seed", type=int, default=1)
+    p.add_argument("--tuning", default="{}", help="placer tuning keys over the tier's, as JSON (a diagnosis)")
     p.add_argument("items", nargs="+")
     r = sub.add_parser("report")
     r.add_argument("--out", required=True)
@@ -242,7 +243,8 @@ def main():
     units = []
     for item in arguments.items:
         tier, _, board = item.partition(":")
-        units.append((item, (lambda t=tier, b=board: place_unit(arguments.out, arguments.binary, t, b, arguments.seed))))
+        units.append((item, (lambda t=tier, b=board: place_unit(arguments.out, arguments.binary, t, b, arguments.seed,
+                                                                json.loads(arguments.tuning)))))
     env = dict(os.environ, RAYON_NUM_THREADS="2", PCB_WORK_RATE="3.15e6,150e6")
     pool(units, arguments.slots, env)
 
