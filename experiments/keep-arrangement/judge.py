@@ -94,8 +94,10 @@ def main():
                     pair = by_seed.get(seed) or [None, None]
                     cells.append(" -> ".join("-" if side is None or side[0] is None else f"{side[0]}{'' if side[1] else '!'}"
                                              for side in pair))
-                    for index, side in enumerate(pair):
-                        strict[index] += bool(side and side[1])
+                    # Only the seeds both sides have.
+                    if pair[0] and pair[1] and pair[0][0] is not None and pair[1][0] is not None:
+                        for index, side in enumerate(pair):
+                            strict[index] += bool(side[1])
                 print(f"| {board.split('__', 1)[-1]} | " + " | ".join(cells) + f" | {strict[0]} -> {strict[1]} |")
             print("(`!`: not a strict pass.)")
             print()
