@@ -285,6 +285,21 @@ fn run_race(
     );
     let (best, chosen, confident, reason) =
         pick_placement(&probes, labels, ripped, race_probe.is_some());
+    // The race-seeds experiment's hook (docs/experiments/race-seeds.md):
+    // the probe at this rank routes on whatever the race picked.
+    let (chosen, reason) = match std::env::var("PCB_RACE_KEEP")
+        .ok()
+        .and_then(|rank| rank.parse::<usize>().ok())
+    {
+        Some(rank) if rank < labels.len() => (
+            rank,
+            format!(
+                "PCB_RACE_KEEP {rank} (the race picked placement {}: {reason})",
+                labels[chosen]
+            ),
+        ),
+        _ => (chosen, reason),
+    };
     eprintln!(
         "placement race: placement {} kept: {reason}",
         labels[chosen]
