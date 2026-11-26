@@ -1206,10 +1206,14 @@ impl<'a> Ladder<'a> {
     /// (route mode). The repairs after the attempts ask it: the neck
     /// repair's checks, charged only afterwards, took WLED_Matrix's final
     /// ladder to 414 s of work on a budget of 332 s (12 checks of 15.9 s),
-    /// and the layout's open repair found its reserve used.
+    /// and the layout's open repair found its reserve used. The work
+    /// deadline counts where it is nearer than the budget (a layout gives
+    /// the ladder its work left less the seed pool's excess as the
+    /// deadline, and more as the budget).
     pub(crate) fn checks_left(&self) -> Option<usize> {
         (self.check_charge > 0.0).then(|| {
-            ((self.ladder_budget - self.work).max(0.0) / self.check_charge).floor() as usize
+            let left = (self.ladder_budget - self.work).min(self.work_left());
+            (left.max(0.0) / self.check_charge).floor() as usize
         })
     }
 

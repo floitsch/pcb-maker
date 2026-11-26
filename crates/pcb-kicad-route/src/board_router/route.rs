@@ -466,6 +466,12 @@ pub fn route_kicad_board(
         let remaining = config
             .provisional_native_check_limit
             .map(|limit| limit.saturating_sub(ladder.checks_charged.checks));
+        if let Some(paid) = ladder.checks_left() {
+            eprintln!(
+                "ladder: {:.1} s of work before the neck repair: what is left pays for {paid} KiCad checks",
+                ladder.work
+            );
+        }
         let remaining = match (remaining, ladder.checks_left()) {
             (Some(limit), Some(paid)) => Some(limit.min(paid)),
             (limit, paid) => limit.or(paid),

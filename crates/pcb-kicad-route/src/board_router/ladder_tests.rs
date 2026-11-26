@@ -2121,6 +2121,13 @@ fn a_layouts_ladder_pays_for_the_checks_after_its_attempts() {
     assert_eq!(layout.checks_left(), Some(0));
     layout.work = 400.0;
     assert_eq!(layout.checks_left(), Some(0));
+    // A work deadline nearer than the budget (the seed pool's excess)
+    // counts: 258 s less the 170 s used pay for five checks, not eight.
+    config.deadline_work = Some(258.4);
+    config.ladder_budget_seconds = Some(301.4);
+    let mut layout = ladder(&config, &out, 2);
+    layout.work = 170.0;
+    assert_eq!(layout.checks_left(), Some(5));
     config.deadline_work = None;
     config.kicad_check_work = None;
     assert_eq!(ladder(&config, &out, 2).checks_left(), None);
