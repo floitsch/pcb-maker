@@ -1,4 +1,4 @@
-# Hand-over (state as of 2026-11-26; measured by layout sweep v47, the nightly of 2026-11-26 on main cb7743e)
+# Hand-over (state as of 2026-11-27; measured by layout sweep v48, the nightly of 2026-11-27 on main 592c633)
 
 Read this first. It says what the tool does today, which benchmarks
 count, what is known to be wrong, how to work on the code and what still
@@ -62,23 +62,22 @@ The line below and the next paragraph are rewritten by the nightly;
 [benchmarks.md](benchmarks.md) has the table of the last 14 nights.
 
 <!-- nightly-state:begin -->
-**Nightly** 2026-11-26 (main cb7743eb2bc6, `build/nightly/2026-11-26/summary.md`): fingerprints changed: Sisu_SSE-9; expansion 27/46 (strict 28), 569 open; short 9/12 (strict 10), 2 open; sweep 72/109 (strict 74), 1209 open; designer 77/109 (strict 78), 2662 open at 0.524; gap placement 61%, routing 39%.
+**Nightly** 2026-11-27 (main 592c633155dd, `build/nightly/2026-11-27/summary.md`): fingerprints identical; expansion 27/46 (strict 28), 569 open; short 9/12 (strict 10), 2 open; sweep 72/109 (strict 74), 1209 open; designer 77/109 (strict 78), 2663 open at 0.528; gap placement 61%, routing 39%.
 <!-- nightly-state:end -->
 
-**Layout sweep v47** (the nightly of 2026-11-26, main cb7743e, written
+**Layout sweep v48** (the nightly of 2026-11-27, main 592c633, written
 by the nightly): **74 of 109 pass the strict rule** (72 the per-type
 rule), 1209 unconnected in all, strict errors 35, no row cut or killed,
 1 without a result; medians against the designer's board: vias x0.64,
 length x0.96, open 0.000 (mean 0.046), bends x0.99, stair-steps +29,
-crossings +0. Against the nightly of 2026-11-25: better 9, same 97,
-worse 2, strict passes 74 -> 74; against v46: better 12, same 92, worse
-3, strict passes 73 -> 73, 1 INPUT left out. The matched designer tier
-on the same binary (budget scale 0.524): 78 strict passes (77 per type);
-over the 100 target boards placement 61 %, routing 39 % of the open
-connections (placement 71 %, routing 29 % without MegaDrive).
-`build/nightly/2026-11-26/`; table, gap split, the costliest placements
+crossings +0. Against the nightly of 2026-11-26: better 0, same 108,
+worse 0, strict passes 74 -> 74. The matched designer tier on the same
+binary (budget scale 0.528): 78 strict passes (77 per type); over the
+100 target boards placement 61 %, routing 39 % of the open connections
+(placement 71 %, routing 29 % without MegaDrive).
+`build/nightly/2026-11-27/`; table, gap split, the costliest placements
 and the losers in
-[benchmarks.md](benchmarks.md#layout-sweep-v47-2026-11-26).
+[benchmarks.md](benchmarks.md#layout-sweep-v48-2026-11-27).
 
 The strict rule became rule 5 on 2026-11-11: a track or via against a
 footprint's own copper graphic that walls in a pad of its net counts as
