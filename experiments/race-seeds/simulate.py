@@ -39,6 +39,21 @@ def race_pick(counts):
     return best if (counts[0] - counts[best]) / counts[0] >= RACE_RIPPED_MARGIN else 0
 
 
+def components(table):
+    """The variance components of a rows x columns table without
+    replication (random effects, floored at 0): rows, columns, the
+    interaction (the residual), and the mean."""
+    rows, columns = len(table), len(table[0])
+    mean = sum(map(sum, table)) / (rows * columns)
+    row_means = [sum(row) / columns for row in table]
+    column_means = [sum(table[r][c] for r in range(rows)) / rows for c in range(columns)]
+    ms_rows = columns * sum((m - mean) ** 2 for m in row_means) / max(rows - 1, 1)
+    ms_columns = rows * sum((m - mean) ** 2 for m in column_means) / max(columns - 1, 1)
+    ms_rest = sum((table[r][c] - row_means[r] - column_means[c] + mean) ** 2
+                  for r in range(rows) for c in range(columns)) / max((rows - 1) * (columns - 1), 1)
+    return max((ms_rows - ms_rest) / columns, 0.0), max((ms_columns - ms_rest) / rows, 0.0), ms_rest, mean
+
+
 def load(out):
     """board -> {"final": {(rank, seed): row}, "probe": {(rank, seed): probe}}, and the problems found."""
     boards, problems = {}, []
@@ -72,8 +87,21 @@ def load(out):
                 stretch = row.get("wall_stretch") or 0
                 log = (cell / name / "layout.log")
                 text = log.read_text(errors="replace") if log.exists() else ""
-                cut = [word for word in ("wall clock", "wall-clock", "guard", "timed out", "killed")
-                       if word in text.lower()]
+                # A row cut by the wall clock, a fired guard, a check's
+                # timeout, a kill.
+                lowered = text.lower()
+                cut = [word for word in ("wall_guard_expired", "wall clock passed the layout's guard",
+                                         "wall guard elapsed", "wall guard ended", "wall guard expired",
+                                         "timed out", "timeout expired")
+                       if word in lowered]
+                try:
+                    verdict = json.loads((cell / name / "layout" / "verdict.json").read_text())
+                except (OSError, ValueError):
+                    verdict = {}
+                cut += ["verdict.cut"] if verdict.get("cut") else []
+                cut += [key for key in ("cut", "killed", "error") if row.get(key)]
+                cut += [f"exit {row.get('exit')}"] if row.get("exit") not in (0, 1) else []
+                cut += ["stretch at the cap"] if stretch >= 3.999 else []
                 final[(rank, seed)] = {
                     "unconnected": unconnected, "strict": bool(row.get("pass_strict")),
                     "first_open": row.get("first_unconnected_terminals"), "work": row.get("work_seconds"),
@@ -207,6 +235,21 @@ def main():
             strict_totals[name] = strict_totals.get(name, 0.0) + strict
             if arguments.boards:
                 print(f"  {name}: {mean:.1f} ({picked})")
+    print("## Where the final result's variance comes from (two-way, a cell is deterministic: the interaction is the residual)")
+    print("| board | placement | router seed | interaction | sd of a cell | mean | the first route's: placement | router seed | interaction |")
+    print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+    for short in complete:
+        final = boards[short]["final"]
+        ranks = sorted({rank for rank, _ in final})
+        line = []
+        for key in ("unconnected", "first_open"):
+            placement, router, interaction, mean = components(
+                [[final[(rank, seed)][key] for seed in seeds] for rank in ranks])
+            total = max(placement + router + interaction, 1e-9)
+            shares = [f"{part:.1f} ({100 * part / total:.0f} %)" for part in (placement, router, interaction)]
+            line += shares + ([f"{total ** 0.5:.1f}", f"{mean:.1f}"] if key == "unconnected" else [])
+        print(f"| {short} | " + " | ".join(line) + " |")
+    print()
     print(f"## The allocations over {len(complete)} boards ({', '.join(complete)})")
     print("| allocation | unconnected | against today | strict passes |")
     print("| --- | ---: | ---: | ---: |")

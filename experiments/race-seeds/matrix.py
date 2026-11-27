@@ -69,7 +69,8 @@ def row(directory):
 
 def probes(out, short):
     """How many placements the board's race probed, from a finished cell."""
-    for directory in out.glob(f"{short}-k*-r*"):
+    # (A rerun into another directory reads the matrix's own cells too.)
+    for directory in [*out.glob(f"{short}-k*-r*"), *OUT.glob(f"{short}-k*-r*")]:
         report = directory / BOARDS[short] / "layout" / "board-layout.json"
         try:
             return len((json.loads(report.read_text()).get("race") or {}).get("probe") or [])
