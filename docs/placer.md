@@ -1093,6 +1093,13 @@ Race and measurement:
 - A coarse whole first route as the race's probe (October): ranks worse
   than the real first route and saves only a fifth of the probe's work;
   what it found was the ripped count.
+- Router seeds in the race (November): one placement under several router
+  seeds, two placements under two, today's pick routed on from its best
+  probe of three seeds, a halving race. On a matrix of every candidate
+  routed to the end under three router seeds (8 boards) none beats one
+  probe per placement: a probe's count says a little about the placement
+  and nothing about the router seed
+  ([race-seeds.md](experiments/race-seeds.md)).
 - Condensed boards as a fast benchmark (October): most dense boards'
   difficulty is not local to a window.
 - A quarter budget as a cheap protocol stage (November): the placement

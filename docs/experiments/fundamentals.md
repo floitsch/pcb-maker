@@ -153,6 +153,11 @@ Run outputs stay outside the tree, in the shared untracked `build/`:
    - same-number pads on two layers are merged (not checked).
 4. **The race:** test n placements × m router seeds at an equal probe budget
    (noise-sources.md). Replicating router seeds is plausible but not shown.
+   - **Done (2026-11-27), and nothing wins:** [race-seeds.md](race-seeds.md).
+     On a matrix of every candidate routed to the end under three router
+     seeds (8 boards, 69 layouts) every allocation with router seeds ends
+     at +4 to +15 % of today's unconnected items; the probe's count does
+     not rank one placement's router seeds (Spearman -0.07). The race stays.
 5. **What leaves tonight's near misses open, if not single-net misses?** The
    retry found no local path on the 11-24 sweep's 17. Look at the model walls
    on those boards, the window census's classes, before any joint solver.
