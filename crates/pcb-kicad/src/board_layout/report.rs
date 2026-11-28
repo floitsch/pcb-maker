@@ -460,7 +460,7 @@ fn verify_terminal_launch_saved_board(
     trial: &Path,
 ) -> Result<Option<crate::FillPublication>, String> {
     use crate::fill_handoff::layout::{FillRefillEvidence, project_inputs};
-    use crate::fill_handoff::{compare_reports, has_fillable_zones, publish_layout_fill};
+    use crate::fill_handoff::{compare_board_reports, has_fillable_zones, publish_layout_fill};
     use pcb_kicad_check::native_report;
 
     if project_inputs(candidate)? != project_inputs(selected)? {
@@ -481,7 +481,7 @@ fn verify_terminal_launch_saved_board(
             false,
             expired,
         )?;
-        compare_reports(&refill, &refill, &stored)?;
+        compare_board_reports(&pcb, &refill, &refill, &stored)?;
         return Ok(None);
     }
     if !ctx.config.save_zone_fills {

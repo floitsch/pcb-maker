@@ -340,6 +340,21 @@ pub(crate) fn compare_reports(
     Ok(inherited_findings(before, saved))
 }
 
+/// `compare_reports` without the items of one-net findings
+/// (`pcb_kicad_check::net_witness`): which copper of a joint KiCad names
+/// for a narrow connection follows the path of the checked file, so two
+/// checks of the same copper in different directories differ in them.
+pub(crate) fn compare_board_reports(
+    board: &pcb_kicad_file::kicad_sexpr::Expr,
+    before: &Value,
+    filled: &Value,
+    saved: &Value,
+) -> Result<BTreeMap<&'static str, BTreeMap<String, usize>>, String> {
+    let [before, filled, saved] = [before, filled, saved]
+        .map(|report| pcb_kicad_check::net_witness::net_witness_neutral(board, report));
+    compare_reports(&before, &filled, &saved)
+}
+
 pub(crate) fn same_metadata(before: &Value, filled: &Value, saved: &Value) -> Result<(), String> {
     for field in [
         "kicad_version",
@@ -521,6 +536,12 @@ pub fn save_filled_kicad_board(
                     .into(),
             );
         }
+        // The stored board is compared without the items of one-net
+        // findings (`net_witness`): which of a joint's tracks KiCad names
+        // follows the checked path. The witness replays keep KiCad's items.
+        let source_pcb = pcb_kicad_file::kicad_sexpr::parse(
+            std::str::from_utf8(&original).map_err(|error| error.to_string())?,
+        )?;
         let mut native_checks = 2;
         let mut connectivity_checks = 0;
         let mut verify = |forms: SourceForms| -> Result<CheckedSavedFill, String> {
@@ -565,7 +586,7 @@ pub fn save_filled_kicad_board(
                 )?);
                 inherited_findings(&before, &stored)
             } else {
-                match compare_reports(&before, &filled, &stored) {
+                match compare_board_reports(&source_pcb, &before, &filled, &stored) {
                     Ok(inherited) => inherited,
                     Err(_) if capped_library_order_changed(&before, &filled, &stored) => {
                         native_checks += 1;
@@ -576,7 +597,7 @@ pub fn save_filled_kicad_board(
                             true,
                             || false,
                         )?;
-                        compare_reports(&before, &reopened, &stored)?
+                        compare_board_reports(&source_pcb, &before, &reopened, &stored)?
                     }
                     Err(error)
                         if forms == SourceForms::Preserved
@@ -735,6 +756,65 @@ pub fn save_filled_kicad_board(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// OpenFC's routed board as KiCad 10.0.8 reports it from two
+    /// directories (names of 2 and of 16 characters): the same narrow
+    /// connection of +3.3V, other tracks of the joint named.
+    #[test]
+    fn a_width_finding_naming_other_copper_of_the_joint_is_the_same_finding() {
+        let board = pcb_kicad_file::kicad_sexpr::parse(
+            r#"(kicad_pcb
+            (segment (start 154.09 89.3) (end 153.89 89.1) (width 0.09) (layer "F.Cu") (net "+3.3V") (uuid "bc4723a3-c7b5-5a3c-9294-ceb62c43bbf2"))
+            (segment (start 154.09 89.4) (end 153.99 89.3) (width 0.09) (layer "F.Cu") (net "+3.3V") (uuid "c266b2fc-254e-50cd-a2db-8f2d0cbd218d"))
+            (segment (start 154.29 89.4) (end 154.09 89.4) (width 0.09) (layer "F.Cu") (net "+3.3V") (uuid "f840d2c2-c499-5de0-8e4f-e8d4c569ece8"))
+            (segment (start 160 89.4) (end 161 89.4) (width 0.09) (layer "F.Cu") (net "GND") (uuid "00000000-0000-0000-0000-000000000001")))"#,
+        )
+        .unwrap();
+        let report = |width: &str, items: [(&str, &str, [f64; 2]); 2]| {
+            json!({
+                "coordinate_units": "mm", "kicad_version": "10.0.8",
+                "unconnected_items": [], "schematic_parity": [],
+                "violations": [{
+                    "type": "connection_width", "severity": "warning",
+                    "description": format!("Copper connection too narrow (board setup constraints minimum connection width 0.0900 mm; actual {width} mm) (F.Cu)"),
+                    "items": items.map(|(uuid, length, [x, y])| json!({
+                        "uuid": uuid, "pos": {"x": x, "y": y},
+                        "description": format!("Track [+3.3V] on F.Cu, length {length} mm"),
+                    })),
+                }]
+            })
+        };
+        let long = (
+            "bc4723a3-c7b5-5a3c-9294-ceb62c43bbf2",
+            "0.2828",
+            [154.09, 89.3],
+        );
+        let short = (
+            "c266b2fc-254e-50cd-a2db-8f2d0cbd218d",
+            "0.1414",
+            [154.09, 89.4],
+        );
+        let middle = (
+            "f840d2c2-c499-5de0-8e4f-e8d4c569ece8",
+            "0.2000",
+            [154.29, 89.4],
+        );
+        let refilled = report("0.0463", [long, middle]);
+        let stored = report("0.0463", [middle, short]);
+        assert!(compare_reports(&refilled, &refilled, &stored).is_err());
+        let inherited = compare_board_reports(&board, &refilled, &refilled, &stored).unwrap();
+        assert_eq!(inherited["violations"]["connection_width"], 1);
+        // Another measured width or copper of another net is another finding.
+        let narrower = report("0.0400", [middle, short]);
+        assert!(compare_board_reports(&board, &refilled, &refilled, &narrower).is_err());
+        let other = (
+            "00000000-0000-0000-0000-000000000001",
+            "1.0000",
+            [160.0, 89.4],
+        );
+        let elsewhere = report("0.0463", [other, other]);
+        assert!(compare_board_reports(&board, &refilled, &refilled, &elsewhere).is_err());
+    }
 
     #[test]
     fn native_fill_counts_boolean_and_severity_exclusions_without_double_counting() {
