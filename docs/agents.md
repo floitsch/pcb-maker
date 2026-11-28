@@ -2584,6 +2584,19 @@ remaining modeled budget covers the two additional native checks. If
 footprint library warnings reach a report cap, install the project's
 libraries and retry with `PCB_MAKER_KICAD_USER_LIBS=1`.
 
+A `connection_width` finding is compared by its rule, severity,
+exclusion, description (limit, measured width, layer) and net, not by
+the two items KiCad names: they are two of the net's items near the
+neck, and which two changes with the path of the checked file (KiCad
+10.0.8 names other tracks of the same joint for the same board under a
+directory of another name length). Layout and route fill publication and
+`--save-filled` compare the stored board with its refill this way, so
+whether a fill is saved does not depend on the output directory. The
+reports themselves (`drc.json`, `drc-saved-fill.json`) keep KiCad's
+items and can differ in them between two output directories. Two necks
+of one net on one layer with the same measured width at different
+places are not told apart by this comparison.
+
 When changed open witnesses name zone or teardrop copper, standalone
 `--save-filled` can also compare the exact native filled polygon shapes
 and their attachments using the captured refill and reopened board. The

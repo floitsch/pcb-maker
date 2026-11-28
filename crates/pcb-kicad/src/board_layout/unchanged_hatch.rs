@@ -87,7 +87,7 @@ pub(super) fn recover(
     if saved.is_none()
         || native_report::validate_drc_report(&refilled, &board).is_err()
         || native_report::validate_drc_report(&stored, &board).is_err()
-        || crate::fill_handoff::compare_reports(&refilled, &refilled, &stored).is_err()
+        || crate::fill_handoff::compare_board_reports(&pcb, &refilled, &refilled, &stored).is_err()
     {
         report.reason = Some("selected_zone_fill_unverified".into());
         return Ok(Some(report));

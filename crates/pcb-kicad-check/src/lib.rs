@@ -33,6 +33,7 @@ pub mod drc_cache;
 pub mod kicad_config;
 pub mod ledger;
 pub mod native_report;
+pub mod net_witness;
 pub mod proc_memory;
 pub mod verification;
 pub mod verification_preview;

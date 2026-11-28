@@ -5,6 +5,7 @@
 mod layer_connections;
 
 use super::*;
+use pcb_kicad_check::net_witness::net_witness_neutral;
 use pcb_kicad_check::verified_fill_cache::VerifiedFillCache;
 use pcb_kicad_file::board_stats::is_rule_area;
 pub(crate) use pcb_kicad_file::fs_util::project_companion_hashes as project_inputs;
@@ -569,7 +570,12 @@ pub(crate) fn publish_layout_fill(
         if let Some(gate) = trial_gate {
             gate(&refilled)?;
         }
-        if guarded && let Some(expected) = expected_report {
+        // Compared without the items of one-net findings (`net_witness`):
+        // which of a joint's tracks KiCad names follows the checked path.
+        let expected_report =
+            expected_report.map(|expected| net_witness_neutral(&original, expected));
+        let refilled = net_witness_neutral(&original, &refilled);
+        if guarded && let Some(expected) = &expected_report {
             compare_reports(expected, expected, &refilled).map_err(|error| {
                 format!("the staged refill differs from the accepted native report: {error}")
             })?;
@@ -604,7 +610,8 @@ pub(crate) fn publish_layout_fill(
         };
         let findings = counts(&stored);
         check_finding_caps(&stored, &findings, &original)?;
-        if let Some(expected) = expected_report {
+        let stored = net_witness_neutral(&original, &stored);
+        if let Some(expected) = &expected_report {
             compare_reports(expected, expected, &stored).map_err(|error| {
                 format!("the saved board differs from its accepted refill: {error}")
             })?;
